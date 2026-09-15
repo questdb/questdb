@@ -33,7 +33,6 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
@@ -232,9 +231,6 @@ public class Unordered4Map implements Map, Reopenable {
 
     @Override
     public void close() {
-        if (cursor != null) {
-            cursor.close();
-        }
         if (memStart != 0) {
             memLimit = memStart = Unsafe.free(memStart, memLimit - memStart + entrySize, memoryTag, memoryTracker);
             zeroMemStart = 0;
@@ -249,15 +245,10 @@ public class Unordered4Map implements Map, Reopenable {
 
     @Override
     public MapRecordCursor getCursor() {
-        return getCursor(null);
-    }
-
-    @Override
-    public MapRecordCursor getCursor(@Nullable SqlExecutionCircuitBreaker circuitBreaker) {
         if (hasZero) {
-            return cursor.init(memStart, memLimit, zeroMemStart, size + 1, circuitBreaker);
+            return cursor.init(memStart, memLimit, zeroMemStart, size + 1);
         }
-        return cursor.init(memStart, memLimit, 0, size, circuitBreaker);
+        return cursor.init(memStart, memLimit, 0, size);
     }
 
     @Override

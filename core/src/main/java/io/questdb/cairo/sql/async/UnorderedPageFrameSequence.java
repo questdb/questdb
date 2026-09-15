@@ -441,10 +441,15 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
 
             atom.init(frameCursor, executionContext);
         } catch (TableReferenceOutOfDateException e) {
+            // The caller releases the per-query tracker on failure, so free the tracked address
+            // cache now. A cache left open would stay charged to a pooled tracker and a later
+            // reset() would free it against whichever tracker is bound then.
+            Misc.free(frameAddressCache, e);
             frameCursor = Misc.freeIfCloseable(frameCursor);
             throw e;
         } catch (Throwable th) {
             LOG.error().$("could not initialize unordered page frame sequence [error=").$(th).I$();
+            Misc.free(frameAddressCache, th);
             frameCursor = Misc.free(frameCursor);
             throw th;
         }

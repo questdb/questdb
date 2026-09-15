@@ -190,7 +190,7 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
      * @param rows          rows to pre-touch
      * @param frameRowCount total number of rows in the frame
      */
-    public void preTouchColumns(PageFrameMemoryRecord record, DirectLongList rows, long frameRowCount, SqlExecutionCircuitBreaker circuitBreaker) {
+    public void preTouchColumns(PageFrameMemoryRecord record, DirectLongList rows, long frameRowCount) {
         // Only pre-touch if the filter selectivity is high, i.e. when reading the column values may involve random I/O.
         if (!preTouchEnabled || rows.size() > frameRowCount * preTouchThreshold) {
             return;
@@ -198,7 +198,6 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
         // We use a LongAdder as a black hole to make sure that the JVM JIT compiler keeps the load instructions in place.
         long sum = 0;
         for (long p = 0, n = rows.size(); p < n; p++) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
             long r = rows.get(p);
             record.setRowIndex(r);
             for (int i = 0; i < columnTypes.size(); i++) {

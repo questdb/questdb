@@ -392,7 +392,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             if (task.isCountOnly()) {
                 long count = 0;
                 for (long r = 0; r < frameRowCount; r++) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
                     record.setRowIndex(r);
                     if (filter.getBool(record)) {
                         count++;
@@ -401,7 +400,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                 task.setFilteredRowCount(count);
             } else { // normal filter task
                 for (long r = 0; r < frameRowCount; r++) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
                     record.setRowIndex(r);
                     if (filter.getBool(record)) {
                         rows.add(r);
@@ -418,7 +416,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
 
                 // Pre-touch native columns, if asked.
                 if (frameMemory.getFrameFormat() == PartitionFormat.NATIVE) {
-                    atom.preTouchColumns(record, rows, frameRowCount, circuitBreaker);
+                    atom.preTouchColumns(record, rows, frameRowCount);
                 }
             }
         } finally {

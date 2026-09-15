@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTableSource;
 
 /**
@@ -43,18 +42,21 @@ public interface FrozenHashJoinBuild {
     /** Allocated native bytes, including unused capacity. */
     long getSizeInBytes();
 
-    /** Each acquired execution slot needs its own probe and circuit breaker. */
-    Probe newProbe(SqlExecutionCircuitBreaker circuitBreaker);
+    /**
+     * Each acquired execution slot needs its own probe. Probes do not consult a circuit
+     * breaker; callers check cancellation at frame boundaries and on a work budget.
+     */
+    Probe newProbe();
 
     interface Probe extends SymbolTableSource {
         /** Explicitly bind this slot-owned view to a refreshed snapshot, after consumer drain. */
         void reopen();
 
-        /** Replaces the current duplicate iterator, including on a miss. */
+        /** Replaces the current duplicate iterator, including on a miss, and clears the payload record. */
         void find(int key);
 
         /**
-         * Skips the row check for a caller that checks at probe frame boundaries.
+         * Replaces the current duplicate iterator using the lookup metadata cached at reopen.
          * Read payload columns only after advancing a matching row.
          */
         void findUnchecked(int key);

@@ -39,7 +39,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
-import org.jetbrains.annotations.Nullable;
 
 public class ShardedMapCursor implements MapRecordCursor {
     private final ShardedMapRecord recordA = new ShardedMapRecord(true);
@@ -95,13 +94,9 @@ public class ShardedMapCursor implements MapRecordCursor {
     }
 
     public void of(ObjList<Map> shards) {
-        of(shards, null);
-    }
-
-    public void of(ObjList<Map> shards, @Nullable SqlExecutionCircuitBreaker circuitBreaker) {
         shardCursors.clear();
         for (int i = 0, n = shards.size(); i < n; i++) {
-            shardCursors.add(shards.getQuick(i).getCursor(circuitBreaker));
+            shardCursors.add(shards.getQuick(i).getCursor());
         }
         toTop();
     }

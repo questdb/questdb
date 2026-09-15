@@ -252,10 +252,13 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                         : fragment.isNotSharded() ? fragment.reopenMap() : fragment.getShards().getQuick(0);
                 final long rowCount = sequence.getFrameRowCount(frameIndex);
                 // The shared reduce job checks the breaker before each frame, as for GROUP BY.
-                // Duplicate iteration below checks separately because join fanout can exceed a frame.
+                // Join fanout can exceed a frame, so duplicate iteration repeats that check
+                // once per page frame of matched pairs, counted across all rows of this frame.
                 if (atom.isBuildUnique()) {
                     aggregateUnique(atom, slotId, probeRecord, fragment, map, rowCount);
                 } else {
+                    final long pairsPerCheck = atom.getPairsPerCheck();
+                    long pairsUntilCheck = pairsPerCheck;
                     for (long r = 0; r < rowCount; r++) {
                         slot.scannedRows++;
                         probeRecord.setRowIndex(r);
@@ -267,8 +270,11 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                             final long rowId = probeRecord.getRowId();
                             record.setHasMatch(true);
                             do {
-                                if (!sequence.isActive()) {
-                                    return;
+                                if (--pairsUntilCheck == 0) {
+                                    if (isInterrupted(breaker, sequence)) {
+                                        return;
+                                    }
+                                    pairsUntilCheck = pairsPerCheck;
                                 }
                                 probe.next();
                                 matchedPairs++;
@@ -334,6 +340,22 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         } finally {
             slot.matchedPairs += matchedPairs;
         }
+    }
+
+    // Repeats UnorderedPageFrameReduceJob.reduce()'s frame-boundary check inside a frame.
+    private static boolean isInterrupted(SqlExecutionCircuitBreaker breaker, UnorderedPageFrameSequence<?> sequence) {
+        if (!sequence.isActive()) {
+            return true;
+        }
+        if (sequence.isUninterruptible()) {
+            return false;
+        }
+        final int state = breaker.getState(sequence.getStartTime(), sequence.getCircuitBreaker().getFd());
+        if (state != SqlExecutionCircuitBreaker.STATE_OK) {
+            sequence.cancel(state);
+            return true;
+        }
+        return false;
     }
 
     private static void update(AsyncHashJoinGroupByAtom.Slot slot, GroupByMapFragment fragment, Map map, RecordSink sink, GroupByFunctionsUpdater updater,

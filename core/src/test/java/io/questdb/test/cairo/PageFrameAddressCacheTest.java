@@ -36,6 +36,9 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.std.MemoryTag;
@@ -44,10 +47,87 @@ import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.LimitedMemoryTracker;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class PageFrameAddressCacheTest extends AbstractCairoTest {
+    private static final String FILTERED_ROWS = """
+            x\ts\tk\tts
+            1\t1\tb\t1970-01-01T00:00:00.000000Z
+            10\t10\tb\t1970-01-01T09:00:00.000000Z
+            """;
+
+    @Test
+    public void testFailedOpenReleasesTrackedCacheFilterOnExcludedValues() throws Exception {
+        assertFailedOpenReleasesTrackedCache(
+                1,
+                "SELECT * FROM t WHERE k != 'a' AND s ~ $1",
+                FILTERED_ROWS,
+                "FilterOnExcludedValues",
+                "filter: s ~ "
+        );
+    }
+
+    @Test
+    public void testFailedOpenReleasesTrackedCacheFilterOnSubQuery() throws Exception {
+        assertFailedOpenReleasesTrackedCache(
+                1,
+                "SELECT * FROM t WHERE k IN (SELECT k FROM t WHERE x = 1) AND s ~ $1",
+                FILTERED_ROWS,
+                "FilterOnSubQuery",
+                "filter: s ~ "
+        );
+    }
+
+    @Test
+    public void testFailedOpenReleasesTrackedCacheFilterOnValues() throws Exception {
+        assertFailedOpenReleasesTrackedCache(
+                1,
+                "SELECT * FROM t WHERE k IN ('a', 'b') AND s ~ $1",
+                FILTERED_ROWS,
+                "FilterOnValues",
+                "and s ~ "
+        );
+    }
+
+    @Test
+    public void testFailedOpenReleasesTrackedCacheIndexedPageFrame() throws Exception {
+        assertFailedOpenReleasesTrackedCache(
+                1,
+                "SELECT * FROM t WHERE k = 'b' AND s ~ $1",
+                FILTERED_ROWS,
+                "PageFrame",
+                "Index forward scan on: k",
+                "and s ~ "
+        );
+    }
+
+    @Test
+    public void testFailedOpenReleasesTrackedCacheOrderedSequence() throws Exception {
+        assertFailedOpenReleasesTrackedCache(
+                4,
+                "SELECT * FROM t WHERE s ~ $1",
+                FILTERED_ROWS,
+                "Async Filter",
+                "filter: s ~ "
+        );
+    }
+
+    @Test
+    public void testFailedOpenReleasesTrackedCacheUnorderedSequence() throws Exception {
+        assertFailedOpenReleasesTrackedCache(
+                4,
+                "SELECT k, count() FROM t WHERE s ~ $1",
+                """
+                        k\tcount
+                        b\t2
+                        """,
+                "Async Group By",
+                "filter: s ~ "
+        );
+    }
+
     @Test
     public void testProjectedMixedFramesResolveBorrowedDecodersInBothDirections() throws Exception {
         assertMemoryLeak(() -> {
@@ -146,8 +226,20 @@ public class PageFrameAddressCacheTest extends AbstractCairoTest {
                             pool.navigateTo(frame, record);
                             record.setRowIndex(0);
                             Assert.assertEquals(frame * 32 + 1, record.getInt(0));
-                            Assert.assertTrue(pool.getCachedFrameCount() <= 256);
+                            // Each declared frame keeps its row-filtered buffer beyond the
+                            // SCATTERED 256-entry cap, so the backward pass decodes nothing.
+                            Assert.assertEquals(pass == 0 ? i + 1 : cache.getFrameCount(), pool.getCachedFrameCount());
                         }
+                    }
+                    // A new query drops the declaration, so its frame count no longer raises
+                    // the cap: full-frame decodes evict at 256 entries.
+                    record.clear();
+                    pool.of(cache, ParquetDecodeHint.SCATTERED);
+                    for (int i = 0; i < cache.getFrameCount(); i++) {
+                        pool.navigateTo(i, record);
+                        record.setRowIndex(1);
+                        Assert.assertEquals(i * 32 + 2, record.getInt(0));
+                        Assert.assertEquals(Math.min(i + 1, 256), pool.getCachedFrameCount());
                     }
                     record.clear();
                     pool.releaseQueryResources();
@@ -196,6 +288,53 @@ public class PageFrameAddressCacheTest extends AbstractCairoTest {
                             cache.close();
                             Assert.assertEquals(0, tracker.getUsed());
                             tracker.setLimit(0);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    private void assertFailedOpenReleasesTrackedCache(
+            int workerCount,
+            String query,
+            String expected,
+            String... planFragments
+    ) throws Exception {
+        // Every open of a cached factory acquires a pooled per-query tracker and charges the page
+        // frame address cache to it. An invalid regex bind variable fails the open after the cache
+        // owner has reopened the cache. If the failed open keeps that charge, the next open recycles
+        // the same tracker with a non-zero used count and PerQueryMemoryTracker.init() asserts.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x, x::VARCHAR s,
+                            CASE WHEN x % 3 = 0 THEN 'a' WHEN x % 3 = 1 THEN 'b' ELSE 'c' END::SYMBOL k,
+                            timestamp_sequence(0, 3_600_000_000) ts
+                        FROM long_sequence(10)
+                    ), INDEX(k) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine, bindVariableService, workerCount)) {
+                bindVariableService.clear();
+                bindVariableService.setStr(0, "abc");
+                assertQuery(query).noLeakCheck().withContext(context).assertsPlanContaining(planFragments);
+                try (
+                        SqlCompiler compiler = engine.getSqlCompiler();
+                        RecordCursorFactory factory = compiler.compile(query, context).getRecordCursorFactory()
+                ) {
+                    bindVariableService.setStr(0, "[");
+                    for (int i = 0; i < 2; i++) {
+                        try (RecordCursor ignore = factory.getCursor(context)) {
+                            Assert.fail("expected an invalid regex failure during cursor open at attempt " + i);
+                        } catch (SqlException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "Unclosed character class");
+                        }
+                    }
+                    bindVariableService.setStr(0, "1");
+                    for (int i = 0; i < 2; i++) {
+                        try (RecordCursor cursor = factory.getCursor(context)) {
+                            println(factory, cursor);
+                            TestUtils.assertEquals(expected, sink);
                         }
                     }
                 }

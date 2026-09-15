@@ -25,7 +25,6 @@
 package io.questdb.test.cairo.sql;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerWrapper;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
@@ -34,66 +33,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class SqlExecutionCircuitBreakerWrapperTest extends AbstractCairoTest {
-    @Test
-    public void testSharedDelegateHasIndependentThrottlesAndRebinds() throws Exception {
-        assertMemoryLeak(() -> {
-            AtomicInteger checks = new AtomicInteger();
-            AtomicBooleanCircuitBreaker delegate = new AtomicBooleanCircuitBreaker(engine, 8) {
-                @Override
-                public void statefulThrowExceptionIfTripped() {
-                    Assert.fail("workers must not share the delegate's mutable row counter");
-                }
-
-                @Override
-                public void statefulThrowExceptionIfTrippedNoThrottle() {
-                    checks.incrementAndGet();
-                    super.statefulThrowExceptionIfTrippedNoThrottle();
-                }
-            };
-            DefaultSqlExecutionCircuitBreakerConfiguration config = new DefaultSqlExecutionCircuitBreakerConfiguration() {
-                @Override
-                public int getCircuitBreakerThrottle() {
-                    return 8;
-                }
-            };
-            try (SqlExecutionCircuitBreakerWrapper a = new SqlExecutionCircuitBreakerWrapper(engine, config);
-                 SqlExecutionCircuitBreakerWrapper b = new SqlExecutionCircuitBreakerWrapper(engine, config)) {
-                a.init(delegate);
-                b.init(delegate);
-                for (int i = 0; i < 8; i++) {
-                    a.statefulThrowExceptionIfTripped();
-                    b.statefulThrowExceptionIfTripped();
-                }
-                Assert.assertEquals(2, checks.get());
-                delegate.cancel();
-                for (SqlExecutionCircuitBreakerWrapper wrapper : new SqlExecutionCircuitBreakerWrapper[]{a, b}) {
-                    try {
-                        wrapper.statefulThrowExceptionIfTripped();
-                        Assert.fail("each slot must check within its own throttle window");
-                    } catch (CairoException ex) {
-                        Assert.assertTrue(ex.isCancellation());
-                    }
-                }
-                AtomicBooleanCircuitBreaker peer = new AtomicBooleanCircuitBreaker(engine, 8);
-                a.init(peer);
-                a.statefulThrowExceptionIfTripped();
-                Assert.assertFalse(a.checkIfTripped());
-                Assert.assertTrue(b.checkIfTripped());
-                a.init(delegate);
-                try {
-                    a.statefulThrowExceptionIfTripped();
-                    Assert.fail("a newly bound execution must check immediately");
-                } catch (CairoException ex) {
-                    Assert.assertTrue(ex.isCancellation());
-                }
-            }
-        });
-    }
-
     @Test
     public void testNetworkSlotsCopyTimeoutAndCancellationAndRebind() throws Exception {
         assertMemoryLeak(() -> {

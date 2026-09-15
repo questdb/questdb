@@ -344,12 +344,22 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testCancellationInsideDuplicateChainAndReuse() throws Exception {
-        assertCancellationInsideDuplicateChainAndReuse(true);
+        assertCancellationInsideDuplicateChainAndReuse(true, 1, 100_000);
+    }
+
+    @Test
+    public void testCancellationAcrossDuplicateChainsInOneFrameAndReuse() throws Exception {
+        assertCancellationInsideDuplicateChainAndReuse(true, 1_000, 100);
     }
 
     @Test
     public void testScalarCancellationInsideDuplicateChainAndReuse() throws Exception {
-        assertCancellationInsideDuplicateChainAndReuse(false);
+        assertCancellationInsideDuplicateChainAndReuse(false, 1, 100_000);
+    }
+
+    @Test
+    public void testScalarCancellationAcrossDuplicateChainsInOneFrameAndReuse() throws Exception {
+        assertCancellationInsideDuplicateChainAndReuse(false, 1_000, 100);
     }
 
     @Test
@@ -540,16 +550,22 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 for (boolean keyed : new boolean[]{true, false}) {
                     String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
                     try (Fixture f = new Fixture(sql)) {
-                        for (int failAt : new int[]{1, 2, 8, 32, 128, 1024}) {
-                            CountingSqlExecutionCircuitBreaker breaker = new CountingSqlExecutionCircuitBreaker(previousBreaker) {
-                                @Override
-                                public void statefulThrowExceptionIfTripped() {
-                                    super.statefulThrowExceptionIfTripped();
-                                    if (getCheckCount() >= failAt) {
-                                        throw CairoException.queryCancelled(1);
-                                    }
-                                }
-                            };
+                        // Acquisition checks at the build cursor's frames, build phases and per MiB of
+                        // growth, not per build row. Cancel at each of those checks in turn.
+                        BuildCheckBreaker counting = new BuildCheckBreaker(previousBreaker, Long.MAX_VALUE);
+                        ((SqlExecutionContextImpl) sqlExecutionContext).with(counting);
+                        sqlExecutionContext.setMemoryTracker(tracker);
+                        try (RecordCursor ignored = f.getRawCursor()) {
+                            Assert.assertTrue(counting.checks > 0);
+                        } finally {
+                            ((SqlExecutionContextImpl) sqlExecutionContext).with(previousBreaker);
+                            sqlExecutionContext.setMemoryTracker(previousTracker);
+                        }
+                        Assert.assertEquals(0, tracker.getUsed());
+                        Assert.assertTrue("build checks must not scale with 1,012 build rows: " + counting.checks,
+                                counting.checks < 1_012);
+                        for (long failAt = 1; failAt <= counting.checks; failAt++) {
+                            BuildCheckBreaker breaker = new BuildCheckBreaker(previousBreaker, failAt);
                             ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
                             sqlExecutionContext.setMemoryTracker(tracker);
                             try (RecordCursor ignored = f.getRawCursor()) {
@@ -669,8 +685,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                 Assert.assertEquals(timeout ? SqlExecutionCircuitBreaker.STATE_TIMEOUT
                                         : SqlExecutionCircuitBreaker.STATE_CANCELLED, ex.getInterruptionReason());
                             }
-                            Assert.assertTrue(hook.calls.get() >= 32 && hook.calls.get()
-                                    <= (timeout ? 32 + configuration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle() : frameRows));
+                            // Misses stop at the frame boundary; duplicate pairs stop at the next pair budget of one frame.
+                            Assert.assertTrue("bounded probe work: " + hook.calls.get(),
+                                    hook.calls.get() >= 32 && hook.calls.get() <= frameRows);
                             if (!timeout) {
                                 Assert.assertEquals("the single all-miss frame finishes before owner cancellation", 1000, hook.calls.get());
                             }
@@ -715,29 +732,38 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             createMergeTables();
             SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
             AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine, 0);
+            CountingSqlExecutionCircuitBreaker counting = new CountingSqlExecutionCircuitBreaker(breaker);
             try {
                 for (int threshold : new int[]{1, Integer.MAX_VALUE}) {
                     setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
                     for (String key : new String[]{"r.plant_id", "r.reading_ts", "r.plant_id, r.reading_ts"}) {
                         String sql = "select " + key + ", sum(r.energy_kwh)" + INNER;
                         try (Fixture f = new Fixture(sql)) {
-                            ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                            ((SqlExecutionContextImpl) sqlExecutionContext).with(counting);
                             breaker.reset();
                             try (RecordCursor cursor = f.getCursor()) {
-                                Assert.assertTrue(cursor.hasNext());
+                                // As in AsyncGroupByRecordCursor, the result-building phase observes
+                                // cancellation before the first group is exposed.
                                 breaker.cancel();
-                                try {
-                                    while (cursor.hasNext()) {
-                                        Assert.fail("output must consult the breaker before returning another group");
-                                    }
-                                    Assert.fail("expected output cancellation");
-                                } catch (CairoException ex) {
-                                    Assert.assertTrue(ex.isCancellation());
-                                }
+                                cursor.hasNext();
+                                Assert.fail("expected cancellation before output");
+                            } catch (CairoException ex) {
+                                Assert.assertTrue(ex.isCancellation());
                             }
                             Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                             Assert.assertNull(sqlExecutionContext.getMemoryTracker());
                             breaker.reset();
+                            try (RecordCursor cursor = f.getCursor()) {
+                                Assert.assertTrue(cursor.hasNext());
+                                final long checks = counting.getCheckCount();
+                                int groups = 1;
+                                while (cursor.hasNext()) {
+                                    groups++;
+                                }
+                                Assert.assertTrue(groups > 1);
+                                Assert.assertEquals("materialized groups must be returned without per-group breaker checks",
+                                        checks, counting.getCheckCount());
+                            }
                             f.assertResults(sql);
                         }
                     }
@@ -763,14 +789,16 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                             filterBuild(childFactory("p"), hook))) {
                         ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
                         hook.cancel = breaker;
+                        sqlExecutionContext.changePageFrameSizes(4096, 4096);
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             cursor.calculateSize(breaker, new RecordCursor.Counter());
                             Assert.fail("expected cancellation inside count-only filter");
                         } catch (CairoException ex) {
                             Assert.assertTrue(ex.isCancellation());
                         }
-                        Assert.assertTrue(hook.calls.get() >= 32 && hook.calls.get()
-                                <= 32 + configuration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
+                        // Count-only filters observe cancellation at frame boundaries; native frames absorb short tails.
+                        Assert.assertTrue("rejected rows must stop at the next frame boundary: " + hook.calls.get(),
+                                hook.calls.get() >= 32 && hook.calls.get() <= 2 * 4096);
                         Assert.assertNull(sqlExecutionContext.getMemoryTracker());
                         breaker.reset();
                         hook.cancel = null;
@@ -784,6 +812,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 }
             } finally {
                 ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
             }
         });
     }
@@ -1236,7 +1265,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                 Assert.assertTrue("the shared reducer must check each frame", frameChecks.get() > 0);
                                 if (duplicates) {
                                     Assert.assertTrue("duplicate checks must read the clock periodically", clockReads.get() > 0);
-                                    Assert.assertTrue("clock reads must be throttled, actual=" + clockReads.get(), clockReads.get() < 25_000);
+                                    // One check per page frame of matched pairs, independent of the row throttle.
+                                    Assert.assertTrue("duplicate checks must use a pair budget, actual=" + clockReads.get(),
+                                            clockReads.get() <= 100_000 / frameRows);
                                 } else {
                                     Assert.assertEquals("rejected rows, misses and outer null extensions use frame checks", 0, clockReads.get());
                                 }
@@ -1244,6 +1275,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                     hook.calls.set(0);
                                     breaker.setTimeout(timeout ? 10 : Long.MAX_VALUE);
                                     breaker.resetTimer();
+                                    // Reducers measure the timeout from the sequence start time, which the engine
+                                    // clock stamps. Start it at the breaker's current tick, as both share a clock in production.
+                                    setCurrentMicros(ticks.get() * 1000);
                                     hook.onLimit = timeout ? () -> ticks.addAndGet(11) : breaker::cancel;
                                     try (RecordCursor cursor = f.getCursor()) {
                                         cursor.hasNext();
@@ -1251,11 +1285,14 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                     } catch (CairoException ex) {
                                         Assert.assertEquals(timeout ? SqlExecutionCircuitBreaker.STATE_TIMEOUT
                                                 : SqlExecutionCircuitBreaker.STATE_CANCELLED, ex.getInterruptionReason());
+                                    } finally {
+                                        setCurrentMicros(-1);
                                     }
                                     // Native frames absorb short tails; Parquet uses a row group (January has 44,640 rows).
+                                    // Duplicate pairs stop at the next pair budget of one page frame.
                                     final int maxFrameRows = storage == 0 ? 2 * frameRows : 44_640;
                                     Assert.assertTrue("bounded probe work: " + hook.calls.get(),
-                                            hook.calls.get() >= 32 && hook.calls.get() <= (duplicates ? 32 + 2 * throttle : maxFrameRows));
+                                            hook.calls.get() >= 32 && hook.calls.get() <= (duplicates ? frameRows : maxFrameRows));
                                     Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                                     Assert.assertNull(sqlExecutionContext.getMemoryTracker());
                                     hook.onLimit = null;
@@ -1270,6 +1307,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             } finally {
                 ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
                 circuitBreakerConfiguration = null;
+                setCurrentMicros(-1);
             }
         });
     }
@@ -1330,6 +1368,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
 
     private void assertRejectedBuildCancellationAndReuse(int filterMode) throws Exception {
         assertMemoryLeak(() -> {
+            frameRows = 4096;
             createTables();
             execute("drop table p");
             execute("create table p (plant_id int, country symbol, installed_kwp double, ts timestamp) timestamp(ts) partition by DAY");
@@ -1378,9 +1417,11 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                     Assert.assertEquals(timeout ? SqlExecutionCircuitBreaker.STATE_TIMEOUT
                                             : SqlExecutionCircuitBreaker.STATE_CANCELLED, ex.getInterruptionReason());
                                 }
-                                int throttle = filterMode == 0 ? 0 : configuration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle();
-                                Assert.assertTrue("rejected rows must stop within the slot throttle: " + hook.calls.get(),
-                                        hook.calls.get() >= 32 && hook.calls.get() <= 32 + throttle);
+                                // Filters observe cancellation at frame boundaries. Native frames absorb short
+                                // tails; Parquet uses one row group (the first DAY partition has 86,400 rows).
+                                final int maxFrameRows = storage == 0 ? 2 * frameRows : 86_400;
+                                Assert.assertTrue("rejected rows must stop at the next frame boundary: " + hook.calls.get(),
+                                        hook.calls.get() >= 32 && hook.calls.get() <= maxFrameRows);
                                 Assert.assertNull(sqlExecutionContext.getMemoryTracker());
                                 hook.cancel = null;
                                 hook.isBuildAccepted = true;
@@ -1393,6 +1434,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 }
             } finally {
                 ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
             }
         });
     }
@@ -1518,42 +1560,49 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         });
     }
 
-    private void assertCancellationInsideDuplicateChainAndReuse(boolean keyed) throws Exception {
+    private void assertCancellationInsideDuplicateChainAndReuse(boolean keyed, int probeRows, int buildDuplicates) throws Exception {
         assertMemoryLeak(() -> {
+            // The pair budget is one page frame. Every probe row lands in one frame, while the
+            // matched pairs (100,000) exceed the budget, whether in one chain or across chains.
+            frameRows = 4096;
             createTables();
             execute("truncate table r");
             execute("truncate table p");
-            execute("insert into r values (1, '2020-01-01', 10, 100)");
-            execute("insert into p select 1, 'ES', null::double from long_sequence(100000)");
-            for (boolean isParquet : new boolean[]{false, true}) {
-                if (isParquet) {
-                    execute("alter table r convert partition to parquet where reading_ts >= '2020-01-01'");
-                }
-                for (boolean isRejected : new boolean[]{false, true}) {
-                    Hook hook = new Hook();
-                    String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER + (isRejected ? " where p.installed_kwp is not null" : " where p.installed_kwp is null");
-                    SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
-                    AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
-                    ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
-                    try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
-                        hook.cancel = breaker;
-                        try (RecordCursor cursor = f.getCursor()) {
-                            cursor.hasNext();
-                            Assert.fail();
-                        } catch (CairoException expected) {
-                            Assert.assertTrue(expected.isInterruption());
+            execute("insert into r select 1, timestamp_sequence('2020-01-01', 1000000), 10, 100 from long_sequence(" + probeRows + ")");
+            execute("insert into p select 1, 'ES', null::double from long_sequence(" + buildDuplicates + ")");
+            try {
+                for (boolean isParquet : new boolean[]{false, true}) {
+                    if (isParquet) {
+                        execute("alter table r convert partition to parquet where reading_ts >= '2020-01-01'");
+                    }
+                    for (boolean isRejected : new boolean[]{false, true}) {
+                        Hook hook = new Hook();
+                        String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER + (isRejected ? " where p.installed_kwp is not null" : " where p.installed_kwp is null");
+                        SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
+                        AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
+                        ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                        try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
+                            hook.cancel = breaker;
+                            try (RecordCursor cursor = f.getCursor()) {
+                                cursor.hasNext();
+                                Assert.fail();
+                            } catch (CairoException expected) {
+                                Assert.assertTrue(expected.isInterruption());
+                            }
+                            // Without an in-frame check, all 100,000 pairs would run before the phase check.
+                            Assert.assertTrue("cancellation must stop within one pair budget inside the frame: " + hook.calls.get(),
+                                    hook.calls.get() >= 32 && hook.calls.get() <= frameRows);
+                            Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                            hook.cancel = null;
+                            breaker.reset();
+                            f.assertResults(sql);
+                        } finally {
+                            ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
                         }
-                        Assert.assertTrue("cancellation must stop within one throttle window inside the duplicate loop",
-                                hook.calls.get() >= 32 && hook.calls.get()
-                                        <= 32 + configuration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
-                        Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                        hook.cancel = null;
-                        breaker.reset();
-                        f.assertResults(sql);
-                    } finally {
-                        ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
                     }
                 }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
             }
         });
     }
@@ -1720,6 +1769,41 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         }
         Collections.sort(rows);
         return rows;
+    }
+
+    /** Counts stateful breaker checks and cancels at the given one. */
+    private static class BuildCheckBreaker extends CountingSqlExecutionCircuitBreaker {
+        private final long failAt;
+        private long checks;
+
+        BuildCheckBreaker(SqlExecutionCircuitBreaker delegate, long failAt) {
+            super(delegate);
+            this.failAt = failAt;
+        }
+
+        @Override
+        public void statefulThrowExceptionIfTripped() {
+            super.statefulThrowExceptionIfTripped();
+            onCheck();
+        }
+
+        @Override
+        public void statefulThrowExceptionIfTrippedNoThrottle() {
+            super.statefulThrowExceptionIfTrippedNoThrottle();
+            onCheck();
+        }
+
+        @Override
+        public void statefulThrowExceptionIfTrippedTimeThrottled() {
+            super.statefulThrowExceptionIfTrippedTimeThrottled();
+            onCheck();
+        }
+
+        private void onCheck() {
+            if (++checks == failAt) {
+                throw CairoException.queryCancelled(1);
+            }
+        }
     }
 
     private static class FaultyBuildFactory extends AbstractRecordCursorFactory {

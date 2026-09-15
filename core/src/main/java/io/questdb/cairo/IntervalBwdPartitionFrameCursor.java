@@ -61,7 +61,6 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
         long size = this.sizeSoFar;
 
         while (intervalsLo1 < intervalsHi1 && partitionLo1 < partitionHi1) {
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             final int currentInterval = intervalsHi1 - 1;
             final int currentPartition = partitionHi1 - 1;
             // We don't need to worry about column tops and null column because we
@@ -148,7 +147,6 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
         // order of logical operations is important
         // we are not calculating partition ranges when intervals are empty
         while (intervalsLo < intervalsHi && partitionLo < partitionHi) {
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             // We don't need to worry about column tops and null column because we
             // are working with timestamp. Timestamp column cannot be added to existing table.
             final int currentInterval = intervalsHi - 1;

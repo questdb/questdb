@@ -75,7 +75,6 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker breaker, Counter counter) {
         buildResult();
-        circuitBreaker.statefulThrowExceptionIfTripped();
         if (functions.isKeyed()) {
             mapCursor.calculateSize(breaker, counter);
         } else if (!isExhausted) {
@@ -124,7 +123,6 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
     @Override
     public boolean hasNext() {
         buildResult();
-        circuitBreaker.statefulThrowExceptionIfTripped();
         if (functions.isKeyed()) {
             return mapCursor.hasNext();
         }
@@ -198,16 +196,16 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
                             }
                             throw frameSequence.buildInterruptionException();
                         }
-                        shardedCursor.of(shards, circuitBreaker);
+                        shardedCursor.of(shards);
                         mapCursor = shardedCursor;
                     } else {
-                        mapCursor = sharding.mergeOwnerMap().getCursor(circuitBreaker);
+                        mapCursor = sharding.mergeOwnerMap().getCursor();
                     }
                     metrics.mergeCardinality = mapCursor.size();
                     recordA.of(mapCursor.getRecord());
                     recordB.of(mapCursor.getRecordB());
                 } else {
-                    recordA.of(atom.mergeScalar(circuitBreaker));
+                    recordA.of(atom.mergeScalar());
                     metrics.mergeCardinality = 1;
                 }
                 // Observe cancellation during the last frame or merge before exposing output.

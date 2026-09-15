@@ -69,11 +69,14 @@ import java.io.Closeable;
  * Frozen views borrow these buffers until close; see {@link FrozenHashJoinBuild}.
  */
 public final class IntHashJoinBuild implements Closeable {
+    // Growth loops (rehash, clear, copy) are not bounded by a row; they check the breaker once per MiB they touch.
     private static final long COPY_CHUNK_SIZE = 1024 * 1024;
     private static final int MAX_SLOTS = 1 << 30;
     private static final long MAX_BUFFER_SIZE = 1L << 48;
     private static final int SLOT_SIZE = 8;
+    private static final int KEY_SLOTS_PER_CHECK = (int) (COPY_CHUNK_SIZE / SLOT_SIZE);
     private static final int SYMBOL_SLOT_SIZE = 16;
+    private static final int SYMBOL_SLOTS_PER_CHECK = (int) (COPY_CHUNK_SIZE / SYMBOL_SLOT_SIZE);
     private final int initialSlots;
     private final long initialRowCapacity;
     private final Buffer keys = new Buffer();
@@ -151,7 +154,6 @@ public final class IntHashJoinBuild implements Closeable {
     public void append(int key, Record record) {
         requireBuilding();
         try {
-            circuitBreaker.statefulThrowExceptionIfTripped();
             appendRow(key, record);
         } catch (Throwable th) {
             close();
@@ -183,8 +185,8 @@ public final class IntHashJoinBuild implements Closeable {
                 }
             }
             Record record = cursor.getRecord();
+            // The source cursor checks the breaker at its frame boundaries.
             while (cursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
                 appendRow(record.getInt(keyColumn), record);
             }
             return freeze();
@@ -262,7 +264,7 @@ public final class IntHashJoinBuild implements Closeable {
         return address;
     }
 
-    // The caller owns failure cleanup and the row check; nested work still checks here.
+    // The caller owns failure cleanup. Growth checks the breaker per MiB of rehashed or copied memory.
     private void appendRow(int key, Record record) {
         long slot = findKeySlot(keys.address, keySlotCount, key);
         int previous = Unsafe.getInt(slot + 4);
@@ -315,7 +317,9 @@ public final class IntHashJoinBuild implements Closeable {
         try {
             dest.allocate((long) slots * 2 * SLOT_SIZE, true);
             for (int i = 0; i < slots; i++) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                if ((i & (KEY_SLOTS_PER_CHECK - 1)) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                }
                 long src = table.address + (long) i * SLOT_SIZE;
                 int value = Unsafe.getInt(src + 4);
                 if (value != 0) {
@@ -348,7 +352,9 @@ public final class IntHashJoinBuild implements Closeable {
         try {
             dest.allocate((long) slots * 2 * SYMBOL_SLOT_SIZE, true);
             for (int i = 0; i < slots; i++) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                if ((i & (SYMBOL_SLOTS_PER_CHECK - 1)) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                }
                 long src = table.address + (long) i * SYMBOL_SLOT_SIZE;
                 long value = Unsafe.getLong(src + 8);
                 if (value != 0) {
@@ -378,9 +384,6 @@ public final class IntHashJoinBuild implements Closeable {
         int len = value.length();
         int hash = 0;
         for (int i = 0; i < len; i++) {
-            if ((i & 1023) == 0) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-            }
             hash = 31 * hash + value.charAt(i);
         }
         if (symbolSlotCount == 0) {
@@ -410,9 +413,6 @@ public final class IntHashJoinBuild implements Closeable {
         symbolEntries.ensure(((long) symbolCount + 1) * 16, 64);
         symbolChars.ensure(symbolBytes + (long) len * 2, 64);
         for (int i = 0; i < len; i++) {
-            if ((i & 1023) == 0) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-            }
             Unsafe.putChar(symbolChars.address + symbolBytes + (long) i * 2, value.charAt(i));
         }
         entry = symbolEntries.address + (long) symbolCount * 16;
@@ -438,9 +438,6 @@ public final class IntHashJoinBuild implements Closeable {
         }
         long address = symbolChars.address + Unsafe.getLong(entry);
         for (int i = 0; i < len; i++) {
-            if ((i & 1023) == 0) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-            }
             if (Unsafe.getChar(address + (long) i * 2) != value.charAt(i)) {
                 return false;
             }
@@ -461,7 +458,7 @@ public final class IntHashJoinBuild implements Closeable {
             capacity = size;
             if (clear) {
                 for (long offset = 0; offset < size; offset += COPY_CHUNK_SIZE) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                     Vect.memset(address + offset, Math.min(size - offset, COPY_CHUNK_SIZE), 0);
                 }
             }
@@ -487,7 +484,7 @@ public final class IntHashJoinBuild implements Closeable {
             try {
                 dest.allocate(Math.max(required, Math.min(limit, Math.max(initialCapacity, capacity * 2))), false);
                 for (long offset = 0; offset < capacity; offset += COPY_CHUNK_SIZE) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                     Unsafe.copyMemory(address + offset, dest.address + offset, Math.min(capacity - offset, COPY_CHUNK_SIZE));
                 }
                 close();
@@ -551,11 +548,11 @@ public final class IntHashJoinBuild implements Closeable {
         }
 
         @Override
-        public Probe newProbe(SqlExecutionCircuitBreaker circuitBreaker) {
+        public Probe newProbe() {
             if (frozen != this) {
                 throw new IllegalStateException("hash join build has expired");
             }
-            return new View(circuitBreaker);
+            return new View();
         }
 
         private class Symbols implements SymbolTable, QuietCloseable {
@@ -612,7 +609,6 @@ public final class IntHashJoinBuild implements Closeable {
         }
 
         private class View implements Probe {
-            private final SqlExecutionCircuitBreaker circuitBreaker;
             private final PayloadRecord record = new PayloadRecord();
             private final Symbols[] symbolTables = new Symbols[types.length];
             private final ObjList<Symbols> symbolPool = new ObjList<>();
@@ -622,8 +618,7 @@ public final class IntHashJoinBuild implements Closeable {
             private long probeGeneration;
             private long next;
 
-            private View(SqlExecutionCircuitBreaker circuitBreaker) {
-                this.circuitBreaker = circuitBreaker;
+            private View() {
                 for (int i = 0; i < types.length; i++) {
                     if (types[i] == ColumnType.SYMBOL) {
                         symbolTables[i] = new Symbols(null);
@@ -655,7 +650,6 @@ public final class IntHashJoinBuild implements Closeable {
             @Override
             public void find(int key) {
                 assert frozen == Frozen.this && probeGeneration == generation;
-                circuitBreaker.statefulThrowExceptionIfTripped();
                 long slot = findKeySlot(keysAddress, slots, key);
                 next = toRowLink(Unsafe.getInt(slot + 4));
                 record.address = 0;
@@ -716,7 +710,6 @@ public final class IntHashJoinBuild implements Closeable {
                 if (next == 0) {
                     throw new IllegalStateException("hash join probe is exhausted");
                 }
-                circuitBreaker.statefulThrowExceptionIfTripped();
                 long handle = handleBase + next - 8;
                 record.address = payloadRowsAddress + next - 8;
                 next = Unsafe.getLong(record.address);

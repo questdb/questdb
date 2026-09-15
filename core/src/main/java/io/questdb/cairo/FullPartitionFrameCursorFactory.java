@@ -98,7 +98,7 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
                 if (fwdCursor == null) {
                     fwdCursor = new FullFwdPartitionFrameCursor();
                 }
-                return fwdCursor.of(reader, executionContext.getCircuitBreaker());
+                return fwdCursor.of(reader);
             }
 
             // Create backward scanning cursor when needed. Factory requesting backward cursor must
@@ -106,7 +106,7 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
             if (bwdCursor == null) {
                 bwdCursor = new FullBwdPartitionFrameCursor();
             }
-            return bwdCursor.of(reader, executionContext.getCircuitBreaker());
+            return bwdCursor.of(reader);
         } catch (Throwable th) {
             Misc.free(reader);
             throw th;

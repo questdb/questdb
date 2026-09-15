@@ -325,8 +325,8 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
                 }
                 try (RecordCursor cursor = fixture.probeFactory.getCursor(sqlExecutionContext)) {
                     Assert.assertTrue(cursor.hasNext());
-                    FrozenHashJoinBuild.Probe a = frozen.newProbe(sqlExecutionContext.getCircuitBreaker());
-                    FrozenHashJoinBuild.Probe b = frozen.newProbe(sqlExecutionContext.getCircuitBreaker());
+                    FrozenHashJoinBuild.Probe a = frozen.newProbe();
+                    FrozenHashJoinBuild.Probe b = frozen.newProbe();
                     HashJoinGroupByRecord left = fixture.metadata.newRecord();
                     HashJoinGroupByRecord right = fixture.metadata.newRecord();
                     left.of(cursor.getRecord(), cursor, a);
@@ -626,7 +626,7 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
                     ObjList<HashJoinGroupByRecord> records = new ObjList<>();
                     ObjList<FrozenHashJoinBuild.Probe> probes = new ObjList<>();
                     for (int i = 0; i <= workers; i++) {
-                        FrozenHashJoinBuild.Probe probe = frozen.newProbe(sqlExecutionContext.getCircuitBreaker());
+                        FrozenHashJoinBuild.Probe probe = frozen.newProbe();
                         HashJoinGroupByRecord record = metadata.newRecord();
                         record.of(cursor.getRecord(), cursor, probe);
                         probes.add(probe);

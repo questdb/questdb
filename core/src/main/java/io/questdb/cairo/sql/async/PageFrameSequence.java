@@ -473,11 +473,16 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             // If atom is to fail, we will be releasing whatever we prepared.
             atom.init(frameCursor, executionContext);
         } catch (TableReferenceOutOfDateException e) {
+            // The caller releases the per-query tracker on failure, so free the tracked address
+            // cache now. A cache left open would stay charged to a pooled tracker and a later
+            // reset() would free it against whichever tracker is bound then.
+            Misc.free(frameAddressCache, e);
             frameCursor = Misc.freeIfCloseable(frameCursor);
             throw e;
         } catch (Throwable th) {
             // Log the OG exception as the below frame cursor close call may throw.
             LOG.error().$("could not initialize page frame sequence [error=").$(th).I$();
+            Misc.free(frameAddressCache, th);
             frameCursor = Misc.free(frameCursor);
             throw th;
         }

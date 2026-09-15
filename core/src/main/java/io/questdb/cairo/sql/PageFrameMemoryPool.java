@@ -183,6 +183,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     // an empty decode window; a zero address reads as a column top (NULL).
     private DirectLongList nullColumnAddresses;
     private DirectLongList recordAtRows;
+    // Number of frames that carry a declared row slice in recordAtSlices.
+    private int recordAtSliceFrameCount;
 
     public PageFrameMemoryPool(CairoConfiguration configuration, long maxCacheBytes) {
         try {
@@ -984,6 +986,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         // to the decoder without a local-row scratch copy.
         int runStart = 0;
         int runFrame = -1;
+        int sliceFrameCount = 0;
         for (int i = 0, n = (int) kept; i < n; i++) {
             final long rowId = recordAtRows.get(i);
             final int frameIndex = Rows.toPartitionIndex(rowId);
@@ -993,10 +996,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 }
                 runFrame = frameIndex;
                 runStart = i;
+                sliceFrameCount++;
             }
             recordAtRows.set(i, Rows.toLocalRowID(rowId));
         }
         recordAtSlices.set(runFrame, Numbers.encodeLowHighInts(runStart, (int) kept));
+        recordAtSliceFrameCount = sliceFrameCount;
     }
 
     private void accountDecode(ParquetBuffers parquetBuffers) {
@@ -1306,10 +1311,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         return frameIndex < recordAtSlices.size() ? recordAtSlices.get(frameIndex) : -1;
     }
 
-    // Sparse declarations must not turn the decoder-shell cache into one heap
-    // object per frame. Evicted slices can be decoded again from the native index.
+    // Row-filtered buffers retain only the declared rows, so a declaration may need
+    // more entries than the hint's cap before the byte budget binds; it never needs
+    // more than the declared frame count. The slice index is empty unless a
+    // declaration is active, so a released declaration's count never raises the cap.
     private int maxCachedBuffers() {
-        return decodeHint.maxCachedBuffers;
+        return recordAtSlices.size() == 0
+                ? decodeHint.maxCachedBuffers
+                : Math.max(decodeHint.maxCachedBuffers, recordAtSliceFrameCount);
     }
 
     private void openParquet(int frameIndex) {

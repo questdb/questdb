@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerWrapper;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -71,6 +70,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private boolean isBuildUnique;
     private boolean functionsInitialized;
     private boolean filtersInitialized;
+    private long pairsPerCheck;
     private GroupByShardingContext shardingContext;
 
     AsyncHashJoinGroupByAtom(
@@ -101,7 +101,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                         perWorkerLocks, workerCount);
             }
             for (int i = -1; i < workerCount; i++) {
-                Slot slot = new Slot(engine, metadata.newRecord());
+                Slot slot = new Slot(metadata.newRecord());
                 if (!functions.isKeyed()) {
                     slot.value = new SimpleMapValue(functions.getValueTypes().getColumnCount(), null, false);
                 }
@@ -186,6 +186,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         try {
             assert frozen != null;
+            // Join fanout is not bounded by a frame, so reducers check once per page frame of matched pairs.
+            pairsPerCheck = Math.max(1, executionContext.getPageFrameMaxRows());
             if (shardingContext != null) {
                 shardingContext.setMemoryTracker(executionContext.getMemoryTracker());
                 shardingContext.reopen();
@@ -198,9 +200,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                     functions.getUpdater(i - 1).updateEmpty(slot.value);
                     slot.value.setNew(true);
                 }
-                slot.breaker.init(executionContext.getCircuitBreaker());
                 if (slot.probe == null) {
-                    slot.probe = frozen.newProbe(slot.breaker);
+                    slot.probe = frozen.newProbe();
                 } else {
                     slot.probe.reopen();
                 }
@@ -285,6 +286,10 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         return functions;
     }
 
+    long getPairsPerCheck() {
+        return pairsPerCheck;
+    }
+
     int getProbeKeyColumn() {
         return probeKeyColumn;
     }
@@ -313,11 +318,10 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         return shardingContext != null && shardingContext.isSharded();
     }
 
-    SimpleMapValue mergeScalar(SqlExecutionCircuitBreaker breaker) {
+    SimpleMapValue mergeScalar() {
         SimpleMapValue dest = getSlot(-1).value;
         GroupByFunctionsUpdater updater = functions.getUpdater(-1);
         for (int i = 1; i < slots.size(); i++) {
-            breaker.statefulThrowExceptionIfTripped();
             SimpleMapValue src = slots.getQuick(i).value;
             if (!src.isNew()) {
                 if (dest.isNew()) {
@@ -340,7 +344,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     }
 
     static final class Slot implements QuietCloseable {
-        final SqlExecutionCircuitBreakerWrapper breaker;
         final HashJoinGroupByRecord joinedRecord;
         final ProbeRecord probeRecord = new ProbeRecord();
         FrozenHashJoinBuild.Probe probe;
@@ -350,9 +353,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         long nullExtendedRows;
         long survivingRows;
 
-        Slot(CairoEngine engine, HashJoinGroupByRecord joinedRecord) {
+        Slot(HashJoinGroupByRecord joinedRecord) {
             this.joinedRecord = joinedRecord;
-            breaker = new SqlExecutionCircuitBreakerWrapper(engine, engine.getConfiguration().getCircuitBreakerConfiguration());
         }
 
         @Override
@@ -360,7 +362,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             Throwable failure = Misc.freeBestEffort(null, value);
             value = null;
             failure = Misc.freeBestEffort(failure, probeRecord);
-            failure = Misc.freeBestEffort(failure, breaker);
             CairoException.rethrowCleanupFailure(failure);
         }
 
@@ -368,11 +369,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             Misc.free(value);
             scannedRows = matchedPairs = nullExtendedRows = survivingRows = 0;
             joinedRecord.clear();
-            try {
-                probeRecord.of(null);
-            } finally {
-                breaker.clear();
-            }
+            probeRecord.of(null);
         }
     }
 

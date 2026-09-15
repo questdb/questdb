@@ -40,15 +40,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 // if it is used by multiple threads (i.e. set as a delegate in multiple wrappers at the same time).
 public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBreaker, Closeable {
     private final CancellationBinding cancellationBinding = new CancellationBinding();
-    private final int throttle;
     private SqlExecutionCircuitBreaker delegate;
-    private boolean isDelegateThreadSafe;
     private NetworkSqlExecutionCircuitBreaker networkSqlExecutionCircuitBreaker;
-    private int testCount;
 
     public SqlExecutionCircuitBreakerWrapper(CairoEngine engine, @NotNull SqlExecutionCircuitBreakerConfiguration configuration) {
         networkSqlExecutionCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, configuration);
-        throttle = configuration.getCircuitBreakerThrottle();
     }
 
     @Override
@@ -74,8 +70,6 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     public void clear() {
         networkSqlExecutionCircuitBreaker.setCancelledFlag((AtomicBoolean) null);
         delegate = networkSqlExecutionCircuitBreaker;
-        isDelegateThreadSafe = false;
-        testCount = 0;
     }
 
     @Override
@@ -139,12 +133,7 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     public void init(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
-        testCount = 0;
-        if (executionContextCircuitBreaker instanceof SqlExecutionCircuitBreakerWrapper wrapper) {
-            executionContextCircuitBreaker = wrapper.delegate;
-        }
-        isDelegateThreadSafe = executionContextCircuitBreaker.isThreadSafe();
-        if (isDelegateThreadSafe) {
+        if (executionContextCircuitBreaker.isThreadSafe()) {
             delegate = executionContextCircuitBreaker;
         } else {
             networkSqlExecutionCircuitBreaker.of(executionContextCircuitBreaker.getFd());
@@ -168,7 +157,6 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
 
     @Override
     public void resetTimer() {
-        testCount = 0;
         delegate.resetTimer();
     }
 
@@ -194,17 +182,7 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
 
     @Override
     public void statefulThrowExceptionIfTripped() {
-        if (isDelegateThreadSafe) {
-            // Thread safety covers the cancellation state, not the delegate's row counter.
-            // Keep the throttle on the independently owned job/slot wrapper.
-            if (testCount == 0 || testCount >= throttle) {
-                delegate.statefulThrowExceptionIfTrippedNoThrottle();
-                testCount = 0;
-            }
-            testCount++;
-        } else {
-            delegate.statefulThrowExceptionIfTripped();
-        }
+        delegate.statefulThrowExceptionIfTripped();
     }
 
     @Override

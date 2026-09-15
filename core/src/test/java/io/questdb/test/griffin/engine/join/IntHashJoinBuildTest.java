@@ -27,13 +27,11 @@ package io.questdb.test.griffin.engine.join;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerWrapper;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.engine.CompressedOffsets;
@@ -114,7 +112,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     capacityField.setLong(rows, realCapacity);
                 }
                 build.append(17, source);
-                FrozenHashJoinBuild.Probe probe = build.freeze().newProbe(NOOP);
+                FrozenHashJoinBuild.Probe probe = build.freeze().newProbe();
                 probe.find(17);
                 probe.next();
                 Assert.assertEquals(42, probe.getRecord().getInt(0));
@@ -159,7 +157,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 Unsafe.putInt(address + 4, CompressedOffsets.compressBiased8(offset + 16));
                 value.set(2);
                 build.append(keys[2], source); // Rehash both negative references into colliding destination slots.
-                FrozenHashJoinBuild.Probe probe = build.freeze().newProbe(NOOP);
+                FrozenHashJoinBuild.Probe probe = build.freeze().newProbe();
                 Field rowsField = probe.getClass().getDeclaredField("payloadRowsAddress");
                 rowsField.setAccessible(true);
                 long realRows = rowsField.getLong(probe);
@@ -193,7 +191,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     for (int i = 0; i < count; i++) {
                         build.append(17, source);
                     }
-                    FrozenHashJoinBuild.Probe probe = build.freeze().newProbe(NOOP);
+                    FrozenHashJoinBuild.Probe probe = build.freeze().newProbe();
                     Field keysField = IntHashJoinBuild.class.getDeclaredField("keys");
                     keysField.setAccessible(true);
                     Object keys = keysField.get(build);
@@ -251,7 +249,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     Assert.assertEquals(0, tracker.getUsed());
                     cursor.toTop();
                     build.open(tracker, NOOP);
-                    FrozenHashJoinBuild.Probe probe = build.build(cursor, 0, 1).newProbe(NOOP);
+                    FrozenHashJoinBuild.Probe probe = build.build(cursor, 0, 1).newProbe();
                     Assert.assertTrue(probe.findSingleUnchecked(17));
                     Assert.assertEquals(17, probe.getRecord().getInt(0));
                     build.close();
@@ -321,7 +319,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                         Assert.assertEquals(expected.size(), frozen.getKeyCount());
                         Assert.assertEquals(tracker.getUsed(), frozen.getSizeInBytes());
                         if (reusable == null) {
-                            reusable = frozen.newProbe(NOOP);
+                            reusable = frozen.newProbe();
                         } else {
                             reusable.reopen();
                         }
@@ -404,7 +402,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                         Assert.assertTrue(cursor.hasNext());
                         build.append(43, cursor.getRecord());
                     }
-                    FrozenHashJoinBuild.Probe probe = build.freeze().newProbe(NOOP);
+                    FrozenHashJoinBuild.Probe probe = build.freeze().newProbe();
                     probe.find(42);
                     Assert.assertTrue(probe.hasNext());
                     probe.next();
@@ -460,7 +458,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     Assert.assertEquals(10_000, frozen.getRowCount());
                     Assert.assertEquals(capacity, tracker.getUsed());
                     Assert.assertEquals(capacity, frozen.getSizeInBytes());
-                    FrozenHashJoinBuild.Probe probe = frozen.newProbe(NOOP);
+                    FrozenHashJoinBuild.Probe probe = frozen.newProbe();
                     probe.find(1);
                     probe.next();
                     Assert.assertEquals(5_000, probe.getRecord().getDouble(0), 0);
@@ -477,8 +475,9 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCursorBuildChecksArePeriodicAndBounded() throws Exception {
+    public void testCursorBuildLeavesRowChecksToCursorFrames() throws Exception {
         assertMemoryLeak(() -> {
+            final int frameRows = 1024;
             AtomicInteger clockReads = new AtomicInteger();
             AtomicInteger consumed = new AtomicInteger();
             AtomicInteger interruptMode = new AtomicInteger();
@@ -487,7 +486,8 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
             DefaultSqlExecutionCircuitBreakerConfiguration config = new DefaultSqlExecutionCircuitBreakerConfiguration() {
                 @Override
                 public int getCircuitBreakerThrottle() {
-                    return 64;
+                    // Every consultation performs a real check, so clock reads count build checks.
+                    return 1;
                 }
 
                 @Override
@@ -532,9 +532,16 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                          if (consumed.get() == 100_000) {
                              return false;
                          }
-                         if (consumed.incrementAndGet() == 32) {
+                         final int row = consumed.incrementAndGet();
+                         if (row == 32) {
                              cancelled.set(interruptMode.get() == 1);
                              expired.set(interruptMode.get() == 2);
+                         }
+                         if (interruptMode.get() == 1 || interruptMode.get() == 2) {
+                             // Table cursors check the breaker once per page frame.
+                             if (row % frameRows == 0) {
+                                 breaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                             }
                          }
                          return true;
                      }
@@ -567,18 +574,20 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     expired.set(false);
                     cursor.toTop();
                     breaker.resetTimer();
-                    build.open(tracker, breaker);
                     clockReads.set(0);
+                    build.open(tracker, breaker);
                     if (mode == 1 || mode == 2) {
                         CairoException error = Assert.assertThrows(CairoException.class, () -> build.build(cursor, 0));
                         Assert.assertEquals(mode == 1, error.isCancellation());
-                        Assert.assertTrue(consumed.get() >= 32 && consumed.get() <= 32 + 64);
+                        Assert.assertEquals("the build observes interruption at the cursor's frame check",
+                                frameRows, consumed.get());
                     } else {
                         FrozenHashJoinBuild frozen = build.build(cursor, 0);
                         Assert.assertEquals(100_000, frozen.getRowCount());
-                        Assert.assertTrue("build polling is periodic", clockReads.get() >= 100_000 / 64);
-                        Assert.assertTrue("build polling is throttled", clockReads.get() < 2 * (100_000 / 64));
-                        FrozenHashJoinBuild.Probe probe = frozen.newProbe(NOOP);
+                        // Only open, the initial slot clear and freeze check; appended rows do not.
+                        Assert.assertTrue("build checks must not scale with rows: " + clockReads.get(),
+                                clockReads.get() <= 3);
+                        FrozenHashJoinBuild.Probe probe = frozen.newProbe();
                         probe.find(1);
                         probe.next();
                         Assert.assertEquals(100_000, probe.getRecord().getDouble(0), 0);
@@ -607,6 +616,22 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                         @Override
                         public void statefulThrowExceptionIfTripped() {
                             super.statefulThrowExceptionIfTripped();
+                            failAtCheck();
+                        }
+
+                        @Override
+                        public void statefulThrowExceptionIfTrippedNoThrottle() {
+                            super.statefulThrowExceptionIfTrippedNoThrottle();
+                            failAtCheck();
+                        }
+
+                        @Override
+                        public void statefulThrowExceptionIfTrippedTimeThrottled() {
+                            super.statefulThrowExceptionIfTrippedTimeThrottled();
+                            failAtCheck();
+                        }
+
+                        private void failAtCheck() {
                             if (getCheckCount() == failureCheck) {
                                 throw CairoException.queryCancelled(1);
                             }
@@ -630,6 +655,55 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRehashChecksCancellationPerMiBOfSlots() throws Exception {
+        assertMemoryLeak(() -> {
+            // Row 65_536 rehashes 2 MiB of symbol slots and row 131_072 rehashes 2 MiB of key slots.
+            final int rows = 131_073;
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(64 * 1024 * 1024);
+                 IntHashJoinBuild build = newBuild(2, 16, ColumnType.SYMBOL)) {
+                io.questdb.std.str.StringSink text = new io.questdb.std.str.StringSink();
+                Source source = new Source();
+                source.text = text;
+                for (String failSite : new String[]{null, "growKeyTable", "growSymbolTable"}) {
+                    SiteBreaker breaker = new SiteBreaker(failSite);
+                    build.open(tracker, breaker);
+                    try {
+                        for (int row = 0; row < rows; row++) {
+                            breaker.row = row;
+                            text.clear();
+                            text.put(row);
+                            build.append(row, source);
+                        }
+                        Assert.assertNull("expected cancellation inside " + failSite, failSite);
+                        Assert.assertEquals(rows, build.freeze().getRowCount());
+                        Assert.assertEquals("appended and interned rows must not check", 0, breaker.rowChecks);
+                        // One check per rehash plus one per MiB of old slots: 19 key and 22 symbol checks.
+                        Assert.assertTrue("key rehash checks: " + breaker.keyRehashChecks,
+                                breaker.keyRehashChecks > 0 && breaker.keyRehashChecks < 64);
+                        Assert.assertTrue("symbol rehash checks: " + breaker.symbolRehashChecks,
+                                breaker.symbolRehashChecks > 0 && breaker.symbolRehashChecks < 64);
+                        build.close();
+                    } catch (CairoException e) {
+                        Assert.assertNotNull("unexpected interruption: " + e.getFlyweightMessage(), failSite);
+                        Assert.assertTrue(e.isCancellation());
+                        // The first rehash of more than 1 MiB of old slots checks again inside its loop.
+                        Assert.assertEquals(failSite.equals("growKeyTable") ? 131_072 : 65_536, breaker.failedRow);
+                    }
+                    Assert.assertEquals("rehash cancellation releases all allocations", 0, tracker.getUsed());
+                    Assert.assertEquals(0, build.getSizeInBytes());
+                }
+                build.open(tracker, NOOP);
+                text.clear();
+                text.put("reused");
+                build.append(1, source);
+                Assert.assertEquals(1, build.freeze().getRowCount());
+                build.close();
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
     public void testCancellationDuringPayloadCopy() throws Exception {
         assertMemoryLeak(() -> {
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(8 * 1024 * 1024);
@@ -637,6 +711,16 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 CountingSqlExecutionCircuitBreaker breaker = new CountingSqlExecutionCircuitBreaker(NOOP) {
                     @Override
                     public void statefulThrowExceptionIfTripped() {
+                        failWhileCopiesCoexist();
+                    }
+
+                    @Override
+                    public void statefulThrowExceptionIfTrippedTimeThrottled() {
+                        // The copy loop checks once per MiB copied.
+                        failWhileCopiesCoexist();
+                    }
+
+                    private void failWhileCopiesCoexist() {
                         if (tracker.getUsed() > 2 * 1024 * 1024) {
                             throw CairoException.queryCancelled(1);
                         }
@@ -653,49 +737,6 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 build.open(tracker, NOOP);
                 build.append(1, record);
                 Assert.assertEquals(1, build.freeze().getRowCount());
-            }
-        });
-    }
-
-    @Test
-    public void testCancellationInsideDuplicateIteration() throws Exception {
-        assertMemoryLeak(() -> {
-            try (IntHashJoinBuild build = newBuild(2, 16, ColumnType.DOUBLE)) {
-                build.open(null, NOOP);
-                Source source = new Source();
-                for (int i = 0; i < 100_000; i++) {
-                    source.row = i;
-                    build.append(1, source);
-                }
-                CountingSqlExecutionCircuitBreaker breaker = new CountingSqlExecutionCircuitBreaker(NOOP) {
-                    @Override
-                    public void statefulThrowExceptionIfTripped() {
-                        super.statefulThrowExceptionIfTripped();
-                        if (getCheckCount() == 10) {
-                            throw CairoException.queryCancelled(1);
-                        }
-                    }
-                };
-                FrozenHashJoinBuild frozen = build.freeze();
-                FrozenHashJoinBuild.Probe probe = frozen.newProbe(breaker);
-                probe.find(1);
-                int visited = 0;
-                try {
-                    while (probe.hasNext()) {
-                        probe.next();
-                        visited++;
-                    }
-                    Assert.fail();
-                } catch (CairoException e) {
-                    Assert.assertTrue(e.isCancellation());
-                }
-                Assert.assertEquals(8, visited);
-                // Probe cancellation must not free storage still visible to other slots.
-                probe = frozen.newProbe(NOOP);
-                probe.find(1);
-                Assert.assertTrue(probe.hasNext());
-                probe.next();
-                Assert.assertEquals(99999.25, probe.getRecord().getDouble(0), 0);
             }
         });
     }
@@ -720,8 +761,8 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                         final int shift = worker;
                         futures.add(executor.submit(() -> {
                             // Task submission and the latch publish the completed build.
-                            FrozenHashJoinBuild.Probe a = frozen.newProbe(NOOP);
-                            FrozenHashJoinBuild.Probe b = frozen.newProbe(NOOP);
+                            FrozenHashJoinBuild.Probe a = frozen.newProbe();
+                            FrozenHashJoinBuild.Probe b = frozen.newProbe();
                             start.await();
                             for (int i = 0; i < 1000; i++) {
                                 int key = (i + shift) % 100;
@@ -759,51 +800,6 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testProbePairChecksArePeriodicAcrossLookupsAndRebinding() throws Exception {
-        assertMemoryLeak(() -> {
-            AtomicInteger clockReads = new AtomicInteger();
-            DefaultSqlExecutionCircuitBreakerConfiguration config = new DefaultSqlExecutionCircuitBreakerConfiguration() {
-                @Override
-                public int getCircuitBreakerThrottle() {
-                    return 7;
-                }
-
-                @Override
-                public MillisecondClock getClock() {
-                    return () -> {
-                        clockReads.incrementAndGet();
-                        return 1000;
-                    };
-                }
-            };
-            try (NetworkSqlExecutionCircuitBreaker breaker = new NetworkSqlExecutionCircuitBreaker(engine, config);
-                 IntHashJoinBuild build = newBuild(2, 2048, ColumnType.DOUBLE)) {
-                build.open(null, NOOP);
-                Source source = new Source();
-                for (int i = 0; i < 130; i++) {
-                    source.row = i;
-                    build.append(1, source);
-                }
-                FrozenHashJoinBuild.Probe probe = build.freeze().newProbe(breaker);
-                for (int binding = 0; binding < 2; binding++) {
-                    probe.reopen();
-                    breaker.resetTimer();
-                    clockReads.set(0);
-                    for (int lookup = 0; lookup < 2; lookup++) {
-                        probe.findUnchecked(1);
-                        for (int pair = 0; pair < 130; pair++) {
-                            probe.next();
-                            Assert.assertEquals(129 - pair + 0.25, probe.getRecord().getDouble(0), 0);
-                            Assert.assertEquals(1 + (130 * lookup + pair) / 7, clockReads.get());
-                        }
-                        Assert.assertFalse(probe.hasNext());
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
     public void testEmptyBuildAndLifecycle() throws Exception {
         assertMemoryLeak(() -> {
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(4096);
@@ -816,7 +812,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 Assert.assertEquals(0, frozen.getRowCount());
                 Assert.assertEquals(0, frozen.getKeyCount());
                 Assert.assertEquals(tracker.getUsed(), frozen.getSizeInBytes());
-                FrozenHashJoinBuild.Probe probe = frozen.newProbe(NOOP);
+                FrozenHashJoinBuild.Probe probe = frozen.newProbe();
                 probe.find(Numbers.INT_NULL);
                 Assert.assertFalse(probe.hasNext());
                 Assert.assertNull(probe.getSymbolTable(0).valueOf(SymbolTable.VALUE_IS_NULL));
@@ -827,12 +823,12 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 build.close();
                 build.close();
                 Assert.assertEquals(0, tracker.getUsed());
-                Assert.assertThrows(IllegalStateException.class, () -> frozen.newProbe(NOOP));
+                Assert.assertThrows(IllegalStateException.class, () -> frozen.newProbe());
                 build.open(tracker, NOOP);
                 Source source = new Source();
                 source.text = "fresh";
                 build.append(1, source);
-                probe = build.freeze().newProbe(NOOP);
+                probe = build.freeze().newProbe();
                 probe.find(1);
                 probe.next();
                 Assert.assertEquals(0, probe.getRecord().getInt(0));
@@ -849,7 +845,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 for (int i = 0; i < 100; i++) {
                     build.append(Numbers.INT_NULL, new Source());
                 }
-                FrozenHashJoinBuild.Probe probe = build.freeze().newProbe(NOOP);
+                FrozenHashJoinBuild.Probe probe = build.freeze().newProbe();
                 probe.find(Numbers.INT_NULL);
                 for (int i = 0; i < 100; i++) {
                     Assert.assertTrue(probe.hasNext());
@@ -886,7 +882,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 FrozenHashJoinBuild frozen = build.freeze();
                 Assert.assertEquals(8, frozen.getKeyCount());
                 Assert.assertEquals(24, frozen.getRowCount());
-                FrozenHashJoinBuild.Probe probe = frozen.newProbe(NOOP);
+                FrozenHashJoinBuild.Probe probe = frozen.newProbe();
                 for (int i = 0; i < keys.size(); i++) {
                     probe.find(keys.getQuick(i));
                     long handle = -1;
@@ -938,7 +934,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                             Assert.assertEquals(Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP) - baseline, tracker.getUsed());
                         }
                         Assert.assertEquals(0, limit);
-                        FrozenHashJoinBuild.Probe probe = build.freeze().newProbe(NOOP);
+                        FrozenHashJoinBuild.Probe probe = build.freeze().newProbe();
                         probe.find(0);
                         int matches = 0;
                         while (probe.hasNext()) {
@@ -1047,7 +1043,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     frozen = build.build(cursor, 0);
                 }
-                FrozenHashJoinBuild.Probe probe = frozen.newProbe(NOOP);
+                FrozenHashJoinBuild.Probe probe = frozen.newProbe();
                 probe.find(Numbers.INT_NULL);
                 probe.next();
                 Assert.assertEquals(2.0, probe.getRecord().getDouble(0), 0);
@@ -1075,7 +1071,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 FrozenHashJoinBuild frozen = build.freeze();
                 Assert.assertEquals(expected.size(), frozen.getKeyCount());
                 Assert.assertEquals(20_000, frozen.getRowCount());
-                FrozenHashJoinBuild.Probe probe = frozen.newProbe(NOOP);
+                FrozenHashJoinBuild.Probe probe = frozen.newProbe();
                 for (int key = -1100; key <= 1100; key++) {
                     probe.find(key);
                     List<Integer> values = expected.get(key);
@@ -1150,7 +1146,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 }
                 text.setLength(0);
                 text.append("source overwritten");
-                FrozenHashJoinBuild.Probe probe = build.freeze().newProbe(NOOP);
+                FrozenHashJoinBuild.Probe probe = build.freeze().newProbe();
                 int es = -1;
                 for (int i = 0; i < values.length; i++) {
                     probe.find(i);
@@ -1211,7 +1207,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                         build.append(row, source);
                     }
                     FrozenHashJoinBuild snapshot = build.freeze();
-                    if (probe == null) probe = snapshot.newProbe(NOOP);
+                    if (probe == null) probe = snapshot.newProbe();
                     else probe.reopen();
                     for (int row = 0; row < rows; row++) {
                         Assert.assertTrue(probe.findSingleUnchecked(row));
@@ -1231,64 +1227,6 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReusableProbeRebindsPrivateAndSharedCircuitBreakers() throws Exception {
-        assertMemoryLeak(() -> {
-            DefaultSqlExecutionCircuitBreakerConfiguration config = new DefaultSqlExecutionCircuitBreakerConfiguration() {
-                @Override
-                public int getCircuitBreakerThrottle() {
-                    return 1;
-                }
-            };
-            AtomicBooleanCircuitBreaker atomic = new AtomicBooleanCircuitBreaker(engine, 1);
-            try (NetworkSqlExecutionCircuitBreaker network = new NetworkSqlExecutionCircuitBreaker(engine, config);
-                 SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(engine, config);
-                 IntHashJoinBuild build = new IntHashJoinBuild(new ArrayColumnTypes(), indexes(), 2, 16, true)) {
-                FrozenHashJoinBuild.Probe probe = null;
-                Source source = new Source();
-                for (int execution = 0; execution < 3; execution++) {
-                    network.setCancelledFlag(new AtomicBoolean());
-                    network.resetTimer();
-                    atomic.reset();
-                    SqlExecutionCircuitBreaker owner = execution == 1 ? atomic : network;
-                    wrapper.init(owner);
-                    build.open(null, NOOP);
-                    build.append(1, source);
-                    build.append(1, source);
-                    FrozenHashJoinBuild snapshot = build.freeze();
-                    if (probe == null) {
-                        probe = snapshot.newProbe(wrapper);
-                    } else {
-                        probe.reopen();
-                    }
-                    FrozenHashJoinBuild.Probe peer = snapshot.newProbe(new AtomicBooleanCircuitBreaker(engine, 1));
-                    probe.findUnchecked(1);
-                    probe.next();
-                    probe.find(1);
-                    probe.next();
-                    owner.cancel();
-                    CairoException nextError = Assert.assertThrows(CairoException.class, probe::next);
-                    Assert.assertTrue(nextError.isCancellation());
-                    FrozenHashJoinBuild.Probe current = probe;
-                    CairoException findError = Assert.assertThrows(CairoException.class, () -> current.find(1));
-                    Assert.assertTrue(findError.isCancellation());
-                    int missing = 2;
-                    while ((Hash.hashInt64(missing) & 1) != (Hash.hashInt64(1) & 1)) {
-                        missing++;
-                    }
-                    final int collidingKey = missing;
-                    // Unchecked lookup relies on the caller's frame check, even on collision.
-                    current.findUnchecked(collidingKey);
-                    Assert.assertFalse(current.hasNext());
-                    peer.find(1);
-                    Assert.assertTrue(peer.hasNext());
-                    peer.next();
-                    build.close();
-                }
-            }
-        });
-    }
-
-    @Test
     public void testReusableSnapshotRequiresExplicitProbeRebinding() throws Exception {
         assertMemoryLeak(() -> {
             ArrayColumnTypes types = new ArrayColumnTypes().add(ColumnType.SYMBOL);
@@ -1299,8 +1237,8 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 build.open(tracker, NOOP);
                 build.append(1, source);
                 FrozenHashJoinBuild snapshot = build.freeze();
-                FrozenHashJoinBuild.Probe probe = snapshot.newProbe(NOOP);
-                FrozenHashJoinBuild.Probe peer = snapshot.newProbe(NOOP);
+                FrozenHashJoinBuild.Probe probe = snapshot.newProbe();
+                FrozenHashJoinBuild.Probe peer = snapshot.newProbe();
                 SymbolTable symbols = probe.newSymbolTable(0);
                 probe.find(1);
                 long oldHandle = probe.next();
@@ -1374,6 +1312,65 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
         }
         FrozenHashJoinBuild frozen = build.freeze();
         Assert.assertEquals(12, frozen.getRowCount());
+    }
+
+    /**
+     * Attributes each build check to the IntHashJoinBuild method that issued it. It cancels
+     * on a second consecutive check from the fail site, i.e. inside a single rehash loop.
+     */
+    private static class SiteBreaker extends CountingSqlExecutionCircuitBreaker {
+        private final String failSite;
+        private final StackWalker walker = StackWalker.getInstance();
+        private int failedRow = -1;
+        private int keyRehashChecks;
+        private String previousSite = "";
+        private int row;
+        private int rowChecks;
+        private int symbolRehashChecks;
+
+        private SiteBreaker(String failSite) {
+            super(NOOP);
+            this.failSite = failSite;
+        }
+
+        @Override
+        public void statefulThrowExceptionIfTripped() {
+            super.statefulThrowExceptionIfTripped();
+            onCheck();
+        }
+
+        @Override
+        public void statefulThrowExceptionIfTrippedNoThrottle() {
+            super.statefulThrowExceptionIfTrippedNoThrottle();
+            onCheck();
+        }
+
+        @Override
+        public void statefulThrowExceptionIfTrippedTimeThrottled() {
+            super.statefulThrowExceptionIfTrippedTimeThrottled();
+            onCheck();
+        }
+
+        private void onCheck() {
+            final String site = walker.walk(frames -> frames
+                    .filter(frame -> frame.getClassName().startsWith(IntHashJoinBuild.class.getName()))
+                    .findFirst()
+                    .map(StackWalker.StackFrame::getMethodName)
+                    .orElse(""));
+            switch (site) {
+                case "append", "appendRow", "build", "intern", "symbolEquals" -> rowChecks++;
+                case "growKeyTable" -> keyRehashChecks++;
+                case "growSymbolTable" -> symbolRehashChecks++;
+                default -> {
+                }
+            }
+            final boolean isRepeatedLoopCheck = site.equals(previousSite);
+            previousSite = site;
+            if (isRepeatedLoopCheck && site.equals(failSite)) {
+                failedRow = row;
+                throw CairoException.queryCancelled(1);
+            }
+        }
     }
 
     private static class Source implements Record {

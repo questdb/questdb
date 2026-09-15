@@ -162,7 +162,7 @@ public class HashJoinBuildBenchmark {
             if (bytes != frozen.getSizeInBytes()) {
                 throw new IllegalStateException("copied storage accounting differs");
             }
-            FrozenHashJoinBuild.Probe probe = frozen.newProbe(NOOP);
+            FrozenHashJoinBuild.Probe probe = frozen.newProbe();
             Record record = probe.getRecord();
             long matches = 0;
             double checksum = 0;

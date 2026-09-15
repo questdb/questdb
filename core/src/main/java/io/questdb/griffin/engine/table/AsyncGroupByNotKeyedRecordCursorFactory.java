@@ -515,16 +515,17 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
 
-        final DirectLongList rows = filterCtx.getFilteredRows(slotId);
-        rows.clear();
-
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final SimpleMapValue value = atom.getMapValue(slotId);
         final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
         final Function filter = filterCtx.getFilter(slotId);
-        // navigateTo() can throw; it must sit inside the try that releases the slot. See
-        // aggregate() for why a leaked slot is permanent.
+        // getFilteredRows() opens the row id list through the per-query memory tracker, and
+        // navigateTo() decodes the frame. Both can throw, so they must sit inside the try that
+        // releases the slot. See aggregate() for why a leaked slot is permanent.
         try {
+            final DirectLongList rows = filterCtx.getFilteredRows(slotId);
+            rows.clear();
+
             final PageFrameMemory frameMemory;
             if (useLateMaterialization) {
                 frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());

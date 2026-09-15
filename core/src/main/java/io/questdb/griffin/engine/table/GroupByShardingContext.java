@@ -383,7 +383,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         postAggregationDoneLatch.reset();
 
         // First, make sure to shard all non-sharded maps, if any.
-        shardAll(circuitBreaker);
+        shardAll();
 
         // Next, merge each set of partial shard maps into the final shard map. This is done in parallel.
         final RingQueue<GroupByMergeShardTask> queue = messageBus.getGroupByMergeShardQueue();
@@ -544,11 +544,9 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         }
     }
 
-    void shardAll(SqlExecutionCircuitBreaker circuitBreaker) {
-        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+    void shardAll() {
         ownerFragment.shard();
         for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             perWorkerFragments.getQuick(i).shard();
         }
     }

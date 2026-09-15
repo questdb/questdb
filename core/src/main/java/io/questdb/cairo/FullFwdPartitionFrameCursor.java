@@ -34,7 +34,6 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
         while (partitionIndex < partitionScanHi) {
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             // Skip empty partitions without opening them, exactly as next() and the interval cursors
             // do. A size-0 partition (e.g. one a backup left out of the restore) has no directory on
             // disk, so openPartition() would throw "partition does not exist" instead of contributing
@@ -52,7 +51,6 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
     @Override
     public @Nullable PartitionFrame next(long skipTarget) {
         while (partitionIndex < partitionScanHi) {
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             final long hi = reader.getPartitionRowCountFromMetadata(partitionIndex);
             if (hi < 1) {
                 // this partition is missing, skip

@@ -169,15 +169,14 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
         // queries that consult the breaker only a handful of times still observe cancellation. Otherwise
         // test once per throttle window to keep hot per-row/per-frame loops cheap.
         if (testCount == 0 || testCount >= throttle) {
-            statefulThrowExceptionIfTrippedNoThrottle();
-            testCount = 0;
+            statefulThrowExceptionIfTrippedNoThrottle(); // performs the real test and resets testCount to 0
         }
         testCount++;
     }
 
     @Override
     public void statefulThrowExceptionIfTrippedNoThrottle() {
-        // Shared worker wrappers call this method with their own throttle counters.
+        testCount = 0;
         if (isCancelled()) {
             throw CairoException.queryCancelled(fd);
         }

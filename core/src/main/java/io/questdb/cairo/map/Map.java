@@ -27,7 +27,6 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Mutable;
@@ -90,11 +89,6 @@ public interface Map extends Mutable, Closeable, Reopenable {
     void close();
 
     MapRecordCursor getCursor();
-
-    /** Supplies a breaker for cursors whose initialization or advance can scan empty hash slots. */
-    default MapRecordCursor getCursor(@Nullable SqlExecutionCircuitBreaker circuitBreaker) {
-        return getCursor();
-    }
 
     @TestOnly
     default long getHeapSize() {
