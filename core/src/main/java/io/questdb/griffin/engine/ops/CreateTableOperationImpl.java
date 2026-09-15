@@ -668,10 +668,30 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.parquetEncodingConfigs.clear();
         if (this.timestampColumnName == null) {
             int timestampIndex = metadata.getTimestampIndex();
-            if (timestampIndex > -1 && scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
+            // Inherit the SELECT's designated timestamp when the target table can absorb rows that do
+            // not arrive in ascending timestamp order. What matters is the target, not the SELECT:
+            //  - partitioned target: TableWriter.newRow() sends a row below maxTimestamp down the O3
+            //    path (ROW_ACTION_SWITCH_PARTITION -> newRowO3), which sorts and merges on commit, so
+            //    the scan direction of the SELECT is irrelevant - the data lands in timestamp order
+            //    whatever order it was produced in. Requiring SCAN_DIRECTION_FORWARD here protected
+            //    nothing and dropped the designated timestamp, which then failed the PARTITION BY
+            //    check below for shapes that work perfectly, e.g.
+            //    "CREATE TABLE t AS ((a UNION ALL b) TIMESTAMP(ts)) PARTITION BY DAY" and the
+            //    temp-table leg of "COPY (...) TO '...' WITH FORMAT PARQUET PARTITION_BY DAY".
+            //  - non-partitioned target: the writer runs ROW_ACTION_NO_PARTITION, which rejects any
+            //    row below maxTimestamp with "cannot insert rows out of order to non-partitioned
+            //    table". Only a SELECT that is known to scan forward may hand its timestamp over.
+            if (timestampIndex > -1
+                    && (scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD || PartitionBy.isPartitioned(this.partitionBy))) {
                 this.timestampIndex = timestampIndex;
                 timestampType = metadata.getTimestampType();
-                this.selectSqlScanDirection = scanDirection;
+                if (scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
+                    // Only a forward scan is recorded: this feeds the HTTP temp-table parquet export,
+                    // which re-reads the temp table in the SELECT's own direction. A partitioned temp
+                    // table has already been O3-sorted into ascending order by the time it is read
+                    // back, so a non-forward SELECT has no order left to preserve.
+                    this.selectSqlScanDirection = scanDirection;
+                }
             }
         } else {
             this.timestampIndex = metadata.getColumnIndexQuiet(this.timestampColumnName);
