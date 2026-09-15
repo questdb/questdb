@@ -10179,6 +10179,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             }
                         }
                         factory.tryDisableTimestampOrdering(orderSensitive, null);
+                        try {
+                            validateOrderSensitiveVectorAggregates(factory, tempVaf);
+                        } catch (Throwable e) {
+                            Misc.freeObjList(tempVaf);
+                            throw e;
+                        }
                     }
                     return generateFill(
                             model,
@@ -11945,6 +11951,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
             final GroupByFunction f = groupByFunctions.getQuick(i);
+            if (f != null && f.isOrderSensitive()) {
+                throw SqlException.$(0, "base query does not provide ASC order over designated TIMESTAMP column, "
+                        + "required by an order-sensitive aggregate");
+            }
+        }
+    }
+
+    /**
+     * {@link VectorAggregateFunction} twin of {@link #validateOrderSensitiveAggregates}. The
+     * vectorized GROUP BY path carries its aggregates as {@code VectorAggregateFunction}
+     * rather than {@link GroupByFunction}, so it cannot share that method's signature (same
+     * erasure), but the backstop it provides is identical: reject a base advertising
+     * {@code SCAN_DIRECTION_OTHER} when it feeds an order-sensitive aggregate.
+     */
+    private static void validateOrderSensitiveVectorAggregates(
+            RecordCursorFactory base,
+            ObjList<VectorAggregateFunction> vafs
+    ) throws SqlException {
+        if (base == null || vafs == null
+                || base.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER) {
+            return;
+        }
+        for (int i = 0, n = vafs.size(); i < n; i++) {
+            final VectorAggregateFunction f = vafs.getQuick(i);
             if (f != null && f.isOrderSensitive()) {
                 throw SqlException.$(0, "base query does not provide ASC order over designated TIMESTAMP column, "
                         + "required by an order-sensitive aggregate");
