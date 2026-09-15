@@ -132,9 +132,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1 + rnd.nextInt(16));
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(enableParallelGroupBy));
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, parallelGroupByBatchSize);
-        // Prerequisite for makeComposite() (see its javadoc); a no-op for any table the
-        // compositePartition coin misses.
-        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        // makeComposite() needs merge-append ON, but composite partitions ship OFF, so pinning ON
+        // every run would never exercise the shipped default here. Tie the flag to the same per-run
+        // compositePartition coin instead: when it draws true the composite path runs ON as before;
+        // when it draws false makeComposite() is already a no-op and the suite exercises the OFF
+        // default write path. The coin comes from the seed logged in the constructor, so it replays.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, String.valueOf(compositePartition));
+        LOG.info().$("merge-append coin [mergeAppendEnabled=").$(compositePartition).I$();
         super.setUp();
     }
 

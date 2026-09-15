@@ -27,6 +27,7 @@ package io.questdb.test.cairo.composite;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PartitionGeometryFile;
@@ -36,7 +37,11 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
+import io.questdb.griffin.PurgingOperator;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -61,6 +66,79 @@ import java.io.File;
  */
 public class CompositeGeometryPurgeTest extends AbstractCairoTest {
     private static final long DAY_03 = MicrosTimestampDriver.floor("2020-02-03T00:00:00.000000Z");
+    private static final Log LOG = LogFactory.getLog(CompositeGeometryPurgeTest.class);
+
+    /**
+     * A generation number is reused: after MAKE-PLAIN retires a partition's {@code _geometry.0}, the next composite
+     * commit restarts the chain at generation 0 and re-creates {@code _geometry.0} in the same directory, under the
+     * same {@code nameTxn}. The retired-generation-0 purge note the MAKE-PLAIN left incomplete must not delete the
+     * re-created LIVE file during ordinary (BAU) queue processing. Before the fix the reader window
+     * {@code [firstWriterTxn, updateTxn)} was inverted for a re-created generation, so the scoreboard reported it
+     * free and the purge removed a live file - the partition then failed every read with
+     * "could not open read-only ... _geometry.0".
+     */
+    @Test
+    public void testAReusedGenerationZeroSurvivesBauProcessing() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                final TableToken tt = buildNearFullGenerationZero();
+                final File generationZero = geometryFileOfDay(0);
+                Assert.assertTrue("fixture wrote no generation-0 file", generationZero.exists());
+
+                // The live generation-0 record at offset 0 carries the txn the on-disk generation became current at.
+                // A note whose updateTxn precedes it is exactly the stale note a MAKE-PLAIN-then-re-create leaves
+                // behind: it retired an OLDER incarnation of generation 0, not the live one now on disk.
+                final long firstWriterTxn = firstWriterTxnOfGeneration(0);
+                queueRetiredGeometryGeneration(tt, 0, firstWriterTxn - 1);
+
+                runPurgeJob(purgeJob);
+
+                Assert.assertTrue(
+                        "BAU purge deleted the re-created live generation: " + generationZero,
+                        generationZero.exists()
+                );
+                assertDayResolvesItsPieces(tt);
+            }
+        });
+    }
+
+    /**
+     * Same reuse as {@link #testAReusedGenerationZeroSurvivesBauProcessing}, but the note is replayed on restart. The
+     * STARTUP_ONLY replay ({@link ColumnPurgeJob}'s constructor) skips the scoreboard reader check entirely, so
+     * before the fix nothing at all stood between the stale note and the re-created live file.
+     */
+    @Test
+    public void testAReusedGenerationZeroSurvivesTheStartupOnlyReplay() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            final TableToken tt = buildNearFullGenerationZero();
+            final File generationZero = geometryFileOfDay(0);
+            Assert.assertTrue("fixture wrote no generation-0 file", generationZero.exists());
+            final long firstWriterTxn = firstWriterTxnOfGeneration(0);
+
+            queueRetiredGeometryGeneration(tt, 0, firstWriterTxn - 1);
+
+            // One job drains the queued note into the purge log with completed=null, but does not process it: the
+            // retry is scheduled a delay into the future and the clock has not moved.
+            try (ColumnPurgeJob drainer = new ColumnPurgeJob(engine)) {
+                drainer.run();
+            }
+
+            engine.releaseInactive();
+            // A fresh job replays the log from its constructor in STARTUP_ONLY mode. It must still refuse to delete
+            // the re-created live generation.
+            try (ColumnPurgeJob replay = new ColumnPurgeJob(engine)) {
+                Assert.assertNotNull(replay);
+            }
+
+            Assert.assertTrue(
+                    "the STARTUP_ONLY replay deleted the re-created live generation: " + generationZero,
+                    generationZero.exists()
+            );
+            assertDayResolvesItsPieces(tt);
+        });
+    }
 
     @Test
     public void testACheckpointKeepsTheRotatedOutGeometryGeneration() throws Exception {
@@ -214,6 +292,39 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
         return tt;
     }
 
+    private static void assertDayResolvesItsPieces(TableToken tt) throws Exception {
+        engine.releaseInactive();
+        try (TableReader reader = engine.getReader(tt)) {
+            final int partitionIndex = reader.getTxFile().getPartitionIndex(DAY_03);
+            Assert.assertTrue("day lost its partition", partitionIndex > -1);
+            Assert.assertTrue("day is not composite any more", reader.getTxFile().isPartitionComposite(partitionIndex));
+            // Resolving the pieces opens _geometry.0 read-only; had the purge deleted it, this throws
+            // "could not open read-only ... _geometry.0".
+            Assert.assertTrue(
+                    "reader resolved an empty geometry",
+                    reader.getGeometry().getPieceCount(partitionIndex) > 0
+            );
+        }
+    }
+
+    /**
+     * The writer txn stamped on the record at offset 0 of the day's {@code _geometry.<generation>} - the txn that
+     * generation became current at.
+     */
+    private static long firstWriterTxnOfGeneration(int generation) throws Exception {
+        final TableToken tt = engine.verifyTableName("x");
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (
+                Path path = new Path();
+                PartitionGeometryFile geometryFile = new PartitionGeometryFile(MemoryTag.NATIVE_TABLE_READER)
+        ) {
+            path.of(configuration.getDbRoot()).concat(tt);
+            TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, DAY_03, nameTxnOfDay());
+            geometryFile.read(ff, path, generation, 0);
+            return geometryFile.getWriterTxn();
+        }
+    }
+
     private static File geometryFileOfDay(int generation) throws Exception {
         final TableToken tt = engine.verifyTableName("x");
         try (Path path = new Path()) {
@@ -222,6 +333,37 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
             path.concat(TableUtils.PARTITION_GEOMETRY_FILE_NAME).put('.').put(generation);
             return new File(path.toString());
         }
+    }
+
+    /**
+     * Queues a retired {@code _geometry.<generation>} note for the day, exactly as
+     * {@code TableWriter.publishRetiredGeometryGenerations} does: a {@link ColumnType#NULL} entry whose
+     * column-version slot carries the generation, keyed on the partition's timestamp and name txn, with
+     * {@code updateTxn} the txn of the commit that retired it.
+     */
+    private static void queueRetiredGeometryGeneration(TableToken tt, int generation, long updateTxn) throws Exception {
+        final long truncateVersion;
+        try (TableReader reader = engine.getReader(tt)) {
+            truncateVersion = reader.getTxFile().getTruncateVersion();
+        }
+        final LongList note = new LongList();
+        note.add(generation, DAY_03, nameTxnOfDay(), 0L);
+        PurgingOperator.purgeColumnVersionAsync(
+                LOG,
+                engine.getMessageBus(),
+                tt,
+                TableUtils.PARTITION_GEOMETRY_FILE_NAME,
+                tt.getTableId(),
+                (int) truncateVersion,
+                ColumnType.NULL,
+                IndexType.NONE,
+                ColumnType.TIMESTAMP,
+                PartitionBy.DAY,
+                updateTxn,
+                note,
+                0,
+                note.size()
+        );
     }
 
     private static long nameTxnOfDay() throws Exception {

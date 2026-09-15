@@ -47,6 +47,7 @@ import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -58,8 +59,15 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     // Caps how many partitions one sweep hands out: the first sweep after an upgrade can find every
     // qualifying partition of every table at once. The next interval picks up the rest.
     private static final int MAX_DISPATCH_PER_SWEEP = 32;
-    // Bounds the clean-parquet memo.
+    // Bounds the clean-parquet memo. Kept across two generations so a full memo evicts its oldest half
+    // rather than being wiped whole - see rememberCleanParquetPartition.
     private static final int MAX_MEMO_SIZE = 100_000;
+    // Caps how many parquet partitions one sweep footer-probes (an mmap of the _pm file plus a parse). A
+    // memo hit costs nothing and is never charged; only an actual probe is. The first sweep after startup,
+    // and any sweep after the memo evicts, would otherwise footer-probe every idle parquet partition of
+    // every table in one tick, on this job's single thread. Charging probes against a per-sweep budget
+    // spreads that cost across sweeps; a partition memoized clean is never probed again until it changes.
+    private static final int MAX_PROBE_PER_SWEEP = 10_000;
     private static final Log LOG = LogFactory.getLog(PartitionCompactionScanJob.class);
     // Bounds how long a pending-swap record can sit unclaimed, and with it how long a queued swap keeps
     // suppressing a re-dispatch. isSwapPending consults the staging directory only while the record is
@@ -69,14 +77,23 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     // stuck swap blocks the partition from being reconsidered.
     private static final long PENDING_SWAP_MEMO_TTL_MICROS = 60 * Micros.MINUTE_MICROS;
     private final long checkInterval;
+    private final Clock clock;
     // Fingerprints of parquet partitions already found to hold no dead space AND no stale schema. Any write
     // to a partition changes its nameTxn or its file size, and any DDL changes the metadata version, so
-    // neither a changed partition nor a changed schema can match its own stale entry.
-    private final LongHashSet cleanParquetPartitions = new LongHashSet();
-    private final Clock clock;
+    // neither a changed partition nor a changed schema can match its own stale entry. Held in two
+    // generations: the active set takes new entries, and when it fills to half the memo bound it is retired
+    // and the previously retired one dropped (see rememberCleanParquetPartition), so a full memo loses only
+    // its oldest half instead of everything.
+    private LongHashSet cleanParquetPartitions = new LongHashSet();
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final FilesFacade ff;
+    // The sweep's own frame factory, deliberately built with a NULL messageBus so a REWRITE copies its
+    // partition serially, inline on this dedicated compaction thread. The engine's own factory carries the
+    // shared column-task bus, which would fan the per-column copy out onto sharedPoolWrite - the pool
+    // running WAL apply and O3 - defeating the whole reason this job owns a separate thread (see
+    // ServerMain, where the compaction pool is created).
+    private final FrameFactory frameFactory;
     private final PartitionGeometry geometry = new PartitionGeometry();
     private final long idleTimeoutMicros;
     private final Path other = new Path();
@@ -91,6 +108,12 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private final TxReader txReader;
     private int dispatchBudget;
     private long last = 0;
+    // Both default to their constants; tests shrink them to exercise the memo eviction and the probe
+    // budget without materializing 100k parquet partitions.
+    private int maxProbesPerSweep = MAX_PROBE_PER_SWEEP;
+    private int memoCapacity = MAX_MEMO_SIZE;
+    private int probeBudget;
+    private LongHashSet retiringCleanParquetPartitions = new LongHashSet();
     private int sidecarDstLen;
     private int sidecarSrcLen;
     // Where the next sweep starts its walk over the table list. A sweep that runs out of budget part way
@@ -107,6 +130,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         // threshold the per-commit path would have applied.
         this.idleTimeoutMicros = configuration.getPartitionCompactionIdleTimeout();
         this.txReader = new TxReader(ff);
+        this.frameFactory = new FrameFactory(configuration, null);
     }
 
     public PartitionCompactionScanJob(CairoEngine engine) {
@@ -116,12 +140,29 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     @Override
     public void close() {
         cleanParquetPartitions.clear();
+        retiringCleanParquetPartitions.clear();
         pendingSwaps.clear();
         geometry.close();
         other.close();
         parquetMetaReader.clear();
         path.close();
         txReader.close();
+        frameFactory.close();
+    }
+
+    @TestOnly
+    public int getCleanParquetPartitionMemoSize() {
+        return cleanParquetPartitions.size() + retiringCleanParquetPartitions.size();
+    }
+
+    @TestOnly
+    public void setMaxProbesPerSweep(int maxProbesPerSweep) {
+        this.maxProbesPerSweep = maxProbesPerSweep;
+    }
+
+    @TestOnly
+    public void setMemoCapacity(int memoCapacity) {
+        this.memoCapacity = memoCapacity;
     }
 
     @Override
@@ -171,7 +212,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         final int timestampType = reader.getMetadata().getTimestampType();
         final int partitionBy = reader.getPartitionedBy();
         final ColumnVersionReader cvr = reader.getColumnVersionReader();
-        final FrameFactory frameFactory = engine.getFrameFactory();
 
         setStagingPath(other, tableToken, timestampType, partitionBy, partitionTimestamp, srcNameTxn, writerTxn);
 
@@ -603,9 +643,17 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 Hash.hashLong256_64(tableToken.getTableId(), partitionTimestamp, nameTxn, parquetFileSize),
                 metadata.getMetadataVersion()
         );
-        if (cleanParquetPartitions.contains(memoKey)) {
+        if (isCleanParquetPartitionMemoized(memoKey)) {
             return false;
         }
+        if (probeBudget <= 0) {
+            // This sweep has already spent its footer-probe budget. Leave the partition for a later sweep
+            // rather than mmap-and-parse its _pm now, so one tick's parquet probe I/O stays bounded on this
+            // single thread however many idle parquet partitions the instance holds. A partition deferred
+            // here is not memoized, so the next sweep reconsiders it.
+            return false;
+        }
+        probeBudget--;
         path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
         TableUtils.setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, nameTxn);
         final long lastModifiedMillis = ff.getLastModified(path.$());
@@ -625,10 +673,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             if ((actualParquetFileSize > 0 && unusedBytes > 0) || isParquetSchemaStale(metadata, parquetMetaReader)) {
                 return true;
             }
-            if (cleanParquetPartitions.size() >= MAX_MEMO_SIZE) {
-                cleanParquetPartitions.clear();
-            }
-            cleanParquetPartitions.add(memoKey);
+            rememberCleanParquetPartition(memoKey);
             return false;
         } finally {
             // Capture before clear() zeros the fields so the mapping can be released.
@@ -638,6 +683,31 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 ff.munmap(addr, mappedSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
         }
+    }
+
+    /**
+     * Whether {@code memoKey} sits in either generation of the clean-parquet memo. A hit means the partition
+     * was footer-probed on an earlier sweep and found clean, so this sweep skips it for free.
+     */
+    private boolean isCleanParquetPartitionMemoized(long memoKey) {
+        return cleanParquetPartitions.contains(memoKey) || retiringCleanParquetPartitions.contains(memoKey);
+    }
+
+    /**
+     * Records a clean parquet partition's fingerprint. When the active generation fills to half the memo
+     * bound it is retired and the previously retired one dropped, evicting the oldest half of the memo
+     * instead of wiping it whole. Swapping the two sets and clearing the reused one keeps the sweep path
+     * allocation-free. A wholesale clear here would collapse the hit rate for an instance holding more clean
+     * parquet partitions than the memo bound, re-probing them all on the next sweep.
+     */
+    private void rememberCleanParquetPartition(long memoKey) {
+        if (cleanParquetPartitions.size() >= memoCapacity / 2) {
+            final LongHashSet retired = retiringCleanParquetPartitions;
+            retiringCleanParquetPartitions = cleanParquetPartitions;
+            cleanParquetPartitions = retired;
+            cleanParquetPartitions.clear();
+        }
+        cleanParquetPartitions.add(memoKey);
     }
 
     /**
@@ -827,6 +897,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
      */
     private void sweep(long nowMicros) {
         dispatchBudget = MAX_DISPATCH_PER_SWEEP;
+        probeBudget = maxProbesPerSweep;
         expirePendingSwaps(nowMicros);
         tableTokenBucket.clear();
         engine.getTableTokens(tableTokenBucket, false);

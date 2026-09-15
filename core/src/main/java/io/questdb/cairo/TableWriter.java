@@ -11013,6 +11013,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         int insertPartitionIndex = i;
                         FrameFactory frameFactory = engine.getFrameFactory();
+                        // A composite parent's live rows stop short of its files, so carving a line off it
+                        // with the plain file-row arithmetic below (open at the live count, append file rows
+                        // [newPrevPartitionSize, prevPartitionSize)) is only correct when it is one piece at
+                        // file row 0 - the shape MOVE-TAIL leaves. Any other composite shape would read the
+                        // wrong file rows, so refuse it loudly rather than corrupt. A plain CairoException,
+                        // not an assert, so the guard holds with -da in production too.
+                        final PartitionGeometry prevGeometry = getGeometry();
+                        final int prevPartitionIndex = txWriter.getPartitionIndex(prevPartitionTimestamp);
+                        final boolean prevPartitionIsComposite = prevGeometry.isComposite(prevPartitionIndex);
+                        if (prevPartitionIsComposite
+                                && (prevGeometry.getPieceCount(prevPartitionIndex) != 1
+                                || prevGeometry.getPieceRowOffset(prevPartitionIndex, 0) != 0)) {
+                            throw CairoException.critical(0)
+                                    .put("cannot split a line off a multi-piece composite partition [table=").put(tableToken.getTableName())
+                                    .put(", partition=").put(formatPartitionForTimestamp(prevPartitionTimestamp, prevPartitionNameTxn))
+                                    .put(", pieces=").put(prevGeometry.getPieceCount(prevPartitionIndex))
+                                    .put(']');
+                        }
                         try (Frame sourceFrame = frameFactory.openRO(path, prevPartitionTimestamp, metadata, columnVersionWriter, prevPartitionSize)) {
                             // Create the source frame and then manipulate partitions in txWriter
                             // When newSplitPartitionTimestamp == partitionTimestamp it is the only way
@@ -11023,6 +11041,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 insertPartitionIndex = removeAttachedPartitionsTracked(prevPartitionTimestamp);
                             } else {
                                 txWriter.updatePartitionSizeByTimestamp(prevPartitionTimestamp, newPrevPartitionSize);
+                                if (prevPartitionIsComposite) {
+                                    // updatePartitionSizeByTimestamp moved the size word alone; the single
+                                    // front piece still counts the carved rows. Republish it at the reduced
+                                    // live count with E untouched (the carved rows become dead space), so the
+                                    // piece-row-count sum and the size word agree again - the same
+                                    // beginUpdate/addPiece/commitUpdate/publish moveTailToFreshPartition uses.
+                                    // The front's new max timestamp is one unit below the split it just shed.
+                                    final long prevE = prevGeometry.getE(prevPartitionIndex);
+                                    prevGeometry.beginUpdate(prevPartitionIndex);
+                                    prevGeometry.addPiece(
+                                            prevGeometry.getPieceTimestampLo(prevPartitionIndex, 0),
+                                            newSplitPartitionTimestamp - 1,
+                                            0,
+                                            newPrevPartitionSize,
+                                            prevGeometry.getPieceWriterTxn(prevPartitionIndex, 0),
+                                            prevGeometry.getPieceLastWriteMicros(prevPartitionIndex, 0)
+                                    );
+                                    prevGeometry.commitUpdate(prevPartitionIndex, prevE);
+                                    final long prevGeometryRef = prevGeometry.publish(
+                                            prevPartitionIndex,
+                                            txWriter.getTxn() + 1,
+                                            getCompositePartitionSeqTxn(),
+                                            configuration.getMicrosecondClock().getTicks(),
+                                            configuration.getCommitMode()
+                                    );
+                                    setGeometryRefRetiringGenerations(prevPartitionTimestamp, prevGeometryRef);
+                                }
                             }
 
                             txWriter.insertPartition(insertPartitionIndex, newSplitPartitionTimestamp, prevPartitionSize - newPrevPartitionSize, txWriter.txn);
@@ -16874,6 +16919,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             txWriter.getTxn() + 1,
                             configuration.getMicrosecondClock().getTicks()
                     );
+                    // The appended run starts at the extent E; when the target's own last piece also ends
+                    // at E, that new piece is file-adjacent to it and carries the SAME shift. Fold the pair,
+                    // exactly as O3PartitionJob.foldAdjacentPieces and every other publish path do, so the
+                    // squash never commits geometry no reader-correctness invariant expects. Result-
+                    // preserving: file-adjacent pieces already tile one contiguous run.
+                    geometry.foldPending();
                     geometry.commitUpdate(targetPartitionIndex, targetExtent + appendedRows);
                     final long targetGeometryRef = geometry.publish(
                             targetPartitionIndex,

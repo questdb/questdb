@@ -35,15 +35,20 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * End-to-end coverage for the idle-triggered Parquet partition compaction: {@link PartitionCompactionScanJob}
@@ -540,6 +545,113 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * The clean-parquet memo is bounded, so an instance holding more clean idle parquet partitions than the
+     * bound cannot keep them all memoized. Above that scale the old wholesale {@code clear()} collapsed the
+     * hit rate to zero, and since a clean partition never charges the dispatch budget, every idle parquet
+     * partition of every table re-mmapped and re-parsed its {@code _pm} footer on every sweep, all in one
+     * tick on this job's single thread. The per-sweep footer-probe budget bounds that: however many idle
+     * parquet partitions exist, one sweep footer-probes at most its budget, memoizes those clean, and leaves
+     * the rest for later sweeps - so the whole set warms up over several ticks and then costs nothing.
+     * <p>
+     * Deterministic operation-count proof: five clean idle parquet partitions, a footer-probe budget of
+     * two. Each sweep must mmap the {@code _pm} footer of at most two partitions, the memoized ones cost
+     * nothing, and the fourth sweep settles at zero probes - not the five-per-tick the unbounded probe path
+     * would keep paying.
+     */
+    @Test
+    public void testIdleParquetSweepBoundsFooterProbesPerSweep() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+
+        final int partitionCount = 5;
+        final int probeBudget = 2;
+        final AtomicInteger footerMmaps = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (memoryTag == MemoryTag.MMAP_PARQUET_METADATA_READER) {
+                    footerMmaps.incrementAndGet();
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            createManyCleanIdleParquetPartitions("px", partitionCount);
+
+            // The parquet idle gate reads the .parquet file's real modification time, so the job's own
+            // clock has to sit past the idle timeout; the array lets each sweep advance it, which - with a
+            // zero check interval - is what lets one job instance sweep more than once.
+            final long[] jobNow = {MicrosecondClockImpl.INSTANCE.getTicks() + 2 * Micros.HOUR_MICROS};
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, ff, () -> jobNow[0])) {
+                job.setMaxProbesPerSweep(probeBudget);
+
+                // Sweep 1: at most the budget, whatever the partition count.
+                footerMmaps.set(0);
+                job.run();
+                Assert.assertEquals("one sweep must not footer-probe past its budget", probeBudget, footerMmaps.get());
+
+                // Sweep 2: the two already-probed partitions are memoized clean and cost nothing; the
+                // budget goes to the next two.
+                jobNow[0] += Micros.HOUR_MICROS;
+                footerMmaps.set(0);
+                job.run();
+                Assert.assertEquals(probeBudget, footerMmaps.get());
+
+                // Sweep 3: four memoized, one left.
+                jobNow[0] += Micros.HOUR_MICROS;
+                footerMmaps.set(0);
+                job.run();
+                Assert.assertEquals(1, footerMmaps.get());
+
+                // Sweep 4: all five memoized clean - a steady state with zero probes, not the O(N) re-probe
+                // per tick the unbounded path settles into above the memo bound.
+                jobNow[0] += Micros.HOUR_MICROS;
+                footerMmaps.set(0);
+                job.run();
+                Assert.assertEquals(0, footerMmaps.get());
+            }
+
+            // The sweep found every partition clean, so it rewrote nothing.
+            assertQuery("SELECT count() c FROM px").noLeakCheck().expectSize().noRandomAccess().returns("c\n6\n");
+        });
+    }
+
+    /**
+     * A full clean-parquet memo evicts its oldest half rather than being wiped whole. With a four-slot memo
+     * and five clean idle parquet partitions, generational eviction keeps at least memoCapacity/2
+     * fingerprints; the wholesale {@code clear()} this replaces would have dropped everything on the fifth
+     * add and kept only that one, so the next sweep re-probed the four it had just found clean.
+     */
+    @Test
+    public void testCleanParquetMemoEvictsOldestHalfNotWholesale() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+
+        final int partitionCount = 5;
+        final int memoCapacity = 4; // rotation at 2; a wholesale clear would leave a single entry after 5 adds
+
+        assertMemoryLeak(() -> {
+            createManyCleanIdleParquetPartitions("px", partitionCount);
+
+            final long[] jobNow = {MicrosecondClockImpl.INSTANCE.getTicks() + 2 * Micros.HOUR_MICROS};
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, configuration.getFilesFacade(), () -> jobNow[0])) {
+                job.setMemoCapacity(memoCapacity);
+                job.run();
+
+                Assert.assertTrue(
+                        "memo fell below half its bound; a wholesale clear leaves near nothing and defeats the memo",
+                        job.getCleanParquetPartitionMemoSize() >= memoCapacity / 2
+                );
+                Assert.assertEquals(
+                        "generational eviction retires only the oldest half",
+                        3, job.getCleanParquetPartitionMemoSize()
+                );
+            }
+        });
+    }
+
     private static PartitionCompactionScanJob newSweepPastTheIdleTimeout() {
         final Clock twoHoursAhead = () -> configuration.getMicrosecondClock().getTicks() + 2 * Micros.HOUR_MICROS;
         return new PartitionCompactionScanJob(engine, configuration.getFilesFacade(), twoHoursAhead);
@@ -778,6 +890,24 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
         execute("INSERT INTO " + tableName + "(a, b, s, ts) VALUES (99, 990, 'k1', '2020-01-02T00:00:00.000Z')");
         drainWalQueue();
         execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+        drainWalQueue();
+        engine.releaseInactive();
+    }
+
+    /**
+     * {@code count} clean parquet day-partitions from 2020-01-01, plus one later native day so the converted
+     * ones are never the active partition. None is touched after conversion, so every one stays clean (no
+     * dead row-group bytes, schema unchanged) - the shape the sweep footer-probes once and then memoizes.
+     */
+    private void createManyCleanIdleParquetPartitions(String tableName, int count) throws Exception {
+        final long dayMicros = 24L * 60 * 60 * 1000000L;
+        final long start = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+        execute("CREATE TABLE " + tableName + " (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO " + tableName + " SELECT x::int a, timestamp_sequence(" + start + ", " + dayMicros
+                + ") ts FROM long_sequence(" + (count + 1) + ")");
+        drainWalQueue();
+        // Convert every day but the last, active one.
+        execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET WHERE ts < " + (start + count * dayMicros));
         drainWalQueue();
         engine.releaseInactive();
     }

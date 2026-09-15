@@ -108,18 +108,6 @@ public class PartitionGeometry implements Closeable, Mutable {
     }
 
     /**
-     * Drops every cached resolution without the dirty assertion, for a rollback that abandons the
-     * in-memory state wholesale and is about to re-read {@code _txn}.
-     */
-    public void discard() {
-        pieces.clear();
-        resolved.clear();
-        pieceHoles = 0;
-        dirtyCount = 0;
-        resolvedEvictWatermark = MIN_RESOLVED_BEFORE_EVICT;
-    }
-
-    /**
      * Splits the directory-cumulative row range {@code [rowLo, rowHi)} of {@code partitionIndex} into the FILE row
      * ranges of the pieces it overlaps, appending them to {@code out} as {@code (fileLo, fileHi)} pairs, {@code fileHi}
      * exclusive, in ascending cumulative-row order.
@@ -137,6 +125,18 @@ public class PartitionGeometry implements Closeable, Mutable {
                 rowLo = subHi;
             }
         }
+    }
+
+    /**
+     * Drops every cached resolution without the dirty assertion, for a rollback that abandons the
+     * in-memory state wholesale and is about to re-read {@code _txn}.
+     */
+    public void discard() {
+        pieces.clear();
+        resolved.clear();
+        pieceHoles = 0;
+        dirtyCount = 0;
+        resolvedEvictWatermark = MIN_RESOLVED_BEFORE_EVICT;
     }
 
     /**
@@ -284,17 +284,6 @@ public class PartitionGeometry implements Closeable, Mutable {
         return getPieceRowOffset(partitionIndex, ordinal) - getPieceCumulativeLo(partitionIndex, ordinal);
     }
 
-    /**
-     * The txn that last moved this piece's bytes, or -1 when unknown.
-     */
-    public long getPieceWriterTxn(int partitionIndex, int ordinal) {
-        final int res = resolveInternal(partitionIndex);
-        if (res < 0) {
-            return -1L;
-        }
-        return pieceLong(res, ordinal, PIECE_WRITER_TXN);
-    }
-
     public long getPieceTimestampHi(int partitionIndex, int ordinal) {
         final int res = resolveInternal(partitionIndex);
         if (res < 0) {
@@ -311,6 +300,17 @@ public class PartitionGeometry implements Closeable, Mutable {
             return txReader.getPartitionTimestampByIndex(partitionIndex);
         }
         return pieceLong(res, ordinal, PIECE_TS_LO);
+    }
+
+    /**
+     * The txn that last moved this piece's bytes, or -1 when unknown.
+     */
+    public long getPieceWriterTxn(int partitionIndex, int ordinal) {
+        final int res = resolveInternal(partitionIndex);
+        if (res < 0) {
+            return -1L;
+        }
+        return pieceLong(res, ordinal, PIECE_WRITER_TXN);
     }
 
     /**
@@ -394,6 +394,63 @@ public class PartitionGeometry implements Closeable, Mutable {
         pending.add(tsLo, tsHi, rowOffset, rowCount);
         pending.add(writerTxn, lastWriteMicros);
         pending.add(cumulativeLo);
+    }
+
+    /**
+     * Folds every run of list-adjacent pieces in the in-flight {@link #beginUpdate}/{@link #addPiece} list that is ALSO
+     * file-adjacent ({@code rowOffset == prevRowOffset + prevRowCount}, hence carrying one shift and tiling one
+     * contiguous file run) into one, in a single forward pass - the same fold {@code O3PartitionJob.foldAdjacentPieces}
+     * runs, kept here so callers that build a pending list (the squash publish branch) commit the folded shape every
+     * other publish path already holds. The survivor keeps the earlier piece's {@code tsLo}, {@code rowOffset} and
+     * cumulative row, takes the run's last non-empty {@code tsHi}, sums the row counts, and carries the freshest
+     * {@code writerTxn}/{@code lastWriteMicros} pair. Zero-GC: rewrites {@link #pending} in place.
+     */
+    public void foldPending() {
+        assert pendingRec != NO_PARTITION : "foldPending outside beginUpdate/commitUpdate";
+        final int n = pending.size();
+        if (n <= LONGS_PER_PIECE) {
+            return;
+        }
+        int w = 0;
+        for (int r = 0; r < n; r += LONGS_PER_PIECE) {
+            final long tsLo = pending.getQuick(r + PIECE_TS_LO);
+            final long tsHi = pending.getQuick(r + PIECE_TS_HI);
+            final long rowOffset = pending.getQuick(r + PIECE_ROW_OFFSET);
+            final long rowCount = pending.getQuick(r + PIECE_ROW_COUNT);
+            final long writerTxn = pending.getQuick(r + PIECE_WRITER_TXN);
+            final long lastWriteMicros = pending.getQuick(r + PIECE_LAST_WRITE_MICROS);
+            final long cumulativeLo = pending.getQuick(r + PIECE_CUMULATIVE_LO);
+            if (w > 0
+                    && rowOffset == pending.getQuick(w - LONGS_PER_PIECE + PIECE_ROW_OFFSET)
+                    + pending.getQuick(w - LONGS_PER_PIECE + PIECE_ROW_COUNT)) {
+                if (rowCount > 0) {
+                    // Must not keep an earlier, smaller tsHi: an empty piece carries no bound, and a tsHi
+                    // cut short makes the transaction clusterer stop the survivor's range early.
+                    pending.setQuick(w - LONGS_PER_PIECE + PIECE_TS_HI, tsHi);
+                }
+                pending.setQuick(w - LONGS_PER_PIECE + PIECE_ROW_COUNT,
+                        pending.getQuick(w - LONGS_PER_PIECE + PIECE_ROW_COUNT) + rowCount);
+                // A fold is as recent as its freshest input.
+                pending.setQuick(w - LONGS_PER_PIECE + PIECE_WRITER_TXN,
+                        Math.max(pending.getQuick(w - LONGS_PER_PIECE + PIECE_WRITER_TXN), writerTxn));
+                pending.setQuick(w - LONGS_PER_PIECE + PIECE_LAST_WRITE_MICROS,
+                        Math.max(pending.getQuick(w - LONGS_PER_PIECE + PIECE_LAST_WRITE_MICROS), lastWriteMicros));
+                // The survivor keeps its own cumulative row; the absorbed rows change no later piece's, so
+                // every kept cumulativeLo below stays valid unchanged.
+                continue;
+            }
+            if (w != r) {
+                pending.setQuick(w + PIECE_TS_LO, tsLo);
+                pending.setQuick(w + PIECE_TS_HI, tsHi);
+                pending.setQuick(w + PIECE_ROW_OFFSET, rowOffset);
+                pending.setQuick(w + PIECE_ROW_COUNT, rowCount);
+                pending.setQuick(w + PIECE_WRITER_TXN, writerTxn);
+                pending.setQuick(w + PIECE_LAST_WRITE_MICROS, lastWriteMicros);
+                pending.setQuick(w + PIECE_CUMULATIVE_LO, cumulativeLo);
+            }
+            w += LONGS_PER_PIECE;
+        }
+        pending.setPos(w);
     }
 
     /**
@@ -590,15 +647,28 @@ public class PartitionGeometry implements Closeable, Mutable {
     }
 
     private int insertResolved(long partitionTimestamp, long nameTxn) {
-        final int n = resolved.size();
-        int at = n;
-        for (int i = 0; i < n; i += LONGS_PER_RESOLVED) {
-            final long ts = resolved.getQuick(i + RES_PARTITION_TS);
-            if (ts > partitionTimestamp || (ts == partitionTimestamp && resolved.getQuick(i + RES_NAME_TXN) > nameTxn)) {
-                at = i;
-                break;
+        // Binary search for the insertion point, matching findResolved's own binary search over the SAME
+        // (RES_PARTITION_TS, RES_NAME_TXN) ordering rather than a linear scan from index 0. The compaction
+        // sweep resolves composite partitions on an ascending partition walk, so a linear scan would always
+        // traverse every slot already present before appending at the tail - O(C) per insert, O(C^2) to
+        // resolve C composite partitions, paid fresh every sweep because of()->discard() drops the cache.
+        // insertResolved runs only for a key findResolved did not find, so the search lands on the first slot
+        // ordered strictly after the key - exactly where the linear scan broke - keeping resolved ascending,
+        // the invariant findResolved depends on.
+        final int blocks = resolved.size() / LONGS_PER_RESOLVED;
+        int lo = 0;
+        int hi = blocks;
+        while (lo < hi) {
+            final int mid = (lo + hi) >>> 1;
+            final long ts = resolved.getQuick(mid * LONGS_PER_RESOLVED + RES_PARTITION_TS);
+            if (ts < partitionTimestamp
+                    || (ts == partitionTimestamp && resolved.getQuick(mid * LONGS_PER_RESOLVED + RES_NAME_TXN) <= nameTxn)) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
             }
         }
+        final int at = lo * LONGS_PER_RESOLVED;
         resolved.insert(at, LONGS_PER_RESOLVED);
         for (int s = 0; s < LONGS_PER_RESOLVED; s++) {
             resolved.setQuick(at + s, 0);

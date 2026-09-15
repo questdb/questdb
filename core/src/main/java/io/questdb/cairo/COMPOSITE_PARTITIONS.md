@@ -269,9 +269,23 @@ file rows   0                                        1070
 ## Downgrade caveat
 
 Bit 61 of the `_txn` slot-3 word carries the composite flag, with no `META_FORMAT_MINOR_VERSION`
-bump - the same way the parquet flag was introduced. An older binary therefore opens a table with
-composite partitions without complaint and reads each one as flat `[0, liveRows)`, and its
-checkpoint scrub zeroes the geometry pointer permanently.
+bump - the same way the parquet flag was introduced. The `_txn` flag alone does not gate downgrade;
+the `_meta` storage version does. While a table holds any composite partition, its `_meta` records
+`ColumnType.MAX_STORAGE_VERSION` (430) instead of `ColumnType.VERSION` (426): `TableWriter` stamps 430
+via `maybeUpgradeStorageVersion` BEFORE the `_txn` commit that publishes the composite flag, and drops
+it back to 426 via `maybeDowngradeStorageVersion` only AFTER a commit clears the last composite flag
+(see `commitTxWithStorageVersionSync`). An older binary validates `_meta` with an exact-match check
+(`TableUtils.validateMetaVersion`: `expectedVersion != metaVersion` throws), so it does NOT open such a
+table and read its pieces as flat `[0, liveRows)` - it refuses the table outright with
+`metadataVersionMismatch` (expected 426, actual 430). This is the safe outcome: the older binary never
+misreads composite pieces, and its checkpoint scrub never touches the geometry pointer, because it
+cannot open the table at all.
+
+The practical consequence for a rollback plan: an older binary hard-fails on any table that currently
+holds a composite partition. To downgrade, first fold every composite partition back to plain on a
+current binary (which restores `_meta` to 426), then roll back. A table that never went composite, or
+that has been fully compacted back to plain, carries version 426 and opens on the older binary
+unchanged.
 
 Turning the flag back OFF on a current binary is safe: a fresh writer folds every composite partition
 back to plain at open, in its own transaction, before it processes a row
