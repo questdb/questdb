@@ -133,9 +133,9 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         int tablePartitionBy = meta.getPartitionBy();
                         if (partitionBy == -1) {
                             exportPartitionBy = tablePartitionBy;
-                            this.selectText = this.tableName;
+                            this.selectText = CopyExportRequestTask.selectAllText(this.tableName);
                         } else if (tablePartitionBy != partitionBy || hasCompositePartitions) {
-                            this.selectText = this.tableName;
+                            this.selectText = CopyExportRequestTask.selectAllText(this.tableName);
                         }
                     }
                 }

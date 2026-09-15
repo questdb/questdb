@@ -35,11 +35,13 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
+import static io.questdb.cairo.TableWriter.TIMESTAMP_MERGE_ENTRY_BYTES;
 
 public class ContiguousFileVarFrameColumn implements FrameColumn {
     private static final Log LOG = LogFactory.getLog(ContiguousFileFixFrameColumn.class);
@@ -374,14 +376,28 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         final long src1DataAddr = source1Lo < source1Hi ? sourceColumn1.getContiguousDataAddr(source1Hi) : 0;
         final long src2DataAddr = source2Lo < source2Hi ? sourceColumn2.getContiguousDataAddr(source2Hi) : 0;
 
-        // Every row of both slices is written out exactly once and carries its own bytes with it, so the merged image
-        // is as long as the two slices put together - the interleaving moves bytes around but creates none.
-        final long belowTopRows = readsBelowTop ? Math.min(source1Hi, src1Top) - source1Lo : 0;
-        final long dataSize = (readsBelowTop
-                ? sourceDataSize(src1AuxAddr, Math.max(source1Lo, src1Top) - src1Top, source1Hi - src1Top)
-                  + belowTopRows * columnTypeDriver.getDataVectorMinEntrySize()
-                : sourceDataSize(src1AuxAddr, source1Lo, source1Hi))
-                + sourceDataSize(src2AuxAddr, source2Lo, source2Hi);
+        final long dataSize;
+        if (mergeIndexRows == (source1Hi - source1Lo) + (source2Hi - source2Lo)) {
+            // The index kept every row of both sides, which only a non-deduplicating index does. Then each row is
+            // written out exactly once and carries its own bytes with it, so the merged image is as long as the two
+            // slices put together - the interleaving moves bytes around but creates none.
+            final long belowTopRows = readsBelowTop ? Math.min(source1Hi, src1Top) - source1Lo : 0;
+            dataSize = (readsBelowTop
+                    ? sourceDataSize(src1AuxAddr, Math.max(source1Lo, src1Top) - src1Top, source1Hi - src1Top)
+                      + belowTopRows * columnTypeDriver.getDataVectorMinEntrySize()
+                    : sourceDataSize(src1AuxAddr, source1Lo, source1Hi))
+                    + sourceDataSize(src2AuxAddr, source2Lo, source2Hi);
+        } else if (!readsBelowTop) {
+            // A shorter index means a DEDUP commit dropped rows, and then the sum above is not an upper bound: a
+            // dedup index emits one entry per DATA row and an entry whose key collided carries the INCOMING row's
+            // id, so N pre-existing duplicate keys select the same incoming value N times. The sizing has to walk
+            // the index, exactly as the classic O3 path's dedupMergeVarColumnSize does - same native, same
+            // convention: bit 63 of an entry picks the side and the rest is a row id into that side's row-zero
+            // aux vector.
+            dataSize = columnTypeDriver.dedupMergeVarColumnSize(mergeIndexAddr, mergeIndexRows, src1AuxAddr, src2AuxAddr);
+        } else {
+            dataSize = dedupMergedDataSizeBelowTop(mergeIndexAddr, mergeIndexRows, src1AuxAddr, src1Top, src2AuxAddr);
+        }
         final long targetDataOffset = getDataAppendOffsetBytes(appendOffsetRowCount);
         final long dstAuxOffset = columnTypeDriver.getAuxVectorOffset(appendOffsetRowCount);
         final long dstAuxSize = columnTypeDriver.getAuxVectorSize(mergeIndexRows);
@@ -506,6 +522,37 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     public void setRecycleBin(RecycleBin<FrameColumn> recycleBin) {
         assert this.recycleBin == null;
         this.recycleBin = recycleBin;
+    }
+
+    /**
+     * The exact byte length of the merged data vector for a DEDUP index whose data side reaches BELOW its column
+     * top. {@link ColumnTypeDriver#dedupMergeVarColumnSize} cannot size that shape: it addresses the data side by
+     * absolute row id, and the rows under the top have no aux entry to address. The top-aware kernel writes this
+     * type's NULL for them instead, which costs {@link ColumnTypeDriver#getDataVectorMinEntrySize()} bytes each -
+     * the same per-row price the non-dedup branch above charges for them.
+     */
+    private long dedupMergedDataSizeBelowTop(
+            long mergeIndexAddr,
+            long mergeIndexRows,
+            long src1AuxAddr,
+            long src1Top,
+            long src2AuxAddr
+    ) {
+        final long nullSize = columnTypeDriver.getDataVectorMinEntrySize();
+        long dataSize = 0;
+        for (long i = 0; i < mergeIndexRows; i++) {
+            // An index entry is a (timestamp, row id) pair; bit 63 of the row id is set when the row comes from the
+            // DATA column and clear when it comes from the O3 batch.
+            final long rowId = Unsafe.getUnsafe().getLong(mergeIndexAddr + i * TIMESTAMP_MERGE_ENTRY_BYTES + Long.BYTES);
+            if (rowId < 0) {
+                // The data side's aux vector is addressed from ITS row zero, which is the column top's row.
+                final long storageRow = (rowId & Long.MAX_VALUE) - src1Top;
+                dataSize += storageRow < 0 ? nullSize : columnTypeDriver.getDataVectorSize(src1AuxAddr, storageRow, storageRow);
+            } else {
+                dataSize += columnTypeDriver.getDataVectorSize(src2AuxAddr, rowId, rowId);
+            }
+        }
+        return dataSize;
     }
 
     private long getDataAppendOffsetBytes(long appendOffsetRowCount) {

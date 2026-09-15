@@ -74,7 +74,17 @@ final class NativeFrameBoundaries {
             int pageFrameMaxRows,
             int workerCount
     ) {
-        populateColumnTops(tableReader, columnVersionReader, columnIndexes, columnCount, partitionTimestamp, partitionRowCount);
+        // Resolving the geometry costs a read, so only a composite partition pays for it.
+        final PartitionGeometry geometry = tableReader.getTxFile().isPartitionComposite(partitionIndex)
+                ? tableReader.getGeometry()
+                : null;
+        // A column absent from this partition has no top of its own, so both this prediction and the open path
+        // (TableReader.reloadColumnAt) invent one, and they have to invent the SAME one: the partition's mapped
+        // extent, which is what the open path stores. A top is a FILE row, and frameHi() compares it against
+        // partition rows by subtracting the piece shift - so the live row count, which is short of the extent by
+        // every dead row, would cut a frame the opened partition does not have.
+        final long absentColumnTop = geometry != null ? geometry.getLiveFileExtent(partitionIndex) : partitionRowCount;
+        populateColumnTops(tableReader, columnVersionReader, columnIndexes, columnCount, partitionTimestamp, absentColumnTop);
 
         final long pageFrameRowLimit = calculatePageFrameRowLimit(
                 0,
@@ -83,10 +93,6 @@ final class NativeFrameBoundaries {
                 pageFrameMaxRows,
                 workerCount
         );
-        // Resolving the geometry costs a read, so only a composite partition pays for it.
-        final PartitionGeometry geometry = tableReader.getTxFile().isPartitionComposite(partitionIndex)
-                ? tableReader.getGeometry()
-                : null;
 
         frameHis.clear();
         long lo = 0;
@@ -144,7 +150,8 @@ final class NativeFrameBoundaries {
 
     /**
      * Reads each column's top - the first row where it has data, with the rows before it NULL - from column version
-     * metadata.
+     * metadata. {@code absentColumnTop} is the top to invent for a column the partition does not hold at all; it has
+     * to be the one the open path invents, see {@link #of}.
      */
     private void populateColumnTops(
             TableReader tableReader,
@@ -152,7 +159,7 @@ final class NativeFrameBoundaries {
             IntList columnIndexes,
             int columnCount,
             long partitionTimestamp,
-            long partitionRowCount
+            long absentColumnTop
     ) {
         // Reader metadata, not factory metadata, for the writer index lookup: factory metadata (a
         // SelectedRecordCursorFactory's, say) may not implement getWriterIndex().
@@ -167,7 +174,7 @@ final class NativeFrameBoundaries {
             } else if (columnVersionReader.getColumnTopPartitionTimestamp(writerIndex) <= partitionTimestamp) {
                 columnTops.add(0); // column exists from start, no top
             } else {
-                columnTops.add(partitionRowCount); // column doesn't exist - all-null
+                columnTops.add(absentColumnTop); // column doesn't exist - all-null
             }
         }
     }
