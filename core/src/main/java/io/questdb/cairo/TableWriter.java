@@ -426,6 +426,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean memColumnShifted;
     private int metaPrevIndex;
     private int metaSwapIndex;
+    // Lower bound on the timestamp of the earliest composite partition. The per-commit compaction passes
+    // start at the first partition at or after this instead of at index 0, so they skip the (potentially
+    // many thousands of) cold plain partitions below the first composite. It is a CONSERVATIVE bound:
+    // lowered when a partition flips composite, reset to Long.MAX_VALUE when the composite count reaches
+    // zero, and recomputed exactly by recountCompositePartitions. It is never raised on a removal, so it
+    // always sits at or below the true earliest composite - a pass may start a few plain partitions early
+    // (harmless, they contribute nothing) but can never skip a real composite. Only read while
+    // compositePartitionCount > 0; the count guard in runCompaction gates every consumer.
+    private long minCompositePartitionTimestamp = Long.MAX_VALUE;
     private long minSplitPartitionTimestamp;
     private long noOpRowCount;
     private ReadOnlyObjList<? extends MemoryCR> o3Columns;
@@ -2634,7 +2643,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 freeColumns(false);
                 releaseIndexerWriters(true);
                 txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
-                compositePartitionCount = 0;
+                resetCompositePartitionTracking();
             }
 
             // Call O3 methods to remove check TxnScoreboard and remove partition directly
@@ -3537,7 +3546,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         columnVersionWriter.truncate();
         txWriter.removeAllPartitions();
-        compositePartitionCount = 0;
+        resetCompositePartitionTracking();
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         commitTxWriter();
@@ -6245,42 +6254,85 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private boolean assertCompositeCountMatchesScan() {
         int count = 0;
+        long minTs = Long.MAX_VALUE;
         for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
             if (txWriter.isPartitionComposite(i)) {
                 count++;
+                final long ts = txWriter.getPartitionTimestampByIndex(i);
+                if (ts < minTs) {
+                    minTs = ts;
+                }
             }
         }
         assert count == compositePartitionCount
                 : "composite partition count drift: tracked=" + compositePartitionCount + ", scanned=" + count;
+        // The compaction passes start at compositeFromIndex(), so the watermark must never sit ABOVE the
+        // earliest composite or a pass would skip it. Sitting below is fine - a conservative lower bound.
+        assert count == 0 || minCompositePartitionTimestamp <= minTs
+                : "composite watermark too high: watermark=" + minCompositePartitionTimestamp + ", earliestComposite=" + minTs;
         return true;
     }
 
     /**
-     * Re-seeds {@link #compositePartitionCount} with a single scan of the partition table. Called only when
-     * the table's partition set is (re)built wholesale - writer open, a full {@code _txn} reload or reset -
-     * never on the per-commit ingest path.
+     * The partition index the per-commit compaction passes start at: the first partition at or after the
+     * earliest composite one ({@link #minCompositePartitionTimestamp}), so a pass skips the cold plain
+     * partitions below it. Returns 0 when the watermark has not been narrowed. Only meaningful while
+     * {@link #compositePartitionCount} > 0, which the caller has already checked.
+     */
+    private int compositeFromIndex() {
+        if (minCompositePartitionTimestamp == Long.MAX_VALUE) {
+            return 0;
+        }
+        // findAttachedPartitionIndexByLoTimestamp returns the exact index on a hit, or a negative encoding
+        // of the insertion point on a miss; decoding the miss gives the first partition strictly after the
+        // watermark, which is still at or before the earliest composite.
+        final int idx = txWriter.findAttachedPartitionIndexByLoTimestamp(minCompositePartitionTimestamp);
+        return idx < 0 ? -idx - 1 : idx;
+    }
+
+    /**
+     * Re-seeds {@link #compositePartitionCount} and {@link #minCompositePartitionTimestamp} with a single
+     * scan of the partition table. Called only when the table's partition set is (re)built wholesale -
+     * writer open, a full {@code _txn} reload or reset - never on the per-commit ingest path.
      */
     private void recountCompositePartitions() {
         int count = 0;
+        long minTs = Long.MAX_VALUE;
         for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
             if (txWriter.isPartitionComposite(i)) {
                 count++;
+                if (minTs == Long.MAX_VALUE) {
+                    // Partitions are ordered by timestamp, so the first composite seen is the earliest.
+                    minTs = txWriter.getPartitionTimestampByIndex(i);
+                }
             }
         }
         compositePartitionCount = count;
+        minCompositePartitionTimestamp = minTs;
     }
 
     /**
      * Removes a partition from {@code _txn}, keeping {@link #compositePartitionCount} in step: a composite
      * partition being removed (DROP, DETACH, SQUASH, a REWRITE retiring its source, a replace-commit) drops
-     * the count by one. The O(1) check happens before the removal, while the slot still exists.
+     * the count by one. The O(1) check happens before the removal, while the slot still exists. The
+     * watermark is not raised here - removing a partition can only leave the earliest composite where it
+     * was or higher - except when the last composite goes, when it resets to Long.MAX_VALUE.
      */
     private int removeAttachedPartitionsTracked(long partitionTimestamp) {
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
-        if (partitionIndex > -1 && txWriter.isPartitionComposite(partitionIndex)) {
-            compositePartitionCount--;
+        if (partitionIndex > -1 && txWriter.isPartitionComposite(partitionIndex) && --compositePartitionCount == 0) {
+            minCompositePartitionTimestamp = Long.MAX_VALUE;
         }
         return txWriter.removeAttachedPartitions(partitionTimestamp);
+    }
+
+    /**
+     * Resets composite-partition tracking to "no composites": the count to zero and the watermark to
+     * Long.MAX_VALUE. Called wherever the partition table is emptied wholesale (truncate, remove-all).
+     */
+    private void resetCompositePartitionTracking() {
+        compositePartitionCount = 0;
+        minCompositePartitionTimestamp = Long.MAX_VALUE;
     }
 
     /**
@@ -6295,7 +6347,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setPartitionGeometryRef(partitionTimestamp, geometryRef);
         final boolean isComposite = geometryRef != NO_GEOMETRY_REF;
         if (wasComposite != isComposite) {
-            compositePartitionCount += isComposite ? 1 : -1;
+            if (isComposite) {
+                compositePartitionCount++;
+                if (partitionTimestamp < minCompositePartitionTimestamp) {
+                    minCompositePartitionTimestamp = partitionTimestamp;
+                }
+            } else if (--compositePartitionCount == 0) {
+                minCompositePartitionTimestamp = Long.MAX_VALUE;
+            }
         }
     }
 
@@ -8586,7 +8645,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void foldFoldableFolders(long wallClockMicros) {
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudgetMs() * Micros.MILLI_MICROS;
         final PartitionGeometry geometry = getGeometry();
-        int from = 0;
+        // Start past the cold plain partitions below the earliest composite one - the caller reached here
+        // only because compositePartitionCount > 0, so the watermark points at a real composite.
+        int from = compositeFromIndex();
         while (true) {
             final int partitionIndex = partitionCompactionPolicy.selectFoldablePartition(txWriter, geometry, wallClockMicros, from);
             if (partitionIndex < 0) {
@@ -9874,7 +9935,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void makePlainFoldableFolders(long wallClockMicros) {
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudgetMs() * Micros.MILLI_MICROS;
         final PartitionGeometry geometry = getGeometry();
-        int from = 0;
+        // Same lower bound as the fold pass: skip everything below the earliest composite partition.
+        int from = compositeFromIndex();
         while (true) {
             final int partitionIndex = partitionCompactionPolicy.selectMakePlainCandidate(txWriter, geometry, wallClockMicros, from);
             if (partitionIndex < 0) {
@@ -10909,7 +10971,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 columnVersionWriter.truncate();
                 txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
-                compositePartitionCount = 0;
+                resetCompositePartitionTracking();
             }
             txWriter.bumpPartitionTableVersion();
         } else {
@@ -15469,7 +15531,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.info().$("repairing abnormally terminated truncate on ").$substr(pathRootSize, path).$();
         scheduleRemoveAllPartitions();
         txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
-        compositePartitionCount = 0;
+        resetCompositePartitionTracking();
         clearTodoLog();
         processPartitionRemoveCandidates();
     }
@@ -15957,7 +16019,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             partitionCompactionPolicy = new PartitionCompactionPolicy(configuration);
         }
         final PartitionGeometry geometry = getGeometry();
-        if (partitionCompactionPolicy.selectPartition(txWriter, geometry, avgRecordSize(), wallClockMicros) < 0) {
+        if (partitionCompactionPolicy.selectPartition(txWriter, geometry, avgRecordSize(), wallClockMicros, compositeFromIndex()) < 0) {
             foldFoldableFolders(wallClockMicros);
             makePlainFoldableFolders(wallClockMicros);
             return;
@@ -17287,7 +17349,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.resetTimestamp();
                 columnVersionWriter.truncate();
                 txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
-                compositePartitionCount = 0;
+                resetCompositePartitionTracking();
             }
             return;
         }
@@ -17318,7 +17380,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.resetTimestamp();
         columnVersionWriter.truncate();
         txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
-        compositePartitionCount = 0;
+        resetCompositePartitionTracking();
         clearTodoLog();
         this.minSplitPartitionTimestamp = Long.MAX_VALUE;
         processPartitionRemoveCandidates();
@@ -17958,7 +18020,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 } else {
                     // we have no partitions, clear partitions in TableWriter
                     txWriter.removeAllPartitions();
-                    compositePartitionCount = 0;
+                    resetCompositePartitionTracking();
                     rowAction = ROW_ACTION_OPEN_PARTITION;
                 }
 
