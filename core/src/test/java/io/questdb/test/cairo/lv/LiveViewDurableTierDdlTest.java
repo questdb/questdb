@@ -8136,6 +8136,20 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                     LiveViewDefinition.readFromPath(reader, path, token, null, new GenericRecordMetadata())
                             .getTtlHoursOrMonths()
             );
+            // A rewrite carries the base table id the CREATE recorded, from the file it rewrites rather
+            // than from the name, which is how a load can still tell the view's base from another table.
+            final LiveViewDefinition sequencerCopy = LiveViewDefinition.readFromPath(reader, path, token, null, new GenericRecordMetadata());
+            Assert.assertEquals(
+                    "sequencer-directory _lv base table id of '" + viewName + "'",
+                    engine.verifyTableName(sequencerCopy.getBaseTableName()).getTableId(),
+                    sequencerCopy.getBaseTableId()
+            );
+            path.of(configuration.getDbRoot()).concat(token).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
+            Assert.assertEquals(
+                    "table-directory _lv base table id of '" + viewName + "'",
+                    sequencerCopy.getBaseTableId(),
+                    LiveViewDefinition.readFromPath(reader, path, token, null, new GenericRecordMetadata()).getBaseTableId()
+            );
         }
     }
 

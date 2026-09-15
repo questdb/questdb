@@ -263,7 +263,7 @@ public class LiveViewCheckpointReleaseCompatTest extends AbstractLiveViewCheckpo
         // inserts one before the dependency-column count, which means reading a released block at
         // this build's offsets would take the old count as the TTL and the first column name's
         // length header as the count - garbage, and the whole view with it. The version gate is
-        // what keeps the released definition readable; the first SET TTL rewrites it as v2.
+        // what keeps the released definition readable; the first SET TTL rewrites it at this build's version.
         assertMemoryLeak(() -> {
             openFixture();
             Assert.assertEquals("a released definition carries no TTL", 0, definitionTtl());

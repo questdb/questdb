@@ -232,6 +232,7 @@ public class LiveViewRegistryRenameSnapshotTest {
                 "SELECT * FROM " + baseTableName,
                 baseTableName,
                 tokenOf(baseTableName, 1_000),
+                1_000,
                 ColumnType.TIMESTAMP,
                 1,
                 's',

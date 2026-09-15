@@ -1013,7 +1013,8 @@ public class CairoEngine implements Closeable, WriterSource {
                             // synthesize "base table does not exist" when nothing was persisted.
                             if (!instance.isInvalid()) {
                                 long nowUs = configuration.getMicrosecondClock().getTicks();
-                                if (!baseTableExists && isReadOnlyMode()) {
+                                final boolean isBaseReplaced = baseTableExists && !definition.isSameBaseTable(baseTableToken);
+                                if ((!baseTableExists || isBaseReplaced) && isReadOnlyMode()) {
                                     // Read-only replica: the LV can download/register before its base
                                     // (object-store ordering). Invalidating is terminal here (no DROP+CREATE
                                     // on a replica), so leave the token null for scanForLaggingViews to
@@ -1021,7 +1022,12 @@ public class CairoEngine implements Closeable, WriterSource {
                                     LOG.info().$("live view base table not yet resolved on read-only node, deferring to runtime heal [table=")
                                             .$safe(definition.getBaseTableName())
                                             .$(", view=").$(tableToken)
+                                            .$(", expectedTableId=").$(definition.getBaseTableId())
                                             .I$();
+                                    // A name that resolves to another table is not the base either:
+                                    // the runtime heal re-resolves by name and binds only the table the
+                                    // view was created over.
+                                    definition.resolveBaseTableToken(null);
                                 } else if (!baseTableExists) {
                                     // Durable, not re-derived on every load: the load binds a view to
                                     // whatever table holds its base's name, so a view invalidated in
@@ -1031,6 +1037,21 @@ public class CairoEngine implements Closeable, WriterSource {
                                             .$(", view=").$(tableToken)
                                             .I$();
                                     invalidateLiveViewOnLoad(instance, "base table does not exist", tornStateRecovered, nowUs);
+                                } else if (isBaseReplaced) {
+                                    // The name resolves to a table the view was not created over: the
+                                    // base was dropped or renamed and a table created under its name, or
+                                    // it was rebased, and whichever invalidation that took never reached
+                                    // this view - a refresh pool that was off, a crash. Binding would drain
+                                    // the other table's commits on top of the old rows, at watermarks
+                                    // taken against a sequencer that table does not have. Durable, like
+                                    // the missing-base branch above.
+                                    LOG.info().$("base table for live view was replaced by another table, invalidating [table=")
+                                            .$safe(definition.getBaseTableName())
+                                            .$(", view=").$(tableToken)
+                                            .$(", expectedTableId=").$(definition.getBaseTableId())
+                                            .$(", tableId=").$(baseTableToken.getTableId())
+                                            .I$();
+                                    invalidateLiveViewOnLoad(instance, "base table was replaced", tornStateRecovered, nowUs);
                                 } else if (!baseTableToken.isWal()) {
                                     // Durable for the same reason: once the base was converted back to
                                     // WAL, the next load registered the view active at the watermark it
@@ -1734,6 +1755,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 op.getSelectSql(),
                 op.getBaseTableName(),
                 baseTableToken,
+                baseTableToken.getTableId(),
                 baseTimestampType,
                 op.getFlushEveryInterval(),
                 op.getFlushEveryIntervalUnit(),

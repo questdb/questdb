@@ -278,6 +278,7 @@ public class LiveViewRegistryFuzzTest extends AbstractTest {
                 "SELECT * FROM " + base,
                 base,
                 null,
+                LiveViewDefinition.BASE_TABLE_ID_UNKNOWN,
                 0,
                 0,
                 's',

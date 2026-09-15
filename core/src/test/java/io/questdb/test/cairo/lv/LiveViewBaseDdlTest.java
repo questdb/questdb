@@ -86,6 +86,8 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
     // The reason the load invalidates a view whose base name resolves to no table under.
     private static final String MISSING_BASE_INVALIDATION_REASON = "base table does not exist";
     private static final String RENAME_BASE_SQL = "RENAME TABLE base TO base_old";
+    // The reason the load invalidates a view whose base name resolves to a table with another id under.
+    private static final String REPLACED_BASE_INVALIDATION_REASON = "base table was replaced";
     private static final String RENAME_INVALIDATION_REASON = "base table rename";
     private static final String UPDATE_FIXTURE_VIEW_ROWS = """
             ts\tsym\tx\trn
@@ -911,6 +913,101 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testLoadInvalidatesAViewWhoseBaseWasReplaced() throws Exception {
+        // The load binds a view to whatever table holds its base's name. A DROP or RENAME the view never
+        // heard about - applied while no refresh worker ran, which LiveViewRefreshDisabledTest drives
+        // through real server starts - followed by a table created under the name left the load a WAL
+        // table under the right name with every referenced column in place, so it bound the view to it:
+        // measured before the fix, the view loaded active, skipped the new table's commits below its
+        // watermark and drained the rest on top of its old rows. The definition now records the base's
+        // table id, and the load invalidates a view whose base name resolves to another table.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertLoadInvalidatesOverAReplacedBase(DROP_BASE_SQL);
+        assertLoadInvalidatesOverAReplacedBase(RENAME_BASE_SQL);
+    }
+
+    @Test
+    public void testLoadInvalidatesAViewWhoseBaseWasRebasedUnseen() throws Exception {
+        // REBASE WAL keeps the base's name and columns and mints a new table id. Its own invalidation
+        // is durable ahead of its commit, but a rebase applied while the view was not registered
+        // invalidated nothing, and nothing a load read could tell. The recorded id can.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createRebaseFixture();
+            final int baseTableId = engine.verifyTableName("base").getTableId();
+            final LiveViewInstance instance = engine.getLiveViewRegistry().removeView("lv");
+            Assert.assertNotNull(instance);
+            execute("ALTER TABLE base SUSPEND WAL");
+            Assert.assertNull("a rebase with no registered live view must land", rebaseBase());
+            drainWalQueue();
+            engine.getLiveViewRegistry().registerView(instance);
+            Assert.assertFalse("the rebase must have missed the unregistered view", instance.isInvalid());
+
+            restartAndAssertReplacedBaseInvalidation(baseTableId);
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                insertRebaseFixtureRow(5);
+                driveRefreshToQuiescence(job);
+                insertRebaseFixtureRow(6);
+                driveRefreshToQuiescence(job);
+            }
+            assertViewInvalidatedBy(REPLACED_BASE_INVALIDATION_REASON);
+            Assert.assertEquals("an invalid view must not spend refresh cycles", 0, reloaded.getRefreshFaultCount());
+            assertQuery("SELECT ts, sym, x, s FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(rebaseFixtureViewRows(4));
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testLoadOnAReadOnlyNodeDefersAViewWhoseBaseWasReplaced() throws Exception {
+        // A read-only node does not invalidate a view whose base it cannot resolve, since there is no DROP
+        // and re-CREATE to undo it there; it defers to the refresh scan's heal by name. A name resolving to
+        // another table gets the same deferral, and the heal binds only the table the view was created
+        // over - before the id it bound the first table under the name, and refreshed the view over it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createRebaseFixture();
+            applyAlterMissedByInvalidation(DROP_BASE_SQL);
+            recreateBase();
+
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            isReadOnly.set(true);
+            try {
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                capture.drain();
+                capture.assertLogged("live view base table not yet resolved on read-only node, deferring to runtime heal [table=base, view=lv");
+                capture.assertNotLogged("base table for live view was replaced by another table");
+            } finally {
+                isReadOnly.set(false);
+                capture.stop();
+            }
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            assertValidOverTheRebaseFixtureRows();
+            Assert.assertNull("the load must not bind the view to another table", instance.getDefinition().getBaseTableToken());
+
+            capture.start();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                insertRecreatedBaseRow(6);
+                driveRefreshToQuiescence(job);
+                capture.drain();
+                capture.assertNotLogged("resolved live view base table token after registration [view=lv");
+            } finally {
+                capture.stop();
+            }
+            Assert.assertNull("the heal must not bind the view to another table", instance.getDefinition().getBaseTableToken());
+            assertValidOverTheRebaseFixtureRows();
+            assertNoRefreshFaults("lv");
+
+            dropRemovalFixture();
+        });
+    }
+
+    @Test
     public void testNonStructuralAlterIsTransparentToLiveView() throws Exception {
         // Non-structural base ALTERs - SET PARAM, ADD / DROP INDEX, symbol CACHE /
         // NOCACHE, SYMBOL CAPACITY - travel the executeAlter apply path, which never
@@ -1721,13 +1818,16 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
     // fixture's watermark, so the ahead-of-base guard is not what keeps the view off the new table.
     private void assertInvalidatedOverARecreatedBase(String reason, int viewRowCount) throws Exception {
         assertViewInvalidatedBy(reason);
-        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-        for (int i = 1; i <= 5; i++) {
-            insertRecreatedBaseRow(i);
-        }
-        drainWalQueue();
+        recreateBase();
         engine.getLiveViewRegistry().clear();
         engine.buildViewGraphs();
+        assertStaysInvalidOverTheRecreatedBase(reason, viewRowCount);
+    }
+
+    // The view invalidated under reason over the table recreateBase created, and what it holds through a
+    // refresh and a sixth commit: the same reason, no refresh fault, and the first viewRowCount fixture
+    // rows.
+    private void assertStaysInvalidOverTheRecreatedBase(String reason, int viewRowCount) throws Exception {
         assertViewInvalidatedBy(reason);
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -1738,6 +1838,16 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
         assertViewInvalidatedBy(reason);
         Assert.assertEquals("an invalid view must not spend refresh cycles", 0, instance.getRefreshFaultCount());
         assertQuery("SELECT ts, sym, x, s FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(rebaseFixtureViewRows(viewRowCount));
+    }
+
+    // Creates a table under the base's name with the fixture's schema and five one-row commits, which
+    // reach the fixture's watermark, so the ahead-of-base guard is not what keeps a view off it.
+    private void recreateBase() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        for (int i = 1; i <= 5; i++) {
+            insertRecreatedBaseRow(i);
+        }
+        drainWalQueue();
     }
 
     // The rebase fixture's view, valid in memory and in live_views(), holding its four fixture rows.
@@ -1857,6 +1967,43 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns("view_status\tinvalidation_reason\ninvalid\t" + reason + '\n');
+    }
+
+    // Over the rebase fixture, applies removalSql with the view off the fan-out index, creates a table under
+    // the base's name before any load, and asserts the load that finds it invalidates the view for good.
+    private void assertLoadInvalidatesOverAReplacedBase(String removalSql) throws Exception {
+        assertMemoryLeak(() -> {
+            createRebaseFixture();
+            final int baseTableId = engine.verifyTableName("base").getTableId();
+            applyAlterMissedByInvalidation(removalSql);
+            recreateBase();
+            Assert.assertNotEquals("a recreated base must carry a new table id", baseTableId, engine.verifyTableName("base").getTableId());
+
+            restartAndAssertReplacedBaseInvalidation(baseTableId);
+            // Durable: a second load reads the invalidation back rather than deciding again.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            assertStaysInvalidOverTheRecreatedBase(REPLACED_BASE_INVALIDATION_REASON, 4);
+
+            dropRemovalFixture();
+        });
+    }
+
+    // Rebuilds the registry from disk and asserts the load invalidated the view over a base whose table id
+    // is no longer expectedBaseTableId.
+    private void restartAndAssertReplacedBaseInvalidation(int expectedBaseTableId) throws Exception {
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            capture.drain();
+            capture.assertLogged("base table for live view was replaced by another table, invalidating [table=base, view=lv");
+            capture.assertLogged(", expectedTableId=" + expectedBaseTableId + ", tableId=" + engine.verifyTableName("base").getTableId() + ']');
+        } finally {
+            capture.stop();
+        }
+        assertViewInvalidatedBy(REPLACED_BASE_INVALIDATION_REASON);
     }
 
     // Over the rebase fixture, applies removalSql with the view off the fan-out index, and asserts the load

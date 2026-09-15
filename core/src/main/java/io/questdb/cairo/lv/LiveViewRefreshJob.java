@@ -14911,7 +14911,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // base lands the view serves disk-only, and once it registers the heal below lets
                 // this same tick proceed to refresh.
                 baseToken = engine.getTableTokenIfExists(instance.getDefinition().getBaseTableName());
-                if (baseToken == null) {
+                // The name can resolve to a table the view was not created over - the base
+                // replaced under it - and a read-only node does not invalidate, so it keeps
+                // waiting for its own base rather than binding to that one.
+                if (baseToken == null || !instance.getDefinition().isSameBaseTable(baseToken)) {
                     continue;
                 }
                 instance.getDefinition().resolveBaseTableToken(baseToken);
@@ -16328,7 +16331,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (instance.getDefinition().getBaseTableToken() == null) {
                 // A definition registered before its base table resolved (replica download-order
                 // race) can reach this path after a promote. The notification carries the base
-                // token, so heal the definition before refreshInstance dereferences it.
+                // token, so heal the definition before refreshInstance dereferences it - unless
+                // that token names a table the view was not created over.
+                if (!instance.getDefinition().isSameBaseTable(baseTableToken)) {
+                    continue;
+                }
                 instance.getDefinition().resolveBaseTableToken(baseTableToken);
             }
             if (seqTxn > instance.getLastProcessedSeqTxn()) {

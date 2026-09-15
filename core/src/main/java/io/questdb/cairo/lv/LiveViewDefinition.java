@@ -61,6 +61,9 @@ import org.jetbrains.annotations.Nullable;
  * </ul>
  */
 public class LiveViewDefinition {
+    // The base table id a definition written before the id was recorded carries: a view created by
+    // a build whose _lv had no such field, which the load then cannot check its base against.
+    public static final int BASE_TABLE_ID_UNKNOWN = -1;
     public static final String LIVE_VIEW_DEFINITION_FILE_NAME = "_lv";
     public static final int LIVE_VIEW_DEFINITION_ANCHOR_MSG_TYPE = 1;
     public static final int LIVE_VIEW_DEFINITION_CORE_MSG_TYPE = 0;
@@ -74,8 +77,11 @@ public class LiveViewDefinition {
     // as the TTL and the first dependency column's length header as the count, so the
     // versions cannot share a read path - and they do not have to, since the clause
     // that sets a TTL did not exist in v1 and 0 is the right value for every v1 view.
-    // Any further CORE layout change needs the same treatment.
-    public static final int LIVE_VIEW_DEFINITION_FORMAT_VERSION = 2;
+    // Version 3 appends baseTableId after ttlHoursOrMonths, with the same treatment: a v1 or v2
+    // view reads BASE_TABLE_ID_UNKNOWN. Any further CORE layout change needs it too.
+    public static final int LIVE_VIEW_DEFINITION_FORMAT_VERSION = 3;
+    // The last version whose CORE block carries no base table id.
+    private static final int LIVE_VIEW_DEFINITION_VERSION_NO_BASE_TABLE_ID = 2;
     // The last version whose CORE block ends at startFromKind, with no TTL field.
     private static final int LIVE_VIEW_DEFINITION_VERSION_NO_TTL = 1;
     // _lv.drop is the "DROP in progress" sentinel. dropLiveView creates it (and
@@ -98,6 +104,12 @@ public class LiveViewDefinition {
     public static final byte START_FROM_UNSET = -1;
 
     private final @Nullable LvAnchorSpec anchorSpec;
+    // The id of the table the view was created over. The load resolves the base by name, and a table
+    // created under that name later has another id, so this is what tells the load it is not the
+    // view's base. Recorded at CREATE and carried by every rewrite from the file, never re-derived
+    // from baseTableToken, which resolves by name as well. BASE_TABLE_ID_UNKNOWN for a view whose
+    // definition predates the field.
+    private final int baseTableId;
     private final String baseTableName;
     // Not final: on a read-only replica the LV's files can download and register BEFORE its base
     // table's, so the registration-time name lookup resolves to null. The refresh scan heals it
@@ -163,6 +175,7 @@ public class LiveViewDefinition {
             String viewSql,
             String baseTableName,
             TableToken baseTableToken,
+            int baseTableId,
             int baseTimestampType,
             long flushEveryInterval,
             char flushEveryIntervalUnit,
@@ -181,6 +194,7 @@ public class LiveViewDefinition {
         this.viewSql = viewSql;
         this.baseTableName = baseTableName;
         this.baseTableToken = baseTableToken;
+        this.baseTableId = baseTableId;
         this.baseTimestampType = baseTimestampType;
         this.flushEveryInterval = flushEveryInterval;
         this.flushEveryIntervalUnit = flushEveryIntervalUnit;
@@ -210,6 +224,7 @@ public class LiveViewDefinition {
         block.putLong(definition.viewLowerBoundTimestamp);
         block.putByte(definition.startFromKind);
         block.putInt(definition.ttlHoursOrMonths);
+        block.putInt(definition.baseTableId);
         final int depCount = definition.dependencyColumnNames.size();
         block.putInt(depCount);
         for (int i = 0; i < depCount; i++) {
@@ -426,6 +441,7 @@ public class LiveViewDefinition {
         long viewLowerBoundTimestamp = 0;
         byte startFromKind = START_FROM_NOW;
         int ttlHoursOrMonths = 0;
+        int baseTableId = BASE_TABLE_ID_UNKNOWN;
         ObjList<String> dependencyColumnNames = new ObjList<>();
         IntList dependencyColumnTypes = new IntList();
         LvAnchorSpec anchorSpec = null;
@@ -465,6 +481,10 @@ public class LiveViewDefinition {
                 offset += Byte.BYTES;
                 if (onDiskVersion > LIVE_VIEW_DEFINITION_VERSION_NO_TTL) {
                     ttlHoursOrMonths = block.getInt(offset);
+                    offset += Integer.BYTES;
+                }
+                if (onDiskVersion > LIVE_VIEW_DEFINITION_VERSION_NO_BASE_TABLE_ID) {
+                    baseTableId = block.getInt(offset);
                     offset += Integer.BYTES;
                 }
                 int depCount = block.getInt(offset);
@@ -528,6 +548,7 @@ public class LiveViewDefinition {
                 viewSql,
                 baseTableName,
                 baseTableToken,
+                baseTableId,
                 baseTimestampType,
                 flushEveryInterval,
                 flushEveryIntervalUnit,
@@ -546,6 +567,10 @@ public class LiveViewDefinition {
 
     public @Nullable LvAnchorSpec getAnchorSpec() {
         return anchorSpec;
+    }
+
+    public int getBaseTableId() {
+        return baseTableId;
     }
 
     public String getBaseTableName() {
@@ -618,6 +643,15 @@ public class LiveViewDefinition {
 
     public long getViewLowerBoundTimestamp() {
         return viewLowerBoundTimestamp;
+    }
+
+    /**
+     * Whether {@code token}, which a caller resolved by the base's name, is the table the view was
+     * created over. A view whose definition predates the recorded id cannot tell, and answers
+     * {@code true}, which is what every load did before the id existed.
+     */
+    public boolean isSameBaseTable(@NotNull TableToken token) {
+        return baseTableId == BASE_TABLE_ID_UNKNOWN || token.getTableId() == baseTableId;
     }
 
     /**
