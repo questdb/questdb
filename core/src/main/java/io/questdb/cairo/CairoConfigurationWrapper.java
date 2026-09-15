@@ -1760,6 +1760,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isLiveViewRebuildRestatementGuardEnabled() {
+        return getDelegate().isLiveViewRebuildRestatementGuardEnabled();
+    }
+
+    @Override
     public boolean isMatViewCoveringIndexEnabled() {
         return getDelegate().isMatViewCoveringIndexEnabled();
     }

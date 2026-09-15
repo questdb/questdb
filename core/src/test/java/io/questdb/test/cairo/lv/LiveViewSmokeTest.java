@@ -1714,6 +1714,21 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         TestUtils.assertEquals(originalDdl, sink.toString().replace("ddl\n", ""));
     }
 
+    /**
+     * Asserts the {@code base_apply_wait_*} pair {@code live_views()} reports for the view
+     * {@code lv}: the base seqTxn its refresh waits to see applied and how long it has waited,
+     * or a NULL pair when it waits for nothing. Both arguments are null or neither is - the two
+     * columns describe one wait, so one of them alone is never a legal reading.
+     */
+    private void assertWaitReported(Long waitSeqTxn, Long waitMicros) throws Exception {
+        Assert.assertEquals("both columns describe one wait", waitSeqTxn == null, waitMicros == null);
+        assertQuery("SELECT base_apply_wait_seqtxn, base_apply_wait_micros FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("base_apply_wait_seqtxn\tbase_apply_wait_micros\n"
+                        + (waitSeqTxn == null ? "null\tnull" : waitSeqTxn + "\t" + waitMicros) + "\n");
+    }
+
     // Builds a live view that lags behind one base commit, removes the base's WAL directory and
     // retypes a column the view REFERENCES, then returns the (still valid) reloaded instance for
     // the caller to drive one refresh over. That is the fixture the applied-base re-derive's ENTRY
@@ -4755,6 +4770,205 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "2026-06-01T00:00:00.000010Z\t1\t2\n" +
                     "2026-06-01T00:00:00.000020Z\t2\t3\n" +
                     "2026-06-01T00:00:00.000030Z\t3\t4\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test(timeout = 120_000)
+    public void testO3ReplayApplyLagWaitIsReportedForAsLongAsItLasts() throws Exception {
+        // The ordinary drain's apply-lag deferral is an operator-visible state, not just an
+        // internal back-off. When a lead refresh detects an O3 base commit the base table has
+        // not applied, the cycle unwinds cooperatively and retries on a back-off - which is
+        // ordinarily momentary, but is bounded by nothing on the view's side: a base whose WAL
+        // apply is suspended keeps the view waiting until an operator resumes it, and the view
+        // stays active and merely lags meanwhile. live_views() therefore names the base commit
+        // the refresh waits to see applied (base_apply_wait_seqtxn) and how long it has been
+        // waiting for it (base_apply_wait_micros), so the momentary case and the stuck one read
+        // differently. The duration measures the wait, not the last retry: the stamp the first
+        // deferral takes survives every retry the back-off paces, and only a cycle that drains,
+        // a turn that faults, an invalidation or a drop ends it.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Establish the in-RAM lead and the O3 detection watermark, as
+                // testO3ReplayDefersOnBaseApplyLagInsteadOfDeadlocking does.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-06-01T00:00:00.000010Z', 1), " +
+                        "('2026-06-01T00:00:00.000020Z', 2), " +
+                        "('2026-06-01T00:00:00.000030Z', 3)");
+                drainWalQueue();
+                instance.setLastFlushTimeUs(currentMicros);
+                drainJob(job);
+
+                // A view that is keeping up waits for nothing, and says so.
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getApplyLagDeferSinceUs());
+                assertWaitReported(null, null);
+
+                // Commit an out-of-order row BELOW the frontier but do NOT apply it: the replay
+                // needs the base applied to that commit, and the base has applied nothing of it.
+                final long deferArmedAtUs = currentMicros;
+                execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:00.000005Z', 4)");
+                drainJob(job);
+
+                final long waitSeqTxn = instance.getApplyLagDeferTargetSeqTxn();
+                Assert.assertTrue(
+                        "the cycle must have deferred on base apply lag, or this test is not exercising the gate",
+                        waitSeqTxn > instance.getLastProcessedSeqTxn()
+                );
+                Assert.assertEquals(deferArmedAtUs, instance.getApplyLagDeferSinceUs());
+                assertWaitReported(waitSeqTxn, 0L);
+                // A drain that waits is not a recovery that waits: the deferred rebuild has a
+                // recovery phase of its own, and this has none.
+                assertQuery("SELECT view_status, checkpoint_recovery_phase FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                view_status\tcheckpoint_recovery_phase
+                                active\t
+                                """);
+
+                // Step past the back-off floor and bring the view back with a later commit's
+                // notification, the base still having applied nothing. The retry defers again on
+                // the same commit - and reports the whole wait, not the window since the last
+                // retry. Stamping the episode on every deferral instead of only the first reads
+                // zero here.
+                setCurrentMicros(deferArmedAtUs + 3_000_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:00.000040Z', 5)");
+                drainJob(job);
+                Assert.assertEquals(
+                        "the back-off window it paces must not restart the wait",
+                        deferArmedAtUs,
+                        instance.getApplyLagDeferSinceUs()
+                );
+                assertWaitReported(waitSeqTxn, 3_000_000L);
+
+                // Apply the base commits and let the next tick converge the replay. A cycle that
+                // drained ends the wait, so both columns go back to NULL.
+                drainWalQueue();
+                setCurrentMicros(currentMicros + 1_000_000L);
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertFalse("view must stay valid after the replay converges", instance.isInvalid());
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getApplyLagDeferSinceUs());
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getApplyLagDeferTargetSeqTxn());
+                assertWaitReported(null, null);
+            }
+
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                    "2026-06-01T00:00:00.000005Z\t4\t1\n" +
+                    "2026-06-01T00:00:00.000010Z\t1\t2\n" +
+                    "2026-06-01T00:00:00.000020Z\t2\t3\n" +
+                    "2026-06-01T00:00:00.000030Z\t3\t4\n" +
+                    "2026-06-01T00:00:00.000040Z\t5\t5\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test(timeout = 120_000)
+    public void testADroppedViewStopsReportingTheApplyLagWaitItWasIn() throws Exception {
+        // The drop twin of the invalidation case above, and the one wait-clear that cannot be
+        // read where every other one is read. A dropped view leaves live_views() carrying the
+        // wait it was in, so the catalogue has nothing left to report the clear through; the
+        // clear is read off the instance the drop closes instead. It still has to happen:
+        // close() does not clear, tryCloseIfDropped is the only thing on the drop path that
+        // does, and a cursor or a checkpoint that pinned the instance before the drop can
+        // still read those fields afterwards.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-06-01T00:00:00.000010Z', 1), " +
+                        "('2026-06-01T00:00:00.000020Z', 2)");
+                drainWalQueue();
+                instance.setLastFlushTimeUs(currentMicros);
+                drainJob(job);
+
+                // An O3 commit the base does not apply leaves the view waiting on it.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:00.000005Z', 3)");
+                drainJob(job);
+                final long waitSeqTxn = instance.getApplyLagDeferTargetSeqTxn();
+                Assert.assertTrue("the cycle must have deferred on base apply lag", waitSeqTxn > 0);
+                Assert.assertTrue("the back-off floor must be armed with the episode", instance.getApplyLagDeferUntilUs() > 0);
+                assertWaitReported(waitSeqTxn, 0L);
+            }
+
+            // The operator drops the view rather than waiting the base's apply out. The drop
+            // fences the refresh worker and closes the instance on the SQL thread it runs on, so
+            // by the time DROP returns the clear has either happened or will never happen.
+            execute("DROP LIVE VIEW lv");
+            Assert.assertTrue(instance.isDropped());
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getApplyLagDeferSinceUs());
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getApplyLagDeferTargetSeqTxn());
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getApplyLagDeferUntilUs());
+            // And the catalogue no longer carries the view at all, which is why the clear had to
+            // be read off the instance.
+            assertQuery("SELECT view_name, base_apply_wait_seqtxn FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_name\tbase_apply_wait_seqtxn
+                            """);
+        });
+    }
+
+    @Test(timeout = 120_000)
+    public void testAnInvalidatedViewStopsReportingTheApplyLagWaitItWasIn() throws Exception {
+        // A view that stops refreshing waits for nothing, and must stop saying it does. An
+        // invalidated view is declined at the top of every later refresh turn, so the wait it was
+        // in when the invalidation landed would otherwise stand in live_views() forever - an
+        // invalid view reporting a base commit it "resumes on its own" once the base applies.
+        // tryFreeRuntimeStateIfInvalid ends it under the refresh latch, beside the rebuild
+        // deferral it ends for the same reason.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-06-01T00:00:00.000010Z', 1), " +
+                        "('2026-06-01T00:00:00.000020Z', 2)");
+                drainWalQueue();
+                instance.setLastFlushTimeUs(currentMicros);
+                drainJob(job);
+
+                // An O3 commit the base does not apply leaves the view waiting on it.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:00.000005Z', 3)");
+                drainJob(job);
+                final long waitSeqTxn = instance.getApplyLagDeferTargetSeqTxn();
+                Assert.assertTrue("the cycle must have deferred on base apply lag", waitSeqTxn > 0);
+                assertWaitReported(waitSeqTxn, 0L);
+            }
+
+            engine.invalidateLiveView(instance, "test invalidation mid-wait");
+            Assert.assertTrue("view must be invalid", instance.isInvalid());
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getApplyLagDeferSinceUs());
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getApplyLagDeferTargetSeqTxn());
+            assertWaitReported(null, null);
+            assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_status
+                            invalid
+                            """);
 
             execute("DROP LIVE VIEW lv");
         });
@@ -11732,12 +11946,13 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testMidDrainRebuildFailureDoesNotDrainOverWipedWindowState() throws Exception {
-        // The sibling test above covers a mid-drain fault whose rebuild SUCCEEDS. This
-        // one covers the rebuild itself failing, which is where the accumulators are
-        // left wiped: o3HeadMissReplay calls clearWindowState and then throws on the
-        // applied-base scan, so the runtime sits at identity while the durable tier
-        // still holds the full history.
+    public void testMidDrainRecoveryFailureDoesNotDrainOverWipedWindowState() throws Exception {
+        // The sibling test below covers a mid-drain fault whose recovery SUCCEEDS. This
+        // one covers the recovery itself failing, which is where the accumulators are
+        // left wiped. The restore from the timeline is tried first and fails on its
+        // timeline read; the rebuild that covers for it calls clearWindowState and then
+        // throws on the applied-base scan, so the runtime sits at identity while the
+        // durable tier still holds the full history.
         //
         // Two things then conspire. refreshInstance assigns windowStateDirty = false at
         // every turn entry, so the dirtiness handleRefreshFailure recorded cannot
@@ -11747,16 +11962,19 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // therefore commits a running sum that restarts mid-view and can never
         // invalidate itself out of it.
         //
-        // Both faults self-clear, so the retry has clean files: any wrong output is the
-        // stale runtime's doing, not a lingering fault.
+        // All three faults self-clear, so the retry has clean files: any wrong output is
+        // the stale runtime's doing, not a lingering fault.
         final String[] baseDir = new String[1];
         // -1 disarmed; >= 0 skip this many base WAL ts.d opens, then fail the next and
         // disarm. Armed with 2 it fails the seqTxn-4 commit's segment read once the
         // seqTxn-3 row is already fed - the same mid-drain shape as the sibling test.
         final AtomicInteger armBaseTsRead = new AtomicInteger(-1);
-        // Armed by the mid-drain fault above. The rebuild it triggers scans the APPLIED
-        // base table rather than the WAL, so this fails one of that scan's column opens
-        // and lands strictly after clearWindowState.
+        // Armed by the mid-drain fault above. The restore the recovery tries first maps
+        // the view's _timeline superblock before it reads a root, so this fails that open.
+        final AtomicBoolean failRestoreRead = new AtomicBoolean(false);
+        // Armed by the mid-drain fault above as well. The rebuild that covers for the
+        // failed restore scans the APPLIED base table rather than the WAL, so this fails
+        // one of that scan's column opens and lands strictly after clearWindowState.
         final AtomicBoolean failRebuildScan = new AtomicBoolean(false);
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -11768,6 +11986,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         && Utf8s.containsAscii(name, "wal")) {
                     if (armBaseTsRead.get() == 0) {
                         armBaseTsRead.set(-1);
+                        failRestoreRead.set(true);
                         failRebuildScan.set(true);
                         return -1;
                     }
@@ -11782,6 +12001,15 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     return -1;
                 }
                 return super.openRO(name);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failRestoreRead.get() && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)) {
+                    failRestoreRead.set(false);
+                    return -1;
+                }
+                return super.openRW(name, opts);
             }
         };
 
@@ -11818,6 +12046,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainWalQueue();
                 Assert.assertEquals("the mid-drain segment read must have been failed exactly once",
                         -1, armBaseTsRead.get());
+                Assert.assertFalse("the restore's timeline read must have been failed exactly once",
+                        failRestoreRead.get());
                 Assert.assertFalse("the rebuild scan must have been failed exactly once",
                         failRebuildScan.get());
 
@@ -11834,14 +12064,19 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // sum mid-view, which this catches.
             assertRunningSumLvMatchesRecompute();
 
-            // The recovering commit must also settle the debt. If it did not, the output
-            // would still be correct - the gate would just rebuild the whole view on every
+            // The recovery must also settle the debt. If it did not, the output would
+            // still be correct - the gate would just recover the whole view on every
             // turn, forever, and report work each time so the worker never idles.
             final LiveViewInstance recovered = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(recovered);
             Assert.assertFalse(
-                    "the rebuild's commit must clear the window-state debt",
+                    "the recovery must clear the window-state debt",
                     recovered.isWindowStateDirty()
+            );
+            Assert.assertEquals(
+                    "the later turn's gate must have restored the window from the timeline",
+                    1,
+                    recovered.getCheckpointRuntimeRestores()
             );
 
             execute("DROP LIVE VIEW lv");
@@ -11853,7 +12088,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Resilience test (it passes both before and after the windowStateDirty
         // fix in drainAppliedBase - see below), covering a drain path that had no
         // fault-injection coverage at all: the coupled applied-base drain.
-        // testMidDrainRefreshFailureRebuildsWindowState covers the sibling raw-WAL
+        // testMidDrainRefreshFailureRecoversWindowState covers the sibling raw-WAL
         // drain (drainBaseWal); this one faults drainAppliedBase, which feeds the
         // SAME incremental window cursor and so advances the same accumulators.
         //
@@ -11874,7 +12109,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Two independent mechanisms now restore the accumulators, and the test
         // pins the outcome rather than either mechanism:
         //   1. drainAppliedBase raises windowStateDirty (this branch previously did
-        //      not), so handleRefreshFailure rebuilds from the applied base before
+        //      not), so handleRefreshFailure restores the accumulators from the
+        //      checkpoint timeline, or rebuilds them from the applied base, before
         //      the retry - matching drainBaseWal.
         //   2. Failing that, the retry's own overlap detection fires: the partial
         //      feed left latestSeenTs at or above the pending range's min ts, so
@@ -11953,9 +12189,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertFalse(armHour02Read.get());
                 drainWalQueue();
 
-                // Recovery is transparent: the window was recomputed from the applied
-                // base, so the view stays valid with a clean tier and its watermark
-                // advances past every commit.
+                // Recovery is transparent: the window was put back where the durable
+                // output is and the retry drained every commit, so the view stays valid
+                // with a clean tier and its watermark advances past every commit.
                 Assert.assertFalse("mid-drain recovery must keep the view valid", instance.isInvalid());
                 Assert.assertFalse("recovery must leave the tier clean", instance.isTierStale());
                 Assert.assertEquals("recovery must advance the watermark past every commit",
@@ -11979,17 +12215,19 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testMidDrainRefreshFailureRebuildsWindowState() throws Exception {
+    public void testMidDrainRefreshFailureRecoversWindowState() throws Exception {
         // Regression: a refresh cycle that feeds >= 1 row through the incremental
         // window cursor - advancing the running-sum accumulator - but then throws
         // BEFORE any durable LV commit must not leave the accumulator
         // double-advanced. handleRefreshFailure observes windowStateDirty == true
-        // and calls rebuildWindowStateAfterMidDrainFailure ->
-        // rebuildActiveWindowStateFromAppliedBase, which recomputes the whole
-        // window from the applied base so the accumulators restart clean. Without
-        // that rebuild the retry re-drains the same base commits and feeds their
-        // rows a second time: with the fix reverted, the mid-drain row's running
-        // sum lands at 9 instead of 6 (fed twice), and this assertion catches it.
+        // and calls recoverWindowStateAfterMidDrainFailure ->
+        // recoverActiveWindowState, which restores the accumulators from the
+        // checkpoint timeline and the base WAL above its root, as a restart does, so
+        // they stand where the durable output does; the next turn drains the
+        // interrupted commits again. Without that recovery the retry re-drains the
+        // same base commits and feeds their rows a second time: with the fix
+        // reverted, the mid-drain row's running sum lands at 9 instead of 6 (fed
+        // twice), and this assertion catches it.
         //
         // The fault is a genuine mid-drain one, not a post-commit one. The lead
         // drain stages rows in RAM and never touches the LV WAL, so a throw during
@@ -12002,7 +12240,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // once the worker finishes seqTxn 2, and that re-enqueued task drains
         // seqTxn 3 AND 4 in a single pass. We fail the base WAL ts.d open of the
         // seqTxn-4 commit once, after the seqTxn-3 row is already fed; the fault
-        // self-clears so the rebuild's applied-base recompute reads cleanly.
+        // self-clears so the recovery's replay and the drain after it read cleanly.
         // assertMemoryLeak covers the base readers the throwing path closes.
         final String[] baseDir = new String[1];
         // -1 disarmed; >= 0 skip this many base WAL ts.d opens, then fail the next
@@ -12068,23 +12306,26 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         -1, armBaseTsRead.get());
                 drainWalQueue();
 
-                // The rebuild recomputed the whole window from the applied base
-                // (all four commits) and recorded success, so recovery is
-                // transparent: the view stays valid with a clean tier, its
-                // watermark advances past every commit, and the budget is untouched.
-                Assert.assertFalse("mid-drain rebuild must keep the view valid", instance.isInvalid());
-                Assert.assertFalse("rebuild must leave the tier clean", instance.isTierStale());
-                Assert.assertEquals("mid-drain rebuild recovers without charging the retry budget",
+                // The recovery restored the window from the timeline rather than
+                // rebuilding it, recorded success, and the turn after it drained the
+                // interrupted commits into the lead again. So recovery is transparent:
+                // the view stays valid with a clean tier, it has refreshed past every
+                // commit, and the budget is untouched.
+                Assert.assertFalse("mid-drain recovery must keep the view valid", instance.isInvalid());
+                Assert.assertFalse("recovery must leave the tier clean", instance.isTierStale());
+                Assert.assertEquals("mid-drain recovery charges no retry budget",
                         0, instance.getFlushRetryCount());
-                Assert.assertEquals("rebuild must advance the watermark past every commit",
-                        4, instance.getLastProcessedSeqTxn());
+                Assert.assertEquals("the recovery must restore the window from the timeline",
+                        1, instance.getCheckpointRuntimeRestores());
+                Assert.assertEquals("the view must refresh past every commit",
+                        4, instance.getRefreshedUpToSeqTxn());
                 // The decisive check: the running sum equals a from-scratch
                 // recompute. A double-advanced mid-drain row inflates it (9 instead
                 // of 6 at the seqTxn-3 row when the fix is reverted).
                 assertRunningSumLvMatchesRecompute();
 
-                // Steady state resumes cleanly: the rebuild advanced the watermark
-                // past all four commits, so a later commit does not re-feed them.
+                // Steady state resumes cleanly: the view refreshed past all four
+                // commits, so a later commit does not re-feed them.
                 setCurrentMicros(4_000_000L);
                 execute("INSERT INTO base VALUES ('2026-04-01T00:00:04.000000Z', 'a', 5)");
                 drainWalQueue();
@@ -15584,7 +15825,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // column that says the view's own bookkeeping stopped describing its
         // output. The two keyed open-segment execution counters are appended so
         // operators can distinguish a healthy checkpoint resume from a cold
-        // bootstrap without binding to refresh-job test hooks.
+        // bootstrap without binding to refresh-job test hooks. The two recovery
+        // columns follow, and the two base_apply_wait_* columns close the set:
+        // the last group an operator reads, and the only one about a view that is
+        // waiting rather than stopped.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
@@ -15617,7 +15861,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         + "o3_open_segment_cold_keyed_replay_count\t"
                         + "checkpoint_effective_duration_micros\t"
                         + "checkpoint_last_correction_depth_micros\t"
-                        + "checkpoint_correction_depth_sample_count\n");
+                        + "checkpoint_correction_depth_sample_count\t"
+                        + "checkpoint_recovery_phase\tcheckpoint_recovery_reason\t"
+                        + "base_apply_wait_seqtxn\tbase_apply_wait_micros\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }

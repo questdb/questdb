@@ -26,17 +26,19 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.lv.LiveViewCheckpointAnchorRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
+import io.questdb.cairo.lv.LiveViewCheckpointRestoreRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointWindowRoot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
@@ -66,15 +68,18 @@ import java.util.zip.CRC32;
  * still correct at the end.
  * <p>
  * What makes it a live concern is what this branch itself did. It added a fused window root
- * ({@code PAGE_KIND = 0x1d}) and a {@code _retirements} file <b>without</b> bumping
+ * ({@code PAGE_KIND = 0x1d}) and a {@code _retirements} file long before it bumped
  * {@code LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION}, because neither addition made an
- * old page unreadable. A future release has every reason to extend the format the same way,
- * so the interesting failures are the ones the superblock version does not announce.
+ * old page unreadable - the bump came later, with the removal of the decoder that had kept
+ * them readable. A future release has every reason to extend the format the same way, so the
+ * interesting failures are still the ones the superblock version does not announce.
  * <p>
  * Three gates decide the outcome, in this order, and the cases below cover all three:
  * <ol>
- *     <li>the superblock's magic and layout version - {@code isForeignFormat} resets the whole
- *     directory;</li>
+ *     <li>the superblock's magic and layout version - a version declared in both fields that
+ *     carry one blocks the view and keeps the directory, a slot whose two disagree is damage the
+ *     other slot recovers from, and a directory holding neither a declaration nor a readable slot
+ *     is reset whole;</li>
  *     <li>an unrecognized top-level entry in {@code _checkpoints/} - the same reset, which is
  *     the gate {@code _retirements} would have tripped on a 10.0.x binary;</li>
  *     <li>neither of those moved, but the metadata pages inside are newer. Nothing at the
@@ -118,6 +123,16 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setCurrentMicros(0);
         capture.start();
+    }
+
+    @Test
+    public void testAFlippedBitInTheNewestSlotsFormatVersionFallsBackToTheOtherSlot() throws Exception {
+        assertMemoryLeak(() -> assertAFlippedFormatBitFallsBack(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET));
+    }
+
+    @Test
+    public void testAFlippedBitInTheNewestSlotsMagicNibbleFallsBackToTheOtherSlot() throws Exception {
+        assertMemoryLeak(() -> assertAFlippedFormatBitFallsBack(LiveViewCheckpointSuperblock.SLOT_MAGIC_OFFSET));
     }
 
     @Test
@@ -196,6 +211,66 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
     }
 
     @Test
+    public void testABlockedViewReleasesItsBaseWalFloor() throws Exception {
+        // One WAL segment per commit, so countWalSegments reads the purge floor rather than the
+        // rollover threshold - the same knob LiveViewRefreshDisabledTest uses for the same reading.
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
+        // WalPurgeJob.runSerially is interval-gated off the millisecond clock, which this class
+        // freezes. Without both of these the sweep below silently does nothing.
+        setProperty(PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 0);
+        assertMemoryLeak(() -> {
+            seedFiveBoundaries();
+            final File checkpointsRoot = checkpointsRoot();
+            final String baseDirName = engine.getTableTokenIfExists("tx").getDirName();
+            shutdown();
+
+            setSuperblockFormatVersion(checkpointsRoot, LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 1);
+            restart();
+            Assert.assertTrue(instance("lv").isCheckpointRecoveryBlocked());
+
+            // A base commit the blocked view will not consume. It is what gives the purge job
+            // something above the view's frozen watermark to reclaim.
+            execute("INSERT INTO tx VALUES ('" + timestamp(50) + "', 'acct-1', 100.0)");
+            drainWalQueue();
+
+            // The floor a blocked view does NOT hold. Its own watermark never advances, so any
+            // floor it publishes is frozen, and a frozen floor grows the base WAL without bound -
+            // on a base table every other writer and view shares. Releasing is the same rule an
+            // invalid view follows, for the same reason.
+            final long walSegmentsBefore = countWalSegments(baseDirName);
+            engine.releaseInactive();
+            setCurrentMicros(60_000_000L);
+            try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
+                purgeJob.drain(0);
+            }
+            Assert.assertTrue(
+                    "a blocked view must release its base WAL floor, not pin it",
+                    countWalSegments(baseDirName) < walSegmentsBefore
+            );
+
+            // What that release costs, stated rather than hidden, because it is the reason to reach
+            // for the exit rather than to sit on a block. The restore replays the base WAL between
+            // the head checkpoint's boundary and the applied watermark; the sweep above took it, so
+            // a build that DOES read the format cannot resume off the roots the block preserved. It
+            // spends the flush-retry budget on the missing segment and lands in the base-WAL-loss
+            // re-derive, which recomputes the view from the base rows available today.
+            shutdown();
+            setSuperblockFormatVersion(checkpointsRoot, LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION);
+            restart();
+            Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+            capture.drain();
+            capture.assertLogged("live view re-derived from the applied base after base WAL loss");
+
+            // The rows are right here only because this base still holds every row the view was
+            // built from. A base that had since lost history to TTL, DROP/DETACH PARTITION or
+            // TRUNCATE would be recomputed from whatever survives - silently, and differently -
+            // which is the outcome the block exists to avoid and the reason the way out is the
+            // operator's re-CREATE rather than an indefinite wait.
+            assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
     public void testAFutureStateRootPageKindRebuildsFromTheBase() throws Exception {
         assertMemoryLeak(() -> {
             seedFiveBoundaries();
@@ -220,30 +295,142 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
             );
 
             restart();
-            assertTheDecoderGateRefused("anchor root page kind unknown, kind=" + FUTURE_PAGE_KIND);
+            assertTheDecoderGateRefused("window state root page kind unknown, kind=" + FUTURE_PAGE_KIND);
             assertRebuiltFromTheBase();
             assertRestartsCleanlyAfterwards();
         });
     }
 
     @Test
-    public void testAFutureSuperblockFormatVersionResetsTheCheckpointDirectory() throws Exception {
+    public void testAFutureSuperblockFormatVersionBlocksTheViewAndKeepsWhatItHas() throws Exception {
         assertMemoryLeak(() -> {
             seedFiveBoundaries();
             final File checkpointsRoot = checkpointsRoot();
+            final long checkpointFilesBefore = countFiles(checkpointsRoot);
+            final long processedBefore = instance("lv").getLastProcessedSeqTxn();
             shutdown();
 
-            // The gate that does announce itself. Both slots, because a single foreign slot is
-            // indistinguishable from a torn write and is deliberately left unclassified.
-            bumpSuperblockFormatVersion(checkpointsRoot);
+            // The gate that does announce itself. Both slots, which is what a build that
+            // owned this directory would have left, though one declaring slot is enough to
+            // block. Declaring takes both fields that carry a version - see
+            // assertAFlippedFormatBitFallsBack for what one of them alone gets.
+            setSuperblockFormatVersion(checkpointsRoot, LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 1);
 
             restart();
-            // The reset removes the directory outright, so the rebuild starts from no tree at all
-            // rather than from one it declined page by page.
+
+            // The boundary gate, not the reset one. The distinction is the whole change: a
+            // version this build does not implement is another build's generation announcing
+            // itself, and this build cannot show that replaying today's surviving base rows
+            // reproduces the output those roots stand for - TTL, DROP PARTITION and TRUNCATE
+            // all take source rows a live view keeps its own output for.
             capture.drain();
-            capture.assertLogged("live view checkpoint timeline carries a foreign layout version");
-            assertRebuiltFromTheBase();
-            assertRestartsCleanlyAfterwards();
+            capture.assertLogged("live view checkpoint timeline declares an unsupported format version");
+            capture.assertNotLogged("live view checkpoint timeline carries a foreign layout version");
+            capture.assertNotLogged("live view restart rebuilding from applied base");
+
+            final LiveViewInstance instance = instance("lv");
+            Assert.assertTrue(instance.isCheckpointRecoveryBlocked());
+            // Not a durable invalidation - _lv.s.invalid stays clear, which is what lets a build
+            // that reads the format resume the view with no operator action - even though the view
+            // reports itself invalid and releases its base WAL floor like any other stopped view.
+            Assert.assertFalse("blocking must not write _lv.s.invalid", instance.isInvalid());
+            TestUtils.assertContains(
+                    instance.getCheckpointRecoveryReason(),
+                    "checkpoint timeline format version " + (LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 1)
+                            + " is not supported by this build"
+            );
+            // The route names a decision that was taken rather than an attempt that ran: the
+            // refresh worker declined the view, so no restore and no rebuild happened.
+            Assert.assertEquals(
+                    "upgrade_blocked",
+                    LiveViewCheckpointRestoreRoute.name(instance.getCheckpointRestoreRoute())
+            );
+            Assert.assertFalse(instance.isCheckpointRestoreAttempted());
+            Assert.assertEquals(0, instance.getCheckpointRebuildAttempts());
+            Assert.assertEquals(0, instance.getCheckpointTimelineResets());
+            Assert.assertEquals(
+                    "not one file of the other build's directory may move",
+                    checkpointFilesBefore,
+                    countFiles(checkpointsRoot)
+            );
+
+            // The rows the other build materialized are still served, and a new base commit
+            // does not move them: refresh is stopped, not merely restore.
+            assertBlockedViewRows();
+            execute("INSERT INTO tx VALUES ('" + timestamp(50) + "', 'acct-1', 100.0)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int i = 0; i < 4; i++) {
+                    drainJob(job);
+                    drainWalQueue();
+                }
+            }
+            assertBlockedViewRows();
+            Assert.assertEquals(
+                    "a blocked view must not advance its watermark",
+                    processedBefore,
+                    instance("lv").getLastProcessedSeqTxn()
+            );
+            assertNoRefreshFaults("lv");
+
+            // live_views() carries the phase and the reason, so an operator can see why the
+            // view stopped without reading the log - and it reports the status those operators
+            // already search for, with invalidation_reason mirroring the recovery reason so a
+            // query written for durable invalidations needs no new column to explain this one.
+            // The phase is what says this is a format block rather than a terminal invalidation.
+            assertQuery("SELECT view_status, checkpoint_recovery_phase, " +
+                    "invalidation_reason = checkpoint_recovery_reason AS reason_mirrored " +
+                    "FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_status\tcheckpoint_recovery_phase\treason_mirrored\n" +
+                            "invalid\tblocked\ttrue\n");
+
+            // The disposition is derived from the superblock, so it survives a restart with no
+            // marker of its own - and the second restart is as harmless as the first.
+            shutdown();
+            restart();
+            Assert.assertTrue(instance("lv").isCheckpointRecoveryBlocked());
+            Assert.assertEquals(checkpointFilesBefore, countFiles(checkpointsRoot));
+            assertBlockedViewRows();
+
+            // A build that does implement the version meets no boundary: the view resumes off
+            // the roots that were held for it, rather than off a rebuild.
+            shutdown();
+            setSuperblockFormatVersion(checkpointsRoot, LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION);
+            restart();
+            Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+            assertRestoredFromTimeline("lv");
+            Assert.assertTrue(
+                    "the ladder the block preserved must come back whole, plus whatever the resume seals",
+                    countSealedBoundaries("lv") >= BOUNDARIES
+            );
+            assertNoRefreshFaults("lv");
+            // The commit that landed while the view was blocked is not lost either: no purge sweep
+            // ran over this block, so the base WAL still held it, and the resumed view materializes
+            // it on top of the restored roots rather than recomputing the window that carries it.
+            // A block that outlives a purge sweep does not get this - see
+            // testABlockedViewReleasesItsBaseWalFloor.
+            assertQuery("SELECT created_at, account_id, cumulative_sum, cumulative_count FROM lv")
+                    .noLeakCheck()
+                    .timestamp("created_at")
+                    .expectSize()
+                    .returns("created_at\taccount_id\tcumulative_sum\tcumulative_count\n" +
+                            "2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1\n" +
+                            "2026-01-01T09:00:10.000000Z\tacct-2\t11.0\t1\n" +
+                            "2026-01-01T09:00:20.000000Z\tacct-1\t22.0\t2\n" +
+                            "2026-01-01T09:00:30.000000Z\tacct-2\t42.0\t2\n" +
+                            "2026-01-01T09:00:40.000000Z\tacct-1\t63.0\t3\n" +
+                            "2026-01-01T09:00:50.000000Z\tacct-1\t163.0\t4\n");
+            assertViewMatchesRecompute();
+
+            // And the generation the resume published is a normal one: a further restart comes
+            // back on it.
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            assertNoRefreshFaults("lv");
+            assertViewMatchesRecompute();
         });
     }
 
@@ -289,6 +476,10 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
                 | ((bytes[offset + 3] & 0xff) << 24);
     }
 
+    private static long leLong(byte[] bytes, int offset) {
+        return (leInt(bytes, offset) & 0xffff_ffffL) | ((long) leInt(bytes, offset + 4) << 32);
+    }
+
     private static void putLeInt(byte[] bytes, int offset, int value) {
         bytes[offset] = (byte) value;
         bytes[offset + 1] = (byte) (value >>> 8);
@@ -296,8 +487,106 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
         bytes[offset + 3] = (byte) (value >>> 24);
     }
 
+    private static void putLeLong(byte[] bytes, int offset, long value) {
+        putLeInt(bytes, offset, (int) value);
+        putLeInt(bytes, offset + 4, (int) (value >>> 32));
+    }
+
     private static String timestamp(int secondOfDay) {
         return DAILY_ANCHOR + String.format("09:%02d:%02d.000000Z", secondOfDay / 60, secondOfDay % 60);
+    }
+
+    /**
+     * Flips one bit of one format field in the newest superblock slot - rot rather than a write,
+     * so the checksum is left stale - and asserts the view neither blocks nor rebuilds: it
+     * restores off the generation the other slot names, replays the commit the damaged slot
+     * covered, and a later seal overwrites the damage.
+     * <p>
+     * Bit 0 of the field's low byte turns this build's 2 into 3, which read alone is the next
+     * format version. A flip in the version field used to block the view on exactly that reading,
+     * costing a DROP and re-CREATE; one in the magic's nibble used to reset the directory and
+     * rebuild the view from the base rows that survive today.
+     */
+    private void assertAFlippedFormatBitFallsBack(int fieldOffset) throws Exception {
+        seedFiveBoundaries();
+        final File checkpointsRoot = checkpointsRoot();
+        shutdown();
+
+        final File timeline = new File(checkpointsRoot, LiveViewCheckpointLayout.TIMELINE_FILE_NAME);
+        final byte[] bytes = Files.readAllBytes(timeline.toPath());
+        final int generationOffset = LiveViewCheckpointSuperblock.SLOT_GENERATION_OFFSET;
+        final long generation0 = leLong(bytes, generationOffset);
+        final long generation1 = leLong(bytes, LiveViewCheckpointSuperblock.SLOT_SIZE + generationOffset);
+        final int newestSlot = generation1 > generation0 ? 1 : 0;
+        final long intactGeneration = Math.min(generation0, generation1);
+        bytes[newestSlot * LiveViewCheckpointSuperblock.SLOT_SIZE + fieldOffset] ^= 1;
+        Files.write(timeline.toPath(), bytes);
+
+        restart();
+        capture.drain();
+        capture.assertNotLogged("live view checkpoint timeline declares an unsupported format version");
+        capture.assertNotLogged("live view checkpoint timeline carries a foreign layout version");
+        capture.assertNotLogged("live view checkpoint directory was written by another format");
+        capture.assertNotLogged("live view restart rebuilding from applied base");
+
+        final LiveViewInstance instance = instance("lv");
+        Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+        Assert.assertFalse(instance.isInvalid());
+        assertRestoredFromTimeline("lv");
+        Assert.assertEquals(
+                "the restore must come back on the generation the intact slot names",
+                intactGeneration,
+                instance.getCheckpointRestoreGeneration()
+        );
+        assertNoRefreshFaults("lv");
+        assertViewMatchesRecompute();
+
+        // A commit seals over the slot selection passed over, and a restart comes back on the
+        // generation that seal published.
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            execute("INSERT INTO tx VALUES ('" + timestamp(50) + "', 'acct-1', 100.0)");
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        }
+        shutdown();
+        restart();
+        assertRestoredFromTimeline("lv");
+        Assert.assertTrue(
+                "the restart must restore off a generation sealed after the damage",
+                instance("lv").getCheckpointRestoreGeneration() > intactGeneration
+        );
+        assertNoRefreshFaults("lv");
+        assertViewMatchesRecompute();
+        assertQuery("SELECT created_at, account_id, cumulative_sum, cumulative_count FROM lv")
+                .noLeakCheck()
+                .timestamp("created_at")
+                .expectSize()
+                .returns("created_at\taccount_id\tcumulative_sum\tcumulative_count\n" +
+                        "2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1\n" +
+                        "2026-01-01T09:00:10.000000Z\tacct-2\t11.0\t1\n" +
+                        "2026-01-01T09:00:20.000000Z\tacct-1\t22.0\t2\n" +
+                        "2026-01-01T09:00:30.000000Z\tacct-2\t42.0\t2\n" +
+                        "2026-01-01T09:00:40.000000Z\tacct-1\t63.0\t3\n" +
+                        "2026-01-01T09:00:50.000000Z\tacct-1\t163.0\t4\n");
+        final byte[] healed = Files.readAllBytes(timeline.toPath());
+        for (int slot = 0; slot < 2; slot++) {
+            final int base = slot * LiveViewCheckpointSuperblock.SLOT_SIZE;
+            Assert.assertEquals(
+                    "slot " + slot + " must carry this build's magic again",
+                    LiveViewCheckpointSuperblock.SLOT_MAGIC,
+                    leLong(healed, base + LiveViewCheckpointSuperblock.SLOT_MAGIC_OFFSET)
+            );
+            Assert.assertEquals(
+                    "slot " + slot + " must carry this build's version again",
+                    LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION,
+                    leInt(healed, base + LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET)
+            );
+            Assert.assertEquals(
+                    "slot " + slot + " must checksum again",
+                    crc32(healed, base, LiveViewCheckpointSuperblock.SLOT_CRC_COVERAGE),
+                    leInt(healed, base + LiveViewCheckpointSuperblock.SLOT_CRC_OFFSET)
+            );
+        }
     }
 
     /**
@@ -327,32 +616,31 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
     }
 
     /**
-     * Asserts the tagged union declines a page kind this build does not know, rather than either
-     * claiming it or reporting it as damage.
+     * Asserts the state-root decoder refuses a page kind this build does not know, rather than
+     * either claiming it or reporting it as damage.
      * <p>
-     * Both halves matter. The fused probe answering yes would hand a newer shape to this build's
-     * decoder on the old field offsets, which is the misread a tagged union makes reachable. The
-     * other arm answering {@code metadata page checksum mismatch} would mean the build cannot
-     * tell a newer format from a corrupt one - the page's checksum agrees with its body here, so
-     * the only honest complaint is about the kind.
+     * Both halves matter. The probe answering yes would hand a newer shape to this build's
+     * decoder on the old field offsets, which is the misread a tagged union used to make
+     * reachable. The strict decode answering {@code metadata page checksum mismatch} would mean
+     * the build cannot tell a newer format from a corrupt one - the page's checksum agrees with
+     * its body here, so the only honest complaint is about the kind.
      */
     private void assertAFuturePageKindIsRejectedRatherThanMisread(File checkpointsRoot, PageSite site) {
         try (
                 Path dir = new Path().of(checkpointsRoot.getAbsolutePath());
-                LiveViewCheckpointWindowRoot windowRoot = new LiveViewCheckpointWindowRoot(engine.getConfiguration());
-                LiveViewCheckpointAnchorRoot anchorRoot = new LiveViewCheckpointAnchorRoot(engine.getConfiguration())
+                LiveViewCheckpointWindowRoot windowRoot = new LiveViewCheckpointWindowRoot(engine.getConfiguration())
         ) {
             Assert.assertFalse(
-                    "the fused probe must decline a page kind this build does not know",
+                    "the probe must decline a page kind this build does not know",
                     windowRoot.ofIfWindowRoot(dir, site.ref())
             );
             try {
-                anchorRoot.of(dir, site.ref());
-                Assert.fail("a page kind this build does not know must not decode as an anchor root");
+                windowRoot.of(dir, site.ref());
+                Assert.fail("a page kind this build does not know must not decode as a state root");
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "anchor root page kind unknown");
+                TestUtils.assertContains(e.getFlyweightMessage(), "window state root page kind unknown");
             } finally {
-                anchorRoot.detach();
+                windowRoot.detach();
             }
         }
     }
@@ -451,18 +739,64 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
     }
 
     /**
-     * Rewrites both superblock slots to a layout version this build does not write, checksum and
-     * all, so the slot is a real generation another build owns rather than a torn write.
+     * Asserts the view still serves exactly the rows the other build materialized. Read through
+     * the ordinary cursor, so it covers what a user querying a blocked view gets.
      */
-    private void bumpSuperblockFormatVersion(File checkpointsRoot) throws IOException {
+    private void assertBlockedViewRows() throws Exception {
+        assertQuery("SELECT created_at, account_id, cumulative_sum, cumulative_count FROM lv")
+                .noLeakCheck()
+                .timestamp("created_at")
+                .expectSize()
+                .returns("created_at\taccount_id\tcumulative_sum\tcumulative_count\n" +
+                        "2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1\n" +
+                        "2026-01-01T09:00:10.000000Z\tacct-2\t11.0\t1\n" +
+                        "2026-01-01T09:00:20.000000Z\tacct-1\t22.0\t2\n" +
+                        "2026-01-01T09:00:30.000000Z\tacct-2\t42.0\t2\n" +
+                        "2026-01-01T09:00:40.000000Z\tacct-1\t63.0\t3\n");
+    }
+
+    /**
+     * Counts the base table's WAL segment directories - what the purge job reclaims once no
+     * consumer's floor holds them.
+     */
+    private long countWalSegments(String tableDirName) throws IOException {
+        final File tableDir = new File(engine.getConfiguration().getDbRoot(), tableDirName);
+        final File[] walDirs = tableDir.listFiles(f -> f.isDirectory() && f.getName().startsWith(WalUtils.WAL_NAME_BASE));
+        if (walDirs == null) {
+            return 0;
+        }
+        long segments = 0;
+        for (File walDir : walDirs) {
+            final File[] segmentDirs = walDir.listFiles(File::isDirectory);
+            if (segmentDirs != null) {
+                segments += segmentDirs.length;
+            }
+        }
+        return segments;
+    }
+
+    /**
+     * Rewrites both superblock slots to name {@code formatVersion} the way a build of that
+     * version stamps one - in the version field and in the magic's trailing nibble, checksum and
+     * all - so the slots are a real generation of that format rather than a torn write or a
+     * flipped field. Both slots, and both directions: the same helper stamps a version this build
+     * does not implement and stamps its own back, which is how a case can show that the block
+     * held the directory intact for the build that does read it.
+     */
+    private void setSuperblockFormatVersion(File checkpointsRoot, int formatVersion) throws IOException {
         final File file = new File(checkpointsRoot, LiveViewCheckpointLayout.TIMELINE_FILE_NAME);
         final byte[] bytes = Files.readAllBytes(file.toPath());
         for (int slot = 0; slot < 2; slot++) {
             final int base = slot * LiveViewCheckpointSuperblock.SLOT_SIZE;
+            putLeLong(
+                    bytes,
+                    base + LiveViewCheckpointSuperblock.SLOT_MAGIC_OFFSET,
+                    LiveViewCheckpointSuperblock.SLOT_MAGIC_FAMILY | formatVersion
+            );
             putLeInt(
                     bytes,
                     base + LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET,
-                    LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 1
+                    formatVersion
             );
             putLeInt(
                     bytes,

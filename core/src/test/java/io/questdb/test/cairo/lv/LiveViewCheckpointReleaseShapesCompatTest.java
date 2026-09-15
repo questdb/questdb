@@ -25,25 +25,30 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointRestoreRoute;
+import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.File;
 import java.io.IOException;
 
 /**
- * Cross-version restore for the durable shapes {@link LiveViewCheckpointReleaseCompatTest}
- * does not reach.
+ * The format block against the released shapes {@link LiveViewCheckpointReleaseCompatTest} does
+ * not reach - and, in four of them, against trees that never carried the removed layout at all.
  * <p>
- * That case reads a released tree carrying one anchored cumulative view, which exercises the
- * boundary root, the legacy anchor root, the function roots and directory, and a partition map
- * one page deep. Four shapes stay unread by it, and each is a decoder this branch would run
- * against released bytes the first time a real instance upgrades:
+ * That case reads a released tree carrying one anchored cumulative view, which is the shape whose
+ * state root this build stopped being able to decode. Five more shapes live in this fixture, and
+ * only one of them is anchored:
  * <ul>
  *     <li><b>{@code lv_rows}</b> - a bounded {@code ROWS} frame, whose functions freeze a
  *     whole-state page rather than a ring;</li>
@@ -57,16 +62,19 @@ import java.io.IOException;
  *     <li><b>{@code lv_late}</b> - a timeline a localized out-of-order repair spliced, so its
  *     published generation carries a row-position delta tree correcting the suffix.</li>
  * </ul>
+ * Four of those five have no anchored window, so 10.0.1 wrote them no state root of any kind and
+ * this build could in principle read every page they hold. They block anyway, and that is the
+ * fact this class exists for: the boundary is the <b>timeline's</b> declared format version, not
+ * the shape of the roots underneath it. A per-root boundary would leave these four restoring off
+ * a directory whose sibling structures this build no longer understands, which is a narrower
+ * promise than the format version makes.
  * <p>
- * The load-bearing assertion is the same one the sibling case rests on:
- * {@link LiveViewInstance#isCheckpointRestoreSucceeded()}. A restore that threw would retire
- * the timeline, replay from the applied base and land on exactly the same rows, so a row
- * oracle alone proves nothing. The rows are compared anyway - against a from-base recompute,
- * not against the runtime's own arithmetic - because a restore that succeeded on a misread
- * page is worse than one that failed.
+ * The rows are the second half. A blocked view keeps serving what the released build materialized
+ * - checked here against a snapshot taken before this build's runtime touched the tree, rather
+ * than against a recompute, because a recompute is exactly what a block must not have done.
  * <p>
- * {@link LiveViewCheckpointWireFormatTest} takes the same fixture apart page by page. This
- * class asks only whether the composite path works.
+ * {@link LiveViewCheckpointWireFormatTest} takes the same fixture apart page by page. This class
+ * asks only what the composite path does with it.
  * <p>
  * To regenerate the fixture, copy {@code /lv/LiveViewReleaseShapesFixtureGenerator.java.txt}
  * into a clean {@code 10.0.1} checkout's {@code io.questdb.test.cairo.lv} package and run it;
@@ -90,10 +98,17 @@ public class LiveViewCheckpointReleaseShapesCompatTest extends AbstractLiveViewC
      */
     private static final String ROWS_FRAME =
             "PARTITION BY account_id ORDER BY created_at ROWS BETWEEN 3 PRECEDING AND CURRENT ROW";
+    // The layout version 10.0.1 stamped, pinned rather than derived from this build's own
+    // constant so a later bump cannot quietly redefine what the fixture is.
+    private static final int RELEASED_FORMAT_VERSION = 1;
     private static final ObjList<ReleasedShape> SHAPES = releasedShapes();
+    // A valid view holding unmoved rows is the ending of both a block and a decline further down,
+    // so the state a case can read afterwards does not say which gate fired. The log does.
+    private static final LogCapture capture = new LogCapture();
 
     @After
     public void resetClock() {
+        capture.stop();
         setCurrentMicros(-1);
     }
 
@@ -103,103 +118,144 @@ public class LiveViewCheckpointReleaseShapesCompatTest extends AbstractLiveViewC
         // seals a boundary of its own rather than waiting for a row budget to fill.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setCurrentMicros(2 * FIXTURE_END_MICROS);
+        capture.start();
     }
 
     @Test
-    public void testEveryReleasedShapeKeepsAccumulatingAfterTheUpgrade() throws Exception {
+    public void testEveryReleasedShapeBlocksWhateverItsStateLayout() throws Exception {
         assertMemoryLeak(() -> {
-            openFixture();
+            final LongList checkpointFilesBefore = openFixture();
+            final ObjList<CharSequence> releasedRows = new ObjList<>();
+            for (int i = 0, n = SHAPES.size(); i < n; i++) {
+                final String viewName = SHAPES.getQuick(i).viewName;
+                releasedRows.add(snapshotRows(viewName));
+                Assert.assertEquals(
+                        viewName + ": the fixture must declare the version 10.0.1 stamped",
+                        RELEASED_FORMAT_VERSION,
+                        readSuperblockFormatVersion(checkpointsRoot(viewName))
+                );
+            }
+
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
-                for (int i = 0, n = SHAPES.size(); i < n; i++) {
-                    Assert.assertTrue(
-                            SHAPES.getQuick(i).viewName + ": the upgrade must restore off the released roots",
-                            instance(SHAPES.getQuick(i).viewName).isCheckpointRestoreSucceeded()
-                    );
-                }
+            }
 
-                // The first commit after the upgrade seals through this branch's writers. A
-                // restored partition that came back empty answers this row's own value rather
-                // than the running one, which the recompute catches on the very next row.
+            // Nothing rebuilt, whichever shape the tree held: the version is read off the
+            // superblock and the decision is taken there, above every structure below it.
+            capture.drain();
+            capture.assertLogged("live view checkpoint timeline declares an unsupported format version");
+            capture.assertNotLogged("could not restore live view from checkpoint timeline, rebuilding derived state");
+            capture.assertNotLogged("live view restart rebuilding from applied base");
+
+            for (int i = 0, n = SHAPES.size(); i < n; i++) {
+                final String viewName = SHAPES.getQuick(i).viewName;
+                final LiveViewInstance instance = instance(viewName);
+                Assert.assertTrue(viewName + ": must be blocked", instance.isCheckpointRecoveryBlocked());
+                Assert.assertFalse(viewName + ": blocking must not write _lv.s.invalid", instance.isInvalid());
+                Assert.assertEquals(
+                        viewName + ": the route must name the decision the refresh turn took",
+                        "upgrade_blocked",
+                        LiveViewCheckpointRestoreRoute.name(instance.getCheckpointRestoreRoute())
+                );
+                Assert.assertFalse(viewName + ": no restore may be attempted", instance.isCheckpointRestoreAttempted());
+                Assert.assertEquals(viewName, 0, instance.getCheckpointRebuildAttempts());
+                Assert.assertEquals(viewName, 0, instance.getCheckpointTimelineResets());
+                Assert.assertEquals(
+                        viewName + ": not one file of the released directory may move",
+                        checkpointFilesBefore.getQuick(i),
+                        countFiles(checkpointsRoot(viewName))
+                );
+                TestUtils.assertEquals(
+                        viewName + ": the rows the released build materialized must still be served",
+                        releasedRows.getQuick(i),
+                        snapshotRows(viewName)
+                );
+                assertNoRefreshFaults(viewName);
+            }
+
+            // A base commit the blocked views will not consume, then a second restart: the
+            // disposition is derived from the superblock, so it comes back with no marker of its
+            // own and the rows still do not move.
+            insertDense(60);
+            insertWide(60);
+            insertLate(130);
+            restartCycle();
+            for (int i = 0, n = SHAPES.size(); i < n; i++) {
+                final String viewName = SHAPES.getQuick(i).viewName;
+                Assert.assertTrue(viewName + ": must stay blocked", instance(viewName).isCheckpointRecoveryBlocked());
+                Assert.assertEquals(
+                        viewName,
+                        checkpointFilesBefore.getQuick(i),
+                        countFiles(checkpointsRoot(viewName))
+                );
+                TestUtils.assertEquals(viewName, releasedRows.getQuick(i), snapshotRows(viewName));
+            }
+        });
+    }
+
+    @Test
+    public void testTheOperatorsReCreateIsTheWayOutForEveryReleasedShape() throws Exception {
+        assertMemoryLeak(() -> {
+            openFixture();
+            for (int i = 0, n = SHAPES.size(); i < n; i++) {
+                Assert.assertTrue(instance(SHAPES.getQuick(i).viewName).isCheckpointRecoveryBlocked());
+            }
+
+            // The documented exit, run as an operator would run it, once per shape. SHOW CREATE
+            // LIVE VIEW has to work on a blocked view of every shape - the definition is what the
+            // re-create is built from - and its output has to re-execute.
+            for (int i = 0, n = SHAPES.size(); i < n; i++) {
+                final String viewName = SHAPES.getQuick(i).viewName;
+                printSql("SHOW CREATE LIVE VIEW " + viewName + ';');
+                final String releasedDdl = sink.toString().replace("ddl\n", "");
+                execute("DROP LIVE VIEW " + viewName);
+                execute(releasedDdl);
+            }
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int i = 0, n = SHAPES.size(); i < n; i++) {
+                    driveSeedToCompletion(job, SHAPES.getQuick(i).viewName);
+                }
+                driveRefreshToQuiescence(job);
                 insertDense(job, 60);
                 insertWide(job, 60);
                 insertLate(job, 130);
             }
-            assertEveryShapeMatchesRecompute("after a commit through this branch's writers");
 
-            // A second restart, now reading back whatever this branch sealed rather than the
-            // released roots.
-            restartCycle();
             for (int i = 0, n = SHAPES.size(); i < n; i++) {
                 final String viewName = SHAPES.getQuick(i).viewName;
-                Assert.assertFalse(viewName + ": must stay valid across a restart", instance(viewName).isInvalid());
-                Assert.assertTrue(
-                        viewName + ": the restart must restore off the root this branch converted to",
-                        instance(viewName).isCheckpointRestoreSucceeded()
+                final LiveViewInstance recreated = instance(viewName);
+                Assert.assertFalse(viewName + ": the re-created view must not be blocked",
+                        recreated.isCheckpointRecoveryBlocked());
+                Assert.assertFalse(viewName, recreated.isInvalid());
+                Assert.assertEquals(
+                        viewName + ": the re-created view must seal under this build's format version",
+                        LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION,
+                        readSuperblockFormatVersion(checkpointsRoot(viewName))
                 );
             }
-            assertEveryShapeMatchesRecompute("after a restart off this branch's own seal");
+            // The rows are a recomputation from the base rows available today, which is what makes
+            // this a separate operation rather than completion of an upgrade.
+            assertEveryShapeMatchesRecompute("after the operator's re-create");
+
+            // And they are ordinary views from here: each seals its own timeline and a restart
+            // comes back on it.
+            restartCycle();
+            for (int i = 0, n = SHAPES.size(); i < n; i++) {
+                assertRestoredFromTimeline(SHAPES.getQuick(i).viewName);
+            }
+            assertEveryShapeMatchesRecompute("after a restart off the re-created views' own seals");
         });
     }
 
-    @Test
-    public void testEveryReleasedShapeRestoresRatherThanRebuildingFromTheBase() throws Exception {
-        assertMemoryLeak(() -> {
-            openFixture();
-
-            // The fixture is genuinely legacy-shaped: 10.0.1 has no fused root to write, so a
-            // probe that reported one here would mean the case is testing this branch's own bytes.
-            for (int i = 0, n = SHAPES.size(); i < n; i++) {
-                final ReleasedShape shape = SHAPES.getQuick(i);
-                Assert.assertFalse(
-                        shape.viewName + ": the fixture's head must be a legacy root, not a fused one",
-                        isFusedHead(shape.viewName)
-                );
-                assertReleasedLineage(shape, "the fixture must arrive with the lineage the released build sealed");
-            }
-
-            // The upgrade's first refresh cycle.
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                driveRefreshToQuiescence(job);
-            }
-
-            for (int i = 0, n = SHAPES.size(); i < n; i++) {
-                final ReleasedShape shape = SHAPES.getQuick(i);
-                final LiveViewInstance instance = instance(shape.viewName);
-                Assert.assertFalse(
-                        shape.viewName + ": a released checkpoint must not invalidate the view",
-                        instance.isInvalid()
-                );
-                Assert.assertTrue(shape.viewName + ": the restore must have run", instance.isCheckpointRestoreAttempted());
-                Assert.assertTrue(
-                        shape.viewName + ": the upgrade must restore off the released roots rather than "
-                                + "rebuild from the base",
-                        instance.isCheckpointRestoreSucceeded()
-                );
-                assertNoRefreshFaults(shape.viewName);
-
-                // A rebuild retires the timeline before replaying, so the lineage is the second,
-                // independent witness that no fallback ran.
-                assertReleasedLineage(
-                        shape,
-                        "the released lineage must carry forward rather than reset to a new generation"
-                );
-                Assert.assertEquals(
-                        shape.viewName + ": the restored runtime must resume at the boundary the released "
-                                + "build sealed",
-                        ts(shape.headBoundary),
-                        instance.getHeadCheckpointMaxTs()
-                );
-                Assert.assertFalse(
-                        shape.viewName + ": restoring must not rewrite the head; only a later seal converts "
-                                + "the shape",
-                        isFusedHead(shape.viewName)
-                );
-            }
-
-            // A restore that succeeded on a misread page is worse than one that failed.
-            assertEveryShapeMatchesRecompute("straight off the released roots");
-        });
+    /**
+     * The rows a view serves right now, as text. Compared against itself across a refresh turn and
+     * a restart, which is how a case says "these did not move" without a literal per shape - and
+     * without a from-base recompute, which is the thing a blocked view must not have run.
+     */
+    private CharSequence snapshotRows(String viewName) throws Exception {
+        printSql("SELECT * FROM " + viewName + " ORDER BY 2, 1;");
+        return sink.toString();
     }
 
     private void assertEveryShapeMatchesRecompute(String at) throws Exception {
@@ -218,65 +274,61 @@ public class LiveViewCheckpointReleaseShapesCompatTest extends AbstractLiveViewC
         LOG.info().$("released shapes match their from-base recompute [at=").$(at).$(']').$();
     }
 
-    /**
-     * Asserts the head the released build sealed is still the head in force: the same number of
-     * logical boundaries, standing on the same live-view and base sequencer txns.
-     * <p>
-     * The boundary timestamp is deliberately not among these. It is runtime state the seal and
-     * the restore publish, not something the live-view state file carries, so before the first
-     * refresh it reads {@code LONG_NULL} whatever the timeline holds. The case asserts it
-     * separately, after the restore that fills it in.
-     */
-    private void assertReleasedLineage(ReleasedShape shape, String message) {
-        final LiveViewInstance instance = instance(shape.viewName);
-        Assert.assertEquals(
-                shape.viewName + ": " + message + " [sealedBoundaries]",
-                shape.sealedBoundaries,
-                countSealedBoundaries(shape.viewName)
-        );
-        Assert.assertEquals(
-                shape.viewName + ": " + message + " [headLvSeqTxn]",
-                shape.headLvSeqTxn,
-                instance.getHeadCheckpointLvSeqTxn()
-        );
-        Assert.assertEquals(
-                shape.viewName + ": " + message + " [headBaseSeqTxn]",
-                shape.headBaseSeqTxn,
-                instance.getHeadCheckpointBaseSeqTxn()
-        );
-    }
-
-    private void insertDense(LiveViewRefreshJob job, int second) throws Exception {
+    private void insertDense(int second) throws Exception {
         execute("INSERT INTO tx VALUES ('" + timestamp(second) + "', 'acct-1', "
                 + (second + 1.0) + ", " + (second * 1_000L) + ", "
                 + "1234512345678901234567890.123456m, 12345678901234567890123456789012345678901m)");
         drainWalQueue();
+    }
+
+    private void insertDense(LiveViewRefreshJob job, int second) throws Exception {
+        insertDense(second);
         driveRefreshToQuiescence(job);
+    }
+
+    private void insertLate(int second) throws Exception {
+        execute("INSERT INTO late VALUES ('" + timestamp(second) + "', 'acct-1', " + (second + 1.0) + ")");
+        drainWalQueue();
     }
 
     private void insertLate(LiveViewRefreshJob job, int second) throws Exception {
-        execute("INSERT INTO late VALUES ('" + timestamp(second) + "', 'acct-1', " + (second + 1.0) + ")");
-        drainWalQueue();
+        insertLate(second);
         driveRefreshToQuiescence(job);
     }
 
-    private void insertWide(LiveViewRefreshJob job, int second) throws Exception {
+    private void insertWide(int second) throws Exception {
         execute("INSERT INTO wide VALUES ('" + timestamp(second) + "', 'k000', " + (second + 1.0) + ")");
         drainWalQueue();
+    }
+
+    private void insertWide(LiveViewRefreshJob job, int second) throws Exception {
+        insertWide(second);
         driveRefreshToQuiescence(job);
     }
 
     /**
-     * Unpacks the fixture and registers its live views, without refreshing them yet, so a case
-     * may inspect the released tree before this branch's runtime has touched it.
+     * Unpacks the fixture and loads its catalogue, which is where the block is decided, and
+     * reports the file count each view's released tree arrived with. The counts are taken before
+     * the catalogue load, so they are the released inventory rather than one this build has
+     * already had an opportunity to change.
      */
-    private void openFixture() throws IOException {
+    private LongList openFixture() throws IOException {
         replaceDbContent(FIXTURE_RESOURCE);
+        final LongList checkpointFiles = new LongList();
+        for (int i = 0, n = SHAPES.size(); i < n; i++) {
+            final String viewName = SHAPES.getQuick(i).viewName;
+            final File checkpointsRoot = new File(
+                    new File(engine.getConfiguration().getDbRoot(), engine.getTableTokenIfExists(viewName).getDirName()),
+                    LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME
+            );
+            checkpointFiles.add(countFiles(checkpointsRoot));
+        }
         engine.buildViewGraphs();
         for (int i = 0, n = SHAPES.size(); i < n; i++) {
             final String viewName = SHAPES.getQuick(i).viewName;
             Assert.assertFalse(viewName + ": the fixture must not carry an invalid view", instance(viewName).isInvalid());
         }
+        return checkpointFiles;
     }
 
     private void restartCycle() throws Exception {
@@ -292,21 +344,22 @@ public class LiveViewCheckpointReleaseShapesCompatTest extends AbstractLiveViewC
     }
 
     /**
-     * The five released views, the lineage each one's own last seal published, and the
-     * from-base recompute its rows have to equal. The numbers are what the generator
-     * printed when it wrote the fixture.
+     * The five released views and the from-base recompute each one's rows have to equal once an
+     * operator has re-created it. The lineage each view's own last seal published is deliberately
+     * not among these: this build cannot read a blocked timeline, so a number it could not check
+     * would be documentation posing as an assertion.
      */
     private static ObjList<ReleasedShape> releasedShapes() {
         final ObjList<ReleasedShape> shapes = new ObjList<>();
         shapes.add(new ReleasedShape(
-                "lv_rows", 5, 5, 5, "2026-01-01T09:00:41.000000Z",
+                "lv_rows",
                 "SELECT created_at, account_id, "
                         + "sum(amount) OVER (" + ROWS_FRAME + ") AS windowed_sum, "
                         + "count(amount) OVER (" + ROWS_FRAME + ") AS windowed_count "
                         + "FROM tx"
         ));
         shapes.add(new ReleasedShape(
-                "lv_range", 5, 5, 5, "2026-01-01T09:00:41.000000Z",
+                "lv_range",
                 "SELECT created_at, account_id, "
                         + "sum(amount) OVER (" + RANGE_FRAME + ") AS range_sum, "
                         + "max(amount) OVER (" + RANGE_FRAME + ") AS range_max, "
@@ -318,7 +371,7 @@ public class LiveViewCheckpointReleaseShapesCompatTest extends AbstractLiveViewC
                         + "FROM tx"
         ));
         shapes.add(new ReleasedShape(
-                "lv_decimal", 5, 5, 5, "2026-01-01T09:00:41.000000Z",
+                "lv_decimal",
                 "SELECT created_at, account_id, "
                         + "sum(d128) OVER (" + RANGE_FRAME + ") AS decimal_sum128, "
                         + "max(d128) OVER (" + RANGE_FRAME + ") AS decimal_max128, "
@@ -329,7 +382,7 @@ public class LiveViewCheckpointReleaseShapesCompatTest extends AbstractLiveViewC
         // ANCHOR is live-view syntax, so the daily bucket is written out as an ordinary
         // partition term.
         shapes.add(new ReleasedShape(
-                "lv_keyed", 5, 5, 5, "2026-01-01T09:00:40.000000Z",
+                "lv_keyed",
                 "SELECT created_at, account_id, "
                         + "sum(amount) OVER (PARTITION BY account_id, bucket ORDER BY created_at "
                         + "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumulative_sum "
@@ -338,7 +391,7 @@ public class LiveViewCheckpointReleaseShapesCompatTest extends AbstractLiveViewC
                         + "FROM wide)"
         ));
         shapes.add(new ReleasedShape(
-                "lv_late", 12, 13, 13, "2026-01-01T09:01:51.000000Z",
+                "lv_late",
                 "SELECT created_at, account_id, "
                         + "sum(amount) OVER (" + ROWS_FRAME + ") AS windowed_sum "
                         + "FROM late"
@@ -350,26 +403,11 @@ public class LiveViewCheckpointReleaseShapesCompatTest extends AbstractLiveViewC
      * One released view and everything the cases assert about it.
      */
     private static final class ReleasedShape {
-        final long headBaseSeqTxn;
-        final String headBoundary;
-        final long headLvSeqTxn;
         final String recompute;
-        final int sealedBoundaries;
         final String viewName;
 
-        ReleasedShape(
-                String viewName,
-                int sealedBoundaries,
-                long headLvSeqTxn,
-                long headBaseSeqTxn,
-                String headBoundary,
-                String recompute
-        ) {
+        ReleasedShape(String viewName, String recompute) {
             this.viewName = viewName;
-            this.sealedBoundaries = sealedBoundaries;
-            this.headLvSeqTxn = headLvSeqTxn;
-            this.headBaseSeqTxn = headBaseSeqTxn;
-            this.headBoundary = headBoundary;
             this.recompute = recompute;
         }
     }

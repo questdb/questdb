@@ -173,6 +173,16 @@ public class LiveViewInstance implements QuietCloseable {
     private RecordCursorFactory storedRowScanFactory;
     private RecordToRowCopier storedRowCopier;
     private long storedRowCopierMetadataVersion = -1;
+    // Wall-clock (micros) at which this view's current apply-lag wait began, and the field that
+    // says the view is in one at all. The back-off floor below cannot say it: the floor ends
+    // every APPLY_LAG_DEFER_BACKOFF_US whether or not the base has applied anything, so a view
+    // waiting on a suspended base holds no floor between its retries. This is stamped on the
+    // first deferral of an episode and left alone by the retries, so live_views() can report how
+    // long the view has been unable to make progress rather than how long ago it last retried.
+    // LONG_NULL when the view is not waiting; clearApplyLagDeferral() ends the episode on every
+    // path that ends the wait - a cycle that drained, a turn that reached a real fault, an
+    // invalidation and a drop. Volatile for the catalogue query thread that reads it.
+    private volatile long applyLagDeferSinceUs = Numbers.LONG_NULL;
     // Base seqTxn the deferred cycle waited on when it armed applyLagDeferUntilUs. The pre-latch
     // guard clears the floor early once the base applies past this point, so a caught-up view
     // converges without waiting out the wall-clock floor (which a frozen clock never crosses).
@@ -422,12 +432,66 @@ public class LiveViewInstance implements QuietCloseable {
     // under the refresh latch; volatile so the catalogue thread can read
     // the latest value without additional synchronisation.
     private volatile boolean checkpointRestoreAttempted;
-    // Set true only when a timeline root restore actually rehydrated the window
-    // state. Stays false when no usable root existed or the restore failed and
-    // fell back to a from-base rebuild. Distinguishes a real
-    // restore from the replay fallback for observability and tests. Mutated only
+    // Which route that one attempt took, as a LiveViewCheckpointRestoreRoute
+    // constant, and the root a TIMELINE_RESTORE selected. The route replaces the
+    // boolean "did the restart resolve its derived state" flag this class used to
+    // carry: both the restore and the applied-base rebuild resolve it, so the
+    // boolean named the outcome without naming the operation, and a restore
+    // regression could hide behind the fallback that covered for it. Each route is
+    // recorded by the branch that finished the operation it names. Mutated only
     // under the refresh latch; volatile for the catalogue thread.
-    private volatile boolean checkpointRestoreSucceeded;
+    private volatile int checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.NONE;
+    private volatile long checkpointRestoreCheckpointId = Numbers.LONG_NULL;
+    private volatile long checkpointRestoreGeneration = Numbers.LONG_NULL;
+    // Why this view's recovery stopped rather than finished, or why it has not
+    // finished yet, as a LiveViewCheckpointRecoveryPhase constant, and the operator
+    // text that goes with it. Derived rather than persisted: the catalogue load
+    // re-reads the superblock on every restart and reaches the same format
+    // disposition, and the restart's own recovery re-reaches a refused rebuild, so a
+    // blocked view stays blocked without a marker of its own. A format block is
+    // written on the catalogue thread, before the refresh worker has seen the
+    // instance and before any repair could be parked on it; a rebuild block, and a
+    // rebuild deferral with its clearing, by the refresh worker under the refresh
+    // latch. Volatile because every other reader - the WAL purge job, live_views() -
+    // is another thread.
+    private volatile int checkpointRecoveryPhase = LiveViewCheckpointRecoveryPhase.NONE;
+    private volatile String checkpointRecoveryReason;
+    // Lifetime counts of the two destructive events a restart witness has to rule
+    // out: applied-base rebuilds this instance started (one per restart at most
+    // today, since the restore attempt is single-shot) and whole-timeline
+    // retirements it ran, from the restart rebuild or from any later out-of-order
+    // repair that could splice nothing. A restart that restored off published roots
+    // leaves both at zero until something else retires the ladder. Bumped only on
+    // the refresh worker; volatile for the catalogue thread. In-memory only - they
+    // reset on restart, like the counters above.
+    private volatile long checkpointRebuildAttempts;
+    private volatile long checkpointTimelineResets;
+    // Lifetime count of restores from the checkpoint timeline this instance ran while
+    // refreshing, rather than at restart: a base schema change or a mid-drain failure lost
+    // the accumulators, and the refresh worker put them back from the view's own newest
+    // root and the base WAL above it instead of rebuilding the view's output from the
+    // applied base. The restart route above does not move for one. Bumped only on the
+    // refresh worker, by the branch that finished the restore; volatile for the reader
+    // that samples it. In-memory only, like the counters above.
+    private volatile long checkpointRuntimeRestores;
+    // Lifetime capture ledger: what every publication this instance made walked, split into
+    // the window root's captures and the function roots'. Nothing in the published artifacts
+    // separates an incremental capture from a complete one - both leave a root naming the
+    // whole live domain - so this is where the structural claim that a steady seal costs the
+    // keys the batch changed is read from. Only a difference between two readings means
+    // anything, so a test or a benchmark takes one before the operation and one after.
+    // Written on the refresh worker; volatile for the reader that samples it. In-memory
+    // only, like the counters above.
+    private volatile long checkpointCaptureFunctionRoots;
+    private volatile long checkpointCaptureFunctionRootsIncremental;
+    private volatile long checkpointCaptureFunctionKeysImaged;
+    private volatile long checkpointCaptureFunctionKeysVisited;
+    private volatile long checkpointCaptureWindowRoots;
+    private volatile long checkpointCaptureWindowRootsIncremental;
+    private volatile long checkpointCaptureWindowKeysImaged;
+    private volatile long checkpointCaptureWindowKeysRemoved;
+    private volatile long checkpointCaptureWindowKeysVisited;
+    private volatile long checkpointCaptureWindowElisionProbes;
     // Wall-clock (micros) of the most recent head-checkpoint seal. Numbers.LONG_NULL
     // until the first cycle that seals a root. The refresh worker compares
     // (nowUs - lastCheckpointWrittenUs) against
@@ -618,11 +682,12 @@ public class LiveViewInstance implements QuietCloseable {
     // Lifetime count of refresh cycles that threw, incremented once per entry into
     // LiveViewRefreshJob.handleRefreshFailure. Unlike flushRetryCount this is never reset, because
     // most refresh faults are invisible after the fact: the job self-heals a mid-drain fault by
-    // recomputing the window from the applied base and calls recordRefreshSuccess(), which zeroes
-    // flushRetryCount, so a view that faults on every cycle and recomputes its way back to the right
-    // answer is indistinguishable from one that never faulted. Tests that mean to assert the
-    // incremental path was actually exercised (rather than silently falling back to a full
-    // recompute) assert this is zero. Written under the refresh latch, read from test threads.
+    // restoring the window from its checkpoint timeline, or recomputing it from the applied base,
+    // and calls recordRefreshSuccess(), which zeroes flushRetryCount, so a view that faults on every
+    // cycle and recovers its way back to the right answer is indistinguishable from one that never
+    // faulted. Tests that mean to assert the incremental path was actually exercised (rather than
+    // silently falling back to a recovery) assert this is zero. Written under the refresh latch,
+    // read from test threads.
     private volatile long refreshFaultCount;
     // In-RAM refresh cursor: the highest base seqTxn whose rows have been refreshed
     // into the in-mem tier (the lead), which leads the flushed/applied point
@@ -1105,6 +1170,15 @@ public class LiveViewInstance implements QuietCloseable {
         return anchorWindow;
     }
 
+    /**
+     * @return the wall clock (micros) at which this view's current apply-lag wait began,
+     * or {@link Numbers#LONG_NULL} when the view is not waiting on its base table's apply.
+     * See {@link #applyLagDeferSinceUs}
+     */
+    public long getApplyLagDeferSinceUs() {
+        return applyLagDeferSinceUs;
+    }
+
     public long getApplyLagDeferTargetSeqTxn() {
         return applyLagDeferTargetSeqTxn;
     }
@@ -1253,6 +1327,106 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return function roots every publication this instance made froze, added up. One
+     * root per residual function and per runtime-only member per boundary, so a repair
+     * that keeps the checkpoint ladder charges one set per boundary it crossed. See
+     * {@link #checkpointCaptureFunctionRoots}
+     */
+    public long getCheckpointCaptureFunctionRoots() {
+        return checkpointCaptureFunctionRoots;
+    }
+
+    /**
+     * @return of those roots, the ones frozen against an established incremental base.
+     * A residual function that requires a full scan - ring-backed RANGE state is the
+     * standing example - never contributes here however warm its predecessor is
+     */
+    public long getCheckpointCaptureFunctionRootsIncremental() {
+        return checkpointCaptureFunctionRootsIncremental;
+    }
+
+    /**
+     * @return keys those function roots published an image for, added up
+     */
+    public long getCheckpointCaptureFunctionKeysImaged() {
+        return checkpointCaptureFunctionKeysImaged;
+    }
+
+    /**
+     * @return rows the walks that produced those function roots read. This counts walks
+     * rather than roots: one seal shares a single walk of a fused group's map across every
+     * runtime-only member that agrees on the incremental disposition, so a wide SELECT list
+     * adds roots and images here without adding visits
+     */
+    public long getCheckpointCaptureFunctionKeysVisited() {
+        return checkpointCaptureFunctionKeysVisited;
+    }
+
+    /**
+     * @return window roots every publication this instance made froze, added up. One per
+     * boundary of an anchored view, and none at all for a view with no anchored window
+     */
+    public long getCheckpointCaptureWindowRoots() {
+        return checkpointCaptureWindowRoots;
+    }
+
+    /**
+     * @return of those window roots, the ones frozen against an established incremental
+     * base. A restore, a rebinding or an incompatible predecessor demotes the next capture
+     * to a complete one, which is why a first reseal after a restart is not a steady sample
+     */
+    public long getCheckpointCaptureWindowRootsIncremental() {
+        return checkpointCaptureWindowRootsIncremental;
+    }
+
+    /**
+     * @return predecessor entries those window captures looked up to decide whether they
+     * could leave the predecessor's entry standing, added up. A capture skips the lookup
+     * for every key it already knows it cannot elide - one the predecessor does not hold,
+     * or one whose anchor value has moved since it did - so this reading sits at zero for a
+     * seal whose imaged keys all crossed an anchor boundary and at the imaged count for one
+     * whose anchors held
+     */
+    public long getCheckpointCaptureWindowElisionProbes() {
+        return checkpointCaptureWindowElisionProbes;
+    }
+
+    /**
+     * @return keys those window roots published an entry for, added up
+     */
+    public long getCheckpointCaptureWindowKeysImaged() {
+        return checkpointCaptureWindowKeysImaged;
+    }
+
+    /**
+     * @return keys those window roots named as removals - the ones the frontier sweep
+     * dropped, which an incremental capture has to name because the root it builds on still
+     * holds their entries
+     */
+    public long getCheckpointCaptureWindowKeysRemoved() {
+        return checkpointCaptureWindowKeysRemoved;
+    }
+
+    /**
+     * @return rows the walks that produced those window roots read: the dirty map's for an
+     * incremental capture, the whole anchor map's for a complete one. This is the reading
+     * that separates the two, and imaged keys alone cannot - a complete capture of a domain
+     * the batch touched entirely images exactly what an incremental one would
+     */
+    public long getCheckpointCaptureWindowKeysVisited() {
+        return checkpointCaptureWindowKeysVisited;
+    }
+
+    /**
+     * @return applied-base rebuilds this instance has started since it was built.
+     * A restart that restored off its published roots leaves this at zero; see
+     * {@link #checkpointRebuildAttempts}
+     */
+    public long getCheckpointRebuildAttempts() {
+        return checkpointRebuildAttempts;
+    }
+
+    /**
      * @return the bounds of the localized repair currently suspended across
      * refresh turns, as {@code {inProgress, C, L, H}}. The array is published by
      * volatile store and never mutated afterwards, so the caller reads a
@@ -1331,6 +1505,55 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return the {@code checkpointId} of the timeline root
+     * {@link LiveViewCheckpointRestoreRoute#TIMELINE_RESTORE} rehydrated this view
+     * from, or {@link Numbers#LONG_NULL} on every other route. Pair it with
+     * {@link #getCheckpointRestoreGeneration()} to pin the restore to an expected
+     * pre-existing root rather than to any root at all.
+     */
+    public long getCheckpointRestoreCheckpointId() {
+        return checkpointRestoreCheckpointId;
+    }
+
+    /**
+     * @return the generation of the timeline root
+     * {@link LiveViewCheckpointRestoreRoute#TIMELINE_RESTORE} rehydrated this view
+     * from, or {@link Numbers#LONG_NULL} on every other route
+     */
+    public long getCheckpointRestoreGeneration() {
+        return checkpointRestoreGeneration;
+    }
+
+    /**
+     * @return the {@code LiveViewCheckpointRecoveryPhase} constant naming why this
+     * view's recovery stopped, or - {@link LiveViewCheckpointRecoveryPhase#REBUILD_DEFERRED}
+     * - why it has not finished yet; {@link LiveViewCheckpointRecoveryPhase#NONE}
+     * for a view whose recovery finished or never had to run. See
+     * {@link #checkpointRecoveryPhase}
+     */
+    public int getCheckpointRecoveryPhase() {
+        return checkpointRecoveryPhase;
+    }
+
+    /**
+     * @return why this view's checkpoint recovery stands where it does, in
+     * operator terms, or null while there is nothing to recover
+     */
+    public String getCheckpointRecoveryReason() {
+        return checkpointRecoveryReason;
+    }
+
+    /**
+     * @return the {@code LiveViewCheckpointRestoreRoute} constant naming the route
+     * this view's single restart recovery attempt took, or
+     * {@link LiveViewCheckpointRestoreRoute#NONE} while no attempt has completed
+     * one. See {@link #checkpointRestoreRoute}
+     */
+    public int getCheckpointRestoreRoute() {
+        return checkpointRestoreRoute;
+    }
+
+    /**
      * @return seals this view has refused because its emitted-row counter and its
      * durable row count disagreed. Any non-zero value means rows the view emitted
      * never reached its table - or rows it never emitted did - and that the
@@ -1339,6 +1562,16 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public long getCheckpointRowCountMismatches() {
         return checkpointRowCountMismatches;
+    }
+
+    /**
+     * @return restores from the checkpoint timeline this instance ran while
+     * refreshing, each one a base schema change or a mid-drain failure recovered
+     * without rebuilding the view from its base table; see
+     * {@link #checkpointRuntimeRestores}
+     */
+    public long getCheckpointRuntimeRestores() {
+        return checkpointRuntimeRestores;
     }
 
     /**
@@ -1357,6 +1590,16 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public long[] getCheckpointTimeline() {
         return checkpointTimeline;
+    }
+
+    /**
+     * @return whole-timeline retirements this instance has run: the restart
+     * rebuild's own, plus any later out-of-order repair that could splice nothing.
+     * A restart that restored off its published roots leaves this at zero until
+     * something else retires the ladder; see {@link #checkpointTimelineResets}
+     */
+    public long getCheckpointTimelineResets() {
+        return checkpointTimelineResets;
     }
 
     public long getCheckpointTimelineWalPurgeFloor() {
@@ -1502,6 +1745,7 @@ public class LiveViewInstance implements QuietCloseable {
         return LiveViewLifecycleState.derive(
                 !dropped && !isClosed,
                 stateReader.isInvalid(),
+                isCheckpointRecoveryBlocked(),
                 stateReader.getSeedState() == LiveViewState.SEED_STATE_SEEDING,
                 isWalSuspended
         );
@@ -1812,12 +2056,58 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * @return {@code true} once a head-checkpoint restore for this LV actually
-     * rehydrated the window state. Remains {@code false} when no head existed
-     * or the restore failed and the LV fell back to a head-miss replay.
+     * @return {@code true} once this LV's restart recovery resolved its derived
+     * state, whichever way it got there: a timeline root restore or the
+     * applied-base rebuild that covers for one. Remains {@code false} while the
+     * attempt has not run, when identity state made it unnecessary, and when the
+     * rebuild failed too. This is the necessary half of a restart assertion -
+     * {@link #getCheckpointRestoreRoute()} is the half that says which operation
+     * actually ran.
      */
     public boolean isCheckpointRestoreSucceeded() {
-        return checkpointRestoreSucceeded;
+        final int route = checkpointRestoreRoute;
+        return route == LiveViewCheckpointRestoreRoute.TIMELINE_RESTORE
+                || route == LiveViewCheckpointRestoreRoute.FALLBACK_REBUILD;
+    }
+
+    /**
+     * @return true when this view's checkpoint timeline declares a format version
+     * this build does not implement. The one kind of block that is about the files
+     * rather than the history: see {@link #isCheckpointRecoveryBlocked()}
+     */
+    public boolean isCheckpointFormatBlocked() {
+        return checkpointRecoveryPhase == LiveViewCheckpointRecoveryPhase.BLOCKED;
+    }
+
+    /**
+     * @return true when this view's recovery stopped rather than finished - its
+     * checkpoint timeline declares a format version this build does not implement,
+     * or the rebuild from the applied base that would have covered for an unusable
+     * timeline was refused because it would have dropped rows the view retains. Such
+     * a view neither refreshes nor publishes, and its checkpoint directory,
+     * materialized rows and watermarks are all held as they are; it stays queryable
+     * over the rows it already has, and reports as {@code invalid} through
+     * {@code live_views().view_status}. It releases its base WAL floor, as an
+     * invalid view does. Distinct from {@link #isInvalid()} in one way that matters:
+     * the block is re-derived on every start rather than written to {@code _lv.s},
+     * so a start whose recovery no longer meets it resumes the view without
+     * operator action. {@link #getCheckpointRecoveryPhase()} says which block it is.
+     * A rebuild that waits for the base's apply is not a block; see
+     * {@link #isCheckpointRebuildDeferred()}
+     */
+    public boolean isCheckpointRecoveryBlocked() {
+        return LiveViewCheckpointRecoveryPhase.isBlocked(checkpointRecoveryPhase);
+    }
+
+    /**
+     * @return true while this view's whole-view rebuild from the applied base waits
+     * for the base table to apply commits the view's table already holds output of.
+     * The view is not stopped: it keeps its status and its base WAL floor, and the
+     * refresh worker retries the recovery on the apply-lag back-off until the rebuild
+     * can run. See {@link LiveViewCheckpointRecoveryPhase#REBUILD_DEFERRED}
+     */
+    public boolean isCheckpointRebuildDeferred() {
+        return checkpointRecoveryPhase == LiveViewCheckpointRecoveryPhase.REBUILD_DEFERRED;
     }
 
     public boolean isInvalid() {
@@ -1938,6 +2228,76 @@ public class LiveViewInstance implements QuietCloseable {
         cancelRefresh();
     }
 
+    /**
+     * Stops this view against the checkpoint format boundary. The caller has read
+     * a format version this build does not implement and has removed, rewritten
+     * and decoded nothing; this makes the refresh worker decline the view, so
+     * nothing rebuilds its output from base rows that may no longer be the ones it
+     * was built from.
+     * <p>
+     * Not a durable invalidation - {@code _lv.s.invalid} stays clear, so a build
+     * that does implement the format resumes the view with no operator action -
+     * but it carries an invalid view's operational properties, because those are
+     * the ones an indefinitely stopped view needs. It reports as {@code invalid}
+     * through {@code live_views().view_status}, and it releases its base WAL
+     * floor: a blocked view's floor never advances, so any hold it takes grows
+     * without bound on a base table other writers and views share.
+     * <p>
+     * That release has a price, and it is the reason to reach for the exit rather
+     * than to sit on a block. A blocked view resumes off its own roots only while
+     * the base WAL its restore replays is still there; once a purge sweep has
+     * moved past it, a later readable build takes the applied-base rebuild
+     * instead, which recomputes the view from whatever source rows survive today.
+     * The exit is the operator's, not the database's: {@code SHOW CREATE LIVE
+     * VIEW}, then {@code DROP LIVE VIEW} and re-CREATE.
+     * <p>
+     * There is no unblock command, by design: the phase is re-derived from the
+     * superblock on every restart, so it clears when - and only when - the format
+     * becomes readable.
+     */
+    public void markCheckpointRecoveryBlocked(@Nullable CharSequence reason) {
+        markBlocked(LiveViewCheckpointRecoveryPhase.BLOCKED, reason);
+    }
+
+    /**
+     * Stops this view because the rebuild from the applied base that its recovery
+     * asked for would have dropped rows it retains. The refresh worker calls this
+     * from the rebuild's own caller, under the refresh latch, after
+     * {@link LiveViewRebuildRestatementGuard} refused the rebuild and before
+     * anything durable moved: the view's rows, watermarks and any timeline the
+     * rebuild would have retired are as the refusal found them.
+     * <p>
+     * Everything {@link #markCheckpointRecoveryBlocked} says about the operational
+     * properties holds here too - no durable invalidation, {@code invalid} through
+     * {@code live_views()}, a released base WAL floor and the price that release
+     * has. What differs is what clears it. Nothing in the superblock records this
+     * block; a restart re-derives it by running the same recovery, which either
+     * restores from a timeline the refusal preserved or meets the same refusal.
+     */
+    public void markCheckpointRebuildBlocked(@Nullable CharSequence reason) {
+        markBlocked(LiveViewCheckpointRecoveryPhase.REBUILD_BLOCKED, reason);
+    }
+
+    /**
+     * Records that this view's whole-view rebuild from the applied base waits for the
+     * base table to apply commits the view's table holds output of. The refresh
+     * worker calls this under the refresh latch, from the deferral itself, once per
+     * target: the retries the apply-lag back-off paces keep the reason it published.
+     * <p>
+     * Unlike the two blocks this cuts nothing short and stops nothing - the deferral
+     * already ended the turn before anything moved - and it never replaces a block:
+     * a blocked view's refresh is declined before any recovery could defer.
+     * {@link #clearCheckpointRebuildDeferred()} ends it.
+     */
+    public void markCheckpointRebuildDeferred(CharSequence reason) {
+        if (isCheckpointRecoveryBlocked()) {
+            return;
+        }
+        // Reason first, as for a block: a reader that sees the phase sees its reason.
+        checkpointRecoveryReason = reason.toString();
+        checkpointRecoveryPhase = LiveViewCheckpointRecoveryPhase.REBUILD_DEFERRED;
+    }
+
     public void markAsDropped() {
         dropped = true;
         cancelRefresh();
@@ -1974,20 +2334,27 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * Prepares the view for a recompile after the base table's metadata version
-     * drifted from the cached compiled factory (a schema change that does not
-     * touch referenced columns - those invalidate the view instead). Frees the
-     * compiled-SQL artifacts so the next factory use ({@code ensureCompiledFactory})
-     * recompiles them against the base table's current metadata. Window state
-     * accumulated in the old factory's functions is lost with it; the caller
-     * must rebuild it (head-miss replay, seed resume, or restart-restore)
+     * Prepares the view for a recompile of its SELECT. Frees the compiled-SQL
+     * artifacts so the next factory use ({@code ensureCompiledFactory}) recompiles
+     * them against the base table's current metadata, at identity. Two callers
+     * need that:
+     * <ul>
+     *     <li>a base metadata version that drifted from the cached compiled factory
+     *     (a schema change that does not touch referenced columns - those invalidate
+     *     the view instead), whose factory no longer matches the base reader's
+     *     column layout;</li>
+     *     <li>a restore from the checkpoint timeline while the view is refreshing,
+     *     which needs the runtime a restart starts from.</li>
+     * </ul>
+     * Window state accumulated in the old factory's functions is lost with it; the
+     * caller must put it back (timeline restore, head-miss replay or seed resume)
      * before resuming incremental processing. The in-memory tier is deliberately
-     * kept: the view's own projection is unchanged and reads keep serving
-     * through it.
+     * kept: the view's own projection is unchanged and reads keep serving through
+     * it.
      * <p>
      * Must be called on the refresh worker under the refresh latch.
      */
-    public void prepareForBaseSchemaRecompile() {
+    public void prepareForRecompile() {
         // Before anything is freed. A parked repair borrowed the very window functions and
         // anchor window below, both to replay through and to hold the pre-repair state its
         // overlay took aside; a session outliving them would restore into freed objects, and
@@ -2018,6 +2385,72 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void recordCheckpointRestoreMicros(long durationUs) {
         this.headCheckpointRestoreMicros = durationUs;
+    }
+
+    /**
+     * Records that a refresh cycle stopped because the base table has not applied
+     * {@code targetSeqTxn} yet, and holds the view back until {@code deferUntilUs}.
+     * <p>
+     * The target goes down before the floor, so a pre-latch guard that sees the floor also
+     * sees the target it may clear the floor early against. The episode stamp goes down
+     * last and only once: the retries the floor paces keep the stamp the first deferral
+     * wrote, so {@code live_views()} reports how long the view has been unable to make
+     * progress rather than how long ago it last retried. {@link #clearApplyLagDeferral()}
+     * ends the episode.
+     * <p>
+     * Every caller runs under the refresh latch; see
+     * {@link io.questdb.cairo.lv.LiveViewRefreshJob#armApplyLagDeferral}.
+     */
+    public void armApplyLagDeferral(long targetSeqTxn, long deferUntilUs, long nowUs) {
+        applyLagDeferTargetSeqTxn = targetSeqTxn;
+        applyLagDeferUntilUs = deferUntilUs;
+        if (applyLagDeferSinceUs == Numbers.LONG_NULL) {
+            applyLagDeferSinceUs = nowUs;
+        }
+    }
+
+    /**
+     * Ends this view's apply-lag wait, on every path that ends it: a cycle that drained,
+     * a turn that reached a fault of its own, an invalidation and a drop. Clears the
+     * episode stamp before the target it goes with, so a reader that takes the target
+     * first and the stamp second never pairs a live stamp with a target from before it;
+     * see {@link #applyLagDeferSinceUs}. Clears the back-off floor with them, because a
+     * view that is no longer waiting has nothing to be paced against.
+     * <p>
+     * Idempotent, and every caller runs under the refresh latch.
+     */
+    public void clearApplyLagDeferral() {
+        applyLagDeferSinceUs = Numbers.LONG_NULL;
+        applyLagDeferUntilUs = Numbers.LONG_NULL;
+        applyLagDeferTargetSeqTxn = Numbers.LONG_NULL;
+    }
+
+    /**
+     * Ends the back-off window alone, leaving the episode standing. The refresh worker
+     * calls this from its authoritative under-latch check once the floor has elapsed or
+     * the base has applied past the target, so the next turn runs; whether the view is
+     * still waiting is that turn's answer to give, and until it gives one the episode is
+     * what {@code live_views()} reports. See
+     * {@link io.questdb.cairo.lv.LiveViewRefreshJob#isApplyLagDeferred}.
+     */
+    public void clearApplyLagDeferFloor() {
+        applyLagDeferUntilUs = Numbers.LONG_NULL;
+    }
+
+    /**
+     * Ends a rebuild deferral, leaving any other phase as it is. The refresh worker
+     * calls this under the refresh latch whenever the deferral stops describing the
+     * view: the base applied far enough for the rebuild to run, a recovery succeeded,
+     * or the view was invalidated or dropped and so waits for nothing.
+     */
+    public void clearCheckpointRebuildDeferred() {
+        if (checkpointRecoveryPhase == LiveViewCheckpointRecoveryPhase.REBUILD_DEFERRED) {
+            // Reason first, as on the way in. A reader that reads the phase before the
+            // reason can then see the phase without its reason, which says less than it
+            // should, but never a reason once the phase is gone.
+            checkpointRecoveryReason = null;
+            checkpointRecoveryPhase = LiveViewCheckpointRecoveryPhase.NONE;
+        }
     }
 
     /**
@@ -2088,6 +2521,16 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Records that the applied-base rebuild started. Bumped where the rebuild
+     * begins rather than where it ends, so an attempt that threw still counts: the
+     * point of the counter is that a restart which restored off its published roots
+     * started none at all. See {@link #checkpointRebuildAttempts}.
+     */
+    public void recordCheckpointRebuildAttempt() {
+        checkpointRebuildAttempts++;
+    }
+
+    /**
      * Records that a localized repair could not publish its splice, which retires
      * the timeline and leaves the next seal to open a fresh history.
      */
@@ -2125,6 +2568,66 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Records that the restart recovery attempt left this view without derived
+     * state: the timeline restore failed and the applied-base rebuild that covers
+     * for it failed too. The caller stamps the pending invalidation reason that
+     * takes the view out of service; this only names the route for an observer.
+     */
+    public void recordCheckpointRestoreBlocked() {
+        checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.BLOCKED;
+    }
+
+    /**
+     * Records that the refresh worker declined this view's restart recovery
+     * because its timeline declares a format version this build does not
+     * implement. Emitted from the turn that declined, so the route names a
+     * decision that was actually taken rather than one derived from a flag.
+     * <p>
+     * Every turn over a blocked view declines it, and the idle scan takes many.
+     * The store is therefore conditional: repeating it would write the same value
+     * to a field several workers read on every pass, for nothing.
+     */
+    public void recordCheckpointUpgradeBlocked() {
+        if (checkpointRestoreRoute != LiveViewCheckpointRestoreRoute.UPGRADE_BLOCKED) {
+            checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.UPGRADE_BLOCKED;
+        }
+    }
+
+    /**
+     * Records that the restart's applied-base rebuild was refused before it
+     * committed, because recomputing from the base would have dropped rows the view
+     * retains. Emitted from the rebuild's catch of that refusal, beside the
+     * {@link LiveViewCheckpointRecoveryPhase#REBUILD_BLOCKED} phase it goes with.
+     */
+    public void recordCheckpointRestoreRebuildBlocked() {
+        checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.REBUILD_BLOCKED;
+    }
+
+    /**
+     * Records that the applied-base rebuild finished and the view's derived state
+     * came from the base table rather than from a published root. No generation or
+     * checkpoint id goes with it: the rebuild retired the timeline before it
+     * replayed, so there is no root to name.
+     */
+    public void recordCheckpointRestoreRebuilt() {
+        checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.FALLBACK_REBUILD;
+    }
+
+    /**
+     * Records that the restart restored this view's window state from a published
+     * timeline root, and which root that was. Called only from the branch that
+     * completed the restore, so the route can never name work that did not run.
+     *
+     * @param generation   the generation the timeline reader selected under its pin
+     * @param checkpointId the logical id of the root within that generation
+     */
+    public void recordCheckpointRestoreRestored(long generation, long checkpointId) {
+        checkpointRestoreGeneration = generation;
+        checkpointRestoreCheckpointId = checkpointId;
+        checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.TIMELINE_RESTORE;
+    }
+
+    /**
      * Records one seal refused because the emitted-row counter and the durable row
      * count disagreed. See {@link #checkpointRowCountMismatches}.
      */
@@ -2133,9 +2636,45 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Records one restore from the checkpoint timeline that the refresh worker ran
+     * while refreshing, called only from the branch that finished it. See
+     * {@link #checkpointRuntimeRestores}.
+     */
+    public void recordCheckpointRuntimeRestore() {
+        checkpointRuntimeRestores++;
+    }
+
+    /**
+     * Records that this view retired its whole timeline, whichever seam did it. See
+     * {@link #checkpointTimelineResets}.
+     */
+    public void recordCheckpointTimelineReset() {
+        checkpointTimelineResets++;
+    }
+
+    /**
      * Mirrors the shape of a timeline generation this view just committed or
      * adopted. See {@link #checkpointTimeline}.
      */
+    /**
+     * Adds one publication's capture ledger to this instance's lifetime totals. Called by
+     * the refresh worker after the publication that produced the ledger is durable, while it
+     * is still the newest one the writer performed - the ledger is the writer's flyweight and
+     * is cleared by its next publication.
+     */
+    public void recordCheckpointCapture(@NotNull LiveViewCheckpointCaptureLedger ledger) {
+        checkpointCaptureWindowRoots += ledger.getWindowCaptures();
+        checkpointCaptureWindowRootsIncremental += ledger.getWindowIncrementalCaptures();
+        checkpointCaptureWindowKeysVisited += ledger.getWindowKeysVisited();
+        checkpointCaptureWindowKeysImaged += ledger.getWindowKeysImaged();
+        checkpointCaptureWindowKeysRemoved += ledger.getWindowKeysRemoved();
+        checkpointCaptureWindowElisionProbes += ledger.getWindowElisionProbes();
+        checkpointCaptureFunctionRoots += ledger.getFunctionCaptures();
+        checkpointCaptureFunctionRootsIncremental += ledger.getFunctionIncrementalCaptures();
+        checkpointCaptureFunctionKeysVisited += ledger.getFunctionKeysVisited();
+        checkpointCaptureFunctionKeysImaged += ledger.getFunctionKeysImaged();
+    }
+
     public void recordCheckpointTimelineStats(@Nullable LiveViewCheckpointTimelineStats stats) {
         checkpointTimeline = stats == null
                 ? EMPTY_CHECKPOINT_TIMELINE
@@ -2201,7 +2740,7 @@ public class LiveViewInstance implements QuietCloseable {
      * clears any armed apply-lag defer floor: a cycle that drained cleanly proves the
      * transient base-apply lag has passed, so the pre-latch throttle in
      * {@link io.questdb.cairo.lv.LiveViewRefreshJob#refreshInstance} should stop
-     * short-circuiting this view.
+     * short-circuiting this view - and ends a rebuild deferral, for the same reason.
      * <p>
      * Does <em>not</em> clear {@code writerStallStartUs}: stall is a property of
      * the in-mem tier's slot pinning, not of refresh-cycle success. A zero-row
@@ -2215,8 +2754,10 @@ public class LiveViewInstance implements QuietCloseable {
     public void recordRefreshSuccess() {
         flushRetryCount = 0;
         flushRetryStartUs = Numbers.LONG_NULL;
-        applyLagDeferUntilUs = Numbers.LONG_NULL;
-        applyLagDeferTargetSeqTxn = Numbers.LONG_NULL;
+        clearApplyLagDeferral();
+        // A rebuild deferral is the same lag seen from a recovery, and a cycle that
+        // succeeded settled the debt it was waiting to pay.
+        clearCheckpointRebuildDeferred();
     }
 
     /**
@@ -2295,7 +2836,7 @@ public class LiveViewInstance implements QuietCloseable {
     /**
      * Re-arms the seed sweep's single-shot resume setup (see
      * {@link #isSeedResumeAttempted()}). Called by the refresh worker after
-     * {@link #prepareForBaseSchemaRecompile()} on a SEEDING view so the next
+     * {@link #prepareForRecompile()} on a SEEDING view so the next
      * sweep turn restores window state and the data offset from the timeline's
      * newest root against the recompiled factory, re-sweeps from offset 0 behind
      * the skip-write floor, or - when a partition removal is still outstanding -
@@ -2322,14 +2863,6 @@ public class LiveViewInstance implements QuietCloseable {
 
     public void setAppliedWatermark(long appliedWatermark) {
         stateReader.setAppliedWatermark(appliedWatermark);
-    }
-
-    public void setApplyLagDeferTargetSeqTxn(long applyLagDeferTargetSeqTxn) {
-        this.applyLagDeferTargetSeqTxn = applyLagDeferTargetSeqTxn;
-    }
-
-    public void setApplyLagDeferUntilUs(long applyLagDeferUntilUs) {
-        this.applyLagDeferUntilUs = applyLagDeferUntilUs;
     }
 
     /**
@@ -2360,15 +2893,6 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void setCheckpointRestoreAttempted() {
         this.checkpointRestoreAttempted = true;
-    }
-
-    /**
-     * Single-shot setter for {@link #isCheckpointRestoreSucceeded()}. The
-     * refresh worker calls this only when the window state was rehydrated from
-     * a checkpoint timeline root.
-     */
-    public void setCheckpointRestoreSucceeded() {
-        this.checkpointRestoreSucceeded = true;
     }
 
     public void setCompiledFactory(RecordCursorFactory factory, LiveViewCompiledPlan plan) {
@@ -2757,6 +3281,10 @@ public class LiveViewInstance implements QuietCloseable {
                 discardSuspendedRepair();
                 freeSeedBaseReader();
                 freeCachedRefreshState();
+                // Under the latch, after the last cycle that could have deferred: a
+                // dropped view waits for nothing.
+                clearApplyLagDeferral();
+                clearCheckpointRebuildDeferred();
             }
         } finally {
             refreshLatch.set(false);
@@ -2796,6 +3324,11 @@ public class LiveViewInstance implements QuietCloseable {
             discardSuspendedRepair();
             freeSeedBaseReader();
             freeCachedRefreshState();
+            // Under the latch, so after any cycle that deferred before it saw the
+            // invalidation; every later one returns before its recovery could defer.
+            // An invalid view waits for nothing.
+            clearApplyLagDeferral();
+            clearCheckpointRebuildDeferred();
         } finally {
             refreshLatch.set(false);
         }
@@ -2901,7 +3434,7 @@ public class LiveViewInstance implements QuietCloseable {
      * non-zero balance returns it to the pool dirty, and PerQueryMemoryTracker.init() then trips
      * its recycle assert in whichever unrelated query next acquires it. Every FULL teardown path
      * (drop, invalidate, runtime-state free) routes through here, so the order is stated once; a
-     * base-schema recompile frees only the artifacts (see {@link #freeCompiledArtifacts}).
+     * recompile frees only the artifacts (see {@link #freeCompiledArtifacts}).
      */
     private void freeCachedRefreshState() {
         inMemoryTier = Misc.free(inMemoryTier);
@@ -2912,7 +3445,7 @@ public class LiveViewInstance implements QuietCloseable {
     /**
      * Frees the compiled-SQL artifacts that charge the per-view {@link #memoryTracker}: the
      * factory's per-partition function maps and the anchor window's anchor map. Does NOT free the
-     * tracker or the in-memory tier, so {@link #prepareForBaseSchemaRecompile} can drop and
+     * tracker or the in-memory tier, so {@link #prepareForRecompile} can drop and
      * rebuild the factory while the tier keeps serving and the tracker keeps accounting the tier's
      * retained footprint (the next factory recharges the same tracker).
      */
@@ -2937,7 +3470,7 @@ public class LiveViewInstance implements QuietCloseable {
         // that state dies with them. A head still claiming a root over state nothing
         // holds must not outlive them: whoever rebuilds re-seals, and only that seal
         // may re-stamp. Clearing here rather than at each caller covers the full
-        // teardown as well as the base-schema recompile, whose rebuild can fail.
+        // teardown as well as the recompile, whose rebuild can fail.
         headCheckpointRootId = Numbers.LONG_NULL;
         headCheckpointRootWindowFactory = null;
     }
@@ -2954,6 +3487,16 @@ public class LiveViewInstance implements QuietCloseable {
         }
         checkpointRepairO3BumpEpochAtPublish = checkpointRepairO3BumpEpoch;
         return true;
+    }
+
+    private void markBlocked(int phase, @Nullable CharSequence reason) {
+        // Reason first: the phase is what every reader tests, so publishing it
+        // last is what makes the reason visible to anyone who sees the phase.
+        checkpointRecoveryReason = reason == null ? null : reason.toString();
+        checkpointRecoveryPhase = phase;
+        // A cycle already in flight is producing output this view must not
+        // publish. Cut it short, as an invalidation does.
+        cancelRefresh();
     }
 
     /**

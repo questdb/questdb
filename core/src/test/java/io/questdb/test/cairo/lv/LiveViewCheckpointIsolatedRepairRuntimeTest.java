@@ -82,7 +82,7 @@ public class LiveViewCheckpointIsolatedRepairRuntimeTest extends AbstractLiveVie
                 final LiveViewRepairRuntime first = viewInstance().getRepairRuntime();
                 Assert.assertNotNull(first);
 
-                viewInstance().prepareForBaseSchemaRecompile();
+                viewInstance().prepareForRecompile();
                 Assert.assertNull(
                         "a base-schema recompile must take the isolated runtime with the primary",
                         viewInstance().getRepairRuntime()

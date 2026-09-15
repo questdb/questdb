@@ -48,6 +48,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointWindowRoot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewWindow;
+import io.questdb.cairo.lv.LiveViewWindowStatePlan;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -1718,7 +1719,12 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                         + "('2026-01-01T11:00:06.000000Z', 'acct-3', 3.0), "
                         + "('2026-01-01T11:00:07.000000Z', 'acct-4', 4.0)", job);
                 assertDirtySetsClearedByPublish();
-                assertHeadRootPartitionCount(0);
+                assertHeadFunctionRootPartitionCount(0);
+                // The window root is untouched by the poke above, which writes the
+                // functions' own tombstone slots and not the anchor map's. Its four keys
+                // are still live, which is what says the removal branch under test is the
+                // per-function one rather than something that emptied every root at once.
+                assertHeadWindowRootPartitionCount(4);
             }
         });
     }
@@ -1982,7 +1988,9 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 // The anchor is not monotone, so no sweep runs and the anchor-key sink is
                 // never reached.
                 keySink,
-                // No fused group: these functions keep the private maps the cases read.
+                // No compiled group at all: these functions keep the private maps the
+                // cases read, and the window has neither a storage plan nor a fused one.
+                null,
                 null,
                 null,
                 null,
@@ -2133,12 +2141,18 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     }
 
     /**
-     * Whether the view's anchored window has adopted a fused plan, and so owns the state
-     * the grouped functions would otherwise each keep. The per-function assertions below
-     * have nothing to read for such a function; the window's own are what carry them.
+     * Whether the view's anchored window owns any grouped accumulator, and so holds state
+     * the functions would otherwise each keep. The per-function assertions below have
+     * nothing to read for such a function; the window's own are what carry them.
+     * <p>
+     * A plan with no component at all does not count. Every anchored window has a storage
+     * plan - that is what its window root is laid out by - and one the compiler admitted
+     * no projection into leaves every function exactly where it was, on its own map and
+     * its own root, which is what the residual cases here need.
      */
     private boolean isWindowStateFused() {
-        return anchorWindow().getCheckpointWindowStatePlan() != null;
+        final LiveViewWindowStatePlan plan = anchorWindow().getCheckpointWindowStatePlan();
+        return plan != null && plan.getComponentCount() > 0;
     }
 
     /**
@@ -2152,6 +2166,26 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
      * thing either way.
      */
     private void assertHeadRootPartitionCount(int expected) {
+        assertHeadRootPartitionCount(expected, true, true);
+    }
+
+    /**
+     * As {@link #assertHeadRootPartitionCount(int)}, for the function roots alone. A case
+     * that moves state out from under the functions without touching the anchor map wants
+     * the two halves counted separately.
+     */
+    private void assertHeadFunctionRootPartitionCount(int expected) {
+        assertHeadRootPartitionCount(expected, false, true);
+    }
+
+    /**
+     * As {@link #assertHeadRootPartitionCount(int)}, for the window root alone.
+     */
+    private void assertHeadWindowRootPartitionCount(int expected) {
+        assertHeadRootPartitionCount(expected, true, false);
+    }
+
+    private void assertHeadRootPartitionCount(int expected, boolean isWindowRootRead, boolean areFunctionRootsRead) {
         final LiveViewInstance instance = viewInstance();
         try (
                 Path dir = checkpointsDir(instance);
@@ -2179,19 +2213,21 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 root.of(dir, head.rootRef);
                 root.getStateRootRef(stateRootRef);
                 int stateRoots = 0;
-                if (!stateRootRef.isNull() && windowRoot.ofIfWindowRoot(dir, stateRootRef)) {
+                if (isWindowRootRead && !stateRootRef.isNull() && windowRoot.ofIfWindowRoot(dir, stateRootRef)) {
                     windowRoot.getPartitionMapRootRef(partitionMapRoot);
                     assertPartitionCount("window state root", expected, partitions, partitionMapRoot);
                     stateRoots++;
                 }
-                root.getFunctionDirectoryRef(functionDirectoryRef);
-                functions.of(dir, functionDirectoryRef);
-                for (int i = 0, n = functions.size(); i < n; i++) {
-                    functions.getRootRef(i, functionRootRef);
-                    functionRoot.of(dir, functionRootRef);
-                    functionRoot.getPartitionMapRootRef(partitionMapRoot);
-                    assertPartitionCount("function " + i + " root", expected, partitions, partitionMapRoot);
-                    stateRoots++;
+                if (areFunctionRootsRead) {
+                    root.getFunctionDirectoryRef(functionDirectoryRef);
+                    functions.of(dir, functionDirectoryRef);
+                    for (int i = 0, n = functions.size(); i < n; i++) {
+                        functions.getRootRef(i, functionRootRef);
+                        functionRoot.of(dir, functionRootRef);
+                        functionRoot.getPartitionMapRootRef(partitionMapRoot);
+                        assertPartitionCount("function " + i + " root", expected, partitions, partitionMapRoot);
+                        stateRoots++;
+                    }
                 }
                 Assert.assertTrue("the view declares per-partition checkpoint state", stateRoots > 0);
             }

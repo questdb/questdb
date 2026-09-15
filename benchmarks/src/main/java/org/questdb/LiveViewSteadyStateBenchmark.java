@@ -30,15 +30,19 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.lv.LiveViewWindowStatePlan;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.MemoryTag;
@@ -52,7 +56,10 @@ import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRuleFactory;
 import io.questdb.std.datetime.microtime.Micros;
 
+import com.sun.management.ThreadMXBean;
+
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -148,6 +155,14 @@ import java.util.Locale;
  * whole row set either way. The base column MUST be indexed ({@code --index=true}) or no
  * segment is priced and none takes the route.
  * <p>
+ * <b>The restart.</b> {@code --restart=true} ends the run by dropping the view's runtime
+ * and rebuilding it from its checkpoint, reported on the {@code # restore} line. That
+ * reading is one of cold code over a warm page cache: the JVM restores once, and the pages
+ * it reads are the ones its own seals just wrote. {@code --restart-cache=cold} fsyncs and
+ * drops every file under the database root first, after releasing the engine's pools, so
+ * the same restore also pays the disk - the cold-cache reading the acceptance matrix asks
+ * for beside the warm one. Linux only.
+ * <p>
  * Build and run:
  * <pre>
  * mvn -pl benchmarks -am package -o -DskipTests -Dmaven.test.skip=true
@@ -182,6 +197,12 @@ public class LiveViewSteadyStateBenchmark {
     private static final String DAILY_ANCHOR_TIME = "12:00";
     private static final int MAX_SUM_COLUMNS = 24;
     private static final int RESTART_PROBE_ROWS = 1_000;
+    // The two bounded windows some shapes add beside the anchored one. Named once so the
+    // view's DDL and the oracle that checks it restate exactly the same frames.
+    private static final String BOUNDED_RANGE_WINDOW =
+            "partition by account_id order by created_at range between '30' second preceding and current row";
+    private static final String BOUNDED_ROWS_WINDOW =
+            "partition by account_id order by created_at rows between 63 preceding and current row";
     private static final long START_TS = 1_785_496_035_000_000L;
     // The default spacing of the generated stream. --ts-step-us widens it, which is what
     // lets a run of a few million rows span many base partitions and many anchor segments
@@ -189,6 +210,9 @@ public class LiveViewSteadyStateBenchmark {
     // rather than in the head partition it can append to.
     private static final long DEFAULT_TS_STEP_MICROS = 444L;
     private static final String VIEW_NAME = "payments_view";
+    // Null where the JVM does not expose per-thread allocation, which leaves the alloc_mb
+    // column at -1 rather than failing the run.
+    private static final ThreadMXBean THREAD_MX_BEAN = threadMxBean();
 
     public static void main(String[] args) throws Exception {
         long seedRows = 1_000_000L;
@@ -200,6 +224,17 @@ public class LiveViewSteadyStateBenchmark {
         long checkpointCompactionInterval = -1;
         boolean isIndexed = true;
         boolean isRestartMeasured = false;
+        // Whether the restart reads its checkpoint back from a cold page cache. The warm
+        // reading is the restart every earlier matrix cell measured: cold code, since the
+        // JVM restores exactly once, over pages the seals just wrote. The cold one fsyncs
+        // every file under the database root and asks the kernel to drop it before the
+        // view is rebuilt, so the restore pays the disk as well - the reading the matrix
+        // names as "cold-cache restore" beside the warm one.
+        boolean isRestartCacheCold = false;
+        // Whether the run ends by comparing the view's rows with the independent oracle.
+        // Off by default: it is a correctness check, not a measurement, and on a run with
+        // millions of rows it costs seconds after the last measured line.
+        boolean isOracleChecked = false;
         boolean isSymbolPreSized = true;
         int recycleAccounts = 0; // 0 = every row a brand new account
         long accountWindow = 0; // 0 = no rolling window, so nothing ages out
@@ -258,9 +293,31 @@ public class LiveViewSteadyStateBenchmark {
         boolean isOpenSegmentKeyedReplay = true;
         boolean forceOpenSegmentKeyedReplay = false;
         boolean isRepairPerSegment = true;
+        // Runtime map fusion. The storage layout no longer follows it - every anchored
+        // window has a storage plan either way - so the two settings are the paired columns
+        // the acceptance matrix reads: with it on the seal walks one fused map, with it off
+        // it walks the anchor map and probes each component out of its contributor's own.
+        boolean isMapFusionEnabled = true;
+        // The share of rows whose partition key is NULL. A guarded count(partition_key)
+        // must leave those rows uncounted while count(*) counts them, so a run without them
+        // never prices the guard.
+        int nullKeyPercent = 0;
         for (String arg : args) {
             if (arg.startsWith("--restart=")) {
                 isRestartMeasured = Boolean.parseBoolean(arg.substring(10));
+                continue;
+            }
+            if (arg.startsWith("--oracle=")) {
+                isOracleChecked = Boolean.parseBoolean(arg.substring("--oracle=".length()));
+                continue;
+            }
+            if (arg.startsWith("--restart-cache=")) {
+                final String cache = arg.substring("--restart-cache=".length());
+                isRestartCacheCold = switch (cache) {
+                    case "cold" -> true;
+                    case "warm" -> false;
+                    default -> throw new IllegalArgumentException("--restart-cache must be warm or cold: " + cache);
+                };
                 continue;
             }
             if (arg.startsWith("--seed=")) {
@@ -299,6 +356,10 @@ public class LiveViewSteadyStateBenchmark {
                 keyType = arg.substring(11);
             } else if (arg.startsWith("--null-percent=")) {
                 nullPercent = Integer.parseInt(arg.substring(15));
+            } else if (arg.startsWith("--null-key-percent=")) {
+                nullKeyPercent = Integer.parseInt(arg.substring("--null-key-percent=".length()));
+            } else if (arg.startsWith("--fusion=")) {
+                isMapFusionEnabled = Boolean.parseBoolean(arg.substring("--fusion=".length()));
             } else if (arg.startsWith("--sum-columns=")) {
                 sumColumns = Integer.parseInt(arg.substring(14));
             } else if (arg.startsWith("--commits-per-batch=")) {
@@ -349,10 +410,27 @@ public class LiveViewSteadyStateBenchmark {
         if (accountWindow > 0 && recycleAccounts > 0) {
             throw new IllegalArgumentException("--account-window and --recycle-accounts both pick the account, use one");
         }
+        if (isRestartCacheCold && !isRestartMeasured) {
+            throw new IllegalArgumentException("--restart-cache=cold needs --restart=true");
+        }
+        if (isRestartCacheCold && !Os.isLinux()) {
+            // posix_fadvise(DONTNEED) is the only way to drop a file's pages without root,
+            // and the harness only knows its value on Linux.
+            throw new IllegalArgumentException("--restart-cache=cold is supported on Linux only");
+        }
         final Shape selectShape = Shape.of(shape);
         final KeyType partitionKeyType = KeyType.of(keyType);
         if (nullPercent < 0 || nullPercent > 100) {
             throw new IllegalArgumentException("--null-percent must be within [0, 100]: " + nullPercent);
+        }
+        if (nullKeyPercent < 0 || nullKeyPercent > 100) {
+            throw new IllegalArgumentException("--null-key-percent must be within [0, 100]: " + nullKeyPercent);
+        }
+        if (nullKeyPercent > 0 && partitionKeyType != KeyType.SYMBOL) {
+            // An INT or LONG key column can hold a null, but the generated expression casts
+            // an ordinal into it and there is no null to cast. Only the SYMBOL shape has a
+            // literal for one.
+            throw new IllegalArgumentException("--null-key-percent needs --key-type=symbol");
         }
         if (sumColumns < 0 || sumColumns > MAX_SUM_COLUMNS) {
             throw new IllegalArgumentException("--sum-columns must be within [0, " + MAX_SUM_COLUMNS + "]: " + sumColumns);
@@ -454,7 +532,8 @@ public class LiveViewSteadyStateBenchmark {
         final long equalTsEveryN = equalTsPercent > 0 ? Math.max(2, Math.round(100 / equalTsPercent)) : 0;
         final int commitRows = batchRows / commitsPerBatch;
         final RowShape rowShape = new RowShape(recycleAccounts, accountWindow, anchorPeriodMicros, anchorOffsetMicros,
-                partitionKeyType, nullPercent, sumColumns, tsStepMicros, hotKeyEveryN, equalTsEveryN);
+                partitionKeyType, nullPercent, nullKeyPercent, selectShape.hasDecimalColumn(), sumColumns,
+                tsStepMicros, hotKeyEveryN, equalTsEveryN);
 
         final Path dbRoot = Files.createTempDirectory("lv-steady-");
         CairoEngine engine = null;
@@ -472,6 +551,7 @@ public class LiveViewSteadyStateBenchmark {
         final boolean finalOpenSegmentKeyedReplay = isOpenSegmentKeyedReplay;
         final long finalKeyedScanIndexOpenRows = keyedScanIndexOpenRows;
         final boolean finalLvDedup = isLvDeduped;
+        final boolean finalMapFusion = isMapFusionEnabled;
         try {
             final CairoConfiguration configuration = new DefaultCairoConfiguration(dbRoot.toString()) {
                 @Override
@@ -560,19 +640,25 @@ public class LiveViewSteadyStateBenchmark {
                 public boolean isLiveViewCheckpointRepairSparsePublicationEnabled() {
                     return finalLvDedup;
                 }
+
+                @Override
+                public boolean isSqlWindowMapFusionEnabled() {
+                    return finalMapFusion;
+                }
             };
             System.out.printf(
                     Locale.ROOT,
                     "# seed=%d batch=%d batches=%d checkpointRows=%d checkpointPurgeInterval=%d "
                             + "checkpointCompactionInterval=%d preSizeSymbol=%s index=%s recycleAccounts=%d "
                             + "anchorPeriod=%s anchorZone=%s accountWindow=%d rowsPerBucket=%d buckets=%d compactThreshold=%d "
-                            + "compactStalePercent=%d shape=%s keyType=%s nullPercent=%d sumColumns=%d "
+                            + "compactStalePercent=%d shape=%s keyType=%s nullPercent=%d nullKeyPercent=%d "
+                            + "fusion=%s sumColumns=%d "
                             + "commitsPerBatch=%d commitRows=%d o3EveryN=%d o3Lag=%s o3LagRows=%d o3FromBatch=%d "
                             + "o3SpreadSteps=%d o3MaxLagRows=%d o3Depths=%s o3CommitPercent=%d "
                             + "hotKeyEveryN=%d equalTsEveryN=%d tsStepUs=%d "
                             + "spanHours=%.2f baseDedup=%s lvDedup=%s repairMaxChainedBoundaries=%d repairPerSegment=%s "
                             + "repairIsolatedRuntime=%s repairSegmentYield=%s repairKeyedReplay=%s "
-                            + "openSegmentKeyedReplay=%s keyedScanIndexOpenRows=%d%n",
+                            + "openSegmentKeyedReplay=%s keyedScanIndexOpenRows=%d restartCache=%s%n",
                     seedRows, batchRows, batches, checkpointRows,
                     configuration.getLiveViewCheckpointPurgeInterval(),
                     configuration.getLiveViewCheckpointCompactionInterval(),
@@ -581,7 +667,8 @@ public class LiveViewSteadyStateBenchmark {
                     accountWindow, rowsPerBucket, totalRows / rowsPerBucket,
                     configuration.getLiveViewPartitionCompactThreshold(),
                     configuration.getLiveViewPartitionCompactStalePercent(),
-                    selectShape.name, partitionKeyType.name, nullPercent, sumColumns,
+                    selectShape.name, partitionKeyType.name, nullPercent, nullKeyPercent,
+                    configuration.isSqlWindowMapFusionEnabled(), sumColumns,
                     commitsPerBatch, commitRows, o3EveryN, o3EveryN > 0 ? o3Lag : "none", o3LagMicros / tsStepMicros,
                     o3FromBatch, o3SpreadSteps, o3MaxLagMicros / tsStepMicros,
                     o3DepthLadder == null ? "none" : o3DepthLadder.describe(), o3CommitPercent,
@@ -593,7 +680,8 @@ public class LiveViewSteadyStateBenchmark {
                     configuration.isLiveViewCheckpointRepairSegmentYieldEnabled(),
                     configuration.isLiveViewCheckpointRepairKeyedReplayEnabled(),
                     configuration.isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled(),
-                    configuration.getLiveViewCheckpointRepairKeyedScanIndexOpenRows()
+                    configuration.getLiveViewCheckpointRepairKeyedScanIndexOpenRows(),
+                    isRestartCacheCold ? "cold" : "warm"
             );
 
             engine = new CairoEngine(configuration);
@@ -614,6 +702,7 @@ public class LiveViewSteadyStateBenchmark {
                             + "created_at timestamp, "
                             + "account_id " + partitionKeyType.columnDdl(capacity, indexClause) + ", "
                             + "amount double"
+                            + (selectShape.hasDecimalColumn() ? ", fee decimal(38,2)" : "")
                             + sumColumnDdl(sumColumns)
                             + ") timestamp(created_at) partition by hour wal"
                             + (isBaseDeduped ? " dedup upsert keys(created_at, account_id)" : ""),
@@ -652,7 +741,7 @@ public class LiveViewSteadyStateBenchmark {
                         (System.nanoTime() - seedStart) / 1e6, instance.getHeadCheckpointWriteMicros() / 1e3);
 
                 segments.sample();
-                System.out.println("batch\tstate_rows\tbase_apply_ms\trefresh_ms\trefresh_max_pass_ms\tcheckpoint_ms\trefresh_ex_cp_ms\trows_per_sec\tstate_bytes\tlag_seqtxn\tfaults\tmap_rows\tsweeps\tevicted\tsweep_ms\trefresh_peak_mb\tmeta_segs\tdata_segs\tmeta_bytes\tdata_bytes\to3_scan_rows\to3_resume_rows\to3_boundary_rows\ttl_gen\ttl_entries\thead_root\thead_lag_rows\tlv_apply_ms\tlv_rows\tlv_phys_rows\tlv_write_amp\tlv_parts\trepair");
+                System.out.println("batch\tstate_rows\tbase_apply_ms\trefresh_ms\trefresh_max_pass_ms\tcheckpoint_ms\trefresh_ex_cp_ms\trows_per_sec\tstate_bytes\tlag_seqtxn\tfaults\tmap_rows\tsweeps\tevicted\tsweep_ms\trefresh_peak_mb\tmeta_segs\tdata_segs\tmeta_bytes\tdata_bytes\to3_scan_rows\to3_resume_rows\to3_boundary_rows\ttl_gen\ttl_entries\thead_root\thead_lag_rows\tlv_apply_ms\tlv_rows\tlv_phys_rows\tlv_write_amp\tlv_parts\twin_caps\twin_inc\twin_visited\twin_imaged\twin_removed\twin_probes\tfn_roots\tfn_inc\tfn_visited\tfn_imaged\talloc_mb\trepair");
                 long firstRow = seedRows + 1;
                 // A seal after a sweep is the one this measurement is about: compact()
                 // demotes the next seal to a full scan of the whole live state, while a
@@ -670,6 +759,13 @@ public class LiveViewSteadyStateBenchmark {
                 long o3ScanRowsBefore = instance.getO3ReplayScanRows();
                 long o3ResumeRowsBefore = instance.getO3ResumeReplayRows();
                 long o3BoundaryRowsBefore = instance.getO3BoundaryReplayRows();
+                // The capture ledger is cumulative over the view's life for the same reason,
+                // and the batch's own reading is its delta. This is the structural half of the
+                // acceptance matrix: nothing in the published artifacts separates an
+                // incremental capture from a complete one, and neither does the seal's elapsed
+                // time, so a run that only timed its seals could not tell a steady incremental
+                // cadence from one silently walking the whole domain every batch.
+                final CaptureLedgerSample capture = new CaptureLedgerSample(instance);
                 final long o3ResumeRowsAtStart = o3ResumeRowsBefore;
                 final long o3BoundaryRowsAtStart = o3BoundaryRowsBefore;
                 long o3ScanRowsTotal = 0;
@@ -743,9 +839,17 @@ public class LiveViewSteadyStateBenchmark {
                     final long lvRowsBefore = engine.getMetrics().tableWriterMetrics().getCommittedRows();
                     final long lvPhysRowsBefore = engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
                     final long lvApplyUsBefore = job.getLiveViewApplyMicros();
+                    // The refresh runs on this thread, so the thread's own allocation counter
+                    // is the refresh's Java allocation and nothing else's. Native peak and
+                    // heap allocation are tracked apart on purpose: a native saving that paid
+                    // for itself in extra heap churn is a regression the two pooled would hide.
+                    final long allocBytesBefore = threadAllocatedBytes();
                     final long refreshStart = System.nanoTime();
                     final long maxPassNanos = drainLiveView(engine, instance, job);
                     final long refreshNanos = System.nanoTime() - refreshStart;
+                    final long allocBytes = allocBytesBefore < 0
+                            ? -1
+                            : threadAllocatedBytes() - allocBytesBefore;
                     final long lvRows = engine.getMetrics().tableWriterMetrics().getCommittedRows() - lvRowsBefore;
                     final long lvPhysRows =
                             engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - lvPhysRowsBefore;
@@ -805,7 +909,8 @@ public class LiveViewSteadyStateBenchmark {
                     segments.sample();
                     System.out.printf(
                             Locale.ROOT,
-                            "%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.0f\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%.1f\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%d\t%d\t%.1f\t%d\t%s%n",
+                            "%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.0f\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%.1f\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%d\t%d\t%.1f\t%d"
+                                    + "\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.2f\t%s%n",
                             b,
                             expected,
                             baseNanos / 1e6,
@@ -838,8 +943,20 @@ public class LiveViewSteadyStateBenchmark {
                             lvPhysRows,
                             lvRows > 0 ? (double) lvPhysRows / lvRows : 0.0,
                             partitionCount(engine, lvToken),
+                            capture.windowCaptures(instance),
+                            capture.windowIncrementalCaptures(instance),
+                            capture.windowKeysVisited(instance),
+                            capture.windowKeysImaged(instance),
+                            capture.windowKeysRemoved(instance),
+                            capture.windowElisionProbes(instance),
+                            capture.functionCaptures(instance),
+                            capture.functionIncrementalCaptures(instance),
+                            capture.functionKeysVisited(instance),
+                            capture.functionKeysImaged(instance),
+                            allocBytes < 0 ? -1.0 : allocBytes / (1024.0 * 1024.0),
                             repair
                     );
+                    capture.advance(instance);
                     firstRow += batchRows;
                 }
                 if (o3EveryN > 0) {
@@ -966,6 +1083,18 @@ public class LiveViewSteadyStateBenchmark {
                     // multi-million key restore.
                     final long stateRows = firstRow - 1;
                     engine.getLiveViewRegistry().clear();
+                    // Nothing below the registry maps a checkpoint page once the view is
+                    // gone, but the pooled readers and writers still map the base and the
+                    // view's own table. Releasing them first lets the eviction reach every
+                    // file: DONTNEED leaves a page alone while a mapping still holds it.
+                    long evictedFiles = 0;
+                    long evictedBytes = 0;
+                    if (isRestartCacheCold) {
+                        engine.releaseInactive();
+                        final long[] evicted = evictPageCache(dbRoot);
+                        evictedFiles = evicted[0];
+                        evictedBytes = evicted[1];
+                    }
                     engine.buildViewGraphs();
                     engine.execute(insertSql(rowShape, firstRow, RESTART_PROBE_ROWS, 0, 0, 1, false), sqlCtx);
                     drainWal(engine);
@@ -994,7 +1123,8 @@ public class LiveViewSteadyStateBenchmark {
                         System.out.printf(
                                 Locale.ROOT,
                                 "# restore state_rows=%d window_ms=%.3f reseal_ms=%.3f read_back_ms=%.3f probe_rows=%d "
-                                        + "state_bytes=%d lookup_depth=%d faults=%d peak_mb=%.1f%n",
+                                        + "state_bytes=%d lookup_depth=%d faults=%d peak_mb=%.1f "
+                                        + "cache=%s evicted_files=%d evicted_mb=%.1f%n",
                                 stateRows,
                                 restoreNanos / 1e6,
                                 checkpointMs,
@@ -1003,11 +1133,20 @@ public class LiveViewSteadyStateBenchmark {
                                 restarted.getHeadCheckpointStateBytes(),
                                 restarted.getCheckpointLastLookupDepth(),
                                 restarted.getRefreshFaultCount(),
-                                restorePeakMb
+                                restorePeakMb,
+                                isRestartCacheCold ? "cold" : "warm",
+                                evictedFiles,
+                                evictedBytes / (1024.0 * 1024.0)
                         );
                     }
                 }
 
+                if (isOracleChecked) {
+                    // After the restart, when one is measured: the rows the oracle then checks
+                    // are the ones the restored runtime produced, so a restore that came back
+                    // with wrong state is caught here rather than only by its row count.
+                    reportOracle(engine, sqlCtx, selectShape, sumColumns, anchorPeriod, anchorZone);
+                }
                 reportFootprint(engine, dbRoot, partitionKeyType == KeyType.SYMBOL);
             }
         } finally {
@@ -1288,7 +1427,12 @@ public class LiveViewSteadyStateBenchmark {
      * only ever moves for the INT-keyed control.
      */
     private static void reportWindowState(LiveViewWindow window) {
-        final LiveViewWindowStatePlan plan = window.getCheckpointWindowStatePlan();
+        // The STORAGE plan, not the adopted runtime one. Every anchored window has a storage
+        // plan whatever cairo.sql.window.map.fusion.enabled says, and reading the adopted plan
+        // would report "anchor, zero components" for every fusion-off run - which is exactly
+        // the reading the acceptance matrix has to compare against the fusion-on one.
+        final LiveViewWindowStatePlan plan = window.getCheckpointStoragePlan();
+        final boolean isFused = window.getCheckpointWindowStatePlan() != null;
         // The state-root kind and the root counts are the per-seal fixed cost the fusion is
         // about: a window root replaces the anchor root and every durable projection's root
         // at once, so a view whose whole SELECT list fuses publishes two metadata files per
@@ -1302,14 +1446,16 @@ public class LiveViewSteadyStateBenchmark {
         // bytes are separate.
         System.out.printf(
                 Locale.ROOT,
-                "# window_state map=%s state_root=%s components=%d durable_components=%d projections=%d "
-                        + "entry_state_bytes=%d runtime_only_members=%s residual_functions=%s%n",
+                "# window_state map=%s state_root=%s fused=%s components=%d durable_components=%d projections=%d "
+                        + "entry_state_bytes=%d inline_leaf_budget=%d runtime_only_members=%s residual_functions=%s%n",
                 window.getAnchorMapImplementation(),
-                plan == null ? "anchor" : "window",
+                plan == null ? "none" : "window",
+                isFused,
                 plan == null ? 0 : plan.getComponentCount(),
                 plan == null ? 0 : plan.getDurableComponentCount(),
                 plan == null ? 0 : plan.getProjectionCount(),
                 plan == null ? Long.BYTES : plan.getTotalInlineStateBytes(),
+                LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES,
                 plan == null ? "n/a" : Integer.toString(runtimeOnlyMembers(plan)),
                 plan == null ? "n/a" : Integer.toString(plan.getResidualFunctions().size())
         );
@@ -1327,6 +1473,85 @@ public class LiveViewSteadyStateBenchmark {
             }
         }
         return count;
+    }
+
+    /**
+     * Compares the view's complete output with an independent query over the base table and
+     * reports the disagreement as row counts. A run whose rows are wrong is not a valid
+     * timing sample - a repair that read too little is faster for the wrong reason - and
+     * the {@code # oracle} line is where that verdict is read from.
+     * <p>
+     * The oracle states the anchored window as a plain window function partitioned by the
+     * account and the anchor bucket the row falls in, framed from the bucket's first row to
+     * the current one: the definition the live view maintains incrementally, written with
+     * none of its machinery. The DAILY sugar anchors at {@link #DAILY_ANCHOR_TIME}, so its
+     * bucket is the UTC day of the timestamp shifted back by that offset; an expression
+     * anchor floors to the epoch grid exactly as the view's own anchor expression does. The
+     * bounded ROWS and RANGE windows some shapes add do not reset at the anchor and are
+     * restated as they stand. A zoned anchor has no {@code timestamp_floor} the civil day
+     * maps onto and is skipped.
+     * <p>
+     * Both directions of EXCEPT are counted, so a missing row and a spurious row are both
+     * reported, and the two row counts beside them tell a disagreement in the rows from one
+     * in their values. Doubles are compared bit for bit: both sides add each key's
+     * contributions in timestamp order from zero, so a value that differs is a wrong value
+     * rather than a rounding artefact, and the repair routes in particular have to
+     * reproduce the forward result exactly.
+     */
+    private static void reportOracle(
+            CairoEngine engine,
+            SqlExecutionContext sqlCtx,
+            Shape shape,
+            int sumColumns,
+            String anchorPeriod,
+            String anchorZone
+    ) throws SqlException {
+        if (anchorZone != null) {
+            System.out.println("# oracle skipped=zoned_anchor");
+            return;
+        }
+        final long start = System.nanoTime();
+        final String bucket = DAILY_ANCHOR_PERIOD.equals(anchorPeriod)
+                ? "timestamp_floor('1d', dateadd('h', -" + DAILY_ANCHOR_OFFSET_MICROS / Micros.HOUR_MICROS + ", created_at))"
+                : "timestamp_floor('" + anchorPeriod + "', created_at)";
+        final String projections = shape.projections(sumColumns)
+                .replace(" over w ", " over (partition by account_id, bucket order by created_at "
+                        + "rows between unbounded preceding and current row) ")
+                .replace(" over r ", " over (" + BOUNDED_ROWS_WINDOW + ") ")
+                .replace(" over g ", " over (" + BOUNDED_RANGE_WINDOW + ") ");
+        final String oracle = "select created_at, account_id, " + projections
+                + " from (select *, " + bucket + " as bucket from payments)";
+        final String view = "select * from " + VIEW_NAME;
+        final long viewRows = scalarLong(engine, sqlCtx, "select count() from (" + view + ")");
+        final long oracleRows = scalarLong(engine, sqlCtx, "select count() from (" + oracle + ")");
+        final long viewOnly = scalarLong(engine, sqlCtx, "select count() from ((" + view + ") except (" + oracle + "))");
+        final long oracleOnly = scalarLong(engine, sqlCtx, "select count() from ((" + oracle + ") except (" + view + "))");
+        final boolean isMatch = viewRows == oracleRows && viewOnly == 0 && oracleOnly == 0;
+        System.out.printf(
+                Locale.ROOT,
+                "# oracle view_rows=%d oracle_rows=%d view_only=%d oracle_only=%d verdict=%s ms=%.1f%n",
+                viewRows,
+                oracleRows,
+                viewOnly,
+                oracleOnly,
+                isMatch ? "match" : "MISMATCH",
+                (System.nanoTime() - start) / 1e6
+        );
+    }
+
+    /**
+     * Runs one query that yields a single LONG and returns it.
+     */
+    private static long scalarLong(CairoEngine engine, SqlExecutionContext sqlCtx, String sql) throws SqlException {
+        try (
+                RecordCursorFactory factory = engine.select(sql, sqlCtx);
+                RecordCursor cursor = factory.getCursor(sqlCtx)
+        ) {
+            if (!cursor.hasNext()) {
+                throw new IllegalStateException("oracle query returned no rows: " + sql);
+            }
+            return cursor.getRecord().getLong(0);
+        }
     }
 
     /**
@@ -1399,6 +1624,53 @@ public class LiveViewSteadyStateBenchmark {
             }
         });
         return total[0];
+    }
+
+    /**
+     * Drops every file under {@code dir} from the page cache, so that the restart that
+     * follows reads its checkpoint back from disk rather than from the pages the seals
+     * just wrote. Each file is fsynced first - a dirty page cannot be dropped, and the
+     * default commit mode leaves the checkpoint's pages dirty - and then advised
+     * {@code POSIX_FADV_DONTNEED} over its whole length. Pages a live mapping still holds
+     * stay where they are, which is why the caller releases the engine's pools first.
+     * <p>
+     * Returns the number of files advised and their total length. Neither proves a page
+     * left the cache - {@code posix_fadvise} is advice - but the reading it produces is
+     * checked once against {@code mincore} in the matrix's README, and a cold restore
+     * that read like a warm one would show in the {@code read_back_ms} it reports.
+     */
+    private static long[] evictPageCache(Path dir) throws IOException {
+        // posix_fadvise's advice values are the same on every Linux ABI the harness runs
+        // on; io.questdb.std.Files only names the two it uses itself.
+        final int POSIX_FADV_DONTNEED = 4;
+        final long[] counts = new long[2];
+        try (io.questdb.std.str.Path nativePath = new io.questdb.std.str.Path()) {
+            Files.walkFileTree(dir, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                    if (!attrs.isRegularFile()) {
+                        return FileVisitResult.CONTINUE;
+                    }
+                    final long fd = io.questdb.std.Files.openRONoCache(nativePath.of(file.toString()).$());
+                    if (fd < 0) {
+                        // A file the engine dropped between the walk's listing and the open;
+                        // nothing to evict.
+                        return FileVisitResult.CONTINUE;
+                    }
+                    try {
+                        final long length = io.questdb.std.Files.length(fd);
+                        io.questdb.std.Files.fsync(fd);
+                        io.questdb.std.Files.fadvise(fd, 0, length, POSIX_FADV_DONTNEED);
+                        counts[0]++;
+                        counts[1] += length;
+                    } finally {
+                        io.questdb.std.Files.close(fd);
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        }
+        return counts;
     }
 
     private static void deleteRecursively(Path dir) throws IOException {
@@ -1551,6 +1823,12 @@ public class LiveViewSteadyStateBenchmark {
                 .append("select (").append(timestamp).append(")::timestamp, ")
                 .append(acct).append(", ")
                 .append(nullableAmountExpr);
+        if (shape.hasDecimalColumn) {
+            // Two decimal places of a value that moves per row, so the scaled integer the
+            // accumulator carries grows the way a real fee column's would rather than
+            // staying at one repeated value the codec could shortcut.
+            sql.append(", ((").append(rowIndex).append(" % 9973) * 0.07)::decimal(38,2)");
+        }
         for (int i = 1; i <= shape.sumColumns; i++) {
             sql.append(", (").append(rowIndex).append(" % ").append(2000 + i).append(") * 0.01");
         }
@@ -1564,6 +1842,32 @@ public class LiveViewSteadyStateBenchmark {
      * changing - which is what makes the leaf-budget question measurable rather than
      * arguable.
      */
+    /**
+     * The extended thread bean, or null on a JVM that does not implement it. Read once: the
+     * cast is the only thing that can fail, and it fails the same way on every call.
+     */
+    private static ThreadMXBean threadMxBean() {
+        final java.lang.management.ThreadMXBean bean = ManagementFactory.getThreadMXBean();
+        if (!(bean instanceof ThreadMXBean extended) || !extended.isThreadAllocatedMemorySupported()) {
+            return null;
+        }
+        extended.setThreadAllocatedMemoryEnabled(true);
+        return extended;
+    }
+
+    /**
+     * This thread's cumulative Java allocation in bytes, or -1 where the JVM does not offer
+     * the reading. Enabled once, lazily: the counter is on by default on HotSpot, and a JVM
+     * that has it switched off answers -1 for the thread rather than throwing.
+     */
+    private static long threadAllocatedBytes() {
+        final ThreadMXBean bean = THREAD_MX_BEAN;
+        if (bean == null) {
+            return -1;
+        }
+        return bean.getCurrentThreadAllocatedBytes();
+    }
+
     private static String sumColumnDdl(int sumColumns) {
         final StringBuilder ddl = new StringBuilder();
         for (int i = 1; i <= sumColumns; i++) {
@@ -1779,8 +2083,10 @@ public class LiveViewSteadyStateBenchmark {
         private final long anchorOffsetMicros;
         private final long anchorPeriodMicros;
         private final long equalTsEveryN;
+        private final boolean hasDecimalColumn;
         private final long hotKeyEveryN;
         private final KeyType keyType;
+        private final int nullKeyPercent;
         private final int nullPercent;
         private final int recycleAccounts;
         private final int sumColumns;
@@ -1793,6 +2099,8 @@ public class LiveViewSteadyStateBenchmark {
                 long anchorOffsetMicros,
                 KeyType keyType,
                 int nullPercent,
+                int nullKeyPercent,
+                boolean hasDecimalColumn,
                 int sumColumns,
                 long tsStepMicros,
                 long hotKeyEveryN,
@@ -1804,6 +2112,8 @@ public class LiveViewSteadyStateBenchmark {
             this.anchorOffsetMicros = anchorOffsetMicros;
             this.keyType = keyType;
             this.nullPercent = nullPercent;
+            this.nullKeyPercent = nullKeyPercent;
+            this.hasDecimalColumn = hasDecimalColumn;
             this.sumColumns = sumColumns;
             this.tsStepMicros = tsStepMicros;
             this.hotKeyEveryN = hotKeyEveryN;
@@ -1843,7 +2153,13 @@ public class LiveViewSteadyStateBenchmark {
             final String hotOrNot = hotKeyEveryN > 0
                     ? "(case when " + rowIndex + " % " + hotKeyEveryN + " = 0 then 0 else " + accountId + " end)"
                     : accountId;
-            return keyType.accountExpression(hotOrNot);
+            final String key = keyType.accountExpression(hotOrNot);
+            // A NULL key is one partition of its own, whatever the shape above picked: the
+            // window groups every such row together and a guarded count(partition_key) must
+            // leave that partition at zero while count(*) counts its rows.
+            return nullKeyPercent > 0
+                    ? "case when " + rowIndex + " % 100 < " + nullKeyPercent + " then null else " + key + " end"
+                    : key;
         }
     }
 
@@ -1899,6 +2215,21 @@ public class LiveViewSteadyStateBenchmark {
      */
     private enum Shape {
         /**
+         * {@code count(*)} beside a guarded {@code count(partition_key)}: an 8-byte row
+         * counter and an 8-byte non-null counter, the narrowest two-component entry there
+         * is. Read it with {@code --null-key-percent} above zero, which is what leaves the
+         * guarded projection behind the row count and prices the guard.
+         */
+        COUNT_STAR_KEY("count-star-key"),
+        /**
+         * An anchored DECIMAL {@code sum}. DECIMAL accumulates as scaled integers, which is
+         * outside every inline family, so the window's plan carries zero components: the
+         * anchor-only shape, an eight-byte payload holding the anchor value alone beside one
+         * function root. It is the row of the acceptance matrix that prices the window root's
+         * fixed header and manifest overhead with no per-key payload at all.
+         */
+        DECIMAL_SUM("decimal-sum"),
+        /**
          * Four dispersion calls plus a {@code count} that folds onto their counter - one
          * 24-byte Welford component serving five outputs.
          */
@@ -1908,6 +2239,15 @@ public class LiveViewSteadyStateBenchmark {
          * own. The mixed shape the acceptance plan asks for.
          */
         MIXED("mixed"),
+        /**
+         * The residual-heavy row of the acceptance matrix: one anchored DOUBLE {@code sum}
+         * that fuses, beside a DECIMAL {@code sum} and a bounded ROWS frame and a bounded
+         * RANGE frame that do not. The RANGE call keeps the live rows behind its tail in a
+         * ring, which is state no dirty-key capture covers - {@code freezeFunction} excludes
+         * ring state from it - so this shape is the one whose seal carries a complete scan
+         * of a residual on top of an incremental window capture.
+         */
+        RESIDUAL("residual"),
         /**
          * {@code count(*)} and {@code row_number()} over one row-count component.
          */
@@ -1956,13 +2296,29 @@ public class LiveViewSteadyStateBenchmark {
         }
 
         String extraWindows() {
-            return this == MIXED
-                    ? ", r as (partition by account_id order by created_at rows between 63 preceding and current row)"
-                    : "";
+            return switch (this) {
+                case MIXED -> ", r as (" + BOUNDED_ROWS_WINDOW + ")";
+                case RESIDUAL -> ", r as (" + BOUNDED_ROWS_WINDOW + "), g as (" + BOUNDED_RANGE_WINDOW + ")";
+                default -> "";
+            };
+        }
+
+        /**
+         * Whether the base table needs the {@code fee} DECIMAL column this shape sums over.
+         * The column is added only for the shapes that read it: an unused column would still
+         * be written on every insert and would move the base apply cost of every other row
+         * of the matrix.
+         */
+        boolean hasDecimalColumn() {
+            return this == DECIMAL_SUM || this == RESIDUAL;
         }
 
         String projections(int sumColumns) {
             final StringBuilder select = new StringBuilder(switch (this) {
+                case COUNT_STAR_KEY -> "count(*) over w as n, count(account_id) over w as k";
+                case DECIMAL_SUM -> "sum(fee) over w as cumulative_fee";
+                case RESIDUAL -> "sum(amount) over w as cumulative_sum, sum(fee) over w as cumulative_fee, "
+                        + "sum(amount) over r as bounded_sum, sum(amount) over g as range_sum";
                 case DISPERSION -> "stddev_samp(amount) over w as ss, stddev_pop(amount) over w as sp, "
                         + "var_samp(amount) over w as vs, var_pop(amount) over w as vp, "
                         + "count(amount) over w as c";
@@ -1979,6 +2335,84 @@ public class LiveViewSteadyStateBenchmark {
                 select.append(", sum(q").append(i).append(") over w as qs").append(i);
             }
             return select.toString();
+        }
+    }
+
+    /**
+     * One batch's slice of the view's lifetime capture ledger.
+     * <p>
+     * Every counter on {@link LiveViewInstance} is cumulative over the view's life, so a
+     * batch's own reading is a difference between two of them. Holding the previous reading
+     * here rather than in ten locals in the batch loop keeps the two halves - what was read
+     * before the refresh and what is subtracted after it - impossible to get out of step.
+     */
+    private static final class CaptureLedgerSample {
+        private long functionCaptures;
+        private long functionIncrementalCaptures;
+        private long functionKeysImaged;
+        private long functionKeysVisited;
+        private long windowCaptures;
+        private long windowElisionProbes;
+        private long windowIncrementalCaptures;
+        private long windowKeysImaged;
+        private long windowKeysRemoved;
+        private long windowKeysVisited;
+
+        private CaptureLedgerSample(LiveViewInstance instance) {
+            advance(instance);
+        }
+
+        void advance(LiveViewInstance instance) {
+            windowCaptures = instance.getCheckpointCaptureWindowRoots();
+            windowIncrementalCaptures = instance.getCheckpointCaptureWindowRootsIncremental();
+            windowKeysVisited = instance.getCheckpointCaptureWindowKeysVisited();
+            windowKeysImaged = instance.getCheckpointCaptureWindowKeysImaged();
+            windowKeysRemoved = instance.getCheckpointCaptureWindowKeysRemoved();
+            windowElisionProbes = instance.getCheckpointCaptureWindowElisionProbes();
+            functionCaptures = instance.getCheckpointCaptureFunctionRoots();
+            functionIncrementalCaptures = instance.getCheckpointCaptureFunctionRootsIncremental();
+            functionKeysVisited = instance.getCheckpointCaptureFunctionKeysVisited();
+            functionKeysImaged = instance.getCheckpointCaptureFunctionKeysImaged();
+        }
+
+        long functionCaptures(LiveViewInstance instance) {
+            return instance.getCheckpointCaptureFunctionRoots() - functionCaptures;
+        }
+
+        long functionIncrementalCaptures(LiveViewInstance instance) {
+            return instance.getCheckpointCaptureFunctionRootsIncremental() - functionIncrementalCaptures;
+        }
+
+        long functionKeysImaged(LiveViewInstance instance) {
+            return instance.getCheckpointCaptureFunctionKeysImaged() - functionKeysImaged;
+        }
+
+        long functionKeysVisited(LiveViewInstance instance) {
+            return instance.getCheckpointCaptureFunctionKeysVisited() - functionKeysVisited;
+        }
+
+        long windowCaptures(LiveViewInstance instance) {
+            return instance.getCheckpointCaptureWindowRoots() - windowCaptures;
+        }
+
+        long windowElisionProbes(LiveViewInstance instance) {
+            return instance.getCheckpointCaptureWindowElisionProbes() - windowElisionProbes;
+        }
+
+        long windowIncrementalCaptures(LiveViewInstance instance) {
+            return instance.getCheckpointCaptureWindowRootsIncremental() - windowIncrementalCaptures;
+        }
+
+        long windowKeysImaged(LiveViewInstance instance) {
+            return instance.getCheckpointCaptureWindowKeysImaged() - windowKeysImaged;
+        }
+
+        long windowKeysRemoved(LiveViewInstance instance) {
+            return instance.getCheckpointCaptureWindowKeysRemoved() - windowKeysRemoved;
+        }
+
+        long windowKeysVisited(LiveViewInstance instance) {
+            return instance.getCheckpointCaptureWindowKeysVisited() - windowKeysVisited;
         }
     }
 

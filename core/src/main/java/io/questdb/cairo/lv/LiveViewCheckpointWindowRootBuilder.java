@@ -40,11 +40,11 @@ import java.util.Arrays;
 
 /**
  * Builds one immutable {@link LiveViewCheckpointWindowRoot} and its changed
- * partition-map paths in the same metadata segment. The fused counterpart of
- * {@link LiveViewCheckpointAnchorRootBuilder}, and it works the same way: a complete
- * freeze treats its puts as the whole truth and removes every old entry it did not put,
- * a forward cadence freeze supplies only touched keys and leaves the rest where the
- * predecessor left them, and the copy-on-write writer drops equal puts either way.
+ * partition-map paths in the same metadata segment. It is the only builder of an
+ * anchored view's state root: a complete freeze treats its puts as the whole truth and
+ * removes every old entry it did not put, a forward cadence freeze supplies only touched
+ * keys and leaves the rest where the predecessor left them, and the copy-on-write writer
+ * drops equal puts either way.
  *
  * <h2>A manifest change is not an incremental seal</h2>
  * {@link #isCompatiblePredecessor} is what the caller has to ask before it may build on
@@ -53,9 +53,9 @@ import java.util.Arrays;
  * silent misread rather than a rejection - the decoder finds the total length it expects
  * and reads the wrong fields out of it. Four things must therefore match, not one: the
  * window identity, the key schema, the anchor value type <b>and</b> the manifest, byte
- * for byte. Anything else - a legacy anchor root below, a component codec bump that left
- * {@code definitionTxn} alone, a reordered component - makes the seal start from an
- * empty tree and image every live key.
+ * for byte. Anything else - a component codec bump that left {@code definitionTxn}
+ * alone, a reordered component - makes the seal start from an empty tree and image every
+ * live key.
  */
 public class LiveViewCheckpointWindowRootBuilder implements Closeable {
 
@@ -265,8 +265,8 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
 
     /**
      * Whether the root at {@code stateRootRef} may be built on incrementally by a seal
-     * that lays its entries out the given way. False for a null reference, for a legacy
-     * anchor root, and for any window root whose identity, key schema, anchor type or
+     * that lays its entries out the given way. False for a null reference, for a page of
+     * any other kind, and for any window root whose identity, key schema, anchor type or
      * manifest differs - all of which take the same full-scan conversion path.
      */
     public boolean isCompatiblePredecessor(
@@ -349,7 +349,7 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
         isInitialized = false;
         clearBorrowedCompiled();
         if (windowIdentity.length == 0 || keySchema.length < Integer.BYTES || manifest.length == 0
-                || totalInlineStateBytes <= LiveViewWindowStatePlan.ANCHOR_STATE_BYTES) {
+                || totalInlineStateBytes < LiveViewWindowStatePlan.ANCHOR_STATE_BYTES) {
             throw CairoException.critical(0).put("live view checkpoint window state root identity or layout invalid");
         }
         LiveViewCheckpointMetadata.validateByteArrayLength(windowIdentity.length, "window state identity");

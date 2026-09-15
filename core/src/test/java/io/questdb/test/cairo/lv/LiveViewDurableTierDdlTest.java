@@ -4777,6 +4777,11 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
         // seqTxn-3 row is already fed when the read throws - the mid-drain shape
         // LiveViewSmokeTest.testMidDrainRefreshFailureRebuildsWindowState pins.
         final AtomicInteger armBaseTsRead = new AtomicInteger(-1);
+        // Armed by the mid-drain fault above. The recovery tries a restore from the timeline
+        // before it rebuilds, and that restore would put the runtime back without committing
+        // anything; failing its first timeline open is what sends the recovery to the rebuild
+        // this test is about.
+        final AtomicBoolean failRestoreRead = new AtomicBoolean();
         final AtomicBoolean failLvApply = new AtomicBoolean();
         final AtomicInteger applyFaults = new AtomicInteger();
         assertMemoryLeak(new TestFilesFacadeImpl() {
@@ -4789,6 +4794,7 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                         && Utf8s.containsAscii(name, "wal")) {
                     if (armBaseTsRead.get() == 0) {
                         armBaseTsRead.set(-1);
+                        failRestoreRead.set(true);
                         return -1;
                     }
                     armBaseTsRead.decrementAndGet();
@@ -4798,6 +4804,10 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
 
             @Override
             public long openRW(LPSZ name, int opts) {
+                if (failRestoreRead.get() && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)) {
+                    failRestoreRead.set(false);
+                    return -1;
+                }
                 // The view's own partition, which only its apply writes - its WAL segments carry no
                 // partition name - so the replacement commits and the apply that would land it fails.
                 if (failLvApply.get()
@@ -4819,7 +4829,7 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
             final LogCapture capture = new LogCapture();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 capture.start();
-                final LiveViewInstance instance = deferAMidDrainRebuild(job, armBaseTsRead, failLvApply);
+                final LiveViewInstance instance = deferAMidDrainRebuild(job, armBaseTsRead, failRestoreRead, failLvApply);
                 Assert.assertTrue("the rebuild's apply must actually have been failed", applyFaults.get() > 0);
 
                 final long replacementLvSeqTxn = instance.getPendingReplacementLvSeqTxn();
@@ -4940,6 +4950,9 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
         final String[] baseDir = new String[1];
         final String[] lvDir = new String[1];
         final AtomicInteger armBaseTsRead = new AtomicInteger(-1);
+        // Armed by the mid-drain fault, so the recovery's restore fails and it rebuilds - see
+        // testMidDrainRebuildWhoseReplacementDidNotApplyRepeatsItOnceItLands.
+        final AtomicBoolean failRestoreRead = new AtomicBoolean();
         final AtomicBoolean failLvApply = new AtomicBoolean();
         assertMemoryLeak(new TestFilesFacadeImpl() {
             @Override
@@ -4951,6 +4964,7 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                         && Utf8s.containsAscii(name, "wal")) {
                     if (armBaseTsRead.get() == 0) {
                         armBaseTsRead.set(-1);
+                        failRestoreRead.set(true);
                         return -1;
                     }
                     armBaseTsRead.decrementAndGet();
@@ -4960,6 +4974,10 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
 
             @Override
             public long openRW(LPSZ name, int opts) {
+                if (failRestoreRead.get() && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)) {
+                    failRestoreRead.set(false);
+                    return -1;
+                }
                 if (failLvApply.get()
                         && lvDir[0] != null
                         && Utf8s.containsAscii(name, lvDir[0])
@@ -4975,7 +4993,7 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
             final TableToken lvToken = engine.verifyTableName("lv");
             lvDir[0] = lvToken.getDirName();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                final LiveViewInstance instance = deferAMidDrainRebuild(job, armBaseTsRead, failLvApply);
+                final LiveViewInstance instance = deferAMidDrainRebuild(job, armBaseTsRead, failRestoreRead, failLvApply);
                 Assert.assertTrue("the debt this restart drops must be there to drop",
                         instance.isWindowStateDirty());
                 // The rebuild retired it on the way in and sealed nothing over a replacement that
@@ -5252,6 +5270,13 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
         final String[] baseDir = new String[1];
         // -1 disarmed; 0 invalidate at the next base partition x.d read and disarm.
         final AtomicInteger armBaseRead = new AtomicInteger(-1);
+        // The drift recovery tries a restore from the timeline before it rebuilds, and that restore
+        // would put the runtime back without the rebuild this test is about. Armed with the view's
+        // refresh fault count, it fails the first timeline open after the drift has been recorded as
+        // a fault - which is the restore's, since the recovery starts right after that record - so
+        // the seals and plans ahead of the drift open the timeline undisturbed.
+        final LiveViewInstance[] faultingView = new LiveViewInstance[1];
+        final long[] failRestoreAfterFaults = {-1};
         setProperty(PropertyKey.CIRCUIT_BREAKER_THROTTLE, 0);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 1);
         assertMemoryLeak(new TestFilesFacadeImpl() {
@@ -5270,6 +5295,18 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                     );
                 }
                 return super.openRO(name);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failRestoreAfterFaults[0] >= 0
+                        && faultingView[0] != null
+                        && faultingView[0].getRefreshFaultCount() > failRestoreAfterFaults[0]
+                        && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)) {
+                    failRestoreAfterFaults[0] = -1;
+                    return -1;
+                }
+                return super.openRW(name, opts);
             }
         }, () -> {
             createMidDrainBaseAndView();
@@ -5297,10 +5334,13 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                 execute("INSERT INTO base (ts, sym, x) VALUES ('2026-04-01T00:00:01.000000Z', 'a', 2)");
                 drainWalQueue();
 
+                faultingView[0] = instance;
+                failRestoreAfterFaults[0] = instance.getRefreshFaultCount();
                 armBaseRead.set(0);
                 for (int i = 0; i < 64 && armBaseRead.get() >= 0; i++) {
                     job.run();
                 }
+                Assert.assertEquals("the drift recovery's restore must have been failed", -1, failRestoreAfterFaults[0]);
                 Assert.assertEquals("the rebuild's base read must actually have been reached",
                         -1, armBaseRead.get());
                 capture.drain();
@@ -5342,9 +5382,23 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
         final String[] lvDir = new String[1];
         final AtomicBoolean failLvApply = new AtomicBoolean();
         final AtomicInteger applyFaults = new AtomicInteger();
+        // The drift recovery tries a restore from the timeline before it rebuilds, and that restore
+        // would put the runtime back without the rebuild this test is about. Armed with the view's
+        // refresh fault count, it fails the first timeline open after the drift has been recorded as
+        // a fault - which is the restore's, since the recovery starts right after that record - so
+        // the seals and plans ahead of the drift open the timeline undisturbed.
+        final LiveViewInstance[] faultingView = new LiveViewInstance[1];
+        final long[] failRestoreAfterFaults = {-1};
         assertMemoryLeak(new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, int opts) {
+                if (failRestoreAfterFaults[0] >= 0
+                        && faultingView[0] != null
+                        && faultingView[0].getRefreshFaultCount() > failRestoreAfterFaults[0]
+                        && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)) {
+                    failRestoreAfterFaults[0] = -1;
+                    return -1;
+                }
                 // The view's own partition, which only its apply writes, so the rebuild's
                 // replacement commits and the apply that would land it fails.
                 if (failLvApply.get()
@@ -5381,12 +5435,15 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                 execute("ALTER TABLE base ADD COLUMN extra DOUBLE");
                 drainWalQueue();
 
+                faultingView[0] = instance;
+                failRestoreAfterFaults[0] = instance.getRefreshFaultCount();
                 failLvApply.set(true);
                 setCurrentMicros(2_000_000L);
                 execute("INSERT INTO base (ts, sym, x) VALUES ('2026-04-01T00:00:01.000000Z', 'a', 2)");
                 drainWalQueue();
                 drainJob(job);
                 drainWalQueue();
+                Assert.assertEquals("the drift recovery's restore must have been failed", -1, failRestoreAfterFaults[0]);
                 Assert.assertTrue("the rebuild's apply must actually have been failed", applyFaults.get() > 0);
                 capture.drain();
                 capture.assertLogged(
@@ -5608,6 +5665,13 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
         final String[] baseDir = new String[1];
         // -1 disarmed; 0 fail the next base partition x.d read and disarm.
         final AtomicInteger armBaseRead = new AtomicInteger(-1);
+        // The drift recovery tries a restore from the timeline before it rebuilds, and that restore
+        // would put the runtime back without the rebuild this test is about. Armed with the view's
+        // refresh fault count, it fails the first timeline open after the drift has been recorded as
+        // a fault - which is the restore's, since the recovery starts right after that record - so
+        // the seals and plans ahead of the drift open the timeline undisturbed.
+        final LiveViewInstance[] faultingView = new LiveViewInstance[1];
+        final long[] failRestoreAfterFaults = {-1};
         assertMemoryLeak(new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
@@ -5621,6 +5685,18 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                     return -1;
                 }
                 return super.openRO(name);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failRestoreAfterFaults[0] >= 0
+                        && faultingView[0] != null
+                        && faultingView[0].getRefreshFaultCount() > failRestoreAfterFaults[0]
+                        && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)) {
+                    failRestoreAfterFaults[0] = -1;
+                    return -1;
+                }
+                return super.openRW(name, opts);
             }
         }, () -> {
             createMidDrainBaseAndView();
@@ -5650,10 +5726,13 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
 
                 // One turn, stopped the moment the fault fires, so the assertions below read the
                 // state the failed recovery left rather than whatever a later turn made of it.
+                faultingView[0] = instance;
+                failRestoreAfterFaults[0] = instance.getRefreshFaultCount();
                 armBaseRead.set(0);
                 for (int i = 0; i < 64 && armBaseRead.get() >= 0; i++) {
                     job.run();
                 }
+                Assert.assertEquals("the drift recovery's restore must have been failed", -1, failRestoreAfterFaults[0]);
                 Assert.assertEquals("the recovery's base read must actually have been failed",
                         -1, armBaseRead.get());
                 capture.drain();
@@ -5662,15 +5741,16 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
                         instance.isWindowStateDirty());
                 Assert.assertFalse("a failed recovery must not invalidate the view", instance.isInvalid());
 
-                // The gate settles the debt before anything drains: the next turn rebuilds from the
-                // applied base, and it is that rebuild - not the correction's repair - that lands the
-                // answer.
+                // The gate settles the debt before anything drains. The failed rebuild stopped at its
+                // probe, ahead of any retire, so the timeline is still there and the next turn
+                // restores the runtime from it; the correction's repair then lands the answer over
+                // the restored runtime rather than over one recompiled at identity.
                 capture.stop();
                 capture.start();
                 driveRefreshToQuiescence(job);
                 capture.drain();
-                capture.assertLogged("live view recomputed window state from applied base [view=lv, cause=mid-drain refresh failure]");
-                Assert.assertFalse("the rebuild clears the debt", instance.isWindowStateDirty());
+                capture.assertLogged("live view restored its runtime from the checkpoint timeline [view=lv, cause=mid-drain refresh failure");
+                Assert.assertFalse("the restore clears the debt", instance.isWindowStateDirty());
                 assertQuery("SELECT ts, sym, x, s FROM lv")
                         .noLeakCheck()
                         .timestamp("ts")
@@ -9183,13 +9263,16 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
      * re-enqueues after the second drains both of them in one pass -
      * {@code LiveViewSmokeTest.testMidDrainRefreshFailureRebuildsWindowState} pins that shape.
      * {@code armBaseTsRead} then fails the fourth commit's segment read with the third's row already
-     * fed: a mid-drain fault, before any durable commit, whose recovery recomputes the view from the
-     * applied base. {@code failLvApply} refuses that recompute's apply, so it defers with seqTxn 3
-     * and 4 unconsumed - a range holding one timestamp, and the frontier's own.
+     * fed: a mid-drain fault, before any durable commit. The caller's facade arms
+     * {@code failRestoreRead} at that fault, so the restore from the timeline the recovery tries
+     * first fails and the recovery recomputes the view from the applied base instead.
+     * {@code failLvApply} refuses that recompute's apply, so it defers with seqTxn 3 and 4
+     * unconsumed - a range holding one timestamp, and the frontier's own.
      */
     private LiveViewInstance deferAMidDrainRebuild(
             LiveViewRefreshJob job,
             AtomicInteger armBaseTsRead,
+            AtomicBoolean failRestoreRead,
             AtomicBoolean failLvApply
     ) throws Exception {
         execute("INSERT INTO base VALUES ('2026-04-01T00:00:00.000000Z', 'a', 1)");
@@ -9212,6 +9295,7 @@ public class LiveViewDurableTierDdlTest extends AbstractLiveViewTest {
         drainWalQueue();
         Assert.assertEquals("the mid-drain segment read must have been failed exactly once",
                 -1, armBaseTsRead.get());
+        Assert.assertFalse("the recovery's restore must have been failed", failRestoreRead.get());
         Assert.assertNotEquals("the rebuild must have handed its replacement to the gate",
                 Numbers.LONG_NULL, instance.getPendingReplacementLvSeqTxn());
         return instance;

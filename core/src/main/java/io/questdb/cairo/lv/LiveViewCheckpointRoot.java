@@ -37,10 +37,10 @@ import java.io.Closeable;
 /**
  * Durable state root referenced by one logical timeline entry.
  * <p>
- * Beside the anchor and function references, the root carries the sorted set of
+ * Beside the state-root and function references, the root carries the sorted set of
  * segments its whole closure names: the data segments its functions' state pages
  * sit in, and the metadata segments holding its own page, its function directory
- * and every anchor-root, function-root and partition-map page below them. Both
+ * and every window-root, function-root and partition-map page below them. Both
  * halves are counted the same way by the catalogue, so publishing this root takes
  * one reference on each and retiring the boundary releases them in one
  * transaction - which is what lets a repair splice or a truncate reclaim a
@@ -51,7 +51,6 @@ public class LiveViewCheckpointRoot implements Closeable {
     public static final int PAGE_KIND = 0x1a;
     private static final int FIXED_SIZE = 2 * Integer.BYTES + 3 * Long.BYTES + 2 * LiveViewCheckpointPageRef.BYTES;
     private static final int FORMAT_VERSION = 1;
-    private final LiveViewCheckpointPageRef anchorRootRef = new LiveViewCheckpointPageRef();
     private long checkpointId;
     private long definitionTxn;
     private final LiveViewCheckpointPageRef functionDirectoryRef = new LiveViewCheckpointPageRef();
@@ -63,6 +62,7 @@ public class LiveViewCheckpointRoot implements Closeable {
      * than rebuilt per open.
      */
     private final LongList segmentIds = new LongList();
+    private final LiveViewCheckpointPageRef stateRootRef = new LiveViewCheckpointPageRef();
 
     public LiveViewCheckpointRoot(@NotNull CairoConfiguration configuration) {
         reader = new LiveViewCheckpointMetaSegmentReader(configuration);
@@ -106,15 +106,14 @@ public class LiveViewCheckpointRoot implements Closeable {
      * Returns the root of this boundary's window state, or a null reference when the
      * view has no anchored window.
      * <p>
-     * The page it names is a tagged union decoded by page kind: a
-     * {@link LiveViewCheckpointAnchorRoot} selects the legacy anchor plus
-     * function-directory restore, a {@link LiveViewCheckpointWindowRoot} selects the
-     * fused one, and any other kind is corruption. The checkpoint root's own bytes did
-     * not have to change for the second kind to exist, which is what lets a new reader
-     * read every old checkpoint.
+     * The page it names is a {@link LiveViewCheckpointWindowRoot}; any other kind is
+     * corruption. The checkpoint root's own bytes never carried which kind it was, so
+     * the reference itself is unchanged from the layout that also admitted a separate
+     * anchor root - what tells the two apart is the format version the timeline's
+     * superblock declares.
      */
     public void getStateRootRef(@NotNull LiveViewCheckpointPageRef out) {
-        out.of(anchorRootRef.getSegmentId(), anchorRootRef.getOffset(), anchorRootRef.getLength());
+        out.of(stateRootRef.getSegmentId(), stateRootRef.getOffset(), stateRootRef.getLength());
     }
 
     public int getSegmentIdCount() {
@@ -146,8 +145,8 @@ public class LiveViewCheckpointRoot implements Closeable {
                     .put(" [checkpointId=").put(checkpointId).put(", definitionTxn=").put(definitionTxn).put(']');
         }
         long offset = 2L * Integer.BYTES + 3L * Long.BYTES;
-        LiveViewCheckpointMetadata.readMetaRef(reader, offset, anchorRootRef);
-        LiveViewCheckpointMetadata.validateMetaRef(anchorRootRef, true, "anchor root");
+        LiveViewCheckpointMetadata.readMetaRef(reader, offset, stateRootRef);
+        LiveViewCheckpointMetadata.validateMetaRef(stateRootRef, true, "window state root");
         offset += LiveViewCheckpointPageRef.BYTES;
         LiveViewCheckpointMetadata.readMetaRef(reader, offset, functionDirectoryRef);
         LiveViewCheckpointMetadata.validateMetaRef(functionDirectoryRef, false, "function directory");
@@ -175,14 +174,14 @@ public class LiveViewCheckpointRoot implements Closeable {
             long checkpointId,
             long maxTimestamp,
             long definitionTxn,
-            LiveViewCheckpointPageRef anchorRootRef,
+            LiveViewCheckpointPageRef stateRootRef,
             LiveViewCheckpointPageRef functionDirectoryRef,
             LongList segmentIds
     ) {
         this.checkpointId = checkpointId;
         this.maxTimestamp = maxTimestamp;
         this.definitionTxn = definitionTxn;
-        this.anchorRootRef.of(anchorRootRef.getSegmentId(), anchorRootRef.getOffset(), anchorRootRef.getLength());
+        this.stateRootRef.of(stateRootRef.getSegmentId(), stateRootRef.getOffset(), stateRootRef.getLength());
         this.functionDirectoryRef.of(functionDirectoryRef.getSegmentId(), functionDirectoryRef.getOffset(), functionDirectoryRef.getLength());
         this.segmentIds.clear();
         this.segmentIds.add(segmentIds);
@@ -195,7 +194,7 @@ public class LiveViewCheckpointRoot implements Closeable {
         mem.putLong(checkpointId);
         mem.putLong(maxTimestamp);
         mem.putLong(definitionTxn);
-        LiveViewCheckpointMetadata.putMetaRef(mem, anchorRootRef);
+        LiveViewCheckpointMetadata.putMetaRef(mem, stateRootRef);
         LiveViewCheckpointMetadata.putMetaRef(mem, functionDirectoryRef);
         for (int i = 0, n = segmentIds.size(); i < n; i++) {
             mem.putLong(segmentIds.getQuick(i));

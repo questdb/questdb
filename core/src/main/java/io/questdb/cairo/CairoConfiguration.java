@@ -1442,6 +1442,29 @@ public interface CairoConfiguration {
         return isLiveViewEnabled() && getLiveViewRefreshWorkerCount() > 0;
     }
 
+    /**
+     * Whether a live view refuses a whole-view rebuild from its base table that would
+     * change output it already retains.
+     * <p>
+     * Several recoveries recompute a view from the base rows that survive today and replace
+     * its whole output with the result: a restart that finds no usable checkpoint timeline, a
+     * base schema change the view survives, a refresh that failed mid-drain, and a base WAL
+     * segment that is gone. TTL, DROP/DETACH PARTITION and TRUNCATE remove base rows a live
+     * view keeps its own output for, so after any of them such a rebuild silently drops rows
+     * and restarts accumulations that the view had already published. With this on, the view
+     * checks before the rebuild commits and, when it can show that rows would be lost, stops
+     * refreshing instead: it keeps its rows, checkpoints and watermarks, reports
+     * {@code invalid} through {@code live_views()} with a reason naming the evidence, and
+     * releases its base WAL floor. The operator decides what happens next, and a restart
+     * retries the recovery. See {@code LiveViewRebuildRestatementGuard} for what the check
+     * can and cannot detect.
+     * <p>
+     * Defaults to true. Setting it false restores the earlier behavior, where every such
+     * rebuild follows the base table: for an operator who would rather a view track its base's
+     * retention than stop when a recovery would restate it.
+     */
+    boolean isLiveViewRebuildRestatementGuardEnabled();
+
     boolean isMatViewCoveringIndexEnabled();
 
     boolean isMatViewEnabled();

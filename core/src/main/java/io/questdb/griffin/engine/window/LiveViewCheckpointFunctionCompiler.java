@@ -828,6 +828,14 @@ public final class LiveViewCheckpointFunctionCompiler {
                 (function, argumentColumnIndex, host) ->
                         isCountOverTheWindowsOwnPartitionKey(function, argumentColumnIndex, host, baseMetadata);
         final LiveViewWindowStatePlan.Builder builder = new LiveViewWindowStatePlan.Builder();
+        // The window names itself before a single projection is offered, so a window whose
+        // every function turns out to be a residual - an anchored DECIMAL sum is the
+        // standing example - still gets the storage plan its checkpoints are laid out by.
+        // Inferring the pair from whichever projection happened to join first would make
+        // the plan's existence depend on the SELECT list rather than on the window.
+        if (!nameAnchoredWindow(builder, anchorableWindowFunctions)) {
+            return null;
+        }
         for (int i = 0, n = functions.size(); i < n; i++) {
             final Function function = functions.getQuick(i);
             if (!(function instanceof WindowFunction windowFunction)) {
@@ -873,6 +881,43 @@ public final class LiveViewCheckpointFunctionCompiler {
         if (dependencyKind(functionName, window) == DependencyKind.RANGE_W_PRECEDING_BOUNDED_HI) {
             validateRangeOrder(functionName, window, baseMetadata);
         }
+    }
+
+    /**
+     * Names the anchored window on {@code builder} from the functions the anchor dispatches
+     * to, and reports whether one could be named.
+     * <p>
+     * Every anchorable function belongs to the one window the view anchors - the runtime
+     * builds a single {@code LiveViewWindow} from a single PARTITION BY and a single anchor
+     * expression - so the first that carries checkpoint metadata names it for all of them.
+     * A function disagreeing with what it names is still declined into the residual list by
+     * the builder's own identity test, which is what that test is for.
+     *
+     * @return false when no anchorable function carries an identity and key layout, which
+     * is a window whose state no root could describe
+     */
+    private static boolean nameAnchoredWindow(
+            LiveViewWindowStatePlan.Builder builder,
+            ObjList<WindowFunction> anchorableWindowFunctions
+    ) {
+        for (int i = 0, n = anchorableWindowFunctions.size(); i < n; i++) {
+            final WindowFunction function = anchorableWindowFunctions.getQuick(i);
+            final LiveViewCheckpointFunctionIdentity identity = function.checkpointFunctionIdentity();
+            final ColumnTypes keyColumnTypes = function.getCheckpointKeyColumnTypes();
+            if (identity == null || keyColumnTypes == null || keyColumnTypes.getColumnCount() == 0) {
+                continue;
+            }
+            builder.ofWindow(
+                    LiveViewWindowStatePlan.encodeWindowIdentity(
+                            identity.getCanonicalWindowName(),
+                            identity.getPartitionSignature(),
+                            identity.getOrderSignature()
+                    ),
+                    keyColumnTypes
+            );
+            return true;
+        }
+        return false;
     }
 
     /**

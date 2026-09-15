@@ -25,6 +25,8 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.test.tools.LogCapture;
@@ -34,34 +36,36 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.File;
 import java.io.IOException;
 
 /**
- * Cross-version restore for the one released shape this branch deliberately <b>cannot</b>
- * restore, and what that costs.
+ * The released shape whose per-function state layout also moved, and what the timeline-wide
+ * format block does to it.
  * <p>
- * {@link LiveViewCheckpointReleaseCompatTest} and
- * {@link LiveViewCheckpointReleaseShapesCompatTest} both read released trees whose state
- * layout did not move, so both prove a ladder carries forward. This case is their inverse.
  * An anchored cumulative {@code max}/{@code min} compiles to
- * {@code MaxDoubleWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction} and
- * its LONG twin, and this branch took the redundant "initialized" byte out of both images -
- * a nine-byte freeze became eight - and bumped {@code checkpointStateFormatVersion()}
- * 1 -&gt; 2 to say so. The version rides inside the codec identity, which is the function
- * directory's lookup key, so every root {@code 10.0.1} wrote for these functions stops
- * resolving. That is the bump working, not failing.
+ * {@code MaxDoubleWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction} and its
+ * LONG twin, and this branch took the redundant "initialized" byte out of both images - a
+ * nine-byte freeze became eight - and bumped {@code checkpointStateFormatVersion()} 1 -&gt; 2 to
+ * say so. The version rides inside the codec identity, which is the function directory's lookup
+ * key, so every root {@code 10.0.1} wrote for these functions stops resolving.
  * <p>
- * What the case pins is the consequence, because nothing else in the suite does and nothing
- * in a running instance reports it. The view stays valid, counts no refresh fault, and
- * serves correct rows the whole way through - and silently throws its checkpoint ladder
- * away and recomputes the window from the base table. The three witnesses are therefore
- * {@link LiveViewInstance#isCheckpointRestoreSucceeded()} reading <b>false</b>, the boundary
- * count collapsing, and the rebuild's own log lines. Rows alone would prove nothing: a
- * from-base replay lands on exactly the same numbers, which is the whole reason this is
- * invisible.
+ * That used to be the whole case, and its answer was uncomfortable: the view stayed valid,
+ * counted no refresh fault, served correct rows - and silently threw its checkpoint ladder away
+ * and recomputed the window from whatever base rows had survived. Correct here only because this
+ * fixture's base still holds every row the view was built from.
  * <p>
- * The cost is also pinned as being paid <b>once</b>. The second restart restores off what
- * this branch sealed, so an upgraded instance does not recompute on every start.
+ * The timeline-wide block now fires first, and that is what this case pins. The released
+ * directory declares a layout version this build does not implement, so reconciliation stops at
+ * the superblock and the function directory is never opened at all: no restore is attempted, no
+ * ladder is retired, and no window is recomputed from source rows this build cannot prove are
+ * the ones the view was built from. The silent-restatement ending is still reachable through the
+ * other doors that lead to a from-base rebuild - it is simply no longer reachable through a
+ * released tree, which is the door a real upgrade comes in by.
+ * <p>
+ * The two witnesses are therefore the block itself and the <b>absence</b> of the rebuild's own
+ * log lines. Rows alone would prove nothing here, as they never did: a from-base replay lands on
+ * exactly the same numbers, which is the whole reason the old ending was invisible.
  * <p>
  * To regenerate the fixture, copy {@code /lv/LiveViewReleaseExtremaFixtureGenerator.java.txt}
  * into a clean {@code 10.0.1} checkout's {@code io.questdb.test.cairo.lv} package and run it;
@@ -79,15 +83,11 @@ public class LiveViewCheckpointReleaseExtremaCompatTest extends AbstractLiveView
     // flush cadence reads a forward-moving clock rather than one that jumped backwards.
     private static final long FIXTURE_END_MICROS = 2_500_000L;
     private static final String FIXTURE_RESOURCE = "/lv/lv_checkpoint_10_0_1_extrema.zip";
-    /**
-     * Boundaries the released build sealed. The upgrade is expected to end below this, which
-     * is the measurement the case exists for.
-     */
-    private static final int RELEASED_BOUNDARIES = 5;
-    private static final long RELEASED_HEAD_BASE_SEQ_TXN = 5;
-    private static final long RELEASED_HEAD_LV_SEQ_TXN = 5;
+    // The layout version 10.0.1 stamped, pinned rather than derived from this build's own
+    // constant so a later bump cannot quietly redefine what the fixture is.
+    private static final int RELEASED_FORMAT_VERSION = 1;
     private static final String VIEW_NAME = "lv_extrema";
-    // A valid view holding correct rows is the ending of both a restore and a rebuild, so the
+    // A valid view holding correct rows is the ending of both a block and a rebuild, so the
     // state a case can read afterwards does not say which one ran. The log does.
     private static final LogCapture capture = new LogCapture();
 
@@ -107,109 +107,91 @@ public class LiveViewCheckpointReleaseExtremaCompatTest extends AbstractLiveView
     }
 
     @Test
-    public void testABumpedFunctionRetiresTheReleasedLadderOnceAndThenRestoresNormally() throws Exception {
+    public void testTheFormatBlockPreEmptsTheSilentRetirementABumpedFunctionWouldCause() throws Exception {
         assertMemoryLeak(() -> {
-            openFixture();
+            final long checkpointFilesBefore = openFixture();
+            final File checkpointsRoot = checkpointsRoot(VIEW_NAME);
+            Assert.assertEquals(
+                    "the fixture must declare the version 10.0.1 stamped",
+                    RELEASED_FORMAT_VERSION,
+                    readSuperblockFormatVersion(checkpointsRoot)
+            );
 
-            // The upgrade's first refresh cycle, which is where the retirement happens.
+            // The upgrade's first refresh cycle, which is where the retirement used to happen.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
-
-                // A commit through this branch's writers, so the next restart has one of its
-                // own seals to come back to.
-                insertExtrema(job, 60);
             }
-            assertViewMatchesRecompute("after a commit through this branch's writers");
 
-            // The second restart is the one that shows the cost is paid once: the roots are this
-            // branch's now, so the restore resolves and the ladder survives. start() clears
-            // everything the upgrade logged, so what follows is this restart's own record.
-            capture.start();
-            restartCycle();
             final LiveViewInstance instance = instance(VIEW_NAME);
-            Assert.assertFalse(VIEW_NAME + ": must stay valid across a restart", instance.isInvalid());
-            assertNoRefreshFaults(VIEW_NAME);
-            // The absence of the rebuild, not isCheckpointRestoreSucceeded(): the from-base
-            // rebuild sets that flag too, so it cannot tell the two endings apart.
-            capture.drain();
-            capture.assertNotLogged("could not restore live view from checkpoint timeline, rebuilding derived state");
-            capture.assertNotLogged("live view restart rebuilding from applied base");
-            Assert.assertTrue(
-                    VIEW_NAME + ": a restart off this branch's own roots must keep its ladder",
-                    countSealedBoundaries(VIEW_NAME) > 1
+            Assert.assertTrue(instance.isCheckpointRecoveryBlocked());
+            Assert.assertFalse("blocking must not write _lv.s.invalid", instance.isInvalid());
+            TestUtils.assertContains(
+                    instance.getCheckpointRecoveryReason(),
+                    "checkpoint timeline format version " + RELEASED_FORMAT_VERSION
+                            + " is not supported by this build"
             );
-            assertViewMatchesRecompute("after a restart off this branch's own seal");
+
+            // The gate that fired, and - the point of the case - the two that did not. The
+            // function directory is never opened, so the identity mismatch the state-version bump
+            // creates is never reached, and nothing recomputes the window from the base.
+            capture.drain();
+            capture.assertLogged("live view checkpoint timeline declares an unsupported format version");
+            capture.assertNotLogged("could not restore live view from checkpoint timeline, rebuilding derived state");
+            capture.assertNotLogged("root is missing a compiled function");
+            capture.assertNotLogged("live view restart rebuilding from applied base");
+            Assert.assertFalse(instance.isCheckpointRestoreAttempted());
+            Assert.assertEquals(0, instance.getCheckpointRebuildAttempts());
+            Assert.assertEquals(0, instance.getCheckpointTimelineResets());
+            Assert.assertEquals(
+                    "not one file of the released directory may move",
+                    checkpointFilesBefore,
+                    countFiles(checkpointsRoot)
+            );
+            assertNoRefreshFaults(VIEW_NAME);
+
+            // A second restart reaches the same disposition off the same superblock.
+            restartCycle();
+            Assert.assertTrue(instance(VIEW_NAME).isCheckpointRecoveryBlocked());
+            Assert.assertEquals(checkpointFilesBefore, countFiles(checkpointsRoot));
         });
     }
 
     @Test
-    public void testABumpedFunctionStateVersionRebuildsFromTheBaseRatherThanMisreading() throws Exception {
+    public void testTheOperatorsReCreateRebuildsTheExtremaViewUnderThisBuildsStateVersion() throws Exception {
         assertMemoryLeak(() -> {
             openFixture();
+            Assert.assertTrue(instance(VIEW_NAME).isCheckpointRecoveryBlocked());
 
-            // The fixture is genuinely legacy-shaped: 10.0.1 has no fused root to write, so a
-            // probe reporting one here would mean the case is reading this branch's own bytes.
-            Assert.assertFalse(
-                    VIEW_NAME + ": the fixture's head must be a legacy root, not a fused one",
-                    isFusedHead(VIEW_NAME)
-            );
-            Assert.assertEquals(
-                    VIEW_NAME + ": the fixture must arrive with the lineage the released build sealed",
-                    RELEASED_BOUNDARIES,
-                    countSealedBoundaries(VIEW_NAME)
-            );
-            Assert.assertEquals(
-                    VIEW_NAME + ": the fixture must arrive on the released head [headLvSeqTxn]",
-                    RELEASED_HEAD_LV_SEQ_TXN,
-                    instance(VIEW_NAME).getHeadCheckpointLvSeqTxn()
-            );
-            Assert.assertEquals(
-                    VIEW_NAME + ": the fixture must arrive on the released head [headBaseSeqTxn]",
-                    RELEASED_HEAD_BASE_SEQ_TXN,
-                    instance(VIEW_NAME).getHeadCheckpointBaseSeqTxn()
-            );
+            // The documented exit. What it produces here is what the old silent retirement
+            // produced - a window recomputed from the base rows available today - with the
+            // difference that the operator asked for it.
+            printSql("SHOW CREATE LIVE VIEW " + VIEW_NAME + ';');
+            final String releasedDdl = sink.toString().replace("ddl\n", "");
+            execute("DROP LIVE VIEW " + VIEW_NAME);
+            execute(releasedDdl);
 
-            // The upgrade's first refresh cycle.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, VIEW_NAME);
                 driveRefreshToQuiescence(job);
+                insertExtrema(job, 60);
             }
+            final LiveViewInstance recreated = instance(VIEW_NAME);
+            Assert.assertFalse(recreated.isCheckpointRecoveryBlocked());
+            Assert.assertFalse(recreated.isInvalid());
+            Assert.assertEquals(
+                    LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION,
+                    readSuperblockFormatVersion(checkpointsRoot(VIEW_NAME))
+            );
+            assertViewMatchesRecompute("after the operator's re-create");
 
-            // The gate that fired, named. The directory lookup turned the released roots away
-            // because the compiled identity now carries /v2, and the message says which
-            // function asked and under which codec - the whole point of naming it, since this
-            // log line is the only place the retirement is ever mentioned.
+            // And the ladder it seals is this build's, so the next restart restores rather than
+            // recomputing: the cost is paid once, by the operator, rather than on every start.
+            capture.start();
+            restartCycle();
+            assertRestoredFromTimeline(VIEW_NAME);
             capture.drain();
-            capture.assertLogged("could not restore live view from checkpoint timeline, rebuilding derived state");
-            capture.assertLogged(
-                    "root is missing a compiled function [function=max, codec=live-view-state-page/max(D)/v2]"
-            );
-            capture.assertLogged("live view restart rebuilding from applied base");
-
-            final LiveViewInstance instance = instance(VIEW_NAME);
-            Assert.assertFalse(
-                    VIEW_NAME + ": a bumped state version must not invalidate the view",
-                    instance.isInvalid()
-            );
-            Assert.assertTrue(
-                    VIEW_NAME + ": the restore must have been attempted",
-                    instance.isCheckpointRestoreAttempted()
-            );
-            // isCheckpointRestoreSucceeded() is deliberately not a witness here: the from-base
-            // rebuild sets it as well, so it reads true on both endings. The log lines above and
-            // the ladder below are what separate them.
-            //
-            // Nothing counts this as a fault either, so the retirement leaves no trace in any
-            // counter a running instance exposes.
-            assertNoRefreshFaults(VIEW_NAME);
-            Assert.assertTrue(
-                    VIEW_NAME + ": the released ladder must be retired rather than carried forward, "
-                            + "which is what a bump costs",
-                    countSealedBoundaries(VIEW_NAME) < RELEASED_BOUNDARIES
-            );
-
-            // And the rows are right anyway, which is exactly why this is worth a test: a
-            // from-base replay lands on the same numbers a restore would have.
-            assertViewMatchesRecompute("after the rebuild the bump forced");
+            capture.assertNotLogged("live view restart rebuilding from applied base");
+            assertViewMatchesRecompute("after a restart off the re-created view's own seal");
         });
     }
 
@@ -241,16 +223,24 @@ public class LiveViewCheckpointReleaseExtremaCompatTest extends AbstractLiveView
     }
 
     /**
-     * Unpacks the fixture and registers its live view, without refreshing it yet, so a case may
-     * inspect the released tree before this branch's runtime has touched it.
+     * Unpacks the fixture and loads its catalogue, which is where the block is decided, and
+     * reports the file count the released tree arrived with. The count is taken before the
+     * catalogue load, so it is the released inventory rather than one this build has already
+     * had an opportunity to change.
      */
-    private void openFixture() throws IOException {
+    private long openFixture() throws IOException {
         replaceDbContent(FIXTURE_RESOURCE);
+        final File checkpointsRoot = new File(
+                new File(engine.getConfiguration().getDbRoot(), engine.getTableTokenIfExists(VIEW_NAME).getDirName()),
+                LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME
+        );
+        final long files = countFiles(checkpointsRoot);
         engine.buildViewGraphs();
         Assert.assertFalse(
                 VIEW_NAME + ": the fixture must not carry an invalid view",
                 instance(VIEW_NAME).isInvalid()
         );
+        return files;
     }
 
     private void restartCycle() throws Exception {

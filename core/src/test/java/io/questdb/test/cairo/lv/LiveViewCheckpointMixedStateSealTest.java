@@ -203,23 +203,20 @@ public class LiveViewCheckpointMixedStateSealTest extends AbstractLiveViewTest {
      * root whose ring entry names the other function's page surfaces.
      * <p>
      * {@link LiveViewInstance#isCheckpointRestoreSucceeded()} cannot tell those apart on
-     * its own: the rebuild path sets it too, so it reports that the restart resolved its
-     * derived state rather than which way. It is asserted here as the necessary half -
-     * it goes false only when the rebuild failed as well - and the lineage below is the
-     * half that discriminates. A rebuild retires the timeline before it replays, so the
-     * boundaries the pre-restart writer published are gone from the ladder afterwards;
-     * a restore resumes on them and leaves them in place.
+     * its own: the rebuild path resolves the derived state too, so the flag reports that
+     * the restart got somewhere rather than which way. The route witness
+     * ({@link AbstractLiveViewTest#assertRestoredFromTimeline(String)}) is what
+     * discriminates, and the ladder check below supplements it with the on-disk
+     * consequence: a rebuild retires the timeline before it replays, so the boundaries
+     * the pre-restart writer published are gone from the ladder afterwards; a restore
+     * resumes on them and leaves them in place.
      *
      * @param newestBoundaryBeforeRestart the newest boundary the pre-restart writer
      *                                    published, which a resumed ladder still carries
      */
     private void assertRestartRestoredFromPublishedRoots(long newestBoundaryBeforeRestart) {
+        assertRestoredFromTimeline(VIEW_NAME);
         final LiveViewInstance instance = viewInstance(VIEW_NAME);
-        Assert.assertTrue(
-                "live view '" + VIEW_NAME + "' did not resolve its derived state after the restart;"
-                        + " both the timeline restore and the applied-base rebuild failed",
-                instance.isCheckpointRestoreSucceeded()
-        );
         final LongList ladder = snapshotCheckpointLadder(instance);
         boolean carriesPreRestartLineage = false;
         for (int i = 0, n = ladder.size(); i < n; i += 2) {

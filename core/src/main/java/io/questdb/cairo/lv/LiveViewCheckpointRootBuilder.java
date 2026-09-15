@@ -42,7 +42,7 @@ import java.io.Closeable;
  * <p>
  * The root also states the segments its whole closure names - the data segments
  * its functions' state pages sit in, and the metadata segments holding its own
- * page, its function directory, and every anchor-root, function-root and
+ * page, its function directory, and every window-root, function-root and
  * partition-map page below them. Both halves come from the subordinate roots'
  * own per-segment counts rather than a walk, and both are read the same way when
  * a boundary is written or retired: a repair splice or a truncate hands the union
@@ -51,8 +51,6 @@ import java.io.Closeable;
  */
 public class LiveViewCheckpointRootBuilder implements Closeable {
 
-    private final LiveViewCheckpointAnchorRoot anchorRoot;
-    private final LiveViewCheckpointPageRef anchorRootRef = new LiveViewCheckpointPageRef();
     private long checkpointId;
     private final Path checkpointsDir = new Path();
     private long definitionTxn;
@@ -74,10 +72,10 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
     private final LiveViewCheckpointRoot resultRoot;
     private final LongList segmentIds = new LongList();
     private final LiveViewCheckpointMetaSegmentWriter segmentWriter;
+    private final LiveViewCheckpointPageRef stateRootRef = new LiveViewCheckpointPageRef();
     private final LiveViewCheckpointWindowRoot windowRoot;
 
     public LiveViewCheckpointRootBuilder(@NotNull CairoConfiguration configuration) {
-        anchorRoot = new LiveViewCheckpointAnchorRoot(configuration);
         functionRoot = new LiveViewCheckpointFunctionRoot(configuration);
         resultRoot = new LiveViewCheckpointRoot(configuration);
         segmentWriter = new LiveViewCheckpointMetaSegmentWriter(configuration);
@@ -102,41 +100,35 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
     /**
      * Starts one checkpoint root. The state root reference may be null when the
      * live view has no anchored WINDOW; it contributes no data segment, because
-     * every entry either kind of state root holds is scalar metadata inside its own
-     * map pages. It does contribute metadata segments - its own page and the map pages
-     * below it, which older seals may have written - so a non-null reference is
-     * read here for the set it names, decoded by the page kind it turns out to be.
+     * every entry a window root holds is scalar metadata inside its own map pages.
+     * It does contribute metadata segments - its own page and the map pages below
+     * it, which older seals may have written - so a non-null reference is read here
+     * for the set it names.
      */
     public void begin(
             @Transient @NotNull Path checkpointsDir,
             long checkpointId,
             long maxTimestamp,
             long definitionTxn,
-            @NotNull LiveViewCheckpointPageRef anchorRootRef
+            @NotNull LiveViewCheckpointPageRef stateRootRef
     ) {
         initialized = false;
         if (checkpointId < 0 || definitionTxn < 0) {
             throw CairoException.critical(0).put("live view checkpoint root identity invalid");
         }
-        LiveViewCheckpointMetadata.validateMetaRef(anchorRootRef, true, "anchor root");
+        LiveViewCheckpointMetadata.validateMetaRef(stateRootRef, true, "window state root");
         this.checkpointsDir.of(checkpointsDir);
         this.checkpointId = checkpointId;
         this.maxTimestamp = maxTimestamp;
         this.definitionTxn = definitionTxn;
-        this.anchorRootRef.of(anchorRootRef.getSegmentId(), anchorRootRef.getOffset(), anchorRootRef.getLength());
+        this.stateRootRef.of(stateRootRef.getSegmentId(), stateRootRef.getOffset(), stateRootRef.getLength());
         functionCount = 0;
         functionIdentityBytes.reset();
         segmentIds.clear();
-        if (!anchorRootRef.isNull()) {
-            if (windowRoot.ofIfWindowRoot(checkpointsDir, anchorRootRef)) {
-                for (int i = 0, n = windowRoot.getSegmentUseCountSize(); i < n; i++) {
-                    addSegmentId(windowRoot.getSegmentId(i));
-                }
-            } else {
-                anchorRoot.of(checkpointsDir, anchorRootRef);
-                for (int i = 0, n = anchorRoot.getSegmentUseCountSize(); i < n; i++) {
-                    addSegmentId(anchorRoot.getSegmentId(i));
-                }
+        if (!stateRootRef.isNull()) {
+            windowRoot.of(checkpointsDir, stateRootRef);
+            for (int i = 0, n = windowRoot.getSegmentUseCountSize(); i < n; i++) {
+                addSegmentId(windowRoot.getSegmentId(i));
             }
         }
         initialized = true;
@@ -192,7 +184,7 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
                 checkpointId,
                 maxTimestamp,
                 definitionTxn,
-                anchorRootRef,
+                stateRootRef,
                 functionDirectoryRef,
                 segmentIds
         );
@@ -201,7 +193,6 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
 
     @Override
     public void close() {
-        Misc.free(anchorRoot);
         Misc.free(functionRoot);
         Misc.free(resultRoot);
         Misc.free(segmentWriter);
@@ -214,7 +205,6 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
      * keeping the reader, writer and identity shells for the next build.
      */
     public void detach() {
-        anchorRoot.detach();
         functionRoot.detach();
         resultRoot.detach();
         windowRoot.detach();

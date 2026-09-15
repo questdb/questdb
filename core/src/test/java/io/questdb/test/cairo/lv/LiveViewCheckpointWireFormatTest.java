@@ -26,7 +26,6 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.lv.LiveViewCheckpointAnchorRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionRoot;
@@ -70,11 +69,13 @@ import java.util.zip.ZipInputStream;
  * Wire-format audit of the checkpoint structures PR #6939 reworked, against the bytes an
  * unmodified 10.0.1 build actually wrote.
  * <p>
- * {@link LiveViewCheckpointReleaseCompatTest} proves the composite path: the released tree
- * restores rather than rebuilding. It cannot say <i>why</i> a field is right, and it cannot fail
- * on a field nothing in that view's restore happens to read. This class takes the other half of
- * the question - field order, width, signedness, alignment, optional/null encoding, page-kind
- * dispatch and checksum coverage, one structure at a time.
+ * {@link LiveViewCheckpointReleaseCompatTest} proves the composite path: the released tree is
+ * preserved and its view stopped rather than rebuilt. It cannot say <i>why</i> a field is right,
+ * and it cannot fail on a field nothing in that tree happens to be read for. This class takes the
+ * other half of the question - field order, width, signedness, alignment, optional/null encoding,
+ * page-kind dispatch and checksum coverage, one structure at a time. The structures below are
+ * still read by this build wherever it writes them itself, so a field that moved is a live defect
+ * even though the released tree it is checked against is one this build now blocks.
  * <p>
  * The rule the cases follow is that nothing here may be checked by production code alone. Each
  * page is parsed twice: once by a reader written out longhand below from the 10.0.x layout, with
@@ -86,8 +87,8 @@ import java.util.zip.ZipInputStream;
  * The structures the audit covers are the pre-existing on-disk shapes this PR touched:
  * <ul>
  *     <li>{@code 0x1a} {@link LiveViewCheckpointRoot} - the boundary root;</li>
- *     <li>{@code 0x1b} {@link LiveViewCheckpointAnchorRoot} - the legacy anchored-window root,
- *     which moved from {@code long[]} to {@code LongList} and gained a decode-buffer pool;</li>
+ *     <li>{@code 0x1b} the released anchored-window root, which this build no longer decodes at
+ *     all - what is audited is that no decoder of this build claims it;</li>
  *     <li>{@code 0x18} {@link LiveViewCheckpointFunctionRoot} - likewise;</li>
  *     <li>{@code 0x19} {@link LiveViewCheckpointFunctionDirectory} - which moved to
  *     {@code ObjList} and retained reference shells;</li>
@@ -256,7 +257,7 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testTheReleasedAnchorRootsDecodeFieldForFieldAndNoFusedDecoderClaimsThem() throws Exception {
+    public void testNoDecoderOfThisBuildClaimsTheReleasedAnchorRoots() throws Exception {
         assertMemoryLeak(() -> {
             unpackFixture();
             final ObjList<ReleasedPage> pages = releasedPages(PAGE_KIND_ANCHOR_ROOT);
@@ -264,8 +265,6 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
 
             try (
                     Path checkpointsDir = checkpointsDir();
-                    LiveViewCheckpointAnchorRoot anchorRoot =
-                            new LiveViewCheckpointAnchorRoot(engine.getConfiguration());
                     LiveViewCheckpointWindowRoot windowRoot =
                             new LiveViewCheckpointWindowRoot(engine.getConfiguration());
                     LiveViewCheckpointPartitionMapReader maps =
@@ -277,9 +276,13 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
                     final byte[] payload = page.payload;
                     final String at = "anchor root in segment " + page.segmentId;
 
-                    // formatVersion INT, anchorValueType INT, windowNameLength INT,
-                    // keySchemaLength INT, segmentCount INT, partitionMapRootRef, then the
-                    // window name, the key schema and (segmentId, useCount) LONG pairs.
+                    // The shape the release wrote, read longhand: formatVersion INT,
+                    // anchorValueType INT, windowNameLength INT, keySchemaLength INT,
+                    // segmentCount INT, partitionMapRootRef, then the window name, the key
+                    // schema and (segmentId, useCount) LONG pairs. Nothing in this build
+                    // decodes it any more; the reading is here so a regenerated fixture that
+                    // stopped carrying the shape fails rather than quietly turning the case
+                    // below into one about nothing.
                     Assert.assertEquals(at + " [formatVersion]", 1, leInt(payload, 0));
                     final int anchorValueType = leInt(payload, 4);
                     final int windowNameLength = leInt(payload, 8);
@@ -297,58 +300,46 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
                             fixedSize + windowNameLength,
                             fixedSize + windowNameLength + keySchemaLength
                     );
-
-                    // The anchor value is a timestamp and the partition key a projected SYMBOL,
-                    // which the projector writes in the STRING space. Both travel as raw
-                    // ColumnType ids, so a renumbering of either would land here.
                     Assert.assertEquals(at + " [anchorValueType]", ColumnType.TIMESTAMP, anchorValueType);
                     Assert.assertEquals(at + " [windowName]", "w", new String(windowName, StandardCharsets.UTF_8));
-                    // The key schema is big-endian - it is built by the identity encoder, not by
-                    // the page writer - and reads count INT then one ColumnType INT per key.
                     Assert.assertEquals(at + " [keySchema columnCount]", 1, beInt(keySchema, 0));
                     Assert.assertEquals(at + " [keySchema columnType]", ColumnType.STRING, beInt(keySchema, 4));
 
-                    anchorRoot.of(checkpointsDir, page.ref());
-                    Assert.assertEquals(at + " [anchorValueType]", anchorValueType, anchorRoot.getAnchorValueType());
-                    Assert.assertArrayEquals(at + " [windowName]", windowName, anchorRoot.getWindowName());
-                    Assert.assertArrayEquals(at + " [keySchema]", keySchema, anchorRoot.getKeySchema());
-                    final LiveViewCheckpointPageRef mapRef = new LiveViewCheckpointPageRef();
-                    anchorRoot.getPartitionMapRootRef(mapRef);
-                    assertPageRef(at + " [partitionMapRootRef]", payload, 20, mapRef);
-                    assertSegmentUseCounts(
-                            at,
-                            payload,
-                            fixedSize + windowNameLength + keySchemaLength,
-                            segmentCount,
-                            anchorRoot.getSegmentUseCountSize(),
-                            anchorRoot::getSegmentId,
-                            anchorRoot::getSegmentUseCount
-                    );
-
-                    // The fused root stands in the same slot, so the two are a tagged union read
-                    // by page kind. A probe that claimed a released anchor root would restore it
-                    // as the wrong shape rather than fail.
+                    // The audit that is load-bearing now. The window root stands in the same
+                    // slot of the checkpoint root, and it is the only shape that may stand
+                    // there, so a decoder that claimed a released anchor root would read the
+                    // release's fields at this build's offsets rather than refuse. Both halves
+                    // are checked: the probe a seal uses declines it, and the strict decode a
+                    // restore uses complains about the page kind rather than about damage - the
+                    // page's checksum agrees with its body, so the kind is the only honest
+                    // complaint.
                     Assert.assertFalse(
-                            at + ": the fused window-root probe must decline a legacy anchor root",
+                            at + ": the window-root probe must decline a released anchor root",
                             windowRoot.ofIfWindowRoot(checkpointsDir, page.ref())
                     );
+                    try {
+                        windowRoot.of(checkpointsDir, page.ref());
+                        Assert.fail(at + ": a released anchor root must not decode as a state root");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(
+                                e.getFlyweightMessage(),
+                                "window state root page kind unknown, kind=" + PAGE_KIND_ANCHOR_ROOT
+                        );
+                    }
 
-                    // The anchor value itself: eight little-endian bytes of scalar state, and no
-                    // data page. A misread here restores a partition to the wrong bucket.
+                    // The map below it is still an ordinary partition map, and this build still
+                    // reads those: one anchor entry is eight bytes of scalar state and no data
+                    // page. What those eight bytes mean is the part no longer decoded here.
+                    final LiveViewCheckpointPageRef mapRef = new LiveViewCheckpointPageRef();
+                    readPageRef(payload, 20, mapRef);
                     final int[] entries = {0};
                     maps.iterateAll(mapRef, entry -> {
                         entries[0]++;
                         Assert.assertEquals(at + " [anchor entry state pages]", 0, entry.getStatePageCount());
                         Assert.assertEquals(at + " [anchor entry scalar length]", 8, entry.getScalarState().length);
-                        Assert.assertEquals(
-                                at + " [anchor value]",
-                                leLong(entry.getScalarState(), 0),
-                                LiveViewCheckpointAnchorRoot.readAnchorValue(entry)
-                        );
                     });
                     Assert.assertTrue(at + " [anchor map is not empty]", entries[0] > 0);
                 }
-                anchorRoot.detach();
                 windowRoot.detach();
             }
         });
@@ -1008,6 +999,18 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
                 }
             }
         });
+    }
+
+    /**
+     * Reads a metadata page reference out of a released payload longhand - segmentId LONG,
+     * offset LONG, length INT - for the pages this build has no decoder to read it with.
+     */
+    private static void readPageRef(byte[] payload, int offset, LiveViewCheckpointPageRef out) {
+        out.of(
+                leLong(payload, offset),
+                leLong(payload, offset + Long.BYTES),
+                leInt(payload, offset + 2 * Long.BYTES)
+        );
     }
 
     private static void assertPageRef(String at, byte[] payload, int offset, LiveViewCheckpointPageRef ref) {

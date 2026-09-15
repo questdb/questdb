@@ -170,25 +170,6 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
         append(OP_PUT, key, scalarState, null);
     }
 
-    public void putAnchor(@NotNull byte[] key, long anchorValue) {
-        ensureOpen();
-        LiveViewCheckpointMetadata.validateByteArrayLength(key.length, "partition key");
-        final long keyOffset = appendBytes(key);
-        final long scalarOffset = bytes.getAppendOffset();
-        for (int i = 0; i < LiveViewCheckpointAnchorRoot.ENTRY_STATE_SIZE; i++) {
-            bytes.putByte((byte) (anchorValue >>> (i * Byte.SIZE)));
-        }
-        appendDescriptor(
-                OP_PUT,
-                keyOffset,
-                key.length,
-                scalarOffset,
-                LiveViewCheckpointAnchorRoot.ENTRY_STATE_SIZE,
-                bytes.getAppendOffset(),
-                0
-        );
-    }
-
     public void remove(@NotNull byte[] key) {
         append(OP_REMOVE, key, null, null);
     }

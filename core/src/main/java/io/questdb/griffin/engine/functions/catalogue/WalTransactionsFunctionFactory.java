@@ -187,9 +187,9 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
         }
 
         private static class TableListRecordCursor implements NoRandomAccessRecordCursor {
+            private final TransactionRecord record = new TransactionRecord();
             private SqlExecutionCircuitBreaker circuitBreaker;
             private TransactionLogCursor logCursor;
-            private final TransactionRecord record = new TransactionRecord();
             private TimestampDriver timestampDriver;
 
             private TableListRecordCursor(TimestampDriver timestampDriver) {

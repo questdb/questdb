@@ -347,6 +347,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long liveViewInMemoryMaxMicros;
     private final int liveViewPartitionCompactStalePercent;
     private final int liveViewPartitionCompactThreshold;
+    private final boolean liveViewRebuildRestatementGuardEnabled;
     private final long liveViewRefreshMemoryLimitBytes;
     private final WorkerPoolConfiguration liveViewRefreshPoolConfiguration = new PropLiveViewRefreshPoolConfiguration();
     private final long liveViewRefreshSleepTimeout;
@@ -1595,6 +1596,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             // peak. 0 turns this arm off and leaves the two count arms above to decide.
             this.liveViewPartitionCompactStalePercent = getIntPercentage(properties, env, PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_STALE_PERCENT, 50);
             this.liveViewPartitionCompactThreshold = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 100_000);
+            this.liveViewRebuildRestatementGuardEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REBUILD_RESTATEMENT_GUARD_ENABLED, true);
             this.liveViewRefreshTurnMaxCommits = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS, 64);
             this.liveViewRefreshTurnMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_DURATION_MICROS, 50_000L);
             // Live views own their pool rather than borrowing the mat-view one: the count is the
@@ -5764,6 +5766,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isLiveViewEnabled() {
             return liveViewEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewRebuildRestatementGuardEnabled() {
+            return liveViewRebuildRestatementGuardEnabled;
         }
 
         @Override

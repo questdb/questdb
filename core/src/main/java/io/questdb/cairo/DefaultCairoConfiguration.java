@@ -1741,6 +1741,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isLiveViewRebuildRestatementGuardEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isMatViewCoveringIndexEnabled() {
         return false;
     }

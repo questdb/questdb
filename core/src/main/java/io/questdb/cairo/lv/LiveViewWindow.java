@@ -93,18 +93,23 @@ import org.jetbrains.annotations.TestOnly;
  * </ul>
  */
 public class LiveViewWindow implements QuietCloseable {
-    // The dirty anchor map's two slots. Nothing reads an anchor value or a live
+    // The dirty anchor map's three slots. Nothing reads an anchor value or a live
     // tombstone off that map - freezeCheckpointEntries goes to the live anchor map for
     // both - so carrying the four slots below would be padding on every key the
     // cadence touches.
     //
+    // DIRTY_SLOT_ANCHOR_MOVED: 1 means this key entered the dirty set on a row that
+    // moved its anchor value, which the seal reads as "the predecessor root cannot hold
+    // this key's payload". See freezeCheckpointEntries: it is a hint that may read 0 for
+    // a key whose anchor did move, and never the other way round.
     // DIRTY_SLOT_EVICTED: 1 means the frontier sweep dropped this key from the anchor
     // map, so the seal freezes a removal for it instead of raising on the missing live
     // value. Per-key rather than per-sweep on purpose: a dirty key that lost its anchor
     // entry to anything but the sweep carries a 0 here and still raises.
     // DIRTY_SLOT_NEW_SINCE_CHECKPOINT: 1 means the key is absent from the durable
     // predecessor, which is what keeps the logical-size accounting exact without a probe
-    // into the anchor root.
+    // into the window state root.
+    private static final int DIRTY_SLOT_ANCHOR_MOVED = 2;
     private static final int DIRTY_SLOT_EVICTED = 1;
     private static final int DIRTY_SLOT_NEW_SINCE_CHECKPOINT = 0;
     // The cadence value no key is ever marked with, so a value slot that was never
@@ -173,6 +178,17 @@ public class LiveViewWindow implements QuietCloseable {
     // be buildable at build() time - a RecordSink needs a BytecodeAssembler, and this
     // window outlives the compiler that lends it one.
     private final @Nullable LiveViewWindowStatePlan compiledWindowStatePlan;
+    // The plan this window's checkpoints are laid out by, or null when the factory
+    // compiled none for this window or compiled one keyed differently. Non-owning, like
+    // compiledWindowStatePlan.
+    //
+    // It is deliberately independent of cairo.sql.window.map.fusion.enabled. Fusion is a
+    // runtime choice - whether the group's accumulators live in this window's one map
+    // value or in a private map per function - and the storage plan is a durable one:
+    // which components a root carries, in what order, under which manifest. Letting the
+    // switch pick the layout is what made one setting's checkpoints unreadable to the
+    // other's, and made a repair publish through a different builder than a seal.
+    private final @Nullable LiveViewWindowStatePlan checkpointStoragePlan;
     // The fused value layout's key sink, or null when the view compiled no plan.
     private final @Nullable RecordSink fusedKeySink;
     // The fused map's value layout: the window's own four slots, then every component's
@@ -235,6 +251,11 @@ public class LiveViewWindow implements QuietCloseable {
     // chain of them rather than only the one that happened to end it.
     private long checkpointFreezeKeyCountTotal;
     private long checkpointLastFreezeKeyCount;
+    // Rows the last freeze's walk read, which is the dirty map's size for an incremental
+    // freeze and the whole anchor map's for a complete one. Imaged keys alone cannot say
+    // which map was walked: a complete freeze of a domain the batch touched entirely
+    // images exactly what an incremental one would.
+    private long checkpointLastFreezeVisitedKeyCount;
     private long checkpointLogicalStateBytes;
     // The plan this window has adopted, or null when it holds none - because the factory
     // compiled none, because the plan's key layout is not this window's, or because
@@ -299,6 +320,7 @@ public class LiveViewWindow implements QuietCloseable {
             @NotNull RecordSink partitionKeySink,
             @NotNull RecordSink anchorKeySink,
             @Nullable LiveViewWindowStatePlan compiledWindowStatePlan,
+            @Nullable LiveViewWindowStatePlan checkpointStoragePlan,
             @Nullable ColumnTypes fusedValueTypes,
             @Nullable RecordSink fusedKeySink,
             @NotNull ObjList<WindowFunction> functions,
@@ -317,6 +339,7 @@ public class LiveViewWindow implements QuietCloseable {
         this.partitionKeySink = partitionKeySink;
         this.anchorKeySink = anchorKeySink;
         this.compiledWindowStatePlan = compiledWindowStatePlan;
+        this.checkpointStoragePlan = checkpointStoragePlan;
         this.fusedValueTypes = fusedValueTypes;
         this.fusedKeySink = fusedKeySink;
         this.activeKeySink = anchorKeySink;
@@ -572,21 +595,26 @@ public class LiveViewWindow implements QuietCloseable {
         // needs the compiler's BytecodeAssembler and this window outlives the compiler.
         // A plan whose components are keyed differently is dropped now: the fused entry
         // is keyed by this map, so such a plan describes state it cannot address.
-        // cairo.sql.window.map.fusion.enabled drops one here for the same reason it
-        // withholds a runtime from a generic group in WindowMapState.createGroups: the
-        // switch gates the binding, not the compile. The compiler still works the group
-        // out and the factory still carries it; what a dropped plan costs this view is
-        // the fused map value and the fused root, so every function keeps the private
-        // map and the legacy root it has outside a group. A view sealed while the switch
-        // was on and restarted with it off is not silently misread - the restore finds a
-        // window root with no plan to restore into and reports it as recoverable
-        // corruption, which falls back to a predecessor or rebuilds from the base.
-        LiveViewWindowStatePlan compiledPlan =
-                windowStatePlan != null
-                        && configuration.isSqlWindowMapFusionEnabled()
-                        && windowStatePlan.isKeyLayoutCompatible(mapKeyTypes)
+        // The storage plan is this window's whatever the fusion switch says. It describes
+        // where the window's durable state goes - the manifest, the component order, the
+        // payload width - and none of that is a fact about which map the accumulators sit
+        // in at runtime. A plan whose components are keyed differently is still dropped:
+        // the entry is keyed by this map, so such a plan describes state it cannot
+        // address.
+        final LiveViewWindowStatePlan storagePlan =
+                windowStatePlan != null && windowStatePlan.isKeyLayoutCompatible(mapKeyTypes)
                         ? windowStatePlan
                         : null;
+        // cairo.sql.window.map.fusion.enabled drops the runtime binding here for the same
+        // reason it withholds a runtime from a generic group in
+        // WindowMapState.createGroups: the switch gates the binding, not the compile and
+        // not the storage layout. What a view with the switch off pays is the fused map
+        // value - every function keeps the private map it owns outside a group - and a
+        // seal reads the same components out of those maps instead of out of one entry.
+        // Both settings publish the same root shape under the same manifest, so a view
+        // sealed under either restores under the other.
+        LiveViewWindowStatePlan compiledPlan =
+                configuration.isSqlWindowMapFusionEnabled() ? storagePlan : null;
         ColumnTypes fusedValueTypes = compiledPlan == null ? null : fusedMapValueTypes(compiledPlan);
         RecordSink fusedKeySink = fusedValueTypes == null
                 ? null
@@ -621,6 +649,7 @@ public class LiveViewWindow implements QuietCloseable {
                 sink,
                 anchorKeySink,
                 compiledPlan,
+                storagePlan,
                 fusedValueTypes,
                 fusedKeySink,
                 functions,
@@ -661,7 +690,7 @@ public class LiveViewWindow implements QuietCloseable {
 
     /**
      * Drops every anchor entry and the frontier that tracks them so a checkpoint
-     * restore can rehydrate the map through {@link #restoreCheckpointEntry}. The
+     * restore can rehydrate the map through {@link #restoreCheckpointWindowEntry}. The
      * caller validates the complete root first, so a framing failure cannot
      * leave the window with a half-restored map.
      * <p>
@@ -710,12 +739,12 @@ public class LiveViewWindow implements QuietCloseable {
         } else {
             declineWindowStatePlan();
         }
-        // The durable shape changed under the runtime - a legacy anchor root and a fused
-        // window root never share a leaf - so the next seal converts whole. Its own
-        // predecessor test would reach the same answer; forcing it here keeps the
-        // logical-byte baseline, which is charged per entry at a width that just moved,
-        // from being carried across the change. The same has just been done to each
-        // member's own root, which the window's flags do not reach.
+        // The durable leaf width changed under the runtime - a window root written for one
+        // manifest and one written for another never share a leaf - so the next seal
+        // converts whole. Its own predecessor test would reach the same answer; forcing it
+        // here keeps the logical-byte baseline, which is charged per entry at a width that
+        // just moved, from being carried across the change. The same has just been done to
+        // each member's own root, which the window's flags do not reach.
         checkpointBaselineGeneration = Numbers.LONG_NULL;
         isCheckpointFullScanRequired = true;
         checkpointLogicalStateBytes = 0;
@@ -827,69 +856,35 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
-     * Encodes every live anchor entry for a complete freeze, or only keys touched
-     * since the durable predecessor for an incremental freeze. Tombstoned entries
-     * are skipped. The keys and anchor values remain index-aligned.
+     * Encodes every live anchor entry for a complete freeze, or only keys touched since
+     * the durable predecessor for an incremental freeze, emitting each key's whole scalar
+     * payload from the same walk. Tombstoned entries are skipped, and the keys, anchor
+     * values and payloads remain index-aligned.
+     * <p>
+     * One entry per key holds the anchor value <b>and</b> every durable accumulator
+     * component, so that entry is what the window's running logical total has to describe:
+     * a grouped function charges nothing of its own. The two figures have to be produced by
+     * the same walk, because an incremental freeze adds and subtracts against a total an
+     * earlier seal left behind, and a width that changed between them would leave the
+     * running total describing neither root.
+     * <p>
+     * Where the components are read from is the runtime's business rather than this
+     * contract's. Fused, they come off the same loaded map value the anchor value does;
+     * unfused, each is probed out of its contributor's own map through the encoded key. The
+     * bytes are the same either way, which is what lets one setting restore the other's
+     * checkpoints.
      * <p>
      * An incremental freeze also names the keys the frontier sweep dropped, in
      * {@code removedKeysOut}: the root the freeze builds on top of still holds their
      * entries, and nothing else in an incremental build would take them out. A complete
-     * freeze leaves the list empty - it removes by omission instead, since its puts are
-     * the whole truth.
+     * freeze leaves the list empty - it removes by omission instead, since its puts are the
+     * whole truth.
      * <p>
-     * {@code keyBuffer} is caller-owned scratch the key codec writes through; it
-     * is rewound per entry and holds nothing once this returns.
-     */
-    public long freezeCheckpointEntries(
-            @NotNull MemoryCARW keyBuffer,
-            @NotNull ObjList<byte[]> keysOut,
-            @NotNull LongList valuesOut,
-            @NotNull ObjList<byte[]> removedKeysOut,
-            boolean isIncremental
-    ) {
-        return freezeCheckpointEntries(keyBuffer, keysOut, valuesOut, removedKeysOut, isIncremental, null);
-    }
-
-    long freezeCheckpointEntries(
-            @NotNull MemoryCARW keyBuffer,
-            @NotNull ObjList<byte[]> keysOut,
-            @NotNull LongList valuesOut,
-            @NotNull ObjList<byte[]> removedKeysOut,
-            boolean isIncremental,
-            @Nullable LiveViewCheckpointByteArrayPool byteArrayPool
-    ) {
-        return freezeCheckpointEntries(
-                keyBuffer,
-                keysOut,
-                valuesOut,
-                removedKeysOut,
-                isIncremental,
-                LiveViewCheckpointAnchorRoot.ENTRY_STATE_SIZE,
-                null,
-                byteArrayPool
-        );
-    }
-
-    /**
-     * As {@link #freezeCheckpointEntries(MemoryCARW, ObjList, LongList, ObjList, boolean)},
-     * but charging {@code entryStateBytes} of state per key rather than the anchor
-     * value's own eight, and - when {@code payloadsOut} is non-null - emitting each
-     * key's whole fused scalar payload from the same walk.
-     * <p>
-     * A fused seal writes one entry per key holding the anchor value <b>and</b> every
-     * grouped accumulator component, so that entry is what the window's running logical
-     * total has to describe: the grouped functions no longer charge anything of their
-     * own. The two figures have to be produced by the same walk, because an incremental
-     * freeze adds and subtracts against a total an earlier seal left behind, and a width
-     * that changed between them would leave the running total describing neither root.
-     * <p>
-     * The payload comes out of the same loaded map value the anchor value does, which is
-     * the whole point of owning the group's runtime state: the seal reads one entry per
-     * key rather than probing a map per component.
+     * {@code keyBuffer} is caller-owned scratch the key codec writes through; it is rewound
+     * per entry and holds nothing once this returns.
      *
      * @param entryStateBytes the state bytes one published entry carries for a key
-     * @param payloadsOut     the fused scalar payloads, index-aligned with
-     *                        {@code keysOut}, or null for the legacy anchor-only shape
+     * @param payloadsOut     the scalar payloads, index-aligned with {@code keysOut}
      */
     public long freezeCheckpointEntries(
             @NotNull MemoryCARW keyBuffer,
@@ -908,6 +903,7 @@ public class LiveViewWindow implements QuietCloseable {
                 isIncremental,
                 entryStateBytes,
                 payloadsOut,
+                null,
                 null
         );
     }
@@ -920,6 +916,7 @@ public class LiveViewWindow implements QuietCloseable {
             boolean isIncremental,
             int entryStateBytes,
             @Nullable ObjList<byte[]> payloadsOut,
+            @Nullable BoolList isElisionRuledOutOut,
             @Nullable LiveViewCheckpointByteArrayPool byteArrayPool
     ) {
         // One member, allocated locally: this runs once per seal, where the batched member
@@ -945,6 +942,7 @@ public class LiveViewWindow implements QuietCloseable {
                 payloads,
                 projectionIndexes,
                 logicalBytes,
+                isElisionRuledOutOut,
                 byteArrayPool
         );
         return logicalBytes.getQuick(0);
@@ -1050,6 +1048,7 @@ public class LiveViewWindow implements QuietCloseable {
                 imagesOut,
                 projectionIndexes,
                 logicalBytesInOut,
+                null,
                 byteArrayPool
         );
     }
@@ -1074,14 +1073,25 @@ public class LiveViewWindow implements QuietCloseable {
      * safe because a frozen partition never mutates its key: {@code FrozenPartition.key} is
      * final and the directory and partition-map writers only read it.
      *
-     * @param entryStateBytes   the state bytes one published entry carries, per member
-     * @param valuesOut         the per-key anchor values, index-aligned with
-     *                          {@code keysOut}, or null for a member walk, whose keys are
-     *                          the window root's to publish an anchor value for
-     * @param payloadsOut       the per-key images, per member, or null for the legacy
-     *                          anchor-only shape that publishes no payload
-     * @param logicalBytesInOut each member's running logical total: seeded by the caller
-     *                          with the root the freeze builds on, charged in place here
+     * @param entryStateBytes      the state bytes one published entry carries, per member
+     * @param valuesOut            the per-key anchor values, index-aligned with
+     *                             {@code keysOut}, or null for a member walk, whose keys
+     *                             are the window root's to publish an anchor value for
+     * @param payloadsOut          the per-key images, per member, or null for the legacy
+     *                             anchor-only shape that publishes no payload
+     * @param logicalBytesInOut    each member's running logical total: seeded by the caller
+     *                             with the root the freeze builds on, charged in place here
+     * @param isElisionRuledOutOut per key, index-aligned with {@code keysOut}: true where
+     *                             this walk already knows the key's entry cannot be the one
+     *                             the durable predecessor holds, so the seal owes it no
+     *                             predecessor probe. A complete walk answers false
+     *                             throughout - it holds no dirty entry to read the fact off
+     *                             - and so does an incremental walk over a key whose anchor
+     *                             moved on a row other than its first of the cadence. The
+     *                             seal treats it as a hint and probes for every key it
+     *                             reads false for, so under-reporting costs a probe and
+     *                             nothing else. Null for a member walk, whose images the
+     *                             window root does not publish
      */
     private void freezeCheckpointEntries(
             @NotNull MemoryCARW keyBuffer,
@@ -1093,6 +1103,7 @@ public class LiveViewWindow implements QuietCloseable {
             @Nullable ObjList<ObjList<byte[]>> payloadsOut,
             @NotNull IntList memberProjectionIndexes,
             @NotNull LongList logicalBytesInOut,
+            @Nullable BoolList isElisionRuledOutOut,
             @Nullable LiveViewCheckpointByteArrayPool byteArrayPool
     ) {
         checkpointFreezeScanCount++;
@@ -1104,14 +1115,37 @@ public class LiveViewWindow implements QuietCloseable {
         if (isAnchorValueEmitted) {
             valuesOut.clear();
         }
+        if (isElisionRuledOutOut != null) {
+            isElisionRuledOutOut.clear();
+        }
         removedKeysOut.clear();
+        // Which side of the group's state this walk reads from. Fused, every component sits
+        // in the entry the walk already loaded; unfused, the entry carries the anchor value
+        // alone and each component is probed out of its contributor's own map. Both produce
+        // the same payload under the same manifest, which is what lets one setting restore
+        // the other's checkpoints.
+        final LiveViewWindowStatePlan storagePlan = checkpointStoragePlan;
+        final boolean isFused = checkpointWindowStatePlan != null;
         if (payloadsOut != null) {
             for (int m = 0; m < memberCount; m++) {
                 payloadsOut.getQuick(m).clear();
             }
-            if (checkpointWindowStatePlan == null) {
+            if (storagePlan == null) {
                 throw CairoException.critical(0)
-                        .put("live view checkpoint window state freeze without an adopted plan");
+                        .put("live view checkpoint window state freeze without a storage plan");
+            }
+            if (!isFused) {
+                for (int m = 0; m < memberCount; m++) {
+                    if (memberProjectionIndexes.getQuick(m) != NO_MEMBER_PROJECTION) {
+                        // A runtime-only member's image is read out of the group's map value
+                        // at its own slot base, and there is no such value here: outside a
+                        // fused group the member still owns the private map its own root is
+                        // written from, so the caller must freeze it as an ordinary function
+                        // rather than as a member of this walk.
+                        throw CairoException.critical(0)
+                                .put("live view checkpoint member freeze without a fused runtime");
+                    }
+                }
             }
         }
         final Map scanMap = isIncremental ? checkpointDirtyAnchorMap : anchorMap;
@@ -1123,12 +1157,19 @@ public class LiveViewWindow implements QuietCloseable {
                 : activeKeyStartIndex;
         final MapRecordCursor cursor = scanMap.getCursor();
         final MapRecord record = scanMap.getRecord();
+        long visitedKeyCount = 0;
         while (cursor.hasNext()) {
+            visitedKeyCount++;
             final MapValue dirtyOrAnchorValue = record.getValue();
             final boolean isNewSinceCheckpoint = isIncremental
                     && dirtyOrAnchorValue.getByte(DIRTY_SLOT_NEW_SINCE_CHECKPOINT) == 1;
             final boolean isRecordedEviction = isIncremental
                     && dirtyOrAnchorValue.getByte(DIRTY_SLOT_EVICTED) == 1;
+            // Only the dirty map carries the marker, and only an incremental walk reads
+            // it: a complete walk is over the anchor map, whose entries say nothing about
+            // what has happened since the predecessor root.
+            final boolean isAnchorMoved = isIncremental
+                    && dirtyOrAnchorValue.getByte(DIRTY_SLOT_ANCHOR_MOVED) == 1;
             keyBuffer.jumpTo(0);
             LiveViewSnapshotKeyCodec.writeKey(keyBuffer, record, partitionKeyTypes, keyStartIndex);
             final long length = keyBuffer.getAppendOffset();
@@ -1180,21 +1221,40 @@ public class LiveViewWindow implements QuietCloseable {
             if (isAnchorValueEmitted) {
                 valuesOut.add(anchorValue.getLong(SLOT_ANCHOR_VALUE));
             }
+            if (isElisionRuledOutOut != null) {
+                // A key the predecessor root does not hold, and a key whose anchor value
+                // moved since it published, both put a payload the predecessor's entry
+                // cannot equal - the anchor value leads that payload. Neither owes the
+                // seal the probe that would establish it.
+                isElisionRuledOutOut.add(isNewSinceCheckpoint || isAnchorMoved);
+            }
             final boolean isCharged = !isIncremental || isNewSinceCheckpoint;
             for (int m = 0; m < memberCount; m++) {
                 final int stateBytes = entryStateBytes.getQuick(m);
                 if (payloadsOut != null) {
                     final int memberProjectionIndex = memberProjectionIndexes.getQuick(m);
-                    payloadsOut.getQuick(m).add(memberProjectionIndex == NO_MEMBER_PROJECTION
-                            ? encodeWindowStatePayload(anchorValue, stateBytes, byteArrayPool)
-                            : encodeMemberStateImage(
-                            memberProjectionIndex,
-                            anchorValue,
-                            record,
-                            keyStartIndex,
-                            stateBytes,
-                            byteArrayPool
-                    ));
+                    final byte[] image;
+                    if (memberProjectionIndex != NO_MEMBER_PROJECTION) {
+                        image = encodeMemberStateImage(
+                                memberProjectionIndex,
+                                anchorValue,
+                                record,
+                                keyStartIndex,
+                                stateBytes,
+                                byteArrayPool
+                        );
+                    } else if (isFused) {
+                        image = encodeWindowStatePayload(anchorValue, stateBytes, byteArrayPool);
+                    } else {
+                        image = encodeWindowStatePayloadFromPrivateMaps(
+                                storagePlan,
+                                keyBuffer,
+                                anchorValue,
+                                stateBytes,
+                                byteArrayPool
+                        );
+                    }
+                    payloadsOut.getQuick(m).add(image);
                 }
                 if (isCharged) {
                     logicalBytesInOut.setQuick(
@@ -1205,6 +1265,7 @@ public class LiveViewWindow implements QuietCloseable {
             }
         }
         checkpointLastFreezeKeyCount = keysOut.size() + removedKeysOut.size();
+        checkpointLastFreezeVisitedKeyCount = visitedKeyCount;
         checkpointFreezeKeyCountTotal += checkpointLastFreezeKeyCount;
     }
 
@@ -1239,7 +1300,7 @@ public class LiveViewWindow implements QuietCloseable {
 
     /**
      * @return the column type the anchor expression evaluates to. Persisted in
-     * the checkpoint anchor root and compared against the recompiled runtime on
+     * the checkpoint window state root and compared against the recompiled runtime on
      * restore, because a widened return type changes how the stored LONG slot
      * must be read back.
      */
@@ -1322,6 +1383,18 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
+     * @return rows the last freeze's walk read: the dirty map's for an incremental freeze,
+     * the whole anchor map's for a complete one. The seal charges this into
+     * {@link LiveViewCheckpointCaptureLedger}, which is where the structural claim that a
+     * steady seal costs the keys the batch changed rather than the keys the view holds is
+     * read from - a claim imaged keys alone cannot carry, because a complete freeze of a
+     * fully touched domain images exactly what an incremental one would
+     */
+    public long getCheckpointLastFreezeVisitedKeyCount() {
+        return checkpointLastFreezeVisitedKeyCount;
+    }
+
+    /**
      * @return the dirty anchor map's current key capacity, or 0 when it holds none. What
      * it exposes is the map's retained backing rather than what it holds: a publication
      * empties the map but a plain clear keeps the capacity, so this is where a sweep's
@@ -1339,6 +1412,26 @@ public class LiveViewWindow implements QuietCloseable {
      */
     public @Nullable LiveViewWindowStatePlan getCheckpointWindowStatePlan() {
         return checkpointWindowStatePlan;
+    }
+
+    /**
+     * @return the plan this window's checkpoints are laid out by, or null when the
+     * factory compiled none for it. Unlike {@link #getCheckpointWindowStatePlan()} this
+     * does not change with {@code cairo.sql.window.map.fusion.enabled}: it is what the
+     * seal writes a root under and what a restore slices one by, in both runtime modes
+     */
+    public @Nullable LiveViewWindowStatePlan getCheckpointStoragePlan() {
+        return checkpointStoragePlan;
+    }
+
+    /**
+     * @return whether the group's accumulators are in this window's own map value rather
+     * than in a private map per function. It is a runtime capability rather than a
+     * storage one: a keyed transplant and a member freeze both need the group's state
+     * addressable through one entry, and a storage plan alone no longer promises that
+     */
+    public boolean isWindowStateFused() {
+        return checkpointWindowStatePlan != null;
     }
 
     /**
@@ -1663,14 +1756,25 @@ public class LiveViewWindow implements QuietCloseable {
         // is one the seal never reads.
         final boolean isFirstCadenceTouch = isNewPartition
                 || value.getShort(SLOT_DIRTY_EPOCH) != checkpointDirtyEpoch;
-        if (isFirstCadenceTouch) {
-            markCheckpointPartitionDirty(record, isNewPartition);
-        }
         final byte initialized = isNewPartition ? 0 : value.getByte(SLOT_INITIALIZED);
         final long lastAnchor = initialized == 0 ? 0 : value.getLong(SLOT_ANCHOR_VALUE);
         final long currentAnchor = readAnchorValue(record);
-        trackFrontier(currentAnchor);
         final boolean shouldReset = initialized == 0 || lastAnchor != currentAnchor;
+        // The anchor comparison is read before the mark rather than after it so the mark
+        // can carry it. On a first cadence touch the anchor value still standing in the
+        // entry is the one the seal that cleared the dirty set published, so shouldReset
+        // says whether this key's payload can still match that root's - which is what
+        // saves the seal a predecessor probe per key.
+        //
+        // A key whose anchor moves on a LATER row of the same cadence keeps the 0 this
+        // row wrote: the marker deliberately stays a once-per-key-per-cadence write, and
+        // the seal answers such a key from the probe as it always did. The regime the
+        // marker is for - a bucket short enough that most keys cross it between seals -
+        // is one where a key's crossing row is its first of the cadence.
+        if (isFirstCadenceTouch) {
+            markCheckpointPartitionDirty(record, isNewPartition, shouldReset);
+        }
+        trackFrontier(currentAnchor);
 
         // The branch takes a row that crossed to a new anchor value, and - through
         // initialized == 0 - every new partition. Resetting a new partition is deliberate:
@@ -1894,41 +1998,6 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
-     * Rehydrates one anchor entry read from a checkpoint anchor-map leaf.
-     * {@code keySource} is the entry's encoded partition key, bounded to its
-     * exact length; the decoder must consume all of it.
-     * <p>
-     * Callers restore a complete root, so {@link #beginCheckpointRestore()}
-     * must precede the first entry. The two retained frontier generations are
-     * reconstructed as the entries arrive, leaving the first post-restore sweep
-     * with exact reclaimable counts.
-     */
-    public void restoreCheckpointEntry(@NotNull LiveViewStatePageReader keySource, long anchorValue) {
-        final MapKey key = anchorMap.withKey();
-        final long consumed = LiveViewSnapshotKeyCodec.readKey(key, keySource, 0, partitionKeyTypes);
-        if (consumed != keySource.size()) {
-            throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
-                    .put("live view checkpoint anchor key decoder did not consume the entry exactly [expected=")
-                    .put(keySource.size()).put(", consumed=").put(consumed).put(']');
-        }
-        final MapValue value = key.createValue();
-        if (!value.isNew()) {
-            throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
-                    .put("live view checkpoint anchor contains a duplicate partition key");
-        }
-        value.putLong(SLOT_ANCHOR_VALUE, anchorValue);
-        value.putByte(SLOT_INITIALIZED, (byte) 1);
-        value.putByte(SLOT_TOMBSTONE, (byte) 0);
-        value.putShort(SLOT_DIRTY_EPOCH, EPOCH_NONE);
-        // A legacy anchor root carries no components, so the group's slots start at
-        // identity and the per-function roots restored after it fill them in. Writing
-        // them explicitly is what keeps a fresh map value's uninitialized bytes from
-        // being read as an accumulator.
-        resetWindowStateComponents(value);
-        restoreFrontierEntry(anchorValue);
-    }
-
-    /**
      * Rehydrates one fused entry read from a window-state root's leaf: the anchor value
      * and every grouped component, out of one payload and into one map value.
      * <p>
@@ -1941,11 +2010,12 @@ public class LiveViewWindow implements QuietCloseable {
      * the first entry.
      */
     public void restoreCheckpointWindowEntry(@NotNull LiveViewStatePageReader keySource, byte @NotNull [] payload) {
-        final LiveViewWindowStatePlan plan = checkpointWindowStatePlan;
+        final LiveViewWindowStatePlan plan = checkpointStoragePlan;
         if (plan == null) {
             throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
-                    .put("live view checkpoint window state restore without an adopted plan");
+                    .put("live view checkpoint window state restore without a storage plan");
         }
+        final boolean isFused = checkpointWindowStatePlan != null;
         final MapKey key = anchorMap.withKey();
         final long consumed = LiveViewSnapshotKeyCodec.readKey(key, keySource, 0, partitionKeyTypes);
         if (consumed != keySource.size()) {
@@ -1963,25 +2033,111 @@ public class LiveViewWindow implements QuietCloseable {
         value.putByte(SLOT_INITIALIZED, (byte) 1);
         value.putByte(SLOT_TOMBSTONE, (byte) 0);
         value.putShort(SLOT_DIRTY_EPOCH, EPOCH_NONE);
-        final LiveViewWindowStateManifest manifest = plan.getManifest();
-        final int durableComponentCount = plan.getDurableComponentCount();
-        for (int c = 0; c < durableComponentCount; c++) {
-            plan.getComponent(c).restoreStateFrom(
-                    payload,
-                    manifest.getComponentStateOffset(c),
-                    value,
-                    plan.getComponentSlotBase(c)
-            );
-        }
-        // A runtime-only member's bytes are on its own function root, which is restored
-        // after this walk has created the entry it writes into. Identity here rather than
-        // whatever the map's backing held: an entry the member's root turns out not to name
-        // is one whose accumulator is empty, and reading uninitialized slots as state is the
-        // one way that could go unnoticed.
-        for (int c = durableComponentCount, n = plan.getComponentCount(); c < n; c++) {
-            plan.getComponent(c).resetState(value, plan.getComponentSlotBase(c));
+        if (isFused) {
+            final LiveViewWindowStateManifest manifest = plan.getManifest();
+            final int durableComponentCount = plan.getDurableComponentCount();
+            for (int c = 0; c < durableComponentCount; c++) {
+                plan.getComponent(c).restoreStateFrom(
+                        payload,
+                        manifest.getComponentStateOffset(c),
+                        value,
+                        plan.getComponentSlotBase(c)
+                );
+            }
+            // A runtime-only member's bytes are on its own function root, which is restored
+            // after this walk has created the entry it writes into. Identity here rather
+            // than whatever the map's backing held: an entry the member's root turns out not
+            // to name is one whose accumulator is empty, and reading uninitialized slots as
+            // state is the one way that could go unnoticed.
+            for (int c = durableComponentCount, n = plan.getComponentCount(); c < n; c++) {
+                plan.getComponent(c).resetState(value, plan.getComponentSlotBase(c));
+            }
+        } else {
+            restorePrivateProjections(plan, keySource, payload);
         }
         restoreFrontierEntry(anchorValue);
+    }
+
+    /**
+     * Puts one entry's durable components back into the private maps their functions own,
+     * which is where the accumulators live while
+     * {@code cairo.sql.window.map.fusion.enabled} is off.
+     * <p>
+     * Every durable projection is written, not only each component's contributor: outside a
+     * fused group each function reads its own map rather than a slice of a shared value, so
+     * a derived {@code count} beside a {@code sum} needs its own eight bytes put back. Which
+     * bytes those are is the plan's answer through
+     * {@link LiveViewAccumulatorProjection#getFunctionStateOffset()}, the same slice the
+     * function's own root would have carried.
+     * <p>
+     * A {@link LiveViewAccumulatorProjection#isPartitionKeyGuarded() guarded} count is the
+     * one projection whose own state is not the slice it reads - it emits
+     * {@code partition-key-is-null ? 0 : rowCount} - so the guard is applied here from the
+     * entry's own encoded key, exactly as {@code lowerProjectionInto} applies it from a
+     * fused record.
+     * <p>
+     * A non-durable projection is skipped: its bytes are on the function root it keeps, and
+     * that root's own restore writes them into this same map afterwards.
+     */
+    private void restorePrivateProjections(
+            @NotNull LiveViewWindowStatePlan plan,
+            @NotNull LiveViewStatePageReader keySource,
+            byte @NotNull [] payload
+    ) {
+        // Read once rather than per projection: it is a property of the key, and only a
+        // guarded projection asks for it at all.
+        boolean isPartitionKeyNullResolved = false;
+        boolean isPartitionKeyNull = false;
+        for (int p = 0, n = plan.getProjectionCount(); p < n; p++) {
+            if (!plan.isDurableProjection(p)) {
+                continue;
+            }
+            final LiveViewAccumulatorProjection projection = plan.getProjection(p);
+            final Map map = plan.getProjectionFunction(p).getPartitionMap();
+            if (map == null || !map.isOpen()) {
+                continue;
+            }
+            final MapKey key = map.withKey();
+            LiveViewSnapshotKeyCodec.readKey(key, keySource, 0, partitionKeyTypes);
+            final MapValue value = key.createValue();
+            if (projection.isPartitionKeyGuarded()) {
+                if (!isPartitionKeyNullResolved) {
+                    isPartitionKeyNullResolved = true;
+                    isPartitionKeyNull = LiveViewSnapshotKeyCodec.isLeadingKeyColumnNull(
+                            keySource,
+                            0,
+                            partitionKeyTypes
+                    );
+                }
+                value.putLong(
+                        0,
+                        isPartitionKeyNull ? 0L : readLongLE(payload, projection.getNonNullCountFieldOffset())
+                );
+            } else {
+                projection.getFunctionComponent().restoreStateFrom(
+                        payload,
+                        projection.getFunctionStateOffset(),
+                        value,
+                        0
+                );
+            }
+            final int tombstoneIndex = plan.getProjectionFunction(p).getTombstoneValueIndex();
+            if (tombstoneIndex >= 0) {
+                value.putByte(tombstoneIndex, (byte) 0);
+            }
+        }
+    }
+
+    /**
+     * Reads one little-endian long out of a scalar payload, the same encoding
+     * {@link LiveViewAccumulatorDescriptor#freezeStateInto} writes every slot in.
+     */
+    private static long readLongLE(byte[] payload, int offset) {
+        long value = 0;
+        for (int i = Long.BYTES - 1; i >= 0; i--) {
+            value = (value << 8) | (payload[offset + i] & 0xffL);
+        }
+        return value;
     }
 
     /**
@@ -2075,7 +2231,10 @@ public class LiveViewWindow implements QuietCloseable {
         } else if (lastAnchor != anchorValue) {
             movePartitionToCurrentBucket(false, lastAnchor);
         }
-        markCheckpointPartitionDirtyByKey(keySource, isNewPartition);
+        // The anchor fact rather than "the replay rewrote everything": a transplanted key
+        // whose anchor held may still carry the payload the predecessor root holds, and
+        // that is exactly the key a repair over a partial domain wants to elide.
+        markCheckpointPartitionDirtyByKey(keySource, isNewPartition, !wasInitialized || lastAnchor != anchorValue);
     }
 
     /**
@@ -2091,8 +2250,7 @@ public class LiveViewWindow implements QuietCloseable {
      * writes. Every other member reading that component holds a root of its own - a derived
      * {@code count}'s eight bytes, a guarded one's corrected number - and neither is the
      * component's state; the contributor's image is, and restoring it restores every output
-     * that reads it. That is the same rule {@code endLegacyComponentRestore} applies when it
-     * hoists a legacy root, one root shape later.
+     * that reads it.
      */
     public void restoreCheckpointMemberEntry(
             int projectionIndex,
@@ -2126,52 +2284,6 @@ public class LiveViewWindow implements QuietCloseable {
                 value,
                 projection.getFunctionSlotBase()
         );
-    }
-
-    /**
-     * Opens the grouped functions' private maps so a legacy per-function root can be
-     * restored into them, and reports whether anything needs it.
-     * <p>
-     * This is the upgrade adapter's first half. A checkpoint written before the fused
-     * root existed holds one root per function, and the shortest correct way to read it
-     * into a fused runtime is to let each function's own restore run exactly as it
-     * always has and then hoist the result - rather than teach every decoder a second
-     * destination.
-     *
-     * @return true when the window owns a group, and so the caller must pair this with
-     * {@link #endLegacyComponentRestore()}
-     */
-    public boolean beginLegacyComponentRestore() {
-        final LiveViewWindowStatePlan plan = checkpointWindowStatePlan;
-        if (plan == null) {
-            return false;
-        }
-        plan.reopenProjectionMaps();
-        return true;
-    }
-
-    /**
-     * Copies every grouped component out of the private maps a legacy restore just
-     * filled and into the fused value, then closes those maps again. The second half of
-     * {@link #beginLegacyComponentRestore()}.
-     */
-    public void endLegacyComponentRestore() {
-        final LiveViewWindowStatePlan plan = checkpointWindowStatePlan;
-        if (plan == null) {
-            return;
-        }
-        try {
-            final MapRecordCursor cursor = anchorMap.getCursor();
-            final MapRecord record = anchorMap.getRecord();
-            while (cursor.hasNext()) {
-                final MapValue value = record.getValue();
-                for (int c = 0, n = plan.getComponentCount(); c < n; c++) {
-                    hoistComponentInto(plan, c, record, activeKeySink, value);
-                }
-            }
-        } finally {
-            plan.releaseProjectionMaps();
-        }
     }
 
     /**
@@ -2714,14 +2826,16 @@ public class LiveViewWindow implements QuietCloseable {
 
     /**
      * Adds one partition key to the checkpoint dirty set and records whether it was new
-     * relative to the last durable checkpoint. The marker keeps logical-size accounting
-     * exact without probing the persistent anchor root.
+     * relative to the last durable checkpoint, and whether the row that named it moved
+     * its anchor value. The first marker keeps logical-size accounting exact without
+     * probing the persistent window state root; the second saves the seal a predecessor
+     * probe per key it can never elide.
      * <p>
      * Reached once per key per cadence rather than once per row - see the epoch test in
      * {@link #processRow} - so what it costs scales with the key domain the cadence
      * touches rather than with the rows it processes.
      */
-    private void markCheckpointPartitionDirty(Record record, boolean isNewPartition) {
+    private void markCheckpointPartitionDirty(Record record, boolean isNewPartition, boolean isAnchorMoved) {
         checkpointDirtyMarkCount++;
         if (checkpointDirtyAnchorMap == null) {
             checkpointDirtyAnchorMap = createTrackedDirtyAnchorMap(
@@ -2741,6 +2855,11 @@ public class LiveViewWindow implements QuietCloseable {
         // Writing it on a fresh entry also keeps the marker off whatever bytes the map's
         // backing happened to hold - createValue() zero-fills on no implementation.
         value.putByte(DIRTY_SLOT_EVICTED, (byte) 0);
+        // Unconditional for the same reason, and it can only raise the marker rather than
+        // clear one: this method runs once per key per cadence, and the one entry it can
+        // meet standing is an eviction's, whose key this row re-creates - which is a new
+        // partition, so isAnchorMoved is true.
+        value.putByte(DIRTY_SLOT_ANCHOR_MOVED, isAnchorMoved ? (byte) 1 : (byte) 0);
     }
 
     /**
@@ -2755,7 +2874,8 @@ public class LiveViewWindow implements QuietCloseable {
      */
     private void markCheckpointPartitionDirtyByKey(
             @NotNull LiveViewStatePageReader keySource,
-            boolean isNewPartition
+            boolean isNewPartition,
+            boolean isAnchorMoved
     ) {
         checkpointDirtyMarkCount++;
         if (checkpointDirtyAnchorMap == null) {
@@ -2772,6 +2892,7 @@ public class LiveViewWindow implements QuietCloseable {
             value.putByte(DIRTY_SLOT_NEW_SINCE_CHECKPOINT, isNewPartition ? (byte) 1 : (byte) 0);
         }
         value.putByte(DIRTY_SLOT_EVICTED, (byte) 0);
+        value.putByte(DIRTY_SLOT_ANCHOR_MOVED, isAnchorMoved ? (byte) 1 : (byte) 0);
     }
 
     /**
@@ -2803,6 +2924,11 @@ public class LiveViewWindow implements QuietCloseable {
             // reaches here without a dirty entry was last written before the predecessor
             // root was published and that root holds it.
             value.putByte(DIRTY_SLOT_NEW_SINCE_CHECKPOINT, (byte) 0);
+            // An eviction publishes a removal rather than a payload, so nothing reads this
+            // marker on the entry as it stands. It is written all the same because
+            // createValue() zero-fills on no implementation, and because the row that
+            // re-creates an evicted key inside the same cadence marks it again anyway.
+            value.putByte(DIRTY_SLOT_ANCHOR_MOVED, (byte) 1);
         }
         value.putByte(DIRTY_SLOT_EVICTED, (byte) 1);
     }
@@ -2895,6 +3021,79 @@ public class LiveViewWindow implements QuietCloseable {
             );
         }
         return payload;
+    }
+
+    /**
+     * Builds one entry's scalar payload with the group's accumulators still in the private
+     * maps their functions own - the unfused counterpart of
+     * {@link #encodeWindowStatePayload}.
+     * <p>
+     * The anchor map is the authoritative key domain, so the walk stays the anchor's and
+     * each component's slice is read by probing its contributor's map through the encoded
+     * key. The probe goes through {@link LiveViewSnapshotKeyCodec} rather than through
+     * either map's own key because the two are free to be different {@link Map}
+     * implementations - {@code MapFactory} selects on value width, and the window's value
+     * is not any function's.
+     * <p>
+     * A key the contributor's map does not hold takes the component's identity image.
+     * Outside a fused group a function creates its map entry on the row that first
+     * contributes, so an anchor key with no entry there is one whose accumulator is empty -
+     * the same reading {@link #adoptWindowStatePlan} takes of the same absence, and the
+     * reason the two runtimes freeze equal bytes for equal state.
+     * <p>
+     * Only the contributor is read. Every other projection on a component holds a derived
+     * or guarded reading of the same state rather than the state itself, so freezing one
+     * would put a narrower or corrected number where the component's image belongs.
+     */
+    private byte[] encodeWindowStatePayloadFromPrivateMaps(
+            @NotNull LiveViewWindowStatePlan plan,
+            @NotNull MemoryCARW keyBuffer,
+            MapValue anchorValue,
+            int entryStateBytes,
+            @Nullable LiveViewCheckpointByteArrayPool byteArrayPool
+    ) {
+        if (entryStateBytes != plan.getTotalInlineStateBytes()) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint window state payload width does not match the plan [expected=")
+                    .put(plan.getTotalInlineStateBytes()).put(", requested=").put(entryStateBytes).put(']');
+        }
+        final byte[] payload = byteArrayPool == null
+                ? new byte[entryStateBytes]
+                : byteArrayPool.next(entryStateBytes);
+        LiveViewCheckpointWindowRoot.encodeAnchorValue(anchorValue.getLong(SLOT_ANCHOR_VALUE), payload);
+        final LiveViewWindowStateManifest manifest = plan.getManifest();
+        for (int c = 0, n = plan.getDurableComponentCount(); c < n; c++) {
+            final LiveViewAccumulatorDescriptor component = plan.getComponent(c);
+            final int offset = manifest.getComponentStateOffset(c);
+            final MapValue source = findPrivateComponentValue(plan, c, keyBuffer);
+            if (source == null) {
+                component.resetStateInto(payload, offset);
+            } else {
+                // A private partition map lays the component's fields out from slot 0 -
+                // the same equality the durable image rests on, and the plan already
+                // required the contributor's declared width to be the family's.
+                component.freezeStateInto(source, 0, payload, offset);
+            }
+        }
+        return payload;
+    }
+
+    /**
+     * Probes component {@code componentIndex}'s contributor for the key {@code keyBuffer}
+     * holds, or returns null when that function keeps no map or has no entry for the key.
+     */
+    private @Nullable MapValue findPrivateComponentValue(
+            @NotNull LiveViewWindowStatePlan plan,
+            int componentIndex,
+            @NotNull MemoryCARW keyBuffer
+    ) {
+        final Map map = plan.getContributor(componentIndex).getPartitionMap();
+        if (map == null || !map.isOpen()) {
+            return null;
+        }
+        final MapKey key = map.withKey();
+        LiveViewSnapshotKeyCodec.readKey(key, keyBuffer, 0, partitionKeyTypes);
+        return key.findValue();
     }
 
     /**
@@ -3129,23 +3328,30 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
-     * Value layout of the checkpoint dirty-key map: two bytes, the
-     * {@link #DIRTY_SLOT_NEW_SINCE_CHECKPOINT} and {@link #DIRTY_SLOT_EVICTED}
-     * markers. The map's whole job is to name keys and say how each one got there,
-     * and {@link #freezeCheckpointEntries} reads every anchor value it publishes out
-     * of the live anchor map, so nothing else belongs here.
+     * Value layout of the checkpoint dirty-key map: three bytes, the
+     * {@link #DIRTY_SLOT_NEW_SINCE_CHECKPOINT}, {@link #DIRTY_SLOT_EVICTED} and
+     * {@link #DIRTY_SLOT_ANCHOR_MOVED} markers. The map's whole job is to name keys and
+     * say how each one got there, and {@link #freezeCheckpointEntries} reads every anchor
+     * value it publishes out of the live anchor map, so nothing else belongs here.
+     * <p>
+     * Three bytes rather than two costs the map implementation nothing:
+     * {@code MapFactory.createUnorderedMap} picks on the raw key+value byte sum against
+     * {@code cairo.sql.unordered.map.max.entry.size}, whose default of 32 leaves this
+     * map's widest admitted key - a VARCHAR at 16 bytes - 13 bytes of headroom.
      */
     private static final class DirtyAnchorMapValueTypes implements ColumnTypes {
         static final DirtyAnchorMapValueTypes INSTANCE = new DirtyAnchorMapValueTypes();
 
         @Override
         public int getColumnCount() {
-            return 2;
+            return 3;
         }
 
         @Override
         public int getColumnType(int columnIndex) {
-            if (columnIndex == DIRTY_SLOT_NEW_SINCE_CHECKPOINT || columnIndex == DIRTY_SLOT_EVICTED) {
+            if (columnIndex == DIRTY_SLOT_NEW_SINCE_CHECKPOINT
+                    || columnIndex == DIRTY_SLOT_EVICTED
+                    || columnIndex == DIRTY_SLOT_ANCHOR_MOVED) {
                 return ColumnType.BYTE;
             }
             throw new IndexOutOfBoundsException();
