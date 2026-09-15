@@ -183,14 +183,37 @@ public class HTTPSerialParquetExporterTest extends AbstractCairoTest {
 
     @Test
     public void testTimerForwardingUsesOnlyLiveExportModeOwner() throws Exception {
+        // Mutation caught: omitting CURSOR_BASED timer forwarding leaves its live record cursor
+        // unnotified while the task's temp-table cursor remains untouched.
         assertMemoryLeak(() -> {
             final ProbeTask task = new ProbeTask();
             final TestExporter exporter = new TestExporter();
+            final TimerProbeRecordCursor cursorBasedCursor = new TimerProbeRecordCursor();
             final TimerProbePageFrameCursor pageFrameBackedCursor = new TimerProbePageFrameCursor();
             final TimerProbePageFrameCursor tempTableCursor = new TimerProbePageFrameCursor();
             try {
                 task.pageFrameCursor = tempTableCursor;
                 exporter.setTask(task);
+                exporter.setExportMode(ParquetExportMode.CURSOR_BASED);
+                exporter.setupCursorBasedExport(cursorBasedCursor, null, null);
+                exporter.suspendCursorTimer();
+                Assert.assertEquals(1, cursorBasedCursor.suspendCount);
+                Assert.assertEquals(0, cursorBasedCursor.resumeCount);
+                exporter.resumeCursorTimer();
+                Assert.assertEquals(1, cursorBasedCursor.suspendCount);
+                Assert.assertEquals(1, cursorBasedCursor.resumeCount);
+                Assert.assertEquals("CURSOR_BASED must use its record cursor only", 0, tempTableCursor.suspendCount);
+                Assert.assertEquals("CURSOR_BASED must use its record cursor only", 0, tempTableCursor.resumeCount);
+
+                exporter.clearExportResources();
+                Assert.assertEquals(1, cursorBasedCursor.closeCount);
+                exporter.setExportMode(ParquetExportMode.CURSOR_BASED);
+                exporter.suspendCursorTimer();
+                exporter.resumeCursorTimer();
+                Assert.assertEquals("cleared CURSOR_BASED owner must not receive timer calls", 1, cursorBasedCursor.suspendCount);
+                Assert.assertEquals("cleared CURSOR_BASED owner must not receive timer calls", 1, cursorBasedCursor.resumeCount);
+                Assert.assertEquals("cleared CURSOR_BASED owner must not receive stale timer calls", 0, cursorBasedCursor.staleTimerCallCount);
+
                 exporter.setExportMode(ParquetExportMode.PAGE_FRAME_BACKED);
                 exporter.setupPageFrameBackedExport(pageFrameBackedCursor, null, null);
                 exporter.suspendCursorTimer();
@@ -276,6 +299,71 @@ public class HTTPSerialParquetExporterTest extends AbstractCairoTest {
 
         private void setTask(CopyExportRequestTask task) {
             this.task = task;
+        }
+    }
+
+    private static final class TimerProbeRecordCursor implements RecordCursor {
+        private int closeCount;
+        private boolean isClosed;
+        private int resumeCount;
+        private int staleTimerCallCount;
+        private int suspendCount;
+
+        @Override
+        public void close() {
+            if (!isClosed) {
+                closeCount++;
+                isClosed = true;
+            }
+        }
+
+        @Override
+        public Record getRecord() {
+            return null;
+        }
+
+        @Override
+        public Record getRecordB() {
+            return null;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return false;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+        }
+
+        @Override
+        public void resumeTimer() {
+            resumeCount++;
+            if (isClosed) {
+                staleTimerCallCount++;
+            }
+        }
+
+        @Override
+        public long size() {
+            return 0;
+        }
+
+        @Override
+        public void suspendTimer() {
+            suspendCount++;
+            if (isClosed) {
+                staleTimerCallCount++;
+            }
+        }
+
+        @Override
+        public void toTop() {
         }
     }
 
