@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -770,6 +771,60 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                     0,
                     deadRowsOfDay("x", "2024-01-01")
             );
+        });
+    }
+
+    /**
+     * A passive reader that already resolved one composite generation must forget it when reload observes
+     * the same directory and geometry reference reused after the partition went plain and composite again.
+     */
+    @Test
+    public void testPassiveReaderReloadsGeometryAfterCompositePlainCompositeRefReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            enableCompaction();
+            letPreSplitCut();
+            setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+
+            createDayTable("x", "2024-01-01", 20_000);
+            backdate("x", "2024-01-01T05:00:00", 200);
+            final TableToken tableToken = engine.verifyTableName("x");
+            try (TableReader reused = engine.getReader(tableToken)) {
+                Assert.assertTrue(reused.getTxFile().isPartitionComposite(0));
+                final long geometryRef = reused.getTxFile().getGeometryRef(0);
+                final long nameTxn = reused.getTxFile().getPartitionNameTxn(0);
+                final long oldWriterTxn = reused.getGeometry().getWriterTxn(0);
+
+                reused.goPassive();
+                backdate("x", "2024-01-01T05:00:00", 200);
+                backdate("x", "2024-01-01T05:00:00", 200);
+                pinPieceCap(2);
+                runCompactionPasses("x");
+                Assert.assertFalse("fixture must reach plain", isComposite("x", "2024-01-01"));
+                Assert.assertEquals("fixture must retain directory", nameTxn, frontNameTxnOfDay("x", "2024-01-01"));
+
+                enableCompaction();
+                letPreSplitCut();
+                backdate("x", "2024-01-01T01:00:00", 200);
+                try (TableReader fresh = engine.getReader(tableToken)) {
+                    Assert.assertTrue(fresh.getTxFile().isPartitionComposite(0));
+                    Assert.assertEquals("fixture must reuse directory", nameTxn, fresh.getTxFile().getPartitionNameTxn(0));
+                    Assert.assertEquals("fixture must reuse ref", geometryRef, fresh.getTxFile().getGeometryRef(0));
+                    Assert.assertTrue("fresh reader must resolve a newer geometry", fresh.getGeometry().getWriterTxn(0) > oldWriterTxn);
+
+                    reused.reload();
+                    try (
+                            TestTableReaderRecordCursor expected = new TestTableReaderRecordCursor().of(fresh);
+                            TestTableReaderRecordCursor actual = new TestTableReaderRecordCursor().of(reused)
+                    ) {
+                        TestUtils.assertEquals(expected, fresh.getMetadata(), actual, reused.getMetadata(), true);
+                    }
+                }
+            }
         });
     }
 

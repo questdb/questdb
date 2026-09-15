@@ -222,6 +222,37 @@ public class PartitionGeometryFile implements Closeable, Mutable {
         return Unsafe.getLong(buf + HEADER_OFFSET_WRITER_TXN_64);
     }
 
+    public long readWriterTxn(FilesFacade ff, Path partitionDir, int generation, long offset) {
+        final int dirLen = partitionDir.size();
+        long fd = -1;
+        try {
+            fd = TableUtils.openRO(ff, geometryFileName(partitionDir, generation), LOG);
+            ensureCapacity(HEADER_SIZE);
+            if (ff.read(fd, buf, HEADER_SIZE, offset) != HEADER_SIZE) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not read partition geometry header [path=").put(partitionDir)
+                        .put(", offset=").put(offset)
+                        .put(']');
+            }
+            final int magic = Unsafe.getInt(buf + HEADER_OFFSET_MAGIC_32);
+            final int count = Unsafe.getInt(buf + HEADER_OFFSET_PIECE_COUNT_32);
+            if (magic != MAGIC || count < 1 || count > MAX_PIECE_COUNT) {
+                throw CairoException.critical(0)
+                        .put("invalid partition geometry record [path=").put(partitionDir)
+                        .put(", offset=").put(offset)
+                        .put(", magic=").put(magic)
+                        .put(", pieceCount=").put(count)
+                        .put(']');
+            }
+            return Unsafe.getLong(buf + HEADER_OFFSET_WRITER_TXN_64);
+        } finally {
+            if (fd > -1) {
+                ff.close(fd);
+            }
+            partitionDir.trimTo(dirLen);
+        }
+    }
+
     /**
      * Reads the record at {@code offset} of {@code <partitionDir>/_geometry.<generation>} into the scratch buffer.
      */

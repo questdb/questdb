@@ -51,7 +51,7 @@ public class PartitionGeometry implements Closeable, Mutable {
      * Stride of {@link #resolved}, kept sorted by {@link #RES_PARTITION_TS} so the cache is keyed on values that never
      * change for a directory - unlike a partition index, which shifts whenever a partition is inserted or removed.
      */
-    private static final int LONGS_PER_RESOLVED = 11;
+    private static final int LONGS_PER_RESOLVED = 12;
     private static final int PIECE_CUMULATIVE_LO = 6;
     private static final int PIECE_LAST_WRITE_MICROS = 5;
     private static final int PIECE_ROW_COUNT = 3;
@@ -62,6 +62,7 @@ public class PartitionGeometry implements Closeable, Mutable {
     private static final int RES_COMMITTED_RECORD_SIZE = 7;
     private static final int RES_PARTITION_TS = 0;
     private static final int RES_E = 4;
+    private static final int RES_PARTITION_TABLE_VERSION = 11;
     private static final int RES_FLAGS = 9;
     private static final int RES_GEOMETRY_REF = 8;
     private static final int RES_LAST_WRITE_MICROS = 5;
@@ -465,6 +466,7 @@ public class PartitionGeometry implements Closeable, Mutable {
             resolved.setQuick(slot + RES_GEOMETRY_REF, -1L);
             resolved.setQuick(slot + RES_WRITER_TXN, -1L);
             resolved.setQuick(slot + RES_SEQ_TXN, -1L);
+            resolved.setQuick(slot + RES_PARTITION_TABLE_VERSION, txReader.getPartitionTableVersion());
         } else {
             pieceHoles += (int) resolved.getQuick(slot + RES_PIECE_COUNT) * LONGS_PER_PIECE;
         }
@@ -558,6 +560,7 @@ public class PartitionGeometry implements Closeable, Mutable {
                 | ((long) generation << TxReader.PARTITION_GEOMETRY_GENERATION_BIT_OFFSET)
                 | packedOffset;
         resolved.setQuick(slot + RES_GEOMETRY_REF, ref);
+        resolved.setQuick(slot + RES_PARTITION_TABLE_VERSION, txReader.getPartitionTableVersion());
         if ((resolved.getQuick(slot + RES_FLAGS) & FLAG_DIRTY) != 0) {
             resolved.setQuick(slot + RES_FLAGS, resolved.getQuick(slot + RES_FLAGS) & ~FLAG_DIRTY);
             dirtyCount--;
@@ -721,6 +724,7 @@ public class PartitionGeometry implements Closeable, Mutable {
         resolved.setQuick(slot + RES_COMMITTED_RECORD_SIZE, PartitionGeometryFile.recordSize(count));
         resolved.setQuick(slot + RES_GEOMETRY_REF, ref);
         resolved.setQuick(slot + RES_FLAGS, 0);
+        resolved.setQuick(slot + RES_PARTITION_TABLE_VERSION, txReader.getPartitionTableVersion());
         return slot;
     }
 
@@ -743,11 +747,29 @@ public class PartitionGeometry implements Closeable, Mutable {
         final int slot = findResolved(partitionTimestamp, nameTxn);
         if (slot > -1) {
             if (resolved.getQuick(slot + RES_GEOMETRY_REF) == ref) {
-                return slot;
+                if (resolved.getQuick(slot + RES_PARTITION_TABLE_VERSION) == txReader.getPartitionTableVersion()) {
+                    return slot;
+                }
+                if (resolved.getQuick(slot + RES_WRITER_TXN) == readWriterTxn(partitionTimestamp, nameTxn, ref)) {
+                    resolved.setQuick(slot + RES_PARTITION_TABLE_VERSION, txReader.getPartitionTableVersion());
+                    return slot;
+                }
             }
-            // Resident at a superseded geometry: re-read in place, and the old piece span becomes a hole.
+            // Resident at a superseded or potentially reused geometry: re-read in place, and the old
+            // piece span becomes a hole. A header writer txn check catches a composite/plain/composite
+            // cycle that reuses both the directory and the geometry reference without re-reading pieces
+            // for unaffected partitions.
             pieceHoles += (int) resolved.getQuick(slot + RES_PIECE_COUNT) * LONGS_PER_PIECE;
         }
         return readInto(slot, partitionTimestamp, nameTxn, ref);
+    }
+
+    private long readWriterTxn(long partitionTimestamp, long nameTxn, long ref) {
+        if (geometryFile == null) {
+            geometryFile = new PartitionGeometryFile(memoryTag);
+        }
+        final Path path = Path.getThreadLocal(tableRoot);
+        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, nameTxn);
+        return geometryFile.readWriterTxn(ff, path, TxReader.geometryGeneration(ref), TxReader.geometryOffset(ref));
     }
 }
