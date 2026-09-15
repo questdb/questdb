@@ -696,11 +696,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 sink.putColumnName(q);
             }
         }
-        // The decode strategy is intentionally derivable from the filter shape below rather than
-        // emitted as a separate attr (which would churn every covering-plan golden test): a single
-        // equality ("sym = 'x'") is produced metadata-only at frame production and decoded in
-        // parallel on the reduce workers, whereas an IN-list ("sym IN (...)") is decoded eagerly via
-        // the multi-key merge. The parallelism itself surfaces on the parent async operator's plan.
+        if (!tsOrderedFrames && multiKeyPageFrameCursor != null) {
+            sink.attr("frames").val("per-key (unordered)");
+        }
         if (patternKeys != null) {
             sink.attr("filter").putColumnName(keyQueryPosition).val(" matches pattern");
         } else if (keyValueFuncs != null) {
@@ -708,6 +706,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         } else {
             sink.attr("filter").putColumnName(keyQueryPosition).val('=').val(symbolFunction);
         }
+        // The partition frame cursor child is printed like the sibling non-covering path
+        // (FilterOnValuesRecordCursorFactory), so time-range pruning stays visible when a
+        // query moves onto the covering index: "Interval forward scan" means the bounds
+        // pruned partitions, "Frame forward scan" means they did not. RuntimeIntervalModel
+        // resolves intervals against the execution context, so bounds derived from a bind
+        // variable or scalar subquery print as concrete timestamps.
+        sink.child(dfcFactory);
     }
 
     private static int[] buildRequiredIncludeIndices(int[] queryColToIncludeIdx) {
