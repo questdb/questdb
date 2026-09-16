@@ -10410,28 +10410,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             factory.getMetadata()
                     );
 
-                    // An order-sensitive aggregate (first/last) is only correct over a
-                    // base that delivers designated-timestamp order, OR over a base that
-                    // accepted the offer below and thereby owns the claim that its
-                    // arrangement is legal for these aggregates and these grouping columns
-                    // -- a covering scan grouped by its own index column, say. Everything
-                    // else advertising SCAN_DIRECTION_OTHER -- e.g. a multi-key covering
-                    // latestBy -- would silently return "whichever key was scanned first"
-                    // instead of the earliest row, so it fails closed, matching how
-                    // SAMPLE BY ALIGN TO FIRST OBSERVATION already rejects such a base.
+                    // An order-sensitive aggregate (first/last) is only correct over a base
+                    // that delivers designated-timestamp order, OR over a base that accepts
+                    // the offer below and thereby owns the claim that its arrangement is
+                    // legal for these aggregates and these grouping columns -- a covering
+                    // scan grouped by its own index column, say. The offer is where that is
+                    // decided; the base refuses whenever an order-sensitive aggregate is
+                    // present and the grouping is not exactly its index key.
                     //
-                    // keyColumns, NOT the live listColumnFilterA: the calls above
-                    // (compilePerWorkerInnerProjectionFunctions,
-                    // compileWorkerFiltersConditionally) re-enter function parsing and may
-                    // clear and repopulate listColumnFilterA -- that is exactly why the copy
-                    // was taken. The offer and the factory MUST read the same object, so the
-                    // offer decides against the grouping the factory will actually execute;
-                    // a one-line edit back to listColumnFilterA here compiles, passes the
-                    // whole suite, and silently re-arms a corruption reproduced by injection
-                    // (a clobbered entry factoring to the index key's query position makes a
-                    // time-bucket grouping take per-key). Binding it once below makes such an
-                    // edit change a visibly shared name instead of swapping one identifier
-                    // for a similar-looking one.
+                    // keyColumns, NOT the live listColumnFilterA. The offer and the factory
+                    // MUST read the same grouping columns, or the offer decides against a
+                    // grouping the factory will not execute. listColumnFilterA is a
+                    // compiler-scoped scratch list and the copy above exists precisely
+                    // because generateSubQuery and compileWorkerFiltersConditionally are
+                    // documented as able to overwrite it; the calls between that copy and
+                    // this line (compilePerWorkerInnerProjectionFunctions,
+                    // compileWorkerFiltersConditionally) re-enter function parsing, so they
+                    // are on the documented hazard's path.
+                    //
+                    // The hazard was NOT reproduced. Three independent attempts to make the
+                    // two diverge failed: identityHashCode of listColumnFilterA matched the
+                    // pre-copy value at five probe points across five query shapes, including
+                    // ones that really do clone per-worker filters, and swapping this line
+                    // back to listColumnFilterA left 613 tests green. So this is a defensive
+                    // read against a hazard the surrounding code documents, not a bug anyone
+                    // here has exhibited -- and it is the right default either way, because
+                    // the failure it would cause is silent: an entry that factored to the
+                    // index key's query position would let a time-bucket grouping take
+                    // per-key, which returns wrong rows without erroring. Binding the copy to
+                    // a name here makes an edit back to the live list change a visibly shared
+                    // identifier rather than swap one similar-looking one for another.
                     //
                     // This must stay ABOVE the ownership transfer below. The offer reaches
                     // GroupByFunction.isOrderSensitive() and the base factory, either of
