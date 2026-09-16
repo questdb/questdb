@@ -78,6 +78,23 @@ public final class QwpConstants {
      */
     public static final byte FLAG_DELTA_SYMBOL_DICT = 0x08;
     /**
+     * Flag bit: side-effect-free durable-ack progress poll. This control frame
+     * has zero tables and zero payload and is accepted only on a connection
+     * that negotiated durable acknowledgements.
+     * <p>
+     * Side-effect-free refers to the engine only: the poll writes no rows and
+     * closes no deferred-commit group. It is NOT free on the wire. The server
+     * assigns it a message sequence exactly like a data frame, and the next
+     * cumulative {@link #STATUS_OK} ack names that sequence once no deferred
+     * rows remain uncommitted. A client that sends a poll must therefore
+     * allocate a sequence for it in the same space it uses for data frames,
+     * and must not map the resulting ack back onto a data frame's
+     * store-and-forward record -- doing so would trim a record the server has
+     * not committed. Clients that poll with a WebSocket PING instead consume
+     * no sequence and are unaffected.
+     */
+    public static final byte FLAG_DURABLE_ACK_POLL = 0x02;
+    /**
      * Flag bit: Gorilla timestamp encoding enabled.
      */
     public static final byte FLAG_GORILLA = 0x04;
@@ -134,6 +151,22 @@ public final class QwpConstants {
      */
     public static final int MAX_TABLE_NAME_LENGTH = 127;
     /**
+     * {@link #STATUS_SERVER_INFO} capability bit: this connection negotiated
+     * durable acknowledgements.
+     * <p>
+     * The verdict travels in-band rather than on the handshake because neither
+     * handshake carrier can deliver it to a browser. {@code X-QWP-Durable-Ack}
+     * is unreadable from page JavaScript, and the
+     * {@code questdb.qwp.durable-ack.v1} subprotocol cannot carry it either:
+     * a browser fails the whole connection when it offered a subprotocol and
+     * the 101 names none (WHATWG "establish a WebSocket connection"), so
+     * withholding the echo destroys the connection the client needs in order
+     * to be told that durable ACK is unavailable. The echo therefore confirms
+     * only that the server speaks the browser negotiation, and this bit
+     * carries whether the capability is actually on.
+     */
+    public static final byte SERVER_INFO_CAP_DURABLE_ACK = 0x01;
+    /**
      * Status: Egress-only. Query aborted because the client sent a {@code CANCEL}
      * frame or the server invoked explicit cancellation.
      */
@@ -150,9 +183,10 @@ public final class QwpConstants {
      * Status: Per-table durable-upload acknowledgment.
      * <p>
      * Sent by the server (only when the client opted in via the
-     * {@code X-QWP-Request-Durable-Ack} handshake header) when WAL segments
-     * have been uploaded to the configured object store. Payload:
-     * 1-byte status + 2-byte tableCount +
+     * {@code X-QWP-Request-Durable-Ack} handshake header or the browser-safe
+     * {@code questdb.qwp.durable-ack.v1} WebSocket subprotocol) when WAL
+     * segments have been uploaded to the configured object store.
+     * Payload: 1-byte status + 2-byte tableCount +
      * [1-byte nameLen + nameLen bytes UTF-8 table name + 8-byte seqTxn] per table.
      * Only tables whose durable seqTxn progressed since the last durable ack
      * are included. Not emitted on servers without primary replication enabled.
@@ -193,6 +227,12 @@ public final class QwpConstants {
      * Status: Authorization failure.
      */
     public static final byte STATUS_SECURITY_ERROR = 0x08;
+    /**
+     * Browser-requested ingress handshake frame. Payload:
+     * 1-byte status + 4-byte effective batch cap in bytes + 1-byte capability
+     * mask (see {@link #SERVER_INFO_CAP_DURABLE_ACK}).
+     */
+    public static final byte STATUS_SERVER_INFO = 0x01;
     /**
      * Status: Write failure (e.g., table not accepting writes).
      */
