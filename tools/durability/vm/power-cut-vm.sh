@@ -68,8 +68,9 @@ fi
 # localAcks and trimAdvances both advance, and Wm tracks, through the shipped launcher.
 #
 # The downgrade is gone rather than left dormant. A latent "cannot enforce" branch on a path
-# that now can is how a bar quietly stops being a bar.
-RPO_ENFORCEABLE=1
+# that now can is how a bar quietly stops being a bar. The flag that guarded it is gone too:
+# it had exactly one assignment, to 1, so the branch was unreachable, and an unreachable branch
+# reads as a live safety net to the next person.
 
 # THE SF ARMS NEED THE ADAPTIVE PATH. Reject here, before 100GB of disks and two VM boots, for
 # the same reason the unknown-arm check above is here. The product arm is NOT rejected: it
@@ -285,11 +286,15 @@ vm_ssh "$P2" "$KEY" "QDB_FS_MOUNT_OPTS='${QDB_FS_MOUNT_OPTS:-}' bash /opt/vmcras
 LINE=$(vm_ssh "$P2" "$KEY" "$(harness_verify_cmd "$ARM" "$MODE" "$WINDOW" "$EPOCH")" 2>&1 || true)
 vm_kill "$RUN"
 
-if [ "${RPO_ENFORCEABLE:-1}" -eq 0 ]; then
-    case "$LINE" in
-        DURABLE*|RPO_OK*) LINE="RPO_UNVERIFIED ${LINE} (gap measured; RPO bar NOT enforced — client Wm unavailable)" ;;
-    esac
-fi
+# The RPO downgrade branch that used to live here is GONE, not dormant, and :70-72 already
+# says why: the shipped launcher advances localAcks and trimAdvances, so this path can enforce
+# the bar. A latent "cannot enforce" branch on a path that now can is how a bar quietly stops
+# being a bar -- and this one was worse than dormant. It ran BEFORE the verdict line is
+# extracted below, so it matched "$LINE" while $LINE was still the whole multi-line blob, and
+# DURABLE*|RPO_OK* could never match a body that opens with DETAIL lines. Revived as it stood,
+# it would have silently failed to downgrade and reported an unenforceable bar as a pass: the
+# exact defect the comment below this records, which cost 27 directories and 28 GB to find.
+# If the bar ever becomes unenforceable again, write the downgrade AFTER the extraction.
 LINE="$LINE [seed=$SEED cutAfterMs=$CUT_AFTER_MS]"
 # CLASSIFY THE VERDICT LINE, NOT THE WHOLE OUTPUT. verify.sh prints its evidence first and the
 # verdict last, so `verdict_classify "$LINE"` matched a DETAIL line and returned UNPARSEABLE for
