@@ -9,6 +9,12 @@
 #   * the failure body carries raw engine output, which contains <, &, quotes and CONTROL
 #     CHARACTERS. Control characters are illegal in XML 1.0 at any escaping, so a naive
 #     escaper produces a file that a dashboard rejects -- or worse, silently truncates.
+#   * an INSTRUMENT fault must be <error> and a PRODUCT fault <failure>. For a durability gate
+#     that is the difference between "the rig broke" and "an acked transaction was lost", and
+#     it decides who gets paged. errors= was hardcoded to 0, so the two were one number.
+#   * the run's IDENTITY must be in the report. A trend that cannot name the build it belongs
+#     to cannot answer issues/06's question, and a DEGRADED product run must not look like a
+#     full-claim one.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,6 +35,11 @@ XML="$TMP/junit.xml"
 echo "t09 — junit xml"
 
 junit_begin "$XML" "durability.product.adaptive.W50000.bitmap"
+junit_property arm product
+junit_property mode adaptive
+junit_property product_dist "questdb-10.0.2-SNAPSHOT-no-jre-bin.tar.gz"
+junit_property harness_commit "d2c1bb9a"
+junit_property degraded false
 junit_case "durability.product.adaptive.W50000.bitmap" "flush-406"  RPO_OK    2 "DETAIL fine
 RPO_OK F=345 >= Wm=177"
 junit_case "durability.product.adaptive.W50000.bitmap" "flush-1321" DURABLE   1 "DURABLE count=1"
@@ -110,8 +121,190 @@ check "failure type is the verdict token" "$t" "LOUD_FAILURE"
 
 # ---- 7. no temp files left, and the report is renamed into place ------------------------
 # issues/19's rule: a consumer must never see a half-written file.
-leftovers=$(find "$TMP" -name 'junit.xml.tmp.*' -o -name 'junit.xml.part.*' | wc -l)
+leftovers=$(find "$TMP" -name 'junit.xml.tmp.*' -o -name 'junit.xml.part.*' -o -name 'junit.xml.props.*' | wc -l)
 check "no temp files left behind" "$leftovers" "0"
+
+# ---- 8. the run's identity is IN the report ---------------------------------------------
+# Without this a dashboard can trend a number but cannot say WHICH BUILD produced it, which is
+# the question issues/06 exists to answer. On a green product run the artifact name reached the
+# XML nowhere at all, because the only place it ever appeared was inside a failure body.
+props=$(python3 - "$XML" <<'PY'
+import sys, xml.etree.ElementTree as E
+s = E.parse(sys.argv[1]).getroot().find('testsuite')
+p = s.find('properties')
+print('MISSING' if p is None else ','.join(
+    '%s=%s' % (q.get('name'), q.get('value')) for q in p.iter('property')))
+PY
+)
+case "$props" in
+    *arm=product*) ok "properties carry the arm" ;;
+    *) bad "properties do not carry the arm (got '$props')" ;;
+esac
+case "$props" in
+    *product_dist=questdb-10.0.2-SNAPSHOT-no-jre-bin.tar.gz*)
+        ok "properties name the ARTIFACT under test" ;;
+    *) bad "properties do not name the artifact (got '$props')" ;;
+esac
+case "$props" in
+    *harness_commit=d2c1bb9a*) ok "properties name the harness commit" ;;
+    *) bad "properties do not name the harness commit (got '$props')" ;;
+esac
+
+# <properties> MUST BE THE FIRST CHILD of <testsuite>. The JUnit XSD models testsuite as a
+# SEQUENCE (properties, testcase*, system-out?, system-err?), so a properties block written
+# after the testcases is schema-invalid. A report the dashboard rejects is worse than no
+# report, because the job still goes green.
+first=$(python3 - "$XML" <<'PY'
+import sys, xml.etree.ElementTree as E
+s = E.parse(sys.argv[1]).getroot().find('testsuite')
+print(list(s)[0].tag if len(s) else 'EMPTY')
+PY
+)
+check "properties come FIRST inside testsuite (XSD sequence order)" "$first" "properties"
+
+# ---- 9. instrument faults are <error>, product faults are <failure> ----------------------
+# The split that decides whether the product owner or the rig owner gets paged. The token list
+# lives in lib/verdict.sh's verdict_is_instrument_fault; this asserts junit.sh honours it.
+XML2="$TMP/junit2.xml"
+junit_begin "$XML2" "durability.reference.SYNC.W0.bitmap"
+junit_property arm product
+junit_property degraded true
+junit_property degraded_reason "no LOCAL durable-ack tier at mode=SYNC; the arm runs the plain-qwp contract"
+junit_case c "flush-10" DURABILITY_FAILURE 1 "DURABILITY_FAILURE acked txn 44 lost"
+junit_case c "flush-11" SILENT_CORRUPTION  1 "SILENT_CORRUPTION row=9 expected_v=1 actual_v=2"
+# MOUNT_FAILED is a PRODUCT finding: an ext4 that will not mount after a power cut is exactly
+# the damage this instrument exists to catch. run-flush-sweep.sh has said so in a comment since
+# the sweep was written; the token now says it where a machine can read it.
+junit_case c "flush-12" MOUNT_FAILED       1 "MOUNT_FAILED"
+# LOUD_FAILURE spans product and instrument meanings and cannot be split by token, so it takes
+# the LOUDER alarm -- see verdict_is_instrument_fault's note and issues/21.
+junit_case c "flush-13" LOUD_FAILURE       1 "LOUD_FAILURE: shipped artifacts were not durable"
+junit_case c "flush-14" UNPARSEABLE        1 "DETAIL something
+what even is this"
+junit_case c "flush-15" RPO_UNVERIFIED     1 "RPO_UNVERIFIED gap=12 rows; client Wm unavailable"
+junit_case c "flush-16" PREFLIGHT_FAILED   1 "PREFLIGHT_FAILED the cut is not cutting"
+junit_case c "flush-17" DURABLE            1 "DURABLE count=7"
+junit_finish
+
+read -r t2 f2 e2 s2 < <(python3 - "$XML2" <<'PY'
+import sys, xml.etree.ElementTree as E
+s = E.parse(sys.argv[1]).getroot().find('testsuite')
+print(s.get('tests'), s.get('failures'), s.get('errors'), s.get('skipped'))
+PY
+)
+check "mixed suite: tests counted"                    "$t2" "8"
+check "mixed suite: product faults -> failures=4"     "$f2" "4"
+check "mixed suite: instrument faults -> errors=3"    "$e2" "3"
+check "mixed suite: a pass and no skips are not counted as either" "$s2" "0"
+
+element_of() {  # XML NAME -> error|failure|skipped|pass
+    python3 - "$1" "$2" <<'PY'
+import sys, xml.etree.ElementTree as E
+for c in E.parse(sys.argv[1]).getroot().iter('testcase'):
+    if c.get('name') == sys.argv[2]:
+        print('error'   if c.find('error')   is not None else
+              'failure' if c.find('failure') is not None else
+              'skipped' if c.find('skipped') is not None else 'pass')
+PY
+}
+check "DURABILITY_FAILURE -> <failure> (product)"  "$(element_of "$XML2" flush-10)" "failure"
+check "SILENT_CORRUPTION  -> <failure> (product)"  "$(element_of "$XML2" flush-11)" "failure"
+check "MOUNT_FAILED       -> <failure> (product)"  "$(element_of "$XML2" flush-12)" "failure"
+check "LOUD_FAILURE       -> <failure> (louder alarm)" "$(element_of "$XML2" flush-13)" "failure"
+check "UNPARSEABLE        -> <error> (instrument)" "$(element_of "$XML2" flush-14)" "error"
+check "RPO_UNVERIFIED     -> <error> (instrument)" "$(element_of "$XML2" flush-15)" "error"
+check "PREFLIGHT_FAILED   -> <error> (instrument)" "$(element_of "$XML2" flush-16)" "error"
+check "DURABLE            -> pass"                 "$(element_of "$XML2" flush-17)" "pass"
+
+# RPO_UNVERIFIED IS INCONCLUSIVE, NOT EXCULPATORY. It is an instrument fault AND a non-pass:
+# the product was neither convicted nor cleared, so it must stay red. This is the one token a
+# future refactor could plausibly "simplify" into a pass, which would turn an unenforceable
+# RPO bar into a green boundary.
+if verdict_is_pass RPO_UNVERIFIED; then
+    bad "RPO_UNVERIFIED counts as a PASS — an unenforceable RPO bar would report green"
+else
+    ok "RPO_UNVERIFIED is not a pass"
+fi
+if verdict_is_instrument_fault RPO_UNVERIFIED; then
+    ok "RPO_UNVERIFIED is an instrument fault"
+else
+    bad "RPO_UNVERIFIED is not routed to <error>"
+fi
+
+# the error element still names the token and carries the evidence
+read -r etype emsg < <(python3 - "$XML2" <<'PY'
+import sys, xml.etree.ElementTree as E
+for c in E.parse(sys.argv[1]).getroot().iter('testcase'):
+    if c.get('name') == 'flush-14':
+        e = c.find('error')
+        print(e.get('type'), 'yes' if (e.get('message') or '') == 'what even is this' else 'no')
+PY
+)
+check "error type names the verdict token" "$etype" "UNPARSEABLE"
+check "error message is the verdict line, DETAIL filtered" "$emsg" "yes"
+
+# the degrade is visible in the machine-readable report
+degraded=$(python3 - "$XML2" <<'PY'
+import sys, xml.etree.ElementTree as E
+s = E.parse(sys.argv[1]).getroot().find('testsuite')
+p = s.find('properties')
+print('MISSING' if p is None else next(
+    (q.get('value') for q in p.iter('property') if q.get('name') == 'degraded'), 'MISSING'))
+PY
+)
+check "a DEGRADED run says so in the XML" "$degraded" "true"
+
+# ---- 10. verdict_line reuse: an all-DETAIL body must not yield message="" ----------------
+# junit.sh used to re-implement verdict_line WITHOUT its blank-line filter -- the third copy of
+# it. A body that is entirely DETAIL lines, or one ending in a blank line, produced an empty
+# message, so the dashboard showed a red boundary with no reason on it.
+XML3="$TMP/junit3.xml"
+junit_begin "$XML3" "s"
+junit_case c "all-detail"  UNPARSEABLE 1 "DETAIL only evidence here
+DETAIL and more"
+# A REAL blank line after the verdict, not just a trailing newline: verify.sh's output reaches
+# the caller through ssh and command substitution, and a body whose last line is empty is what
+# the missing blank-line filter actually mishandles. The fixture needs the empty line to exist,
+# or the assertion passes against the broken implementation too -- which it did, first try.
+junit_case c "trailing-nl" SILENT_CORRUPTION 1 "DETAIL noise
+SILENT_CORRUPTION row=1
+
+"
+junit_finish
+msg_all=$(python3 - "$XML3" <<'PY'
+import sys, xml.etree.ElementTree as E
+for c in E.parse(sys.argv[1]).getroot().iter('testcase'):
+    if c.get('name') == 'all-detail':
+        print(repr(c.find('error').get('message')))
+PY
+)
+if [ "$msg_all" = "''" ]; then
+    bad "all-DETAIL body yields message=\"\" — a red boundary with no reason on it"
+else
+    ok "all-DETAIL body still carries a message ($msg_all)"
+fi
+msg_tr=$(python3 - "$XML3" <<'PY'
+import sys, xml.etree.ElementTree as E
+for c in E.parse(sys.argv[1]).getroot().iter('testcase'):
+    if c.get('name') == 'trailing-nl':
+        print(c.find('failure').get('message'))
+PY
+)
+check "a trailing blank line does not blank the message" "$msg_tr" "SILENT_CORRUPTION row=1"
+
+# ---- 11. time= is escaped like every other attribute ------------------------------------
+# It was the one attribute interpolated raw. Unreachable from today's callers, which pass
+# arithmetic -- but an attribute exempt from escaping only because of what its callers happen
+# to do is one call site away from a report the dashboard rejects WHOLE.
+XML4="$TMP/junit4.xml"
+junit_begin "$XML4" "s"
+junit_case c "odd-time" DURABILITY_FAILURE 'x"y<z' "DURABILITY_FAILURE nope"
+junit_finish
+if python3 -c "import xml.etree.ElementTree as E; E.parse('$XML4')" 2>/dev/null; then
+    ok "a non-numeric time= still produces well-formed XML"
+else
+    bad "a non-numeric time= produced MALFORMED XML — the whole report would be rejected"
+fi
 
 echo
 if [ "$fails" -eq 0 ]; then

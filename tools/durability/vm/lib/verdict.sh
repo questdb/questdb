@@ -21,6 +21,10 @@
 #                       Wm was unavailable. Reported with the measured gap, never
 #                       silently treated as a pass. Measuring the gap is the point
 #                       -- refusing to run measures nothing.
+#   MOUNT_FAILED        the filesystem would not mount at this boundary. A PRODUCT
+#                       finding, not a rig fault: an ext4 that will not mount after
+#                       a power cut is exactly the damage this instrument exists to
+#                       catch.
 #   UNPARSEABLE         no recognised verdict; treated as failure, disks kept
 
 verdict_classify() {  # LINE -> one token on stdout
@@ -37,6 +41,16 @@ verdict_classify() {  # LINE -> one token on stdout
         # committed history reconciled.
         NO_COMMIT*)           echo NO_COMMIT ;;
         RPO_UNVERIFIED*)      echo RPO_UNVERIFIED ;;
+        # MOUNT_FAILED USED TO HIDE INSIDE UNPARSEABLE, and those are opposite alarms:
+        # "the filesystem is wrecked" against "we could not read the oracle's output".
+        # run-flush-sweep.sh already special-cased the RAW STRING while this function knew
+        # nothing about it -- two sources of truth for one concept, which is the drift pattern
+        # that has cost this effort four separate bugs. The token lives here now, and the sweep
+        # compares against it.
+        #
+        # Prefix-anchored like every case above, so run-st8-probe.sh's
+        # "ST8_READBACK a=MOUNT_FAILED b=MOUNT_FAILED" is NOT absorbed by it.
+        MOUNT_FAILED*)        echo MOUNT_FAILED ;;
         CONSISTENT*)          echo DURABLE ;;
         *)                    echo UNPARSEABLE ;;
     esac
@@ -65,6 +79,51 @@ verdict_line() {  # BLOB -> the verdict line (empty if there is none)
 verdict_is_pass() {  # TOKEN -> exit 0 if pass
     case "$1" in
         DURABLE|RPO_OK|PREFLIGHT_OK|NO_COMMIT) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Did the INSTRUMENT break, or did the PRODUCT fail?
+#
+# Not a cosmetic split. For a durability gate this is the distinction that decides who gets
+# paged: "the rig broke, nothing was measured" is a different alarm from "an acked transaction
+# was lost". JUnit XML already carries it as <error> vs <failure>, and lib/junit.sh maps this
+# predicate onto exactly that. It lives HERE, next to verdict_is_pass, so the two files cannot
+# drift about what a token means.
+#
+# NOT a pass/fail decision. Every token below is still a non-pass -- verdict_is_pass is
+# unchanged and remains the only authority on that. This only routes an already-failing
+# boundary to the right alarm.
+#
+# WHY LOUD_FAILURE IS **NOT** HERE, because someone will re-litigate this:
+# it spans BOTH meanings and cannot be split by token. Checked call site by call site --
+#   product side:    guest/verify.sh:85 "$JAR missing or empty after the cut -- shipped
+#                    artifacts were not durable"; guest/verify.sh:164/169 the shipped server
+#                    would not start or was not the shipped artifact; CrashVerifier:305 and
+#                    :612 CairoException on open/query (detected torn state); :529 "matview is
+#                    EMPTY after recovery".
+#   instrument side: guest/verify.sh:318 "verifier produced no verdict"; :334 "the oracle's own
+#                    numbers did not parse, so this boundary was not evaluated"; :94 "product
+#                    distribution unusable in the guest".
+# The review that prompted this change cited only the instrument-side call sites. Because the
+# token cannot separate them, LOUD_FAILURE takes the LOUDER alarm: an instrument fault shown as
+# a product failure gets investigated, whereas a product failure shown as a rig glitch gets
+# ignored. Splitting it properly needs verify.sh to emit a distinct not-evaluated token --
+# issues/21, deliberately out of scope here.
+#
+# MOUNT_FAILED is likewise NOT here: see the token's note above. It is a product finding.
+verdict_is_instrument_fault() {  # TOKEN -> exit 0 if the RIG broke rather than the product
+    case "$1" in
+        # No recognised verdict: the oracle's output could not be read, so this boundary
+        # measured nothing about the product either way.
+        UNPARSEABLE) return 0 ;;
+        # The cut is not cutting. Every verdict that follows it is vacuous, which is a
+        # statement about the instrument and never about the product.
+        PREFLIGHT_FAILED) return 0 ;;
+        # INCONCLUSIVE, NOT EXCULPATORY: the gap was measured but the RPO bar could not be
+        # enforced, so the product was neither convicted nor cleared. It stays a non-pass --
+        # do not "simplify" this into a pass; t09 pins that.
+        RPO_UNVERIFIED) return 0 ;;
         *) return 1 ;;
     esac
 }

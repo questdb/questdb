@@ -333,6 +333,63 @@ JUNIT_XML="${QDB_JUNIT_XML:-$OUTDIR/junit.xml}"
 mkdir -p "$(dirname "$JUNIT_XML")"
 junit_begin "$JUNIT_XML" "durability.$ARM.$MODE.W$WINDOW.$PROFILE"
 JUNIT_CLASS="durability.$ARM.$MODE.W$WINDOW.$PROFILE"
+# THE RUN'S IDENTITY, IN THE MACHINE-READABLE REPORT. The classname smuggles four of these
+# into a dotted string; everything else lived only in the text log, so a dashboard could not
+# say WHICH BUILD a trend belonged to -- and on a green product run the artifact name appeared
+# nowhere in the XML at all. issues/06 asks for "boundary 13776 regressed between build N and
+# N+1"; that question needs the build named.
+#
+# Set from the values this script already holds, never re-derived inside lib/junit.sh: a second
+# derivation is a second source of truth, and this harness has paid for that four times.
+junit_property arm          "$ARM"
+junit_property edition      "$EDITION"
+junit_property mode         "$MODE"
+junit_property window_us    "$WINDOW"
+junit_property profile      "$PROFILE"
+junit_property epoch_ms     "$EPOCH"
+junit_property wal_table    "$WAL_TABLE"
+junit_property sweep_mode   "$SWEEP_MODE"
+junit_property nflush       "$nflush"
+junit_property points       "$(echo "$points" | wc -w)"
+junit_property replay_reset "${QDB_REPLAY_RESET:-blkdiscard}"
+junit_property fs_mount_opts "${QDB_FS_MOUNT_OPTS:-default}"
+junit_property stamp        "$STAMP"
+# THE HARNESS COMMIT. Which instrument produced the numbers is part of the numbers: a trend
+# that moves because the harness changed is not a product regression, and without this the two
+# are indistinguishable after the fact. Degrades to "unknown" outside a git checkout rather
+# than failing the sweep.
+junit_property harness_commit "$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+# THE ACK CHANNEL, AND WHETHER THE RUN COULD CLAIM IT. 203f136a05 promises that outside
+# adaptive "nothing reports ack-channel coverage the product cannot provide in that mode" --
+# the text log honours that, the XML did not, so a DEGRADED product/SYNC cell was
+# indistinguishable from a full-claim run and a dashboard would show "product arm: green" for
+# coverage that was explicitly never provided.
+if [ "$ARM" = qwp-sf ] || [ "$ARM" = product ]; then
+    junit_property qwp_tier  "$QWP_TIER"
+    junit_property sf_replay "$SF_REPLAY"
+fi
+if [ "$ARM" = product ]; then
+    junit_property product_dist "$(basename "$DIST_TGZ")"
+    junit_property product_recovery_pass "${QDB_PRODUCT_RECOVERY_PASS:-true}"
+    # The degrade is the arm dropping to the plain-qwp contract because the LOCAL durable-ack
+    # tier cannot exist outside adaptive. Keyed on arm_sf_capable, the same predicate that
+    # produced the degrade above -- not on the resulting flag values, which would also be false
+    # for a deliberately defanged run.
+    if arm_sf_capable "$MODE"; then
+        junit_property degraded false
+    else
+        junit_property degraded true
+        junit_property degraded_reason "no LOCAL durable-ack tier at mode=$MODE; the arm runs the plain-qwp contract and makes no ack-channel claim"
+    fi
+fi
+# A run that is REQUIRED to fail must say so where a machine can see it, or its red is
+# indistinguishable from a regression.
+if [ "${QDB_QWP_DEFANG_ACK:-0}" = "1" ]; then
+    junit_property negative_control true
+fi
+if [ "$WAL_TABLE" = true ] && [ "$(echo "$MODE" | tr 'A-Z' 'a-z')" = nosync ]; then
+    junit_property barrier_control true
+fi
 for n in $points; do
     point_started=$(date +%s)
     out=$(vm_ssh "$P2" "$KEY" "sudo umount /mnt/qdb 2>/dev/null; sudo dmsetup remove qdbdata 2>/dev/null; \
@@ -356,9 +413,12 @@ for n in $points; do
     printf '  flush %4d/%-4d -> %s\n' "$n" "$nflush" "$v"
     case "$v" in
         DURABLE|RPO_OK|NO_COMMIT) ;;
-        *) if [ "$line" = "MOUNT_FAILED" ]; then
+        *) if [ "$v" = MOUNT_FAILED ]; then
                # A filesystem that will not mount at a crash point is a real
                # outcome, not a harness error -- report it and keep going.
+               # Compared as a TOKEN, not as the raw string: verdict_classify owns
+               # the vocabulary, and this line matching text the classifier knew
+               # nothing about was two sources of truth for one concept.
                echo "      (filesystem unmountable at this boundary)"
            fi
            fails=$((fails + 1))
