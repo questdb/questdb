@@ -63,7 +63,10 @@ for a in "$@"; do
         --rebase=*)    REBASE="${a#*=}" ;;
         --sf-replay=*) SFREPLAY="${a#*=}" ;;
         --server=*)    SERVER="${a#*=}" ;;
-        *) echo "LOUD_FAILURE: verify.sh unknown argument $a"; exit 0 ;;
+        # NOT_EVALUATED, not LOUD_FAILURE: a flag this script does not know is the HARNESS
+        # calling its own oracle wrongly. Nothing was measured, so it cannot be a statement
+        # about the product. See the vocabulary note in lib/verdict.sh.
+        *) echo "NOT_EVALUATED: verify.sh unknown argument $a"; exit 0 ;;
     esac
 done
 
@@ -91,9 +94,28 @@ case "$SERVER" in
     product)
         # shellcheck source=product-dist.sh
         source /opt/vmcrash/guest/product-dist.sh
-        product_dist_unpack || { echo "LOUD_FAILURE: product distribution unusable in the guest"; exit 0; }
+        # NOT_EVALUATED, and this one is NOT obvious -- the reasoning is recorded because the
+        # opposite reading is tempting: "the shipped distribution is unusable" sounds like a
+        # product finding.
+        #
+        # It is not, and the decisive fact is WHERE the tarball lives. It is staged at
+        # /opt/vmcrash/questdb-dist.tar.gz on the guest's BOOT OVERLAY, and on the sweep path
+        # it is re-shipped to the REPLAY VM after the reboot (run-flush-sweep.sh:289) -- so it
+        # never sat on the crashed data device and the cut cannot have touched it. Every
+        # failure product_dist_unpack can return says the same thing in its own words: "the
+        # release tarball was never shipped into the guest", "missing from the unpacked
+        # distribution", "the assembly's fileMode was lost in transit". Those are transfer and
+        # staging faults, which are the rig's.
+        #
+        # The counter-case -- a genuinely broken release assembly -- stays covered: it fails
+        # identically at EVERY boundary of every run, which reads as a build fault rather than
+        # a per-boundary durability verdict, and the arm's premise assertion at the server
+        # start below is the check that convicts the artifact itself. NOT_EVALUATED is still a
+        # non-pass and still red; it only changes WHO is paged.
+        product_dist_unpack || { echo "NOT_EVALUATED: product distribution unusable in the guest"; exit 0; }
         ;;
-    *) echo "LOUD_FAILURE: verify.sh unknown --server=$SERVER"; exit 0 ;;
+    # Harness misuse again: lib/arms.sh chooses this value, not a user.
+    *) echo "NOT_EVALUATED: verify.sh unknown --server=$SERVER"; exit 0 ;;
 esac
 
 case "$ARM" in
@@ -315,7 +337,11 @@ case "$ARM" in
             [ ! -s "$vout" ] && [ ! -s "$verr" ] && why="$why produced-no-output-at-all"
             ls /tmp/hs_err_pid*.log >/dev/null 2>&1 && why="$why jvm-crash-log-present"
             [ -d "$DB" ] || why="$why db-root-absent"
-            line="LOUD_FAILURE: verifier produced no verdict ($why)"
+            # NOT_EVALUATED: the oracle never reached a verdict, so this boundary says nothing
+            # about the product either way. It stays a FAILURE -- a boundary that cannot be
+            # evaluated is a finding, not something to skip past -- but it is the RIG's finding.
+            # Reporting it as LOUD_FAILURE paged the product owner for a JVM the agent killed.
+            line="NOT_EVALUATED: verifier produced no verdict ($why)"
         fi
         # PASS B vs PASS A. The delta is what the CLIENT put back, and it is the only number
         # that distinguishes the mechanism working from nothing having happened.
@@ -331,7 +357,7 @@ case "$ARM" in
                 # cannot evaluate is a finding about the harness, not a pass and not a defect.
                 if [ "$delta" -lt 0 ]; then
                     echo "DETAIL SF_INDETERMINATE armA=$sfa_distinct armB=$sfb_distinct delta=$delta"
-                    line="LOUD_FAILURE qwp-sf: impossible negative replay delta ($delta) — the oracle's own numbers did not parse, so this boundary was not evaluated"
+                    line="NOT_EVALUATED qwp-sf: impossible negative replay delta ($delta) — the oracle's own numbers did not parse, so this boundary was not evaluated"
                     sfb_distinct=-1
                 fi
             fi
@@ -417,10 +443,14 @@ case "$ARM" in
         # ARTIFACT, and a measurement that changes with the thing being measured cannot compare
         # them. The product arm runs this same reference oracle with --server=product, which is
         # what lib/arms.sh emits. Reaching this branch means a caller sent the workload arm here.
-        echo "LOUD_FAILURE: --arm=product is not an oracle; the product arm uses --arm=reference --server=product (see lib/arms.sh arm_verify_flags)"
+        # NOT_EVALUATED: reaching this branch means a CALLER sent the workload arm to the
+        # oracle. That is a harness routing bug -- nothing was measured.
+        echo "NOT_EVALUATED: --arm=product is not an oracle; the product arm uses --arm=reference --server=product (see lib/arms.sh arm_verify_flags)"
         ;;
 
     *)
-        echo "LOUD_FAILURE: unknown arm $ARM"
+        # Same class as above. lib/arms.sh:129 records the incident that made this reachable:
+        # a new arm was added to the harness and never to this case statement.
+        echo "NOT_EVALUATED: unknown arm $ARM"
         ;;
 esac

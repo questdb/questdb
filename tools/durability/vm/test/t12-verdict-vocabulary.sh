@@ -60,12 +60,26 @@ row DURABILITY_FAILURE \
 row SILENT_CORRUPTION \
     "SILENT_CORRUPTION count=43264 is not a multiple of K=1000" \
     "SILENT_CORRUPTION     <- CrashVerifier"
+# THIS FIXTURE MOVED with issues/21. It used to be "LOUD_FAILURE: verifier produced no verdict"
+# citing verify.sh:318 -- a line that no longer exists, because that exit now emits
+# NOT_EVALUATED. The rule this file states at the top (fixtures come from the producer, or the
+# test checks itself against itself) is what makes the stale citation a defect rather than a
+# cosmetic detail.
 row LOUD_FAILURE \
-    "LOUD_FAILURE: verifier produced no verdict (jvm-crash-log-present)" \
-    "LOUD_FAILURE          <- guest/verify.sh:318"
+    "LOUD_FAILURE: the shipped server did not start on the crashed database" \
+    "LOUD_FAILURE          <- guest/verify.sh:186 (product side)"
+# issues/21. The oracle never reached a verdict: nothing was measured, so this is the RIG's
+# finding and not a statement about the product. Both wordings verify.sh emits are pinned,
+# because the second has no colon after the token and a tightened anchor would drop it.
+row NOT_EVALUATED \
+    "NOT_EVALUATED: verifier produced no verdict (jvm-crash-log-present)" \
+    "NOT_EVALUATED         <- guest/verify.sh:344"
+row NOT_EVALUATED \
+    "NOT_EVALUATED qwp-sf: impossible negative replay delta (-1230974) — the oracle's own numbers did not parse, so this boundary was not evaluated" \
+    "NOT_EVALUATED qwp-sf  <- guest/verify.sh:360 (no colon after the token)"
 row NO_COMMIT \
     "NO_COMMIT cut landed before any commit (watermark=absent)" \
-    "NO_COMMIT             <- guest/verify.sh:406"
+    "NO_COMMIT             <- guest/verify.sh:432"
 row MOUNT_FAILED \
     "MOUNT_FAILED" \
     "MOUNT_FAILED          <- run-flush-sweep.sh:401 (the whole line, no detail)"
@@ -211,6 +225,10 @@ pass_is NO_COMMIT          yes
 pass_is DURABILITY_FAILURE no
 pass_is SILENT_CORRUPTION  no
 pass_is LOUD_FAILURE       no
+# A boundary the oracle could not evaluate is a FINDING, not something to skip past. It is not
+# NO_COMMIT: that is a VALID sample that measured nothing, this is an INVALID one, so it must
+# not inherit NO_COMMIT's pass.
+pass_is NOT_EVALUATED      no
 pass_is MOUNT_FAILED       no
 pass_is PREFLIGHT_FAILED   no
 pass_is UNPARSEABLE        no
@@ -231,10 +249,88 @@ fault_is SILENT_CORRUPTION no
 # LOUD_FAILURE spans both meanings and cannot be split by token, so it takes the LOUDER alarm:
 # a rig fault shown as a product failure gets investigated, the reverse gets ignored. See
 # verdict_is_instrument_fault's note and issues/21.
+# Since issues/21 this is true for a REASON rather than for want of a distinction: the
+# not-evaluated cases carry their own token, so LOUD_FAILURE means only "the product refused".
 fault_is LOUD_FAILURE      no
+# The other half of that split, and the reason the ticket exists: a rig fault must not raise
+# the data-loss alarm. Do that weekly and the real one stops being believed.
+fault_is NOT_EVALUATED     yes
 # MOUNT_FAILED is a PRODUCT finding: an ext4 that will not mount after a power cut is exactly
 # the damage this instrument exists to catch.
 fault_is MOUNT_FAILED      no
+
+# ---- 5b. the PRODUCER side: what guest/verify.sh actually emits ----------------------------
+# Everything above tests verdict_classify against fixtures. Nothing tested that the fixtures
+# still match their producer -- and that is the drift this file exists to catch. verify.sh runs
+# INSIDE the guest, so no VM-free test could execute it; it can still be READ.
+#
+# This section is why it matters: issues/21 moved seven exits from LOUD_FAILURE to
+# NOT_EVALUATED. Revert any one of them and every assertion above still passes, because they
+# all test the vocabulary against strings this file owns. The alarm would silently go back to
+# paging the product owner for a dead JVM.
+echo "  producer scan: guest/verify.sh's own verdict lines"
+
+VERIFY_SH="$HERE/../guest/verify.sh"
+
+# Every verdict guest/verify.sh emits, as the literal text after echo " or line=".
+# Comments are stripped first: this file's own explanatory prose names these tokens.
+emitted_lines=$(grep -vE '^[[:space:]]*#' "$VERIFY_SH" \
+    | grep -oE '(echo "|line=")(NOT_EVALUATED|LOUD_FAILURE|DURABILITY_FAILURE|NO_COMMIT)[^"]*' \
+    | sed -e 's/^echo "//' -e 's/^line="//')
+
+unknown=0
+while IFS= read -r l; do
+    [ -z "$l" ] && continue
+    [ "$(verdict_classify "$l")" = UNPARSEABLE ] && { unknown=$((unknown + 1)); echo "       UNCLASSIFIED: $l"; }
+done <<< "$emitted_lines"
+check "every verdict line verify.sh emits is classifiable" "$unknown" "0"
+
+# THE THREE INSTRUMENT-SIDE EXITS NAMED IN issues/21, by their message text rather than by
+# line number -- line numbers move, and a citation that rots is worse than none. Each phrase
+# must sit on a line whose token is an INSTRUMENT fault. This is the assertion that fails if
+# someone reverts one of the seven exits.
+producer_is_instrument() {  # PHRASE
+    local phrase="$1" line tok
+    line=$(grep -vE '^[[:space:]]*#' "$VERIFY_SH" \
+        | grep -oE '(echo "|line=")[A-Z_]+[^"]*'"$(printf '%s' "$phrase" | sed 's/[].[^$*\/]/\\&/g')"'[^"]*' \
+        | sed -e 's/^echo "//' -e 's/^line="//' | head -1)
+    if [ -z "$line" ]; then
+        bad "producer: no verdict line carries '$phrase' (wording changed?)"
+        return
+    fi
+    tok=$(verdict_classify "$line")
+    if verdict_is_instrument_fault "$tok"; then
+        ok "producer: '$phrase' -> $tok (instrument)"
+    else
+        bad "producer: '$phrase' -> $tok, which pages the PRODUCT owner (issues/21 regression)"
+    fi
+}
+producer_is_instrument "verifier produced no verdict"
+producer_is_instrument "did not parse, so this boundary was not evaluated"
+producer_is_instrument "product distribution unusable in the guest"
+producer_is_instrument "verify.sh unknown argument"
+producer_is_instrument "unknown arm"
+
+# The converse, so the scan cannot be satisfied by moving EVERYTHING to NOT_EVALUATED: the
+# product-side exits must still raise the product alarm.
+producer_is_product() {  # PHRASE
+    local phrase="$1" line tok
+    line=$(grep -vE '^[[:space:]]*#' "$VERIFY_SH" \
+        | grep -oE '(echo "|line=")[A-Z_]+[^"]*'"$(printf '%s' "$phrase" | sed 's/[].[^$*\/]/\\&/g')"'[^"]*' \
+        | sed -e 's/^echo "//' -e 's/^line="//' | head -1)
+    if [ -z "$line" ]; then
+        bad "producer: no verdict line carries '$phrase' (wording changed?)"
+        return
+    fi
+    tok=$(verdict_classify "$line")
+    if verdict_is_instrument_fault "$tok"; then
+        bad "producer: '$phrase' -> $tok, but a product failure must NOT be a rig glitch"
+    else
+        ok "producer: '$phrase' -> $tok (product)"
+    fi
+}
+producer_is_product "shipped artifacts were not durable"
+producer_is_product "the shipped server did not start on the crashed database"
 
 # ---- 6. the table above covers every token the function can emit ---------------------------
 # Without this, adding a token to lib/verdict.sh and forgetting to test it is silent -- and the
@@ -245,7 +341,7 @@ emitted=$(sed -n '/^verdict_classify()/,/^}/p' "$HERE/../lib/verdict.sh" \
     | grep -vE '^[[:space:]]*#' \
     | grep -oE '\)[[:space:]]+echo[[:space:]]+[A-Z_]+' \
     | awk '{print $NF}' | sort -u | tr '\n' ' ')
-covered="DURABILITY_FAILURE DURABLE LOUD_FAILURE MOUNT_FAILED NO_COMMIT PREFLIGHT_FAILED PREFLIGHT_OK RPO_OK RPO_UNVERIFIED SILENT_CORRUPTION UNPARSEABLE "
+covered="DURABILITY_FAILURE DURABLE LOUD_FAILURE MOUNT_FAILED NO_COMMIT NOT_EVALUATED PREFLIGHT_FAILED PREFLIGHT_OK RPO_OK RPO_UNVERIFIED SILENT_CORRUPTION UNPARSEABLE "
 check "every token verdict_classify can emit has a row above" "$emitted" "$covered"
 
 echo

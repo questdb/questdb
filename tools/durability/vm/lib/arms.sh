@@ -126,7 +126,7 @@ arm_progress_file() {
 # modifiers (--qwp / --qwp-sf), which is the convention run-flush-sweep.sh already used.
 #
 # power-cut-vm.sh instead forwarded its WORKLOAD arm straight through, so `--arm=qwp` reached
-# verify.sh's case statement and fell to `LOUD_FAILURE: unknown arm qwp` -- after a full
+# verify.sh's case statement and fell to `NOT_EVALUATED: unknown arm qwp` -- after a full
 # record, cut and reboot cycle. Third arm-specific divergence between these two callers, and
 # the third to be found only by actually running the path rather than reading it.
 #

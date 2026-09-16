@@ -9,7 +9,15 @@
 #   RPO_OK              every ACKED txn survived; loss confined to (Wm, C]
 #   DURABILITY_FAILURE  an acked txn was lost, or a suspend never cleared
 #   SILENT_CORRUPTION   wrong value, gap, or torn commit boundary — the worst
-#   LOUD_FAILURE        the engine refused to open or query, loudly
+#   LOUD_FAILURE        the engine refused to open or query, loudly. A PRODUCT finding:
+#                       since issues/21 the not-evaluated cases carry NOT_EVALUATED, so this
+#                       token means only "the product refused" -- for a reason, rather than
+#                       for want of a distinction.
+#   NOT_EVALUATED       the oracle never reached a verdict, so this boundary says NOTHING
+#                       about the product either way. A rig fault, and a non-pass: a boundary
+#                       that cannot be evaluated is a finding, not something to skip past.
+#                       Distinct from NO_COMMIT, which is a VALID sample that measured
+#                       nothing; this is an INVALID one.
 #   PREFLIGHT_OK        the cut demonstrably drops un-fsync'd data
 #   PREFLIGHT_FAILED    the cut is not cutting — every later verdict is vacuous
 #   NO_COMMIT           the cut landed before ANYTHING was committed. A legitimate
@@ -37,6 +45,10 @@ verdict_classify() {  # LINE -> one token on stdout
         DURABILITY_FAILURE*)  echo DURABILITY_FAILURE ;;
         SILENT_CORRUPTION*)   echo SILENT_CORRUPTION ;;
         LOUD_FAILURE*)        echo LOUD_FAILURE ;;
+        # issues/21. Prefix-anchored like every case above; guest/verify.sh emits both
+        # "NOT_EVALUATED: ..." and "NOT_EVALUATED qwp-sf: ...", so the anchor must not
+        # assume the colon.
+        NOT_EVALUATED*)       echo NOT_EVALUATED ;;
         # CrashVerifier's wording on the non-WAL path. Same meaning: the
         # committed history reconciled.
         NO_COMMIT*)           echo NO_COMMIT ;;
@@ -96,20 +108,23 @@ verdict_is_pass() {  # TOKEN -> exit 0 if pass
 # boundary to the right alarm.
 #
 # WHY LOUD_FAILURE IS **NOT** HERE, because someone will re-litigate this:
-# it spans BOTH meanings and cannot be split by token. Checked call site by call site --
-#   product side:    guest/verify.sh:85 "$JAR missing or empty after the cut -- shipped
-#                    artifacts were not durable"; guest/verify.sh:164/169 the shipped server
-#                    would not start or was not the shipped artifact; CrashVerifier:305 and
-#                    :612 CairoException on open/query (detected torn state); :529 "matview is
-#                    EMPTY after recovery".
-#   instrument side: guest/verify.sh:318 "verifier produced no verdict"; :334 "the oracle's own
-#                    numbers did not parse, so this boundary was not evaluated"; :94 "product
-#                    distribution unusable in the guest".
-# The review that prompted this change cited only the instrument-side call sites. Because the
-# token cannot separate them, LOUD_FAILURE takes the LOUDER alarm: an instrument fault shown as
-# a product failure gets investigated, whereas a product failure shown as a rig glitch gets
-# ignored. Splitting it properly needs verify.sh to emit a distinct not-evaluated token --
-# issues/21, deliberately out of scope here.
+# it USED to span both meanings, and the stopgap was to give it the LOUDER alarm -- an
+# instrument fault shown as a product failure gets investigated, whereas a product failure
+# shown as a rig glitch gets ignored. issues/21 removed the ambiguity at the source instead:
+# guest/verify.sh now emits NOT_EVALUATED at the exits where nothing was measured, so
+# LOUD_FAILURE is left meaning only "the product refused, loudly".
+#
+# What still emits LOUD_FAILURE, checked call site by call site:
+#   guest/verify.sh:88   "$JAR missing or empty after the cut -- shipped artifacts were not
+#                        durable"
+#   guest/verify.sh:186/191/223/261/288  the shipped server would not start or stop, or the
+#                        server that recovered was not the shipped artifact
+#   CrashVerifier:305/612  CairoException on open/query (detected torn state)
+#   CrashVerifier:529    "matview is EMPTY after recovery"
+# Every one of those is the product refusing. The host-side scripts (power-cut-vm.sh,
+# run-flush-sweep.sh, run-st8-probe.sh, run-sf-replay.sh, lib/qemu.sh) also print
+# LOUD_FAILURE for their own setup faults, but those abort the run before any boundary is
+# classified and never reach junit_case, so they cannot mis-page anyone.
 #
 # MOUNT_FAILED is likewise NOT here: see the token's note above. It is a product finding.
 verdict_is_instrument_fault() {  # TOKEN -> exit 0 if the RIG broke rather than the product
@@ -124,6 +139,11 @@ verdict_is_instrument_fault() {  # TOKEN -> exit 0 if the RIG broke rather than 
         # enforced, so the product was neither convicted nor cleared. It stays a non-pass --
         # do not "simplify" this into a pass; t09 pins that.
         RPO_UNVERIFIED) return 0 ;;
+        # THE POINT OF issues/21. The oracle never reached a verdict -- a JVM the agent killed,
+        # a distribution that was never staged, numbers that did not parse. Nothing was
+        # measured, so paging the product owner is a false alarm; do that weekly and the real
+        # data-loss alarm stops being believed too.
+        NOT_EVALUATED) return 0 ;;
         *) return 1 ;;
     esac
 }

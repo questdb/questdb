@@ -19,11 +19,16 @@
 # rejects everywhere else. run-fuzz.sh already tracks "N informative, M NO_COMMIT"; this
 # preserves that distinction where CI can see it.
 #
-# INSTRUMENT FAULTS ARE <error>, PRODUCT FAULTS ARE <failure>. "MOUNT_FAILED, the rig broke"
-# and "an acked transaction was lost" are different alarms and, for a durability gate, the
-# distinction decides whether to page someone. The token list is NOT here: it is
-# verdict_is_instrument_fault in lib/verdict.sh, next to verdict_is_pass, so this file cannot
-# drift from the rest of the harness about what a token means.
+# INSTRUMENT FAULTS ARE <error>, PRODUCT FAULTS ARE <failure>. "NOT_EVALUATED, the oracle never
+# reached a verdict" and "an acked transaction was lost" are different alarms and, for a
+# durability gate, the distinction decides whether to page someone. The token list is NOT here:
+# it is verdict_is_instrument_fault in lib/verdict.sh, next to verdict_is_pass, so this file
+# cannot drift from the rest of the harness about what a token means.
+#
+# The example above was MOUNT_FAILED until issues/21, which was exactly backwards: MOUNT_FAILED
+# is a PRODUCT finding (an ext4 that will not mount after a power cut is the damage this
+# instrument hunts), and a reader following the old comment would have concluded it renders as
+# <error>. t12 asserts the opposite, which is how the contradiction surfaced.
 #
 # Written incrementally to a temp file and renamed at the end, for the reason issues/19
 # established: a consumer must never see a half-written file, and a run killed mid-sweep

@@ -49,7 +49,10 @@ junit_case "durability.product.adaptive.W50000.bitmap" "flush-2236" NO_COMMIT 1 
 junit_case "durability.product.adaptive.W50000.bitmap" "flush-3151" SILENT_CORRUPTION 3 "DETAIL i.q.c.TableWriter o3 <commit> \"quoted\" & 'single'
 DETAIL control-char:$(printf '\001')here
 SILENT_CORRUPTION row=43264 expected_v=1 actual_v=2 a<b && c>d"
-junit_case "durability.product.adaptive.W50000.bitmap" "flush-4066" LOUD_FAILURE 1 "LOUD_FAILURE: verifier produced no verdict (exit=134 killed-by-signal-6)"
+# The wording here USED to be "verifier produced no verdict", which since issues/21 is a
+# NOT_EVALUATED line, not a LOUD_FAILURE one. A fixture that cites a producer must move when
+# the producer moves, or the test drifts into asserting against wording nothing emits.
+junit_case "durability.product.adaptive.W50000.bitmap" "flush-4066" LOUD_FAILURE 1 "LOUD_FAILURE: the shipped server did not start on the crashed database"
 junit_finish
 
 # ---- 1. well-formed XML, by a real parser, not a regex ----------------------------------
@@ -176,14 +179,18 @@ junit_case c "flush-11" SILENT_CORRUPTION  1 "SILENT_CORRUPTION row=9 expected_v
 # the damage this instrument exists to catch. run-flush-sweep.sh has said so in a comment since
 # the sweep was written; the token now says it where a machine can read it.
 junit_case c "flush-12" MOUNT_FAILED       1 "MOUNT_FAILED"
-# LOUD_FAILURE spans product and instrument meanings and cannot be split by token, so it takes
-# the LOUDER alarm -- see verdict_is_instrument_fault's note and issues/21.
+# LOUD_FAILURE is now a PRODUCT finding outright: issues/21 moved the not-evaluated cases to
+# their own token, so this one means only "the product refused, loudly".
 junit_case c "flush-13" LOUD_FAILURE       1 "LOUD_FAILURE: shipped artifacts were not durable"
 junit_case c "flush-14" UNPARSEABLE        1 "DETAIL something
 what even is this"
 junit_case c "flush-15" RPO_UNVERIFIED     1 "RPO_UNVERIFIED gap=12 rows; client Wm unavailable"
 junit_case c "flush-16" PREFLIGHT_FAILED   1 "PREFLIGHT_FAILED the cut is not cutting"
 junit_case c "flush-17" DURABLE            1 "DURABLE count=7"
+# THE POINT OF issues/21: the oracle never reached a verdict, so nothing was measured and the
+# RIG owner is the one to page. Before the split this line was a LOUD_FAILURE and rendered as
+# <failure> -- a data-loss alarm for a JVM the agent killed.
+junit_case c "flush-18" NOT_EVALUATED     1 "NOT_EVALUATED: verifier produced no verdict (exit=134 killed-by-signal-6)"
 junit_finish
 
 read -r t2 f2 e2 s2 < <(python3 - "$XML2" <<'PY'
@@ -192,9 +199,9 @@ s = E.parse(sys.argv[1]).getroot().find('testsuite')
 print(s.get('tests'), s.get('failures'), s.get('errors'), s.get('skipped'))
 PY
 )
-check "mixed suite: tests counted"                    "$t2" "8"
+check "mixed suite: tests counted"                    "$t2" "9"
 check "mixed suite: product faults -> failures=4"     "$f2" "4"
-check "mixed suite: instrument faults -> errors=3"    "$e2" "3"
+check "mixed suite: instrument faults -> errors=4"    "$e2" "4"
 check "mixed suite: a pass and no skips are not counted as either" "$s2" "0"
 
 element_of() {  # XML NAME -> error|failure|skipped|pass
@@ -215,6 +222,11 @@ check "UNPARSEABLE        -> <error> (instrument)" "$(element_of "$XML2" flush-1
 check "RPO_UNVERIFIED     -> <error> (instrument)" "$(element_of "$XML2" flush-15)" "error"
 check "PREFLIGHT_FAILED   -> <error> (instrument)" "$(element_of "$XML2" flush-16)" "error"
 check "DURABLE            -> pass"                 "$(element_of "$XML2" flush-17)" "pass"
+check "NOT_EVALUATED      -> <error> (instrument)" "$(element_of "$XML2" flush-18)" "error"
+# The pair that is the whole point of issues/21: two boundaries, both red, DIFFERENT alarms.
+# If these ever collapse to the same element the split has been undone.
+check "NOT_EVALUATED and LOUD_FAILURE are different alarms" \
+    "$(element_of "$XML2" flush-18)/$(element_of "$XML2" flush-13)" "error/failure"
 
 # RPO_UNVERIFIED IS INCONCLUSIVE, NOT EXCULPATORY. It is an instrument fault AND a non-pass:
 # the product was neither convicted nor cleared, so it must stay red. This is the one token a
