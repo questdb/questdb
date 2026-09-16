@@ -66,13 +66,43 @@ fi
 # ---- 2. counts are honest ---------------------------------------------------------------
 read -r tests failures skipped < <(python3 - "$XML" <<'PY'
 import sys, xml.etree.ElementTree as E
-s = E.parse(sys.argv[1]).getroot().find('testsuite')
+r = E.parse(sys.argv[1]).getroot()
+# ROOT IS <testsuite> since the XSD check (issues/21 follow-up): the <testsuites>
+# aggregate requires package= and id= on every child, which we never emitted. Accept
+# either shape here so this helper does not have to change again if that is revisited.
+s = r if r.tag == 'testsuite' else r.find('testsuite')
 print(s.get('tests'), s.get('failures'), s.get('skipped'))
 PY
 )
 check "tests counted"    "$tests"    "5"
 check "failures counted" "$failures" "2"
 check "skipped counted"  "$skipped"  "1"
+
+# ---- 2b. the attributes the XSD calls REQUIRED --------------------------------------------
+# PublishTestResults@2 documents the windyroad JUnit.xsd as its supported format. Four
+# violations shipped undetected until that schema was read against a real sweep's output:
+# timestamp and hostname were absent, and the <testsuites> wrapper we used requires package=
+# and id= on every child suite, neither of which we emitted. A rejected report does not fail
+# the job -- it goes green and shows nothing, which is the worst way for a durability gate to
+# break. These assertions exist so it cannot regress silently.
+read -r root ts host < <(python3 - "$XML" <<'PY'
+import sys, xml.etree.ElementTree as E
+r = E.parse(sys.argv[1]).getroot()
+s = r if r.tag == 'testsuite' else r.find('testsuite')
+print(r.tag, s.get('timestamp'), s.get('hostname'))
+PY
+)
+check "root element is <testsuite>, so package=/id= are not required" "$root" "testsuite"
+if printf '%s' "$ts" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}$'; then
+    ok "timestamp= matches the XSD pattern (ISO8601, NO timezone)"
+else
+    bad "timestamp='$ts' does not match the XSD pattern; a trailing Z is the usual cause"
+fi
+if [ -n "$host" ] && [ "$host" != None ]; then
+    ok "hostname= present (names the agent that produced the run)"
+else
+    bad "hostname= is REQUIRED by the schema and is missing"
+fi
 
 # ---- 3. NO_COMMIT is skipped, NOT a pass and NOT a failure -------------------------------
 kind=$(python3 - "$XML" <<'PY'
@@ -133,7 +163,11 @@ check "no temp files left behind" "$leftovers" "0"
 # XML nowhere at all, because the only place it ever appeared was inside a failure body.
 props=$(python3 - "$XML" <<'PY'
 import sys, xml.etree.ElementTree as E
-s = E.parse(sys.argv[1]).getroot().find('testsuite')
+r = E.parse(sys.argv[1]).getroot()
+# ROOT IS <testsuite> since the XSD check (issues/21 follow-up): the <testsuites>
+# aggregate requires package= and id= on every child, which we never emitted. Accept
+# either shape here so this helper does not have to change again if that is revisited.
+s = r if r.tag == 'testsuite' else r.find('testsuite')
 p = s.find('properties')
 print('MISSING' if p is None else ','.join(
     '%s=%s' % (q.get('name'), q.get('value')) for q in p.iter('property')))
@@ -159,7 +193,11 @@ esac
 # report, because the job still goes green.
 first=$(python3 - "$XML" <<'PY'
 import sys, xml.etree.ElementTree as E
-s = E.parse(sys.argv[1]).getroot().find('testsuite')
+r = E.parse(sys.argv[1]).getroot()
+# ROOT IS <testsuite> since the XSD check (issues/21 follow-up): the <testsuites>
+# aggregate requires package= and id= on every child, which we never emitted. Accept
+# either shape here so this helper does not have to change again if that is revisited.
+s = r if r.tag == 'testsuite' else r.find('testsuite')
 print(list(s)[0].tag if len(s) else 'EMPTY')
 PY
 )
@@ -195,7 +233,11 @@ junit_finish
 
 read -r t2 f2 e2 s2 < <(python3 - "$XML2" <<'PY'
 import sys, xml.etree.ElementTree as E
-s = E.parse(sys.argv[1]).getroot().find('testsuite')
+r = E.parse(sys.argv[1]).getroot()
+# ROOT IS <testsuite> since the XSD check (issues/21 follow-up): the <testsuites>
+# aggregate requires package= and id= on every child, which we never emitted. Accept
+# either shape here so this helper does not have to change again if that is revisited.
+s = r if r.tag == 'testsuite' else r.find('testsuite')
 print(s.get('tests'), s.get('failures'), s.get('errors'), s.get('skipped'))
 PY
 )
@@ -258,7 +300,11 @@ check "error message is the verdict line, DETAIL filtered" "$emsg" "yes"
 # the degrade is visible in the machine-readable report
 degraded=$(python3 - "$XML2" <<'PY'
 import sys, xml.etree.ElementTree as E
-s = E.parse(sys.argv[1]).getroot().find('testsuite')
+r = E.parse(sys.argv[1]).getroot()
+# ROOT IS <testsuite> since the XSD check (issues/21 follow-up): the <testsuites>
+# aggregate requires package= and id= on every child, which we never emitted. Accept
+# either shape here so this helper does not have to change again if that is revisited.
+s = r if r.tag == 'testsuite' else r.find('testsuite')
 p = s.find('properties')
 print('MISSING' if p is None else next(
     (q.get('value') for q in p.iter('property') if q.get('name') == 'degraded'), 'MISSING'))

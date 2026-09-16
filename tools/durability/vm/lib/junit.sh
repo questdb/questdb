@@ -137,13 +137,30 @@ junit_case() {
 junit_finish() {
     [ -n "${JUNIT_TMP:-}" ] || return 0
     local elapsed=$(( $(date +%s) - JUNIT_STARTED ))
+    # ROOT IS <testsuite>, NOT <testsuites>. Checked against the JUnit XSD that
+    # PublishTestResults@2 names as its supported format (windyroad JUnit.xsd): inside a
+    # <testsuites> aggregate, every child testsuite carries package= and id= as REQUIRED
+    # attributes, and we emitted neither -- so the wrapper made the file invalid rather than
+    # more standard. The schema declares testsuite as a root element in its own right, one
+    # sweep writes exactly one suite, and ADO's parser has documented trouble with nesting
+    # (azure-pipelines-tasks#7659, #8305). A report the publisher rejects is worth less than
+    # no report, because the job still goes green and the dashboard shows nothing.
+    local host stamp
+    host=$(hostname 2>/dev/null || echo localhost)
+    # timestamp= is REQUIRED and its XSD pattern is ISO8601 WITHOUT a timezone, so the trailing
+    # Z that $STAMP carries elsewhere in the harness must be stripped here. Keeping the Z was
+    # the kind of detail that fails validation silently, long after the run that produced it.
+    stamp=$(date -u +%Y-%m-%dT%H:%M:%S)
     {
         printf '<?xml version="1.0" encoding="UTF-8"?>\n'
-        printf '<testsuites>\n'
         # errors= IS NOW REAL. It was hardcoded to 0, so an instrument fault and a lost
         # transaction were the same number on the dashboard.
-        printf '  <testsuite name="%s" tests="%d" failures="%d" errors="%d" skipped="%d" time="%d">\n' \
-            "$(junit_escape "$JUNIT_SUITE")" "$JUNIT_TESTS" "$JUNIT_FAILURES" "$JUNIT_ERRORS" \
+        # timestamp= and hostname= are required by the schema and were both missing. hostname
+        # also answers "which agent produced this?", which on a one-agent pool is the question
+        # asked the moment a result looks odd.
+        printf '<testsuite name="%s" timestamp="%s" hostname="%s" tests="%d" failures="%d" errors="%d" skipped="%d" time="%d">\n' \
+            "$(junit_escape "$JUNIT_SUITE")" "$stamp" "$(junit_escape "$host")" \
+            "$JUNIT_TESTS" "$JUNIT_FAILURES" "$JUNIT_ERRORS" \
             "$JUNIT_SKIPPED" "$elapsed"
         # <properties> FIRST, before any <testcase>. The JUnit XSD models testsuite as a
         # SEQUENCE (properties, testcase*, system-out?, system-err?), so a properties block
@@ -155,7 +172,19 @@ junit_finish() {
             printf '    </properties>\n'
         fi
         cat "$JUNIT_TMP"
-        printf '  </testsuite>\n</testsuites>\n'
+        # THE IDENTITY, AGAIN, IN system-out. Not redundancy for its own sake: ADO's JUnit
+        # parser has limited support for <properties> and may never surface it, and an identity
+        # the dashboard cannot show does not answer "which build produced this?" when someone
+        # is staring at a red boundary. system-out is part of the same schema sequence, it is
+        # displayed per suite, and it costs a few lines. The properties block stays for
+        # consumers that do read it.
+        if [ -s "${JUNIT_PROPS:-/dev/null}" ]; then
+            printf '    <system-out>'
+            sed -e 's/.*name="//' -e 's/" value="/=/' -e 's/"\/>[[:space:]]*$//' "$JUNIT_PROPS" \
+                | sed 's/^[[:space:]]*//'
+            printf '</system-out>\n'
+        fi
+        printf '</testsuite>\n'
     } > "${JUNIT_FILE}.part.$$"
     mv -f "${JUNIT_FILE}.part.$$" "$JUNIT_FILE"
     rm -f "$JUNIT_TMP" "${JUNIT_PROPS:-}"
