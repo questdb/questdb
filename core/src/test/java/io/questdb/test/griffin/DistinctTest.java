@@ -427,23 +427,23 @@ public class DistinctTest extends AbstractCairoTest {
     @Test
     public void testDuplicateColumnWithWildcard() throws Exception {
         assertDistinctWildcard("select distinct symbol, * from trades order by symbol, price", """
-                        symbol\tsymbol1\tprice
-                        \t\t1
-                        A\tA\t0
-                        A\tA\t1
-                        B\tB\t0
-                        """);
+                symbol\tsymbol1\tprice
+                \t\t1
+                A\tA\t0
+                A\tA\t1
+                B\tB\t0
+                """);
     }
 
     @Test
     public void testDuplicateColumnWithWildcardAlias() throws Exception {
         assertDistinctWildcard("select distinct symbol as ticker, * from trades order by ticker, price", """
-                        ticker\tsymbol\tprice
-                        \t\t1
-                        A\tA\t0
-                        A\tA\t1
-                        B\tB\t0
-                        """);
+                ticker\tsymbol\tprice
+                \t\t1
+                A\tA\t0
+                A\tA\t1
+                B\tB\t0
+                """);
     }
 
     @Test
@@ -462,23 +462,23 @@ public class DistinctTest extends AbstractCairoTest {
     @Test
     public void testDuplicateColumnWithWildcardExpression() throws Exception {
         assertDistinctWildcard("select distinct price + 1 as next_price, symbol, * from trades order by symbol, price", """
-                        next_price\tsymbol\tsymbol1\tprice
-                        2\t\t\t1
-                        1\tA\tA\t0
-                        2\tA\tA\t1
-                        1\tB\tB\t0
-                        """);
+                next_price\tsymbol\tsymbol1\tprice
+                2\t\t\t1
+                1\tA\tA\t0
+                2\tA\tA\t1
+                1\tB\tB\t0
+                """);
     }
 
     @Test
     public void testDuplicateColumnWithWildcardFirst() throws Exception {
         assertDistinctWildcard("select distinct *, symbol from trades order by symbol, price", """
-                        symbol\tprice\tsymbol1
-                        \t1\t
-                        A\t0\tA
-                        A\t1\tA
-                        B\t0\tB
-                        """);
+                symbol\tprice\tsymbol1
+                \t1\t
+                A\t0\tA
+                A\t1\tA
+                B\t0\tB
+                """);
     }
 
     @Test
@@ -499,34 +499,34 @@ public class DistinctTest extends AbstractCairoTest {
     @Test
     public void testDuplicateColumnWithWildcardQualified() throws Exception {
         assertDistinctWildcard("select distinct t.symbol, t.* from trades t order by symbol, price", """
-                        symbol\tsymbol1\tprice
-                        \t\t1
-                        A\tA\t0
-                        A\tA\t1
-                        B\tB\t0
-                        """);
+                symbol\tsymbol1\tprice
+                \t\t1
+                A\tA\t0
+                A\tA\t1
+                B\tB\t0
+                """);
     }
 
     @Test
     public void testDuplicateColumnWithWildcardRepeated() throws Exception {
         assertDistinctWildcard("select distinct symbol, *, * from trades order by symbol, price", """
-                        symbol\tsymbol1\tprice\tsymbol2\tprice1
-                        \t\t1\t\t1
-                        A\tA\t0\tA\t0
-                        A\tA\t1\tA\t1
-                        B\tB\t0\tB\t0
-                        """);
+                symbol\tsymbol1\tprice\tsymbol2\tprice1
+                \t\t1\t\t1
+                A\tA\t0\tA\t0
+                A\tA\t1\tA\t1
+                B\tB\t0\tB\t0
+                """);
     }
 
     @Test
     public void testDuplicateColumnWithWildcardSubQuery() throws Exception {
         assertDistinctWildcard("select symbol1, price from (select distinct symbol, * from trades) order by symbol1, price", """
-                        symbol1\tprice
-                        \t1
-                        A\t0
-                        A\t1
-                        B\t0
-                        """);
+                symbol1\tprice
+                \t1
+                A\t0
+                A\t1
+                B\t0
+                """);
     }
 
     @Test
