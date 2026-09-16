@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.covering;
 
+import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
@@ -72,6 +73,14 @@ import java.util.List;
  * mode() misclassification fails the plan arm and not the value arm, and a fixture built to make
  * the value arm catch it would be pinning a hash layout. Recorded so the gap is not rediscovered
  * as a finding.
+ * <p>
+ * <b>The bucketed arm, and why it is separate.</b> The not-keyed cases above put every matching
+ * row in ONE group, so an order-sensitive aggregate has one chance to disagree, and they share a
+ * single plan assertion -- which made the whole set only as discriminating as its weakest member.
+ * {@link #testOrderSensitiveAggregatesOverATimeBucketMatchFullScan()} runs the same aggregates
+ * under {@code SAMPLE BY 10s}, giving sixty-odd independent buckets, and asserts the VALUE before
+ * the plan. Measured, a flip of {@code last()} went from being caught only on a plan string to
+ * being caught on the bucket values themselves.
  */
 public class CoveringIndexAggregateAgreementTest extends AbstractCoveringIndexQueryTest {
 
@@ -195,6 +204,41 @@ public class CoveringIndexAggregateAgreementTest extends AbstractCoveringIndexQu
             "sum(d256)", "avg(d256)",
     };
 
+    /**
+     * The subset of {@link #ORDER_SENSITIVE_AGGREGATES} that can reach the per-key site under a
+     * time-bucket grouping at all.
+     * <p>
+     * Three exclusions, each measured rather than assumed:
+     * <ul>
+     *   <li>{@code string_agg()} is absent because
+     *       {@code StringAggGroupByFunction.supportsParallelism()} returns false, so a bucketed
+     *       {@code string_agg()} is generated at the SERIAL group-by site -- the plan reads
+     *       {@code GroupBy vectorized: false}, not {@code Async Group By} -- and the serial sites
+     *       never offer the covering scan the ordering opt-out. Flipping its
+     *       {@code isOrderSensitive()} to false therefore changes nothing anywhere: verified, the
+     *       whole of this class stays green. Its flag is unreachable from the per-key machinery,
+     *       and no test built on that machinery can pin it.</li>
+     *   <li>{@code sum(d256)}/{@code avg(d256)} are absent because what makes them
+     *       order-sensitive is an overflow their VALUE never shows. That is pinned over a
+     *       purpose-built fixture in
+     *       {@code CoveringIndexOrderSensitiveTest.testSumAvgOverDecimal256KeepTheMerge()}.</li>
+     *   <li>{@code mode()} is absent for the reason recorded in this class's javadoc: over this
+     *       data it returns the same winner in either arrival order.</li>
+     * </ul>
+     * <p>
+     * Of those that remain, {@code last(value)} discriminates on the VALUE -- flipping
+     * {@code LastDoubleGroupByFunction.isOrderSensitive()} makes the bucket values disagree with
+     * the full scan. {@code arg_min}/{@code arg_max} do not, because they select by value and
+     * this fixture has no ties for arrival order to break; their flip is caught by the mode
+     * counter instead, which is a weaker but still non-vacuous assertion.
+     */
+    private static final String[] ORDER_SENSITIVE_BUCKETED_AGGREGATES = {
+            "first(value)", "last(value)", "first_not_null(value)", "last_not_null(value)",
+            "array_agg(value)",
+            "arg_min(value, l)", "arg_max(value, l)",
+            "approx_percentile(value, 0.5)",
+    };
+
     @Test
     public void testOrderInsensitiveAggregatesAgreeWithFullScan() throws Exception {
         assertMemoryLeak(() -> {
@@ -236,6 +280,57 @@ public class CoveringIndexAggregateAgreementTest extends AbstractCoveringIndexQu
                 assertQuery(indexed).noLeakCheck().assertsPlanContaining("CoveringIndex on: param_id");
                 assertQuery(indexed).noLeakCheck().assertsPlanNotContaining("frames: per-key");
                 assertSameResult(indexed, select(agg, true));
+            }
+        });
+    }
+
+    /**
+     * The same order-sensitive aggregates GROUPED BY A TIME BUCKET, which is the shape a
+     * misclassification actually reaches users through and the one nothing covered.
+     * <p>
+     * The cases above have no grouping column, so a misclassified aggregate is caught by the
+     * plan arm -- the scan takes per-key and the plan says so. That arm is shared by every
+     * entry in the list, which made the whole set only as discriminating as its weakest member:
+     * measured, a flip of {@code last()}, {@code arg_min()} or {@code string_agg()} was caught
+     * by NO test in the suite on a value, only on a plan. A plan assertion says the permission
+     * was granted; it does not say the answer moved.
+     * <p>
+     * Under {@code SAMPLE BY 10s} it does. A ten-second bucket over this fixture holds rows of
+     * BOTH selected keys, so timestamp arrival and key-major arrival disagree inside every
+     * bucket, and an aggregate that selects on arrival position rather than on value returns a
+     * different row per bucket under per-key mode. {@code last()} takes the last row of the last
+     * key instead of the latest row; {@code arg_min()} breaks its ties the other way;
+     * {@code string_agg()} renders the arrival order directly. Sixty-odd buckets each carrying
+     * an independent discrimination, rather than one whole-table group.
+     * <p>
+     * A time bucket is a key FUNCTION, not a column, so the grouping filter the scan inspects is
+     * EMPTY here -- it is not the index key -- which is why the offer must be declined and the
+     * merge kept. Both halves are asserted: the plan for the permission, the mode counters for
+     * what the execution actually did.
+     */
+    @Test
+    public void testOrderSensitiveAggregatesOverATimeBucketMatchFullScan() throws Exception {
+        assertMemoryLeak(() -> {
+            createMixedTypeTelemetry();
+            for (String agg : ORDER_SENSITIVE_BUCKETED_AGGREGATES) {
+                final String indexed = bucketed(agg, false);
+                // Routing only. The VALUE comparison comes next, deliberately BEFORE the
+                // permission and mode assertions: a misclassification that lets this shape take
+                // per-key changes the answer, and a failure that reports the changed answer says
+                // far more than one reporting a plan string. The plan and mode assertions below
+                // are what catch a misclassification whose answer happens not to move.
+                assertQuery(indexed).noLeakCheck().assertsPlanContaining("CoveringIndex on: param_id");
+                CoveringIndexRecordCursorFactory.resetModeSelectionsForTesting();
+                assertSameResult(indexed, bucketed(agg, true));
+                Assert.assertEquals(
+                        agg + " ran per-key under a time-bucket grouping. A bucket draws from BOTH"
+                                + " selected keys, so one key's rows arrive before the other's"
+                                + " regardless of timestamp, and an aggregate that selects on"
+                                + " arrival position returns a different row per bucket.",
+                        0,
+                        CoveringIndexRecordCursorFactory.getPerKeyModeOpensForTesting()
+                );
+                assertQuery(indexed).noLeakCheck().assertsPlanNotContaining("frames: per-key");
             }
         });
     }
@@ -296,6 +391,24 @@ public class CoveringIndexAggregateAgreementTest extends AbstractCoveringIndexQu
         } catch (NumberFormatException e) {
             return Double.NaN;
         }
+    }
+
+    /**
+     * The IN-list is REVERSED relative to {@link #select(String, boolean)}, and that is what makes
+     * the value comparison discriminating rather than decorative.
+     * <p>
+     * Per-key mode drains keys in the order the IN-list resolved them, so with
+     * {@code ('SFID','HOTMIC')} the key that owns the LAST row of every bucket is also the key
+     * drained last, and key-major arrival and timestamp arrival agree bucket by bucket --
+     * {@code last()} returns the same row either way and the comparison proves nothing. Measured:
+     * with the list in that order a flip of {@code LastDoubleGroupByFunction.isOrderSensitive()}
+     * left every value identical and was caught only by the mode counter. Reversed, the key
+     * drained FIRST owns the later row in each bucket, the two orders disagree, and the flip
+     * changes the answer.
+     */
+    private static String bucketed(String agg, boolean fullScan) {
+        return "SELECT " + (fullScan ? "/*+ no_index */ " : "") + "ts, " + agg
+                + " FROM agg_tel WHERE param_id IN ('HOTMIC','SFID') SAMPLE BY 10s";
     }
 
     private static String select(String agg, boolean fullScan) {

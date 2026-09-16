@@ -39,12 +39,14 @@ import org.junit.Test;
  * a result comparison: the merged and per-key modes return the SAME rows, so a scan that
  * wrongly kept the merge, an ordering opt-out that was wrongly refused, and a direction
  * declared too wide all leave every value assertion in the suite passing. They are also
- * invisible to a plan assertion, because the plan prints the plan-stable PERMISSION. Four
- * separate mutations of this machinery -- neutering the order-sensitivity backstop, deleting
- * {@code tryDisableTimestampOrdering}'s refusal, reducing
+ * invisible to a plan assertion, because the plan prints the plan-stable PERMISSION. Three
+ * separate mutations of this machinery -- deleting {@code tryDisableTimestampOrdering}'s
+ * refusal, reducing
  * {@code AdaptiveSymbolPatternRecordCursorFactory.getPageFrameScanDirection()} to a bare
  * {@code SCAN_DIRECTION_FORWARD}, and deleting {@code getScanDirection()}'s per-key
- * {@code SCAN_DIRECTION_OTHER} branch -- each produced zero test failures across the suite.
+ * {@code SCAN_DIRECTION_OTHER} branch -- each produced zero test failures across the suite. A
+ * fourth, neutering the order-sensitivity backstop, did the same; that backstop turned out to be
+ * unreachable and has been removed rather than pinned.
  * <p>
  * <b>Both directions, deliberately.</b> Each declaration is asserted on a shape where it must
  * be {@code SCAN_DIRECTION_OTHER} AND on a shape where it must be
@@ -52,6 +54,25 @@ import org.junit.Test;
  * answer but not by one that narrows it, or the reverse -- which is exactly the gap that let a
  * bare-{@code FORWARD} mutation survive 730 tests while the bare-{@code OTHER} one was caught
  * by four.
+ * <p>
+ * <b>Verified by re-applying each mutation.</b> Every case below was written against a specific
+ * one and confirmed to fail with it applied and pass with it reverted:
+ * <ul>
+ *   <li>{@code AdaptiveSymbolPatternRecordCursorFactory.getPageFrameScanDirection()} reduced to a
+ *       bare {@code SCAN_DIRECTION_FORWARD} --
+ *       {@link #testPatternFactoryDeclaresOtherWhenAPageFrameDelegateIsNotForward()}</li>
+ *   <li>the same reduced to a bare {@code SCAN_DIRECTION_OTHER} --
+ *       {@link #testPatternFactoryDeclaresForwardWhenOnlyTheIndexRouteIsUnordered()} and
+ *       {@link #testPageFrameScanDirectionSurvivesTheWrapperChain()}</li>
+ *   <li>{@code AsyncFilteredRecordCursorFactory}'s {@code getPageFrameScanDirection()} override
+ *       deleted -- {@link #testPageFrameScanDirectionSurvivesTheWrapperChain()}</li>
+ *   <li>{@code CoveringIndexRecordCursorFactory.getScanDirection()}'s per-key
+ *       {@code SCAN_DIRECTION_OTHER} branch deleted --
+ *       {@link #testScanDeclaresOtherWhenGroupedByTheIndexKey()}</li>
+ *   <li>{@code tryDisableTimestampOrdering()}'s
+ *       {@code latestBy || multiKeyPageFrameCursor == null} refusal deleted --
+ *       {@link #testLatestByAndSingleKeyRefuseTheOrderingOptOut()}</li>
+ * </ul>
  */
 public class CoveringIndexScanDirectionTest extends AbstractCoveringIndexQueryTest {
 
@@ -227,9 +248,56 @@ public class CoveringIndexScanDirectionTest extends AbstractCoveringIndexQueryTe
     /**
      * A multi-key covering latestBy merges nothing and emits one row per key in KEY order, so
      * it must refuse the ordering opt-out outright rather than be granted a permission it
-     * cannot honour. This is the arm that catches deleting
-     * {@code tryDisableTimestampOrdering}'s {@code latestBy || multiKeyPageFrameCursor == null}
-     * refusal.
+     * cannot honour -- and a single-key scan, which has no merge to pay for, must refuse it too.
+     * <p>
+     * Asked through {@code tryDisableTimestampOrdering()} itself rather than through a
+     * consequence, because it currently has none. Every reader of the permission conjoins
+     * {@code multiKeyPageFrameCursor != null}, which is null for both of these shapes, so
+     * granting it would change no plan, no scan direction and no answer -- verified by deleting
+     * the refusal, which left the whole covering suite green. What it would change is the
+     * meaning of the field, which the shapes below are the only statement of.
+     * <p>
+     * The control arm is what stops this being vacuous: the same call on a multi-key scan that
+     * CAN honour the opt-out must return true, so a refusal that started rejecting everything
+     * fails here rather than passing twice.
+     */
+    @Test
+    public void testLatestByAndSingleKeyRefuseTheOrderingOptOut() throws Exception {
+        assertMemoryLeak(() -> {
+            createTelemetryMultiPartition();
+            assertRefusesOptOut(
+                    "SELECT param_id, value FROM telemetry" +
+                            " WHERE param_id IN ('SFID','HOTMIC') LATEST ON ts PARTITION BY param_id",
+                    "a multi-key covering latestBy accepted an ordering opt-out. It emits one row"
+                            + " per key in KEY order and has no page-frame cursor to run per-key with,"
+                            + " so there is no arrangement for it to have agreed to."
+            );
+            assertRefusesOptOut(
+                    "SELECT param_id, first(value) FROM telemetry WHERE param_id = 'SFID'",
+                    "a single-key covering scan accepted an ordering opt-out. Its frames are"
+                            + " already one per key; there is no merge to be released from."
+            );
+            // Control: the shape that MUST accept, so the two refusals above are the refusal
+            // under test and not a call that always answers false.
+            try (RecordCursorFactory top = select(
+                    "SELECT ts, first(value) FROM telemetry" +
+                            " WHERE param_id IN ('SFID','HOTMIC') SAMPLE BY 1h")) {
+                final CoveringIndexRecordCursorFactory covering =
+                        findBase(top, CoveringIndexRecordCursorFactory.class);
+                Assert.assertNotNull("no covering scan under " + top.getClass().getSimpleName(), covering);
+                Assert.assertTrue(
+                        "the multi-key control refused the opt-out, so the two refusals above prove"
+                                + " nothing -- tryDisableTimestampOrdering() is answering false to"
+                                + " everything",
+                        covering.tryDisableTimestampOrdering(false, null)
+                );
+            }
+        });
+    }
+
+    /**
+     * A multi-key covering latestBy emits one row per key in KEY order, not timestamp order, and
+     * must say so.
      */
     @Test
     public void testScanDeclaresOtherForMultiKeyLatestBy() throws Exception {
@@ -251,6 +319,15 @@ public class CoveringIndexScanDirectionTest extends AbstractCoveringIndexQueryTe
                 );
             }
         });
+    }
+
+    private static void assertRefusesOptOut(String sql, String message) throws Exception {
+        try (RecordCursorFactory top = select(sql)) {
+            final CoveringIndexRecordCursorFactory covering =
+                    findBase(top, CoveringIndexRecordCursorFactory.class);
+            Assert.assertNotNull("no covering scan under " + top.getClass().getSimpleName(), covering);
+            Assert.assertFalse(message, covering.tryDisableTimestampOrdering(false, null));
+        }
     }
 
     /**
