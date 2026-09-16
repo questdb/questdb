@@ -1641,6 +1641,80 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testEnterpriseSecurityContextRequirementClosesArgsBeforeConstruction() {
+        final AtomicInteger closeCount = new AtomicInteger();
+        final AtomicInteger constructionCount = new AtomicInteger();
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "tracked_arg()";
+            }
+
+            @Override
+            public Function newInstance(
+                    int position,
+                    ObjList<Function> args,
+                    IntList argPositions,
+                    CairoConfiguration configuration,
+                    SqlExecutionContext sqlExecutionContext
+            ) {
+                return new BooleanFunction() {
+                    @Override
+                    public void close() {
+                        closeCount.incrementAndGet();
+                    }
+
+                    @Override
+                    public boolean getBool(Record rec) {
+                        return true;
+                    }
+                };
+            }
+        });
+        functions.add(new FunctionFactory() {
+            @Override
+            public int getExecutionRequirements() {
+                return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+            }
+
+            @Override
+            public String getSignature() {
+                return "ent_secure(T)";
+            }
+
+            @Override
+            public Function newInstance(
+                    int position,
+                    ObjList<Function> args,
+                    IntList argPositions,
+                    CairoConfiguration configuration,
+                    SqlExecutionContext sqlExecutionContext
+            ) {
+                constructionCount.incrementAndGet();
+                return BooleanConstant.TRUE;
+            }
+        });
+
+        final boolean isAllowed = sqlExecutionContext.allowNonDeterministicFunctions();
+        sqlExecutionContext.setAllowNonDeterministicFunction(false);
+        try {
+            try {
+                parseFunction("ent_secure(tracked_arg())", new GenericRecordMetadata(), createFunctionParser());
+                fail("expected enterprise security context rejection");
+            } catch (SqlException e) {
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "function requires an enterprise security context and cannot be used in materialized view: ent_secure"
+                );
+            }
+            assertEquals(0, constructionCount.get());
+            assertEquals(1, closeCount.get());
+        } finally {
+            sqlExecutionContext.setAllowNonDeterministicFunction(isAllowed);
+        }
+    }
+
+    @Test
     public void testEnterpriseSecurityContextRequirementRejectedBeforeConstruction() throws Exception {
         final AtomicInteger constructionCount = new AtomicInteger();
         functions.add(new FunctionFactory() {
