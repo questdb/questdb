@@ -326,23 +326,17 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testTheMergeChargeGrowsWithTheKeysItShiftsRatherThanTheirLogarithm() {
-        // HeapRowCursor merges through IntLongSortedList, which is a sorted array and not a
-        // heap: pollAndReplace searches for the replacement's slot, then arrayCopy-s up to
-        // |Q| - 1 elements of two arrays down by one. Round-robin key interleaving - the
-        // ordinary shape for a time-ordered base - lands every replacement at the top of
-        // the list, so the shift is the whole of it and the per-row charge has to grow with
-        // |Q| rather than with its logarithm.
+    public void testTheMergeChargeGrowsWithTheLogarithmOfTheKeyCount() {
+        // HeapRowCursor merges through IntLongSortedList, an array-backed binary min-heap:
+        // pollAndReplace sifts the replacement down from the root in at most floor(log2 |Q|)
+        // steps, whatever order the keys' rows interleave in. The per-row merge charge
+        // therefore grows with the logarithm of |Q| and never with |Q| itself.
 
         // First, the one number this route was ever measured at. Commit 5ce0d8172a records
         // it: "On the worked shape - an 800k-row daily partition, eight shared query
         // workers, 256 keys - ... the corrected model prices 446_272 against a measured
         // cost near 450_000." That is 40_000 posting rows behind one partition open and
-        // eight frames of 256 seeks, at the shipped 256-row open price. Every merge term is
-        // calibrated or mis-calibrated by what it does HERE, whatever its shape in |Q|:
-        // the measurement leaves those 40_000 rows only (450_000 - 86_272) row-equivalents
-        // between them, about nine each, and a term that spends more than that is charging
-        // the merge something nothing measured admits.
+        // eight frames of 256 seeks, at the shipped 256-row open price.
         final long measuredShapePrice = LiveViewCheckpointKeyedScanCost.keyedScanCostRows(
                 40_000, 1, 8 * 256, 256, 256, 42);
         Assert.assertEquals(446_272, measuredShapePrice);
@@ -357,55 +351,72 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                         40_000, 1, 8 * 256, 256, 800_000, 256, 42)
         );
 
-        // Second, the floor. No key domain may price cheaper than it did before the shift
-        // charge existed: the route's A/Bs were all run under the logarithmic charge, and a
-        // cheaper price would promote shapes nothing measured.
-        for (int keyCount = 1; keyCount <= 4_096; keyCount++) {
-            final long logarithmicCharge = keyCount <= 1
-                    ? 1
-                    : 1 + (Integer.SIZE - Integer.numberOfLeadingZeros(keyCount - 1));
-            Assert.assertTrue(
-                    "the merge charge dipped below the logarithmic one at " + keyCount + " keys",
+        // Second, the charge itself, read with one posting row and the setup term priced at
+        // zero: one row for the read plus ceil(log2 |Q|) for the heap. The loop derives the
+        // logarithm by doubling rather than through the bit arithmetic the model uses, so a
+        // shared slip cannot pass it, and it spans the 321 to 100_000 keys a linear charge
+        // used to over-price.
+        for (int keyCount = 1; keyCount <= 100_000; keyCount++) {
+            int ceilLog2 = 0;
+            while ((1L << ceilLog2) < keyCount) {
+                ceilLog2++;
+            }
+            Assert.assertEquals(
+                    "the merge charge at " + keyCount + " keys",
+                    1 + ceilLog2,
                     LiveViewCheckpointKeyedScanCost.keyedScanCostRows(1, 0, 0, keyCount, 0, 0)
-                            >= logarithmicCharge
             );
         }
-        // The per-row charge, read with one posting row and the setup term priced at zero.
-        // A narrow domain is priced exactly as it was, up to the 320 keys where the shift
-        // charge catches the logarithmic one.
+        // A single-key scan merges nothing, and a degenerate key count must neither go below
+        // the row it reads nor wrap at the top of the int range.
+        Assert.assertEquals(1, LiveViewCheckpointKeyedScanCost.keyedScanCostRows(1, 0, 0, 0, 0, 0));
+        Assert.assertEquals(1, LiveViewCheckpointKeyedScanCost.keyedScanCostRows(1, 0, 0, -1, 0, 0));
         Assert.assertEquals(1, LiveViewCheckpointKeyedScanCost.keyedScanCostRows(1, 0, 0, 1, 0, 0));
-        Assert.assertEquals(6, LiveViewCheckpointKeyedScanCost.keyedScanCostRows(1, 0, 0, 32, 0, 0));
+        Assert.assertEquals(2, LiveViewCheckpointKeyedScanCost.keyedScanCostRows(1, 0, 0, 2, 0, 0));
         Assert.assertEquals(9, LiveViewCheckpointKeyedScanCost.keyedScanCostRows(1, 0, 0, 256, 0, 0));
-        Assert.assertEquals(10, LiveViewCheckpointKeyedScanCost.keyedScanCostRows(1, 0, 0, 320, 0, 0));
-        Assert.assertEquals(11, LiveViewCheckpointKeyedScanCost.keyedScanCostRows(1, 0, 0, 321, 0, 0));
-
-        // Third, the growth. Past the crossover the charge follows the shift, so doubling a
-        // wide key domain has to about double it rather than add one to it - which is the
-        // whole of the finding. A charge that read the merge as a heap prices these four at
-        // 11, 12, 13 and 18.
-        final long at1024 = LiveViewCheckpointKeyedScanCost.keyedScanCostRows(1, 0, 0, 1_024, 0, 0);
-        final long at2048 = LiveViewCheckpointKeyedScanCost.keyedScanCostRows(1, 0, 0, 2_048, 0, 0);
-        Assert.assertEquals(32, at1024);
-        Assert.assertEquals(64, at2048);
-        Assert.assertTrue(
-                "doubling the key domain has to about double the merge charge, not add one to it",
-                at2048 >= 2 * at1024 - 2
-        );
-        Assert.assertEquals(128, LiveViewCheckpointKeyedScanCost.keyedScanCostRows(1, 0, 0, 4_096, 0, 0));
-        Assert.assertEquals(3_125, LiveViewCheckpointKeyedScanCost.keyedScanCostRows(1, 0, 0, 100_000, 0, 0));
-
-        // And the verdict it decides. The same worked shape, here over 4_096 keys, at the
-        // open segment's capped setup price of four rows for both halves. Charged the merge
-        // logarithmically the keyed side prices 651_076 and takes the route; charged for the
-        // shift it prices 5_251_076 against 800_000 and reads the range whole.
+        Assert.assertEquals(10, LiveViewCheckpointKeyedScanCost.keyedScanCostRows(1, 0, 0, 321, 0, 0));
+        Assert.assertEquals(18, LiveViewCheckpointKeyedScanCost.keyedScanCostRows(1, 0, 0, 100_000, 0, 0));
         Assert.assertEquals(
-                5_251_076,
-                LiveViewCheckpointKeyedScanCost.keyedScanCostRows(40_000, 1, 8 * 4_096, 4_096, 4, 4)
+                32,
+                LiveViewCheckpointKeyedScanCost.keyedScanCostRows(1, 0, 0, Integer.MAX_VALUE, 0, 0)
         );
         Assert.assertFalse(
-                "a 4_096-key merge shifts more than the range it replaces reads",
+                "a keyed scan over no key has nothing to follow",
+                LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(1, 0, 0, 0, 1_000, 256, 42)
+        );
+
+        // Third, the growth. Doubling a key domain adds one level to the heap, so it adds
+        // one row-equivalent to the charge rather than doubling it.
+        Assert.assertEquals(
+                "doubling the key domain adds one heap level to the merge charge",
+                LiveViewCheckpointKeyedScanCost.keyedScanCostRows(1, 0, 0, 1_024, 0, 0) + 1,
+                LiveViewCheckpointKeyedScanCost.keyedScanCostRows(1, 0, 0, 2_048, 0, 0)
+        );
+
+        // And the verdicts it decides. The worked shape over 4_096 keys, at the open
+        // segment's capped setup price of four rows for both halves: 40_000 * 13 + 4 +
+        // 32_768 * 4 is 651_076 against 800_000, so the keyed route wins.
+        Assert.assertEquals(
+                651_076,
+                LiveViewCheckpointKeyedScanCost.keyedScanCostRows(40_000, 1, 8 * 4_096, 4_096, 4, 4)
+        );
+        Assert.assertTrue(
+                "a 4_096-key heap merge over 40_000 rows reads less than the 800_000-row range",
                 LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(
                         40_000, 1, 8 * 4_096, 4_096, 800_000, 4, 4)
+        );
+        // A closed segment at the shipped 256-row open price: 1_000 keys holding 50_000 rows
+        // of a 1_000_000-row single-frame partition cost 50_000 * 11 + 256 + 1_000 * 42 =
+        // 592_256. An indexed scan of that shape measured 2.02 ms against 5.15 ms for the
+        // whole range, so the keyed route has to win here too.
+        Assert.assertEquals(
+                592_256,
+                LiveViewCheckpointKeyedScanCost.keyedScanCostRows(50_000, 1, 1_000, 1_000, 256, 42)
+        );
+        Assert.assertTrue(
+                "a 1_000-key heap merge over 50_000 rows reads less than the 1_000_000-row range",
+                LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(
+                        50_000, 1, 1_000, 1_000, 1_000_000, 256, 42)
         );
     }
 

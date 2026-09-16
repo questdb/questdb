@@ -78,6 +78,50 @@ import java.util.Arrays;
 public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
     public static final int FUNCTION_STATE_PAGE_KIND = 0x41;
+    /**
+     * Frozen key and state image arrays one freeze scratch keeps pooled once its
+     * operation ends. An inline or fused seal images a key into one key array and one
+     * state or payload array, so the pool stays warm for such seals of up to 32,768
+     * keys - 32 times the key set the allocation gate pins as garbage-free - and an
+     * outlier seal above that hands its whole frozen graph back instead of parking it on
+     * the worker for its lifetime. A page-backed seal takes one array per key and a ring
+     * seal three. A fused anchored seal pools about 120 bytes per key in its frozen
+     * scratch, so the limit caps such a scratch at roughly 4 MiB. It bounds every frozen
+     * list that grows one entry per key, but not the state page references a partition
+     * holder owns: {@link #MAX_RETAINED_FROZEN_STATE_PAGE_REFS} bounds those. The price
+     * is paid above the limit: a seal imaging more keys than that allocates its frozen
+     * graph afresh, as every seal did before the scratch was pooled.
+     */
+    public static final int MAX_RETAINED_FROZEN_ARRAYS = 65_536;
+    /**
+     * Image bytes one freeze scratch keeps pooled once its operation ends, headers
+     * excluded. {@link #MAX_RETAINED_FROZEN_ARRAYS} bounds narrow images; this bounds
+     * wide ones, which reach it first: a fused leaf payload may be 256 bytes wide.
+     */
+    public static final long MAX_RETAINED_FROZEN_ARRAY_BYTES = 4_194_304;
+    /**
+     * State page references the frozen partition holders of one freeze scratch keep
+     * once its operation ends. A holder owns its reference array and every reference in
+     * it instead of taking them from the image array pool: one reference per key for a
+     * page-backed partition, but one per live chunk page for a ring-shaped one. A ring
+     * seal's holders therefore grow with keys times chunk pages while its image arrays
+     * grow with keys alone - 2,048 keys at 38 chunk pages pin 77,824 references in only
+     * 6,144 arrays. A reference costs about 60 bytes with its array slot, so the limit
+     * caps the holders of one scratch at roughly 4 MiB, and a page-backed seal reaches
+     * it at the key count at which it reaches {@link #MAX_RETAINED_FROZEN_ARRAYS}. Above
+     * it a seal allocates its holders afresh, which a ring holder already does whenever
+     * its key's chunk count changes.
+     */
+    public static final int MAX_RETAINED_FROZEN_STATE_PAGE_REFS = 65_536;
+    /**
+     * Partition-map nodes and page references the writer keeps pooled once a
+     * publication ends. A complete build over 32,768 ascending keys - the largest inline
+     * or fused seal {@link #MAX_RETAINED_FROZEN_ARRAYS} keeps warm - pools about 2,100 of
+     * them, so a build with sparser leaves still stays inside this limit. Pooled objects
+     * cost about 1.3 KB each on average, node arrays included, which caps the pool at
+     * roughly 5.3 MiB.
+     */
+    public static final int MAX_RETAINED_PARTITION_MAP_OBJECTS = 4_096;
     public static final int RAW_CODEC = 0;
     /**
      * Throws where {@link #TEST_FAIL_AFTER_METADATA_PUBLISH} would, but only in
@@ -245,7 +289,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      *                         append runs, or null to account against process
      *                         totals only. The append frees the scratch and
      *                         detaches the tracker before returning on every
-     *                         path, so no capacity and no charge outlive it -
+     *                         path, so no native capacity and no charge outlive it -
      *                         the writer is shared across every view its worker
      *                         seals
      */
@@ -631,9 +675,67 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         return partitionMapObjectPool.getFirstRetainedNodeIdentityForTest();
     }
 
+    /**
+     * @return image bytes of the frozen byte arrays every freeze scratch this writer owns
+     * keeps pooled, headers excluded
+     */
+    @TestOnly
+    public long getRetainedFrozenByteArrayBytesForTest() {
+        long bytes = publicationScratch.frozenByteArrays.getRetainedBytes();
+        for (int i = 0, n = repairScratchPool.size(); i < n; i++) {
+            bytes += repairScratchPool.getQuick(i).frozenByteArrays.getRetainedBytes();
+        }
+        return bytes;
+    }
+
+    /**
+     * @return frozen byte arrays and frozen holders pooled by every freeze scratch this
+     * writer owns - the publication's and each repair lease's
+     */
+    @TestOnly
+    public int getRetainedFrozenObjectCountForTest() {
+        int count = publicationScratch.getRetainedObjectCountForTest();
+        for (int i = 0, n = repairScratchPool.size(); i < n; i++) {
+            count += repairScratchPool.getQuick(i).getRetainedObjectCountForTest();
+        }
+        return count;
+    }
+
+    /**
+     * @return state page reference slots the pooled partition holders of every freeze
+     * scratch this writer owns keep, counted by walking the holders
+     */
+    @TestOnly
+    public long getRetainedFrozenStatePageRefCountForTest() {
+        long count = publicationScratch.countFrozenStatePageRefs();
+        for (int i = 0, n = repairScratchPool.size(); i < n; i++) {
+            count += repairScratchPool.getQuick(i).countFrozenStatePageRefs();
+        }
+        return count;
+    }
+
     @TestOnly
     public int getRetainedPartitionMapObjectCountForTest() {
         return partitionMapObjectPool.getRetainedObjectCount();
+    }
+
+    /**
+     * @return true when no pooled frozen holder of an idle freeze scratch still names a
+     * window, a window state plan or a window function - the runtime of the view that
+     * scratch last froze
+     */
+    @TestOnly
+    public boolean isFrozenScratchRuntimeReferenceClearForTest() {
+        if (!publicationScratch.isRuntimeReferenceClearForTest()) {
+            return false;
+        }
+        for (int i = 0, n = repairScratchPool.size(); i < n; i++) {
+            final FreezeScratch scratch = repairScratchPool.getQuick(i);
+            if (!scratch.isLeased && !scratch.isRuntimeReferenceClearForTest()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -2970,7 +3072,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * <p>
      * The grouped-freeze scratch goes back here too, which is what covers a seal that
      * threw part-way: {@code freezeGroupedFunctions} releases its own on every path it
-     * reaches, and this is the outer net for the paths that never reach it.
+     * reaches, and this is the outer net for the paths that never reach it. So does the
+     * heap-side frozen graph, which the tracker never sees: see
+     * {@code FreezeScratch.releaseFrozenGraph}.
      */
     private void releaseScratchBuffers() {
         publicationScratch.release();
@@ -3063,6 +3167,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         } finally {
             isPublicationShellsLeased = false;
             isPartitionMapObjectPoolLeased = false;
+            // Its nodes stay valid only until the next build resets the pool, and no build
+            // runs outside a lease, so an outlier build's nodes can go with the lease.
+            if (partitionMapObjectPool.getRetainedObjectCount() > MAX_RETAINED_PARTITION_MAP_OBJECTS) {
+                partitionMapObjectPool.clear();
+            }
         }
     }
 
@@ -3103,12 +3212,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private final LiveViewCheckpointByteArrayPool frozenByteArrays = new LiveViewCheckpointByteArrayPool();
         private final ObjList<FrozenBoundary> frozenBoundaryPool = new ObjList<>();
         private final ObjList<FrozenFunction> frozenFunctionPool = new ObjList<>();
-        private final ObjList<FrozenPartition> frozenPartitionPool = new ObjList<>();
-        private final ObjList<LiveViewCheckpointStatePageRef> frozenStateRefPool = new ObjList<>();
         private final ObjList<FrozenWindowState> frozenWindowStatePool = new ObjList<>();
-        private final ObjList<byte[]> groupedFreezeKeys = new ObjList<>();
         private final LongList groupedFreezeLogicalBytes = new LongList();
-        private final ObjList<byte[]> groupedFreezeRemovedKeys = new ObjList<>();
         private final ObjList<ObjList<byte[]>> incrementalMemberImages = new ObjList<>();
         private final IntList incrementalMemberProjections = new IntList();
         private final ObjList<FrozenFunction> incrementalMembers = new ObjList<>();
@@ -3118,10 +3223,26 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 new MemoryCARWImpl(SCRATCH_PAGE_SIZE, SCRATCH_MAX_PAGES, MemoryTag.NATIVE_DEFAULT);
         private int frozenBoundaryPoolCursor;
         private int frozenFunctionPoolCursor;
+        // frozenPartitionPool, frozenStateRefPool, groupedFreezeKeys and
+        // groupedFreezeRemovedKeys grow one entry per frozen key, and ObjList.clear() keeps
+        // the backing array, so releaseFrozenGraph() replaces them after an outlier operation.
+        private ObjList<FrozenPartition> frozenPartitionPool = new ObjList<>();
         private int frozenPartitionPoolCursor;
+        // Reference array slots of every holder in frozenPartitionPool, which is also the
+        // references in them: a holder fills every slot of the array it owns. Kept as
+        // holders take and drop arrays, so a release reads it without walking the holders.
+        private long frozenStatePageRefCount;
+        private ObjList<LiveViewCheckpointStatePageRef> frozenStateRefPool = new ObjList<>();
         private int frozenStateRefPoolCursor;
         private int frozenWindowStatePoolCursor;
-        private boolean isLeased;
+        private ObjList<byte[]> groupedFreezeKeys = new ObjList<>();
+        private ObjList<byte[]> groupedFreezeRemovedKeys = new ObjList<>();
+        // DROP can close a parked repair capture on its own thread, under the view's refresh
+        // latch (LiveViewInstance.tryCloseIfDropped), which the worker that owns this scratch
+        // does not take to lease it for another view. That release clears the lease as its
+        // last write, so the worker's volatile read of the lease is what lets it see every
+        // field the release wrote - cursors, counts, replaced lists - before it binds.
+        private volatile boolean isLeased;
         private MemoryTracker memoryTracker;
 
         @Override
@@ -3135,6 +3256,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             frozenBoundaryPool.clear();
             frozenFunctionPool.clear();
             frozenPartitionPool.clear();
+            frozenStatePageRefCount = 0;
             frozenStateRefPool.clear();
             frozenWindowStatePool.clear();
             incrementalMemberImages.clear();
@@ -3143,17 +3265,57 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
 
         private void bind(@Nullable MemoryTracker memoryTracker) {
+            // Also rewinds every frozen holder cursor.
             release();
             captureLedger.clear();
             frozenByteArrays.reset();
-            frozenBoundaryPoolCursor = 0;
-            frozenFunctionPoolCursor = 0;
-            frozenPartitionPoolCursor = 0;
-            frozenStateRefPoolCursor = 0;
-            frozenWindowStatePoolCursor = 0;
             this.memoryTracker = memoryTracker;
             keyBuffer.setMemoryTracker(memoryTracker);
             stateBuffer.setMemoryTracker(memoryTracker);
+        }
+
+        /**
+         * @return the reference array slots of every pooled partition holder, counted by
+         * walking them, which is what {@link #frozenStatePageRefCount} must always equal
+         */
+        private long countFrozenStatePageRefs() {
+            long count = 0;
+            for (int i = 0, n = frozenPartitionPool.size(); i < n; i++) {
+                count += frozenPartitionPool.getQuick(i).statePageRefs.length;
+            }
+            return count;
+        }
+
+        @TestOnly
+        private int getRetainedObjectCountForTest() {
+            return frozenByteArrays.getRetainedArrayCount()
+                    + frozenBoundaryPool.size()
+                    + frozenFunctionPool.size()
+                    + frozenPartitionPool.size()
+                    + frozenStateRefPool.size()
+                    + frozenWindowStatePool.size();
+        }
+
+        @TestOnly
+        private boolean isRuntimeReferenceClearForTest() {
+            for (int i = 0, n = frozenBoundaryPool.size(); i < n; i++) {
+                final FrozenBoundary boundary = frozenBoundaryPool.getQuick(i);
+                if (boundary.windowState != null || boundary.functions.size() > 0) {
+                    return false;
+                }
+            }
+            for (int i = 0, n = frozenFunctionPool.size(); i < n; i++) {
+                if (frozenFunctionPool.getQuick(i).function != null) {
+                    return false;
+                }
+            }
+            for (int i = 0, n = frozenWindowStatePool.size(); i < n; i++) {
+                final FrozenWindowState windowState = frozenWindowStatePool.getQuick(i);
+                if (windowState.window != null || windowState.plan != null) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         private void release() {
@@ -3168,6 +3330,58 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             completeMembers.clear();
             completeMemberProjections.clear();
             memoryTracker = null;
+            releaseFrozenGraph();
+        }
+
+        /**
+         * Hands back what the ended operation froze. Nothing reads a frozen holder past
+         * this point: a seal releases after its publication committed or failed, and a
+         * repair capture releases on close, after its publication or discard.
+         * <p>
+         * The writer outlives every view it serves, so a holder that kept naming the
+         * view's window, state plan or functions would keep a dropped view's runtime
+         * reachable until another operation reused it. Beyond that, an operation that
+         * pooled more than the retention limits allow hands back its whole frozen graph, so
+         * one outlier seal does not park its footprint on the worker for good. Every list
+         * sized to the key set grows by at most one entry per image array the operation
+         * took, which is what lets the array pool's high-water mark stand for all of those
+         * lists. The state page references partition holders own do not follow that mark -
+         * a ring holder names one per live chunk page of its key - so the scratch counts
+         * them by themselves as holders take and drop reference arrays. An operation within
+         * the limits keeps everything pooled for the next one to reuse.
+         */
+        private void releaseFrozenGraph() {
+            assert frozenStatePageRefCount == countFrozenStatePageRefs();
+            if (frozenByteArrays.getRetainedArrayCount() > MAX_RETAINED_FROZEN_ARRAYS
+                    || frozenByteArrays.getRetainedBytes() > MAX_RETAINED_FROZEN_ARRAY_BYTES
+                    || frozenStatePageRefCount > MAX_RETAINED_FROZEN_STATE_PAGE_REFS) {
+                frozenByteArrays.clear();
+                frozenBoundaryPool.clear();
+                frozenFunctionPool.clear();
+                frozenWindowStatePool.clear();
+                frozenPartitionPool = new ObjList<>();
+                frozenStatePageRefCount = 0;
+                frozenStateRefPool = new ObjList<>();
+                groupedFreezeKeys = new ObjList<>();
+                groupedFreezeRemovedKeys = new ObjList<>();
+                completeMemberImages.clear();
+                incrementalMemberImages.clear();
+            } else {
+                for (int i = 0; i < frozenBoundaryPoolCursor; i++) {
+                    frozenBoundaryPool.getQuick(i).of();
+                }
+                for (int i = 0; i < frozenFunctionPoolCursor; i++) {
+                    frozenFunctionPool.getQuick(i).clearRuntime();
+                }
+                for (int i = 0; i < frozenWindowStatePoolCursor; i++) {
+                    frozenWindowStatePool.getQuick(i).clearRuntime();
+                }
+            }
+            frozenBoundaryPoolCursor = 0;
+            frozenFunctionPoolCursor = 0;
+            frozenPartitionPoolCursor = 0;
+            frozenStateRefPoolCursor = 0;
+            frozenWindowStatePoolCursor = 0;
         }
 
         private void releaseGroupedFreezeScratch(@NotNull ObjList<ObjList<byte[]>> memberImages) {
@@ -3209,6 +3423,18 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private int totalInlineStateBytes;
         private LiveViewWindow window;
         private byte[] windowIdentity;
+
+        /**
+         * Drops what this holder borrowed from the view it froze. The key and payload
+         * arrays stay: they belong to the scratch's array pool, not to the view.
+         */
+        private void clearRuntime() {
+            window = null;
+            plan = null;
+            windowIdentity = null;
+            keySchema = null;
+            manifest = null;
+        }
 
         private FrozenWindowState of(
                 LiveViewWindow window,
@@ -3298,15 +3524,29 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
 
         /**
+         * Drops what this holder borrowed from the function it froze. The partitions stay:
+         * their arrays and holders belong to the scratch's pools, not to the view.
+         */
+        private void clearRuntime() {
+            function = null;
+            identity = null;
+            keySchema = null;
+        }
+
+        /**
          * Takes one whole-state image the leaf carries itself. The image is already
          * a fresh array per partition, so it is stored rather than copied again.
          */
         private void addPartition(byte[] key, byte[] scalarState, boolean isUnchanged) {
-            addPartition(nextFrozenPartition().of(key, scalarState, NO_STATE_PAGES, isUnchanged));
+            final FrozenPartition partition = nextFrozenPartition();
+            final int previousStatePageRefCount = partition.statePageRefs.length;
+            addPartition(partition.of(key, scalarState, NO_STATE_PAGES, isUnchanged), previousStatePageRefCount);
         }
 
         private void addPartition(byte[] key, LiveViewCheckpointStatePageRef stateRef, boolean isUnchanged) {
-            addPartition(nextFrozenPartition().of(key, NO_BYTES, stateRef, isUnchanged));
+            final FrozenPartition partition = nextFrozenPartition();
+            final int previousStatePageRefCount = partition.statePageRefs.length;
+            addPartition(partition.of(key, NO_BYTES, stateRef, isUnchanged), previousStatePageRefCount);
         }
 
         /**
@@ -3314,15 +3554,27 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
          * every partition it freezes.
          */
         private void addPartition(LiveViewCheckpointPartitionMapEntry entry) {
-            addPartition(nextFrozenPartition().of(
-                    activeScratch.frozenByteArrays.copy(entry.getKey()),
-                    activeScratch.frozenByteArrays.copy(entry.getScalarState()),
-                    entry,
-                    false
-            ));
+            final FrozenPartition partition = nextFrozenPartition();
+            final int previousStatePageRefCount = partition.statePageRefs.length;
+            addPartition(
+                    partition.of(
+                            activeScratch.frozenByteArrays.copy(entry.getKey()),
+                            activeScratch.frozenByteArrays.copy(entry.getScalarState()),
+                            entry,
+                            false
+                    ),
+                    previousStatePageRefCount
+            );
         }
 
-        private void addPartition(FrozenPartition partition) {
+        /**
+         * @param previousStatePageRefCount the length of the reference array the pooled
+         *                                  holder owned before this freeze refilled it
+         */
+        private void addPartition(FrozenPartition partition, int previousStatePageRefCount) {
+            // A refill may have replaced the holder's reference array or dropped it for the
+            // shared empty one, so the scratch's count moves by the difference.
+            activeScratch.frozenStatePageRefCount += partition.statePageRefs.length - previousStatePageRefCount;
             // partitionIndexes serves two readers, and an incremental freeze has
             // neither: removeMissingPartitions, which only a full scan runs, and
             // CapturedPreviousBoundary, which only a repair capture builds - and a

@@ -35,6 +35,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointWindowRoot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.LongList;
@@ -43,6 +44,9 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Coverage for the keyed repair of a closed anchor segment: the replay that follows only
@@ -311,6 +315,101 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(2, job.segmentRepairCountForTest());
                 Assert.assertEquals(rowsBefore + 3, count("select count() from lv"));
                 assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testADedupReplacementAppliedBehindTheCleanRangeCheckIsRepairedWhole() throws Exception {
+        // The replacement moves 2026-01-03T01:00:01 from acct-1 to acct-5 in the day above
+        // the correction's.
+        assertDedupReplacementBehindTheCleanRangeCheckIsRepairedWhole(
+                false,
+                "",
+                "('2026-01-03T01:00:01.000000Z', 'acct-5', 1.0)",
+                "2026-01-03T01:00:01.000000Z",
+                """
+                        created_at\taccount_id\tcumulative_sum
+                        2026-01-03T01:00:01.000000Z\tacct-5\t1.0
+                        """
+        );
+    }
+
+    @Test
+    public void testADedupReplacementAppliedBehindTheCleanRangeCheckIsRepairedWholeWhenPublishedSparsely() throws Exception {
+        assertDedupReplacementBehindTheCleanRangeCheckIsRepairedWhole(
+                true,
+                "",
+                "('2026-01-03T01:00:01.000000Z', 'acct-5', 1.0)",
+                "2026-01-03T01:00:01.000000Z",
+                """
+                        created_at\taccount_id\tcumulative_sum
+                        2026-01-03T01:00:01.000000Z\tacct-5\t1.0
+                        """
+        );
+    }
+
+    @Test
+    public void testADedupReplacementInsideTheCorrectedSegmentIsRepairedWhole() throws Exception {
+        // The replacement moves 2026-01-02T01:00:02 from acct-2 to acct-5 in the day the
+        // correction itself lands in, so one segment carries both keys the walk saw and the
+        // one it did not.
+        assertDedupReplacementBehindTheCleanRangeCheckIsRepairedWhole(
+                false,
+                "",
+                "('2026-01-02T01:00:02.000000Z', 'acct-5', 1.0)",
+                "2026-01-02T01:00:02.000000Z",
+                """
+                        created_at\taccount_id\tcumulative_sum
+                        2026-01-02T01:00:02.000000Z\tacct-5\t1.0
+                        """
+        );
+    }
+
+    @Test
+    public void testADedupReplacementTheFilterRejectsIsRepairedWhole() throws Exception {
+        // The replacement moves 2026-01-03T01:00:01 to acct-5 with an amount the view's WHERE
+        // rejects, so the timestamp must leave the view altogether.
+        assertDedupReplacementBehindTheCleanRangeCheckIsRepairedWhole(
+                false,
+                " where amount > 0",
+                "('2026-01-03T01:00:01.000000Z', 'acct-5', -1.0)",
+                "2026-01-03T01:00:01.000000Z",
+                "created_at\taccount_id\tcumulative_sum\n"
+        );
+    }
+
+    @Test
+    public void testAFilteredViewOverAnAppendOnlyBaseIsStillRepairedByKey() throws Exception {
+        // The counterpart of the dedup cases, and the reason their gate is the base's dedup
+        // keys rather than the view's filter. Without dedup a classified change set only adds
+        // base rows, so a stored row whose key the walk did not collect derives from base rows
+        // nothing changed, and a recomputed key re-emits every pair it had stored plus whatever
+        // the new rows add - the merge has no stale row to carry and a sparse upsert has no row
+        // to delete. The correction carries one row the filter accepts and one it rejects, so
+        // both kinds of key are in the domain, and the publication is the sparse one, which
+        // is the one that could not remove a row if a filter ever required it to.
+        armKeyedReplay();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(seedEightAccountsOverThreeDays(), true, "", " where amount > 0");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, "acct-1"), job);
+
+                commit(correction("acct-1") + ", ('2026-01-02T00:30:01.000000Z', 'acct-2', -1.0)", job);
+
+                Assert.assertEquals(
+                        "a filtered view over an append-only base must still be repaired by key",
+                        1,
+                        job.keyedReplaySegmentCountForTest()
+                );
+                Assert.assertEquals(
+                        "and published sparsely, or the case covers the merged route only",
+                        1,
+                        job.sparsePublicationCountForTest()
+                );
+                assertViewMatchesRecompute("lv", " where amount > 0");
             }
         });
     }
@@ -795,16 +894,107 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "false");
     }
 
+    /**
+     * Applies a key-changing replacement to a deduplicating base inside the window a refresh
+     * turn opens between vouching for its drained range and pinning the reader its repair
+     * plans against, and holds the view to a from-base recompute.
+     * <p>
+     * The turn takes the raw-WAL drain only because the apply signal proves nothing deduped
+     * over the range it drains. The repair then pins whatever the apply has reached, and the
+     * change-set walk classifies every commit up to that pin - including a replacement the
+     * signal never vouched for. The walk reads the incoming row's key and not the key of the
+     * row the replacement displaced, so a keyed replay recomputes the new key and copies the
+     * displaced key's stale row forward, or leaves it standing under a sparse publication.
+     * <p>
+     * The injection is synchronous on the refresh thread: it fires on the turn's first
+     * acquisition of the view's WAL writer, which the raw-WAL drain takes after the range
+     * check and before the repair's pin. That the turn really took the raw-WAL drain is
+     * asserted rather than assumed - a replacement applied before the check would fail it
+     * and route the turn through the applied base, where no keyed route exists and the case
+     * would cover nothing.
+     */
+    private void assertDedupReplacementBehindTheCleanRangeCheckIsRepairedWhole(
+            boolean isSparse,
+            String whereClause,
+            String replacementRow,
+            String replacedTimestamp,
+            String expectedRowsAtReplacedTimestamp
+    ) throws Exception {
+        armKeyedReplay();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, isSparse ? "true" : "false");
+        assertMemoryLeak(() -> {
+            createView(seedEightAccountsOverThreeDays(), true, " dedup upsert keys(created_at)", whereClause);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, "acct-1"), job);
+                final LiveViewInstance instance = viewInstance();
+
+                // Applied before the turn, so the apply signal covers the range it drains.
+                execute("insert into tx values " + correction("acct-1"));
+                drainWalQueue();
+                final long cleanCyclesBefore = instance.getDedupRawWalCleanCycles();
+
+                final AtomicBoolean isInjectionArmed = new AtomicBoolean(true);
+                final AtomicReference<Throwable> injectionError = new AtomicReference<>();
+                engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+                    if (factoryType == PoolListener.SRC_WAL_WRITER
+                            && (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE)
+                            && "lv".equals(tableToken.getTableName())
+                            && isInjectionArmed.compareAndSet(true, false)) {
+                        try {
+                            execute("insert into tx values " + replacementRow);
+                            drainWalQueue();
+                        } catch (Throwable t) {
+                            injectionError.set(t);
+                        }
+                    }
+                });
+                try {
+                    driveRefreshToQuiescence(job);
+                } finally {
+                    engine.setPoolListener(null);
+                }
+                if (injectionError.get() != null) {
+                    throw new AssertionError("the injected replacement failed", injectionError.get());
+                }
+                Assert.assertFalse("the replacement must land inside the refresh turn", isInjectionArmed.get());
+                Assert.assertTrue(
+                        "the turn must take the raw-WAL drain, which puts the replacement behind its range check",
+                        instance.getDedupRawWalCleanCycles() > cleanCyclesBefore
+                );
+                Assert.assertTrue(
+                        "the correction must reach the per-segment repair, or the case covers nothing",
+                        job.segmentRepairCountForTest() > 0
+                );
+
+                assertQuery("SELECT created_at, account_id, cumulative_sum FROM lv WHERE created_at = '" + replacedTimestamp + "'")
+                        .noLeakCheck()
+                        .timestamp("created_at")
+                        .returns(expectedRowsAtReplacedTimestamp);
+                assertViewMatchesRecompute("lv", whereClause);
+                Assert.assertEquals(
+                        "a deduplicating base must keep every closed segment on the whole-segment read",
+                        0,
+                        job.keyedReplaySegmentCountForTest()
+                );
+            }
+        });
+    }
+
     private void assertViewMatchesRecompute() throws Exception {
         assertViewMatchesRecompute("lv");
     }
 
     private void assertViewMatchesRecompute(String viewName) throws Exception {
+        assertViewMatchesRecompute(viewName, "");
+    }
+
+    private void assertViewMatchesRecompute(String viewName, String whereClause) throws Exception {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
         final String recompute = "select created_at, account_id, "
                 + "sum(amount) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_sum "
-                + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx)";
+                + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx" + whereClause + ")";
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
@@ -837,14 +1027,22 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     private void createView(String seedRows, boolean isKeyIndexed) throws Exception {
+        createView(seedRows, isKeyIndexed, "", "");
+    }
+
+    /**
+     * @param dedupClause the base table's DEDUP clause, or empty for an append-only base
+     * @param whereClause the view's WHERE clause, or empty for an unfiltered view
+     */
+    private void createView(String seedRows, boolean isKeyIndexed, String dedupClause, String whereClause) throws Exception {
         execute("create table tx (created_at timestamp, account_id symbol nocache"
                 + (isKeyIndexed ? " index capacity 8" : "") + ", "
-                + "amount double) timestamp(created_at) partition by hour wal");
+                + "amount double) timestamp(created_at) partition by hour wal" + dedupClause);
         execute("insert into tx values " + seedRows);
         drainWalQueue();
         execute("create live view lv flush every 100ms start from beginning as "
                 + "select created_at, account_id, sum(amount) over w as cumulative_sum "
-                + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
+                + "from tx" + whereClause + " window w as (partition by account_id order by created_at anchor daily '00:00')");
     }
 
     /**

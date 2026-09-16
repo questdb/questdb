@@ -27,8 +27,11 @@ package io.questdb.test.cairo.lv;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.lv.LiveViewCheckpointMutationArena;
 import io.questdb.std.IntObjHashMap;
+import io.questdb.std.Os;
 import io.questdb.test.tools.LimitedMemoryTracker;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.lang.reflect.Constructor;
@@ -36,7 +39,73 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
 public class LiveViewCheckpointMutationArenaTest {
+    // The widest key or scalar one mutation may carry.
+    private static final int MAX_FIELD_BYTES = 1 << 20;
     private static final byte[] NO_BYTES = new byte[0];
+
+    @Test
+    public void testArenaGrowsPastTwoGiBUntilTheTrackerLimit() throws Exception {
+        // The ceiling this guards was a fixed page count, which no platform changes. Crossing
+        // it holds 2 GiB of resident native memory, and past 2^31 the tracker limit makes the
+        // arena grow in exact 4 KiB steps: glibc remaps the block for each step, while other
+        // allocators may copy all 2 GiB per step. Run on Linux only.
+        Assume.assumeTrue(Os.isLinux());
+        TestUtils.assertMemoryLeak(() -> {
+            // The fillers end exactly at offset 2^31, where 524_288 pages of 4 KiB used to stop
+            // the arena. The limit sits just above that, as a view's refresh limit would.
+            final int fillerCount = (int) ((1L << 31) / MAX_FIELD_BYTES);
+            final long limit = (1L << 31) + (32L << 20);
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(limit)) {
+                try (LiveViewCheckpointMutationArena arena = new LiveViewCheckpointMutationArena(tracker)) {
+                    final byte[] key = new byte[MAX_FIELD_BYTES];
+                    // Descending prefixes, so the sort has to move every entry.
+                    for (int i = 0; i < fillerCount; i++) {
+                        putIntKey(key, fillerCount - i);
+                        arena.put(key, NO_BYTES);
+                    }
+                    // Two probes wholly above 2^31 that differ only in their last byte and sort
+                    // ahead of every filler, so ordering them reads each probe to its end.
+                    putIntKey(key, 0);
+                    key[MAX_FIELD_BYTES - 1] = 2;
+                    arena.put(key, NO_BYTES);
+                    key[MAX_FIELD_BYTES - 1] = 1;
+                    arena.put(key, NO_BYTES);
+                    Assert.assertTrue("the tracker must carry the staged bytes", tracker.getUsed() > 1L << 31);
+
+                    final int count = fillerCount + 2;
+                    Assert.assertEquals(count, arena.sortAndValidateForTest());
+                    Assert.assertEquals(fillerCount + 1, arena.getSortedMutationIndex(0));
+                    Assert.assertEquals(fillerCount, arena.getSortedMutationIndex(1));
+                    for (int i = 2; i < count; i++) {
+                        Assert.assertEquals(fillerCount + 1 - i, arena.getSortedMutationIndex(i));
+                    }
+                    Assert.assertTrue(arena.compareSortedKeysForTest(0, 1) < 0);
+
+                    // The configured limit, not a page count, is what stops the arena, and it
+                    // stops it with the tracker's own breach.
+                    key[MAX_FIELD_BYTES - 1] = 0;
+                    boolean isBreached = false;
+                    for (int i = 1; i <= 64 && !isBreached; i++) {
+                        putIntKey(key, fillerCount + i);
+                        try {
+                            arena.put(key, NO_BYTES);
+                        } catch (CairoException e) {
+                            Assert.assertTrue(e.isOutOfMemory());
+                            TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                            isBreached = true;
+                        }
+                    }
+                    Assert.assertTrue("expected the tracker limit to stop the arena", isBreached);
+                    Assert.assertTrue(tracker.getUsed() <= limit);
+
+                    arena.clear();
+                    arena.put(intKey(1), NO_BYTES);
+                    Assert.assertEquals(1, arena.sortAndValidateForTest());
+                }
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
 
     @Test
     public void testArenaGrowthFailureReleasesTrackerAndCanBeReused() {

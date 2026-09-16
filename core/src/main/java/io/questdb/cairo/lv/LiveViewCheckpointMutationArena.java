@@ -57,9 +57,14 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
     private static final int DESC_SCALAR_LENGTH = 4;
     private static final int DESC_SCALAR_OFFSET = 3;
     private static final int INITIAL_LONG_CAPACITY = 64;
-    private static final int MAX_PAGES = 524_288;
     private static final long PAGE_SIZE = 4096;
-    private final MemoryCARWImpl bytes = new MemoryCARWImpl(PAGE_SIZE, MAX_PAGES, MemoryTag.NATIVE_DEFAULT);
+    // One root build stages every put, domain entry and decoded leaf entry here, so a page
+    // ceiling would cap how many keys a view can checkpoint. The arena sets none: offsets are
+    // long end to end, and append() and the partition-map page decoder validate each field's
+    // length before staging it. Two limits bound the growth instead: the memory tracker that
+    // bind() attaches, which enforces cairo.live.view.refresh.memory.limit.bytes, and the
+    // global RSS limit. Each fails the growth with its own out-of-memory error.
+    private final MemoryCARWImpl bytes = new MemoryCARWImpl(PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
     private final DirectLongList descriptors = new DirectLongList(INITIAL_LONG_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
     private final DirectLongList ordinals = new DirectLongList(INITIAL_LONG_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
     private final LiveViewCheckpointStatePageRef otherStateRefFlyweight = new LiveViewCheckpointStatePageRef();

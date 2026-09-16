@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
@@ -88,6 +89,7 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
     // from "scratch retained" with no sensitivity to incidental allocations.
     private static final long RELEASED_TOLERANCE_BYTES = 1_048_576;
     private static final int STATE_IMAGE_BYTES = 8_388_608;
+    private static final int WIDE_KEY_COLUMNS = 32;
 
     @Before
     public void setUp() {
@@ -220,6 +222,126 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
                 Assert.assertTrue(
                         "the seal must release its state scratch after publishing, retained=" + retained,
                         retained < RELEASED_TOLERANCE_BYTES
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testAppendTrimsFrozenScratchAboveRetentionLimit() throws Exception {
+        // The frozen key and state arrays live on the Java heap, where neither the
+        // refresh tracker nor the leak check sees them, and the writer lives as long as
+        // its worker. One outlier seal must therefore hand its frozen graph back when it
+        // ends, while a seal within the limit keeps reusing what it pooled.
+        assertMemoryLeak(() -> {
+            try (
+                    PartitionedStateStub stub = new PartitionedStateStub();
+                    LiveViewCheckpointTimelineStoreWriter writer =
+                            new LiveViewCheckpointTimelineStoreWriter(configuration)
+            ) {
+                // One key array and one inline state array per key, so this key set pools
+                // four times the array limit, and its ascending keys fill about twice as
+                // many partition-map nodes as that pool keeps.
+                putStates(stub, 2 * LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAYS, 1);
+                seal(writer, stub, 1);
+                final int retainedAfterOutlier = writer.getRetainedFrozenObjectCountForTest();
+                Assert.assertTrue(
+                        "an outlier seal must not park its frozen graph on the writer, retained="
+                                + retainedAfterOutlier,
+                        retainedAfterOutlier <= LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAYS
+                );
+                final int retainedPartitionMapObjects = writer.getRetainedPartitionMapObjectCountForTest();
+                Assert.assertTrue(
+                        "an outlier seal must not park its partition-map nodes on the writer, retained="
+                                + retainedPartitionMapObjects,
+                        retainedPartitionMapObjects <= LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_PARTITION_MAP_OBJECTS
+                );
+
+                // The first small seal also removes every key the outlier root holds,
+                // which is outlier work of its own; the two after it are the steady state.
+                // Each seal moves every state, so each one rewrites its partition map.
+                stub.clearStates();
+                putStates(stub, 1_000, 2);
+                seal(writer, stub, 2);
+                putStates(stub, 1_000, 3);
+                seal(writer, stub, 3);
+                final int warmed = writer.getRetainedFrozenObjectCountForTest();
+                Assert.assertTrue("a seal within the limit must keep its frozen graph pooled", warmed > 0);
+                final int warmedPartitionMapObjects = writer.getRetainedPartitionMapObjectCountForTest();
+                Assert.assertTrue(
+                        "a seal within the limit must keep its partition-map nodes pooled",
+                        warmedPartitionMapObjects > 0
+                );
+                putStates(stub, 1_000, 4);
+                seal(writer, stub, 4);
+                Assert.assertEquals(warmed, writer.getRetainedFrozenObjectCountForTest());
+                Assert.assertEquals(warmedPartitionMapObjects, writer.getRetainedPartitionMapObjectCountForTest());
+            }
+        });
+    }
+
+    @Test
+    public void testAppendTrimsFrozenScratchOfWideImagesAboveByteLimit() throws Exception {
+        // Wide key images reach the byte limit long before the array limit, and the
+        // array limit alone would let a few thousand wide keys pin megabytes.
+        assertMemoryLeak(() -> {
+            try (
+                    PartitionedStateStub stub = new PartitionedStateStub(WIDE_KEY_COLUMNS);
+                    LiveViewCheckpointTimelineStoreWriter writer =
+                            new LiveViewCheckpointTimelineStoreWriter(configuration)
+            ) {
+                // Every key images into at least WIDE_KEY_COLUMNS * 8 bytes, so this key
+                // set pools more bytes than the limit in fewer arrays than that limit allows.
+                final int keyCount = (int) (LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAY_BYTES
+                        / (WIDE_KEY_COLUMNS * Long.BYTES)) + 1_024;
+                Assert.assertTrue(2 * keyCount < LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAYS);
+                putStates(stub, keyCount, 1);
+                seal(writer, stub, 1);
+                final long retainedBytes = writer.getRetainedFrozenByteArrayBytesForTest();
+                Assert.assertTrue(
+                        "a seal of wide images must not park them on the writer, retainedBytes=" + retainedBytes,
+                        retainedBytes <= LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAY_BYTES
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testFrozenScratchDropsTheSealedRuntimeWhenItsOperationEnds() throws Exception {
+        // The writer is shared across every view its worker seals, so a frozen holder
+        // that still names the function it froze keeps that view's runtime reachable
+        // after DROP, until another seal happens to reuse the holder.
+        assertMemoryLeak(() -> {
+            try (
+                    PartitionedStateStub partition = new PartitionedStateStub();
+                    ScalarStateStub scalar = new ScalarStateStub();
+                    LiveViewCheckpointTimelineStoreWriter writer =
+                            new LiveViewCheckpointTimelineStoreWriter(configuration);
+                    Path dir = new Path()
+            ) {
+                final ObjList<WindowFunction> functions = new ObjList<>();
+                functions.add(partition);
+                functions.add(scalar);
+                partition.putState(11, 0x11);
+                scalar.state = filled(64, (byte) 0x21);
+                seal(writer, functions, LV_DIR, 1, LIFECYCLE_IDENTITY, null);
+                Assert.assertTrue(
+                        "a finished seal must not keep the sealed functions reachable",
+                        writer.isFrozenScratchRuntimeReferenceClearForTest()
+                );
+                seal(writer, functions, LV_DIR, 2, LIFECYCLE_IDENTITY, null);
+
+                checkpointsDir(dir);
+                try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
+                             writer.beginRepair(dir, null, null, false)) {
+                    final ObjList<LiveViewCheckpointTimelineEntry> boundaries = new ObjList<>();
+                    capture.collectBoundaries(0, 1_500_000, boundaries);
+                    Assert.assertEquals(1, boundaries.size());
+                    capture.capture(boundaries.getQuick(0), functions, null, 1);
+                }
+                Assert.assertTrue(
+                        "a closed repair capture must not keep the replayed functions reachable",
+                        writer.isFrozenScratchRuntimeReferenceClearForTest()
                 );
             }
         });
@@ -493,6 +615,12 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
         return bytes;
     }
 
+    private static void putStates(PartitionedStateStub stub, int keyCount, long seq) {
+        for (int key = 0; key < keyCount; key++) {
+            stub.putState(key, seq * keyCount + key);
+        }
+    }
+
     private MemoryTracker acquireRefreshTracker() {
         return engine.getMemoryTrackerProvider().acquire(
                 AllowAllSecurityContext.INSTANCE,
@@ -551,18 +679,30 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
      * the retained partition-map object pool.
      */
     private static final class PartitionedStateStub extends BaseWindowFunction {
-        private static final ColumnTypes KEY_TYPES = new SingleColumnType(ColumnType.LONG);
-        private final Map map = new OrderedMap(
-                1024,
-                KEY_TYPES,
-                new SingleColumnType(ColumnType.LONG),
-                16,
-                0.7,
-                8
-        );
+        private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+        private final Map map;
 
         private PartitionedStateStub() {
+            this(1);
+        }
+
+        /**
+         * @param keyColumnCount LONG key columns, each holding the same key value, so a
+         *                       case widens the frozen key image without changing the keys
+         */
+        private PartitionedStateStub(int keyColumnCount) {
             super(null);
+            for (int i = 0; i < keyColumnCount; i++) {
+                keyTypes.add(ColumnType.LONG);
+            }
+            map = new OrderedMap(
+                    1024,
+                    keyTypes,
+                    new SingleColumnType(ColumnType.LONG),
+                    16,
+                    0.7,
+                    Integer.MAX_VALUE
+            );
             setCheckpointCompilerMetadata(
                     new LiveViewCheckpointFunctionIdentity(
                             "w0",
@@ -612,7 +752,7 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
 
         @Override
         public ColumnTypes getCheckpointKeyColumnTypes() {
-            return KEY_TYPES;
+            return keyTypes;
         }
 
         @Override
@@ -655,15 +795,25 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
             return true;
         }
 
+        private void clearStates() {
+            map.clear();
+        }
+
+        private void putKey(MapKey mapKey, long key) {
+            for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+                mapKey.putLong(key);
+            }
+        }
+
         private void putState(long key, long state) {
             final MapKey mapKey = map.withKey();
-            mapKey.putLong(key);
+            putKey(mapKey, key);
             mapKey.createValue().putLong(0, state);
         }
 
         private long readState(long key) {
             final MapKey mapKey = map.withKey();
-            mapKey.putLong(key);
+            putKey(mapKey, key);
             final MapValue value = mapKey.findValue();
             Assert.assertNotNull("restored map must hold key " + key, value);
             return value.getLong(0);

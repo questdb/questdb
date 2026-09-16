@@ -924,8 +924,8 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         // The marker is what makes keeping the roots safe to attempt: between the
         // replacement commit and the publication the timeline describes output that has
         // moved, and only the marker turns a crash in there into a rebuild from the applied
-        // base. A repair that cannot write one therefore takes the truncate, which carries
-        // its own - it must not splice unprotected.
+        // base. A repair that cannot write one at its commit therefore retires the timeline
+        // ahead of that commit - it must not splice unprotected.
         final AtomicBoolean failMarkerWrite = new AtomicBoolean(true);
         final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
@@ -973,14 +973,33 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         //
         // What it finally publishes is what the single-turn run publishes: the same rows
         // read, the same rows emitted, the same splice over [C, +inf) and the same output.
+        //
+        // The repair marker waits for the replacement commit. A parked repair has moved
+        // nothing durable, so a marker on disk through the park would only turn a restart
+        // during it into a rebuild from the applied base. The turn that finishes the repair
+        // writes it, immediately ahead of the commit whose window it guards.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
-        assertMemoryLeak(() -> {
+        // The view's committed WAL seqTxn at each marker publication.
+        final LongList lvSeqTxnAtMarkerWrites = new LongList();
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                final int result = super.rename(from, to);
+                if (Utf8s.containsAscii(to, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)) {
+                    lvSeqTxnAtMarkerWrites.add(engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("lv")));
+                }
+                return result;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
             createWideRangeView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 final LiveViewInstance instance = buildHistory(job);
                 final LongList before = snapshotTimeline(instance);
                 final long generationBefore = generation(instance);
                 final long processedBefore = instance.getLastProcessedSeqTxn();
+                final long lvSeqTxnBefore = engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken());
+                Assert.assertEquals("the cadence seals write no repair marker", 0, lvSeqTxnAtMarkerWrites.size());
 
                 setCurrentMicros(currentMicros + 200_000);
                 execute("INSERT INTO base VALUES ('" + timestamp(5) + "', 'a', 100)");
@@ -998,8 +1017,8 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                     // parked: the replacement is uncommitted, so the durable output is the
                     // pre-repair one; no generation names the staged roots; and the base
                     // range stays unconsumed. The roots the splice will re-version are
-                    // still the ones the cadence wrote, which is exactly what the marker
-                    // is there to protect against a crash at this point.
+                    // still the ones the cadence wrote and still describe the output on
+                    // disk, so a restart at this point restores from them.
                     Assert.assertEquals(HISTORY_COMMITS, durableRowCount(instance));
                     Assert.assertEquals(generationBefore, generation(instance));
                     Assert.assertEquals(processedBefore, instance.getLastProcessedSeqTxn());
@@ -1008,16 +1027,27 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                             1,
                             repairDescriptorCount()
                     );
-                    Assert.assertTrue(
-                            "a parked splice must hold its repair marker across the park",
+                    Assert.assertFalse(
+                            "a parked splice has moved nothing durable, so it owes no repair marker yet",
                             repairMarkerExists()
                     );
+                    Assert.assertEquals(0, lvSeqTxnAtMarkerWrites.size());
                 }
                 drainWalQueue();
 
                 Assert.assertTrue("the replay must have yielded at least once", parkedTurns > 0);
                 Assert.assertNull("the repair must finish", instance.getSuspendedRepair());
                 Assert.assertEquals("a published repair owes no descriptor", 0, repairDescriptorCount());
+                Assert.assertEquals("the finishing turn writes the marker once", 1, lvSeqTxnAtMarkerWrites.size());
+                Assert.assertEquals(
+                        "the marker must be durable before the replacement commits",
+                        lvSeqTxnBefore,
+                        lvSeqTxnAtMarkerWrites.getQuick(0)
+                );
+                Assert.assertTrue(
+                        "the replacement must have committed after the marker",
+                        engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken()) > lvSeqTxnBefore
+                );
                 Assert.assertFalse(
                         "the turn that finishes the repair owes the marker its clear",
                         repairMarkerExists()
@@ -1634,6 +1664,78 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAnUnwritableMarkerRetiresAParkedConvergingSpliceAheadOfItsCommit() throws Exception {
+        // The converging repair above, parked across turns, on a filesystem that refuses its
+        // repair marker. The marker is written on the turn that finishes the repair, after the
+        // replay has frozen its roots into the capture, so the capture can no longer be
+        // declined before the replay. The repair retires the timeline ahead of its commit
+        // instead and publishes as one that holds no capture: no splice goes out unprotected,
+        // and the output is the one the splicing run publishes.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (Utf8s.containsAscii(to, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)) {
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                return super.rename(from, to);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final long processedBefore = instance.getLastProcessedSeqTxn();
+
+                setCurrentMicros(currentMicros + 200_000);
+                execute("INSERT INTO base VALUES ('" + timestamp(25) + "', 'a', 100)");
+                drainWalQueue();
+
+                int turns = 0;
+                int parkedTurns = 0;
+                while (turns < 64 && job.processNotificationsForTest()) {
+                    turns++;
+                    if (instance.getSuspendedRepair() != null) {
+                        parkedTurns++;
+                    }
+                }
+                drainWalQueue();
+
+                Assert.assertTrue("the replay must have yielded at least once", parkedTurns > 0);
+                Assert.assertNull("the repair must finish", instance.getSuspendedRepair());
+                Assert.assertEquals("the correction must be consumed", processedBefore + 1, instance.getLastProcessedSeqTxn());
+                Assert.assertEquals("no marker, no splice", 0, instance.getCheckpointRepairRootsVersioned());
+                Assert.assertEquals("a retired candidate owes no descriptor", 0, repairDescriptorCount());
+                Assert.assertFalse("a retired timeline owes no marker", repairMarkerExists());
+                Assert.assertTrue("the retire must have run", instance.getCheckpointTimelineResets() > 0);
+                Assert.assertEquals("the rebuild must stop at H", 6, instance.getO3ReplayScanRows());
+                Assert.assertEquals("the rebuild must re-emit [R, H) only", 4, instance.getO3BoundaryReplayRows());
+                assertNoRefreshFaults("lv");
+            }
+
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\ts
+                            2026-01-01T00:00:10.000000Z\ta\t1.0
+                            2026-01-01T00:00:20.000000Z\ta\t3.0
+                            2026-01-01T00:00:25.000000Z\ta\t103.0
+                            2026-01-01T00:00:30.000000Z\ta\t106.0
+                            2026-01-01T00:00:40.000000Z\ta\t110.0
+                            2026-01-01T00:00:50.000000Z\ta\t114.0
+                            2026-01-01T00:01:00.000000Z\ta\t18.0
+                            2026-01-01T00:01:10.000000Z\ta\t22.0
+                            2026-01-01T00:01:20.000000Z\ta\t26.0
+                            2026-01-01T00:01:30.000000Z\ta\t30.0
+                            2026-01-01T00:01:40.000000Z\ta\t34.0
+                            2026-01-01T00:01:50.000000Z\ta\t38.0
+                            2026-01-01T00:02:00.000000Z\ta\t42.0
+                            """);
+        });
+    }
+
+    @Test
     public void testAForeignWorkerLeavesAParkedRepairAlone() throws Exception {
         // A parked repair holds a pinned base snapshot, a live-view writer with
         // uncommitted rows and a capture that freezes through its owner's timeline
@@ -1706,6 +1808,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                     0,
                     repairDescriptorCount()
             );
+            Assert.assertFalse("the abandoned candidate leaves no repair marker for a restart", repairMarkerExists());
             Assert.assertEquals(generationBefore, generation(instance));
             Assert.assertEquals(HISTORY_COMMITS, durableRowCount(instance));
 
@@ -1852,6 +1955,10 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         HISTORY_COMMITS,
                         entryCount(instance)
                 );
+                // Nor may it leave a repair marker standing over that timeline: a restart, or
+                // the in-place restore a failure recovery tries first, would rebuild from the
+                // applied base instead of restoring from roots that still describe the output.
+                Assert.assertFalse("a candidate that committed nothing owes no repair marker", repairMarkerExists());
             }
 
             // The pre-repair output, unchanged: the replacement never committed.

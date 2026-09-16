@@ -366,15 +366,17 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                         Assert.assertEquals(1, reads[secondColumn]);
                         Assert.assertEquals(1, state.getMapSize());
 
-                        // The first component refuses and the second accepts. The walk holds no
-                        // value for a component it passed over, so that one reads its own column
-                        // again - and the one the walk stopped on does not.
+                        // The first component refuses and the second accepts. The walk already
+                        // found the first one's argument refused, and an inert component leaves
+                        // its state alone on a refused row, so computeNext skips its contributor
+                        // rather than have it read the column again - and the one the walk stopped
+                        // on takes the value the walk read.
                         reads[firstColumn] = 0;
                         reads[secondColumn] = 0;
                         columns[firstColumn] = Double.NaN;
                         columns[secondColumn] = 20.0;
                         state.computeNext(record);
-                        Assert.assertEquals(2, reads[firstColumn]);
+                        Assert.assertEquals(1, reads[firstColumn]);
                         Assert.assertEquals(1, reads[secondColumn]);
 
                         // The first component accepts and the second refuses: the second reads
@@ -467,15 +469,17 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                         Assert.assertEquals(1, reads[secondColumn]);
                         Assert.assertEquals(1, state.getMapSize());
 
-                        // The first component refuses and the second accepts. The walk holds no
-                        // value for a component it passed over, so that one reads its own column
-                        // again - and the one the walk stopped on does not.
+                        // The first component refuses and the second accepts. The walk already
+                        // found the first one's argument refused, and an inert component leaves
+                        // its state alone on a refused row, so computeNext skips its contributor
+                        // rather than have it read the column again - and the one the walk stopped
+                        // on takes the value the walk read.
                         reads[firstColumn] = 0;
                         reads[secondColumn] = 0;
                         columns[firstColumn] = Double.NaN;
                         columns[secondColumn] = 20.0;
                         state.computeNext(record);
-                        Assert.assertEquals(2, reads[firstColumn]);
+                        Assert.assertEquals(1, reads[firstColumn]);
                         Assert.assertEquals(1, reads[secondColumn]);
 
                         // The first component accepts and the second refuses: the second reads

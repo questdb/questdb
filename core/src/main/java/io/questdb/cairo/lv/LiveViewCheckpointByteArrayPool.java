@@ -34,10 +34,28 @@ import java.util.Arrays;
  * Operation-scoped high-water pool for exact-width frozen key and scalar
  * images. Each width retains its simultaneous-use high-water count, independent
  * of the order in which later freezes encounter widths.
+ * <p>
+ * The pool never shrinks by itself. An owner that outlives the operations it
+ * serves reads {@link #getRetainedArrayCount()} and {@link #getRetainedBytes()}
+ * once an operation ends and calls {@link #clear()} when one outlier operation
+ * left more behind than the owner is willing to park.
  */
 final class LiveViewCheckpointByteArrayPool {
     private final IntObjHashMap<WidthPool> poolsByWidth = new IntObjHashMap<>();
     private int epoch;
+    private int retainedArrayCount;
+    private long retainedBytes;
+
+    /**
+     * Drops every pooled array, so the next operation allocates its images afresh.
+     * Arrays an earlier operation handed out stay valid for whoever still holds them:
+     * the pool only stops handing them out again.
+     */
+    void clear() {
+        poolsByWidth.clear();
+        retainedArrayCount = 0;
+        retainedBytes = 0;
+    }
 
     byte[] copy(MemoryR source, long offset, int length) {
         final byte[] out = next(length);
@@ -51,6 +69,20 @@ final class LiveViewCheckpointByteArrayPool {
         final byte[] out = next(source.length);
         System.arraycopy(source, 0, out, 0, source.length);
         return out;
+    }
+
+    /**
+     * @return the arrays this pool holds across every width, used or not
+     */
+    int getRetainedArrayCount() {
+        return retainedArrayCount;
+    }
+
+    /**
+     * @return the image bytes of every array this pool holds, excluding array headers
+     */
+    long getRetainedBytes() {
+        return retainedBytes;
     }
 
     byte[] next(int length) {
@@ -67,6 +99,8 @@ final class LiveViewCheckpointByteArrayPool {
             final byte[] value = new byte[length];
             pool.arrays.add(value);
             pool.cursor++;
+            retainedArrayCount++;
+            retainedBytes += length;
             return value;
         }
         final byte[] value = pool.arrays.getQuick(pool.cursor++);

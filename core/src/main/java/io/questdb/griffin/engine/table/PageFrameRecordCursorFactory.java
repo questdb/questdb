@@ -363,10 +363,10 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
      * page frame, merged into physical row order, which inside a partition is
      * designated-timestamp order. That shape costs two things a single-key scan does not,
      * and a caller pricing this against the full scan has to carry both: one index open per
-     * partition with a seek per key per frame off it, and an {@code O(rows * |keys|)}
-     * merge - {@link io.questdb.std.IntLongSortedList} is a sorted array rather than a
-     * heap, so every row that leaves it shifts the elements above its replacement's slot.
-     * See {@code LiveViewCheckpointKeyedScanCost}.
+     * partition with a seek per key per frame off it, and an {@code O(rows * log |keys|)}
+     * merge - {@link io.questdb.std.IntLongSortedList} is a binary min-heap, so every row
+     * that leaves it sifts its replacement down through a number of levels logarithmic in
+     * the key count. See {@code LiveViewCheckpointKeyedScanCost}.
      * <p>
      * {@code symbolKeys} are the table-local keys the column stores, so
      * {@link io.questdb.cairo.sql.SymbolTable#VALUE_IS_NULL} selects the rows whose value

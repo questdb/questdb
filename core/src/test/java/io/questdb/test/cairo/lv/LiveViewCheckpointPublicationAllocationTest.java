@@ -106,6 +106,14 @@ public class LiveViewCheckpointPublicationAllocationTest extends AbstractCairoTe
     }
 
     @Test
+    public void testASealJustInsideTheFrozenRetentionLimitAllocatesNothingPerSealOnceWarm() throws Exception {
+        // The writer hands an outlier seal's frozen graph back when the seal ends. One key
+        // array and one inline state array per key puts this key set just inside the
+        // limit, so its steady state must stay as garbage-free as a small one's.
+        assertSealAllocationIsBounded(LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAYS / 2 - 1_024);
+    }
+
+    @Test
     public void testSealAllocationDoesNotGrowWithSealCount() throws Exception {
         assertMemoryLeak(() -> {
             try (

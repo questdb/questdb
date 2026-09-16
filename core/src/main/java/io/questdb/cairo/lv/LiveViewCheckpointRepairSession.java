@@ -117,8 +117,8 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     private boolean isKeyedReplayRoute;
     // Whether this repair has a durable LiveViewCheckpointRepairMarker on disk that the
     // turn finishing it owes a clear. It lives here rather than in the executing turn
-    // because it outlives one: a repair that parks on its budget leaves the marker
-    // behind, and the turn that resumes it is a different call with its own locals.
+    // because it outlives one: a truncating repair that parks on its budget leaves the
+    // marker behind, and the turn that resumes it is a different call with its own locals.
     private boolean isRepairMarkerLive;
     private boolean isSuspended;
     // Set when close() abandoned the repair but could not put the overlay back, leaving the
@@ -483,9 +483,9 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     }
 
     /**
-     * @return true when a durable {@code LiveViewCheckpointRepairMarker} written for this
-     * repair is still on disk, so the turn that finishes the repair owes either a clear
-     * or a retire. See {@link #setRepairMarkerLive(boolean)}
+     * @return true when a durable {@code LiveViewCheckpointRepairMarker} this head-miss
+     * repair wrote is still on disk, so the turn that finishes the repair owes either a
+     * clear or a retire. See {@link #setRepairMarkerLive(boolean)}
      */
     public boolean isRepairMarkerLive() {
         return isRepairMarkerLive;
@@ -561,11 +561,19 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     }
 
     /**
-     * Records whether this repair has a live durable repair marker: one is written before
-     * a prefix truncate or a timeline splice, and cleared once the post-replay seal - or
-     * the splice itself - has made the timeline consistent again. A repair that parks on
-     * its turn budget leaves the marker on disk, so the flag travels with the session and
-     * the turn that finishes the repair is the one that resolves it.
+     * Records whether this repair has a live durable repair marker. Only the head-miss
+     * replay, the one executor whose session can park, sets the flag and reads it back.
+     * It writes the marker before a prefix truncate, or immediately before the replacement
+     * commit a timeline splice publishes over, and clears it once the post-replay seal - or
+     * the splice itself - has made the timeline consistent again. A truncating repair that
+     * parks on its turn budget leaves the marker on disk, so the flag travels with the
+     * session and the turn that finishes the repair is the one that resolves it. A splicing
+     * head miss has written none while its replay runs or while it is parked: nothing
+     * durable has moved under its roots yet.
+     * <p>
+     * A predecessor resume never sets the flag. It never parks, so it tracks its marker in
+     * a local of its own, and its session reports false here even while that marker is on
+     * disk.
      */
     public void setRepairMarkerLive(boolean live) {
         this.isRepairMarkerLive = live;

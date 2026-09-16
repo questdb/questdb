@@ -67,6 +67,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.lang.ref.WeakReference;
+import java.lang.reflect.Field;
 import java.util.Arrays;
 
 public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
@@ -78,6 +80,18 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
     // LiveViewCheckpointRingSeal.MIN_SHARED_CHUNK_ROWS, so the chunk each seal writes
     // carries enough rows to be worth a later root's reference.
     private static final int DENSE_ROWS_PER_COMMIT = 100;
+    // From the third seal on, every ring commit adds one shared chunk - a timestamp page
+    // and a value page - to each key, so from the second commit on a key's frozen holder
+    // names 2 * (c - 1) state pages after commit c: 2 * 19 * 2_048 = 77_824 references
+    // at the last commit, 2 * 11 * 2_048 = 45_056 at the within-limit probe.
+    private static final int RING_COMMITS = 20;
+    private static final int RING_COMMITS_WITHIN_LIMIT = 12;
+    // Three frozen image arrays per ring key keep this key set far inside the array limit,
+    // so only the state page references can make its seal an outlier.
+    private static final int RING_KEYS = 2_048;
+    // LiveViewCheckpointRingSeal.MIN_SHARED_CHUNK_ROWS: the fewest rows a chunk may carry
+    // and still be shared rather than re-imaged.
+    private static final int RING_ROWS_PER_COMMIT = 64;
 
     @After
     public void resetClock() {
@@ -108,6 +122,89 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                             LiveViewCheckpointLayout.dataDirPath(timelinePath, checkpointsDir).$()
                     ));
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testDropLeavesNoViewRuntimeInTheWorkersFreezeScratch() throws Exception {
+        // The refresh job's timeline writer outlives every view it seals. Its freeze
+        // scratch must not keep a dropped view's anchor window reachable for as long as
+        // the worker runs no other seal.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                            "SELECT ts, sym, sum(x) OVER w s, count(x) OVER w c FROM base " +
+                            "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(job, 10, 1);
+                appendAndRefresh(job, 11, 2);
+                final WeakReference<LiveViewWindow> anchorWindow = sealedAnchorWindow();
+
+                execute("DROP LIVE VIEW lv");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertTrue(
+                        "the worker's freeze scratch must not name the dropped view's runtime",
+                        timelineWriter(job).isFrozenScratchRuntimeReferenceClearForTest()
+                );
+                for (int i = 0; i < 20 && anchorWindow.get() != null; i++) {
+                    System.gc();
+                }
+                Assert.assertNull(
+                        "the worker must not keep the dropped view's anchor window reachable",
+                        anchorWindow.get()
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testDropLeavesNoRingHoldersAboveTheStatePageRefLimitInTheWorkersFreezeScratch() throws Exception {
+        // A ring-shaped partition freezes one state page reference per live chunk page,
+        // into a reference array its frozen holder allocates for itself rather than takes
+        // from the image array pool. What a ring seal leaves on the worker's writer grows
+        // with keys times chunk pages, so a view far inside the image array limit could
+        // still park megabytes of holders there for as long as the worker runs.
+        Assert.assertTrue(3 * RING_KEYS < LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAYS);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY MONTH WAL");
+            execute(
+                    "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                            "SELECT ts, sym, avg(x) OVER (" +
+                            "PARTITION BY sym ORDER BY ts RANGE BETWEEN '100000000' SECOND PRECEDING AND CURRENT ROW" +
+                            ") a FROM base"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                long withinLimit = -1;
+                for (int commit = 1; commit <= RING_COMMITS; commit++) {
+                    commitRingRowsAndRefresh(job, commit);
+                    if (commit == RING_COMMITS_WITHIN_LIMIT) {
+                        withinLimit = timelineWriter(job).getRetainedFrozenStatePageRefCountForTest();
+                    }
+                }
+                Assert.assertTrue(
+                        "a ring seal within the limit must keep its frozen holders pooled, retained=" + withinLimit,
+                        withinLimit > 0
+                                && withinLimit <= LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_STATE_PAGE_REFS
+                );
+                assertNoRefreshFaults("lv");
+
+                execute("DROP LIVE VIEW lv");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                final long retained = timelineWriter(job).getRetainedFrozenStatePageRefCountForTest();
+                Assert.assertTrue(
+                        "the worker's freeze scratch must not keep an outlier ring seal's state page references,"
+                                + " retained=" + retained,
+                        retained <= LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_STATE_PAGE_REFS
+                );
             }
         });
     }
@@ -908,6 +1005,29 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                 .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
     }
 
+    /**
+     * Weakly references the sealed view's anchor window. A separate frame, so no local
+     * of the calling test keeps the instance, and through it the window, reachable.
+     */
+    private static WeakReference<LiveViewWindow> sealedAnchorWindow() {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        Assert.assertTrue(
+                "the view must have sealed a fused window root",
+                instance.getCheckpointCaptureWindowRoots() > 0
+        );
+        Assert.assertNotNull(instance.getAnchorWindow());
+        return new WeakReference<>(instance.getAnchorWindow());
+    }
+
+    private static LiveViewCheckpointTimelineStoreWriter timelineWriter(LiveViewRefreshJob job) throws Exception {
+        final Field field = LiveViewRefreshJob.class.getDeclaredField("checkpointTimelineStoreWriter");
+        field.setAccessible(true);
+        final LiveViewCheckpointTimelineStoreWriter writer = (LiveViewCheckpointTimelineStoreWriter) field.get(job);
+        Assert.assertNotNull("the job must have sealed through its timeline writer", writer);
+        return writer;
+    }
+
     private void commitDenseAndRefresh(LiveViewRefreshJob job, int commit) throws Exception {
         setCurrentMicros(currentMicros + 200_000);
         final StringBuilder sql = new StringBuilder("INSERT INTO base VALUES ");
@@ -920,6 +1040,24 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                     .append(firstSecond + i).append(')');
         }
         execute(sql.toString());
+        drainWalQueue();
+        drainJob(job);
+        drainWalQueue();
+    }
+
+    /**
+     * Appends {@link #RING_ROWS_PER_COMMIT} rows to every one of {@link #RING_KEYS} keys, one
+     * second apart and all above the previous commit's rows, then drains the refresh.
+     */
+    private void commitRingRowsAndRefresh(LiveViewRefreshJob job, int commit) throws Exception {
+        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+        final long firstSecond = (long) (commit - 1) * RING_ROWS_PER_COMMIT;
+        execute(
+                "INSERT INTO base SELECT (" + ts("2026-01-01T00:00:00.000000Z") + " + ("
+                        + firstSecond + " + (x - 1) / " + RING_KEYS + ") * 1_000_000)::timestamp, "
+                        + "concat('s', (x - 1) % " + RING_KEYS + "), x::double "
+                        + "FROM long_sequence(" + RING_KEYS * RING_ROWS_PER_COMMIT + ")"
+        );
         drainWalQueue();
         drainJob(job);
         drainWalQueue();

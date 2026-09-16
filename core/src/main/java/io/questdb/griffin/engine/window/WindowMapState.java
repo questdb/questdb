@@ -349,14 +349,16 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      * {@link WindowFunction#accumulateWindowState(Record, MapValue, double)} - so an accepted
      * row costs the skip nothing at all on a dense input, where the walk stops at the first
      * component and the contributor it stopped on is handed what it would otherwise read a
-     * second time. The components the walk passed over, and the ones it never reached, read
-     * their own arguments exactly as they always did: their arguments are their own columns
-     * and the walk holds no value for them.
+     * second time. The contributor dispatch starts at that component, because the walk has
+     * already read and refused the argument of every component it passed over, and a component
+     * inert on a refused row would only read the same column again to leave its state as it
+     * found it. The components the walk never reached read their own arguments exactly as they
+     * always did: their arguments are their own columns and the walk holds no value for them.
      */
     public void computeNext(Record record) {
         // The component whose argument the skip evaluated and found present, and the value it
-        // read. -1 for a group whose pass 1 skips nothing, which is what leaves every
-        // contributor on the plain call below.
+        // read. -1 for a group whose pass 1 skips nothing, which is what starts the contributor
+        // loop below at the first component and leaves every contributor on the plain call.
         int acceptingComponent = -1;
         double acceptedArgument = Double.NaN;
         if (isPass1SkipEnabled) {
@@ -380,7 +382,11 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
                 plan.getComponent(c).resetState(value, plan.getComponentSlotBase(c));
             }
         }
-        for (int c = 0; c < componentCount; c++) {
+        // The walk read and refused the argument of every component ahead of the accepting one,
+        // and each of them is inert on a refused row, so their contributors have nothing to
+        // write. The loop starts at the accepting component rather than make them read their
+        // columns a second time to find that out.
+        for (int c = Math.max(acceptingComponent, 0); c < componentCount; c++) {
             if (c == acceptingComponent) {
                 plan.getContributor(c).accumulateWindowState(record, value, acceptedArgument);
             } else {
