@@ -426,6 +426,73 @@ public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryT
      * serial sites carry no guard.
      */
     /**
+     * sum()/avg() over DECIMAL256 carry a FIXED 256-bit running sum that THROWS
+     * {@code Overflow in addition} on a partial sum outside 2^255, and DECIMAL256 is the widest
+     * type there is, so unlike every other decimal sum/avg they have nothing to widen to. That
+     * makes the ERROR a function of arrival order even though the VALUE is not: the fixture
+     * alternates {@code +10^76-1} and {@code -10^76-1} between two keys, so in timestamp order no
+     * partial sum ever exceeds one operand and the answer is exactly 0, while key-major arrival
+     * delivers sixty same-sign additions and the sixth leaves the range.
+     * <p>
+     * Declared order-insensitive this threw where stock master answered {@code 0}. The assertions
+     * are the VALUE, not merely the absence of an exception -- a throw is the failure that was
+     * reported, but an accumulator silently wrapping instead would be worse.
+     * <p>
+     * The {@code sum(value)} control is what stops this being vacuous. It is the same query over
+     * the same fixture with a DOUBLE column, and it DOES take per-key, so the merge below is kept
+     * because of the AGGREGATE and not because the fixture is too small or too sparse to qualify.
+     */
+    @Test
+    public void testSumAvgOverDecimal256KeepTheMerge() throws Exception {
+        assertMemoryLeak(() -> {
+            createAlternatingDecimal256Table();
+            assertQuery("SELECT sum(value) FROM dec_tel WHERE param_id IN ('A','B')")
+                    .noLeakCheck()
+                    .assertsPlanContaining("frames: per-key (unordered)");
+            for (String agg : new String[]{"sum(v)", "avg(v)", "avg(v, 0)"}) {
+                final String indexed = "SELECT " + agg + " FROM dec_tel WHERE param_id IN ('A','B')";
+                assertQuery(indexed).noLeakCheck().assertsPlanNotContaining("frames: per-key");
+                assertSameResult(
+                        indexed,
+                        "SELECT /*+ no_index */ " + agg + " FROM dec_tel WHERE param_id IN ('A','B')"
+                );
+            }
+            assertQuery("SELECT sum(v) s, avg(v) a, avg(v, 0) r FROM dec_tel WHERE param_id IN ('A','B')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("s\ta\tr\n0\t0\t0\n");
+        });
+    }
+
+    /**
+     * Two keys whose rows INTERLEAVE in time and whose values cancel pairwise: {@code 'A'} holds
+     * the largest DECIMAL(76,0) there is and {@code 'B'} its negation. Timestamp order therefore
+     * keeps every partial sum inside one operand; key-major order does not.
+     * <p>
+     * Sixty rows per key, not six, because per-key mode declines below ~32 rows per
+     * (key, partition) pair. A six-row fixture would fall back to the merge on density and prove
+     * nothing about the aggregate. The DOUBLE {@code value} column carries the control query that
+     * pins the fixture really is per-key-eligible.
+     */
+    private void createAlternatingDecimal256Table() throws Exception {
+        final String max = "9999999999999999999999999999999999999999999999999999999999999999999999999999";
+        execute("CREATE TABLE dec_tel (" +
+                "  ts TIMESTAMP," +
+                "  param_id SYMBOL INDEX TYPE POSTING INCLUDE (v, value)," +
+                "  v DECIMAL(76,0)," +
+                "  value DOUBLE" +
+                ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("INSERT INTO dec_tel SELECT" +
+                " x::timestamp," +
+                " CASE WHEN x % 2 = 0 THEN 'A' ELSE 'B' END," +
+                " CASE WHEN x % 2 = 0 THEN '" + max + "'::DECIMAL(76,0)" +
+                "      ELSE '-" + max + "'::DECIMAL(76,0) END," +
+                " x::double" +
+                " FROM long_sequence(120)");
+    }
+
+    /**
      * {@link #createSymbolPatternTable()}'s shape, but with the two matching keys INTERLEAVED so
      * that key-major arrival and timestamp arrival disagree: {@code 'AB'} owns the earliest row and
      * {@code 'AA'} the latest. Without that the two orders coincide and an order-sensitivity

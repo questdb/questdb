@@ -115,9 +115,29 @@ class SumDecimal256GroupByFunction extends Decimal256Function implements GroupBy
         return false;
     }
 
+    /**
+     * True, because {@link #computeNext} can THROW on a partial sum that the same multiset of
+     * rows in another order would never produce.
+     * <p>
+     * The accumulator is a FIXED 256-bit integer and {@link Decimal256#uncheckedAdd} raises
+     * {@code Overflow in addition} the moment a partial sum leaves that range. Every other
+     * {@code Sum*Decimal*} widens instead: {@code SumDecimal8}/{@code SumDecimal16} add into a
+     * plain {@code long}, and {@code SumDecimal32}/{@code SumDecimal64}/{@code SumDecimal128}
+     * carry a promoted DECIMAL128/DECIMAL256 accumulator plus an "already promoted" flag, so
+     * the widened range is wide enough that no reachable row count can exhaust it. DECIMAL256
+     * is the widest type there is, so this one has nothing to widen to.
+     * <p>
+     * The VALUE is order-invariant -- exact integer addition is associative -- but whether the
+     * query answers at all is not. Twelve DECIMAL(76,0) rows alternating {@code +10^76-1} and
+     * {@code -10^76-1} sum to 0 in timestamp order, because every partial sum stays inside one
+     * operand. Grouped key-major by a covering scan the same rows arrive as six additions of
+     * the same sign, and the sixth exceeds 2^255-1. Declaring false let that happen: it told
+     * the scan it could reorder freely, and a query that returned {@code 0} before this branch
+     * began throwing.
+     */
     @Override
     public boolean isOrderSensitive() {
-        return false;
+        return true;
     }
 
     @Override

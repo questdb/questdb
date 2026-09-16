@@ -158,6 +158,20 @@ public class GroupByFunctionOrderSensitivityTest {
      * flagged so it stays correct when something does. The LONG variants are genuinely
      * insensitive and stay in the other list: their integer histogram only ever appends buckets
      * on resize, leaving the value-to-bucket mapping of existing values untouched.
+     * <p>
+     * sum()/avg() over DECIMAL256 are here because their accumulator can THROW, which is a
+     * result like any other. All three carry a FIXED 256-bit running sum and
+     * {@code Decimal256.uncheckedAdd} raises {@code Overflow in addition} the instant a PARTIAL
+     * sum leaves that range. Every other decimal sum/avg widens instead -- the 8/16-bit ones add
+     * into a plain {@code long}, the 32/64/128-bit ones promote to DECIMAL128/DECIMAL256 behind
+     * an "already promoted" flag -- and DECIMAL256 is the widest type there is, so this family
+     * has nothing to widen to. Twelve DECIMAL(76,0) rows alternating {@code +10^76-1} and
+     * {@code -10^76-1} sum to 0 in timestamp order because no partial sum ever exceeds one
+     * operand; key-major they arrive as six same-sign additions and the sixth exceeds 2^255-1.
+     * Declaring false made a query that used to return {@code 0} throw. The exact VALUE is
+     * order-invariant, so this is over-conservative in the sense that it also costs per-key to
+     * queries whose data would never overflow -- but nothing at plan time can tell those apart,
+     * and the cost is confined to sum()/avg() over DECIMAL precision above 38.
      */
     private static final Set<String> ORDER_SENSITIVE = new TreeSet<>(Arrays.asList(
             "io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByFunction",
@@ -192,6 +206,8 @@ public class GroupByFunctionOrderSensitivityTest {
             "io.questdb.griffin.engine.functions.groupby.ArgMinUuidTimestampGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.ArrayAggDoubleArrayGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.ArrayAggDoubleGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.AvgDecimal256GroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.AvgDecimal256Rescale256GroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.FirstArrayGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.FirstBooleanGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.FirstByteGroupByFunction",
@@ -304,6 +320,7 @@ public class GroupByFunctionOrderSensitivityTest {
             "io.questdb.griffin.engine.functions.groupby.StringDistinctAggGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.StringDistinctAggSymbolGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.StringDistinctAggVarcharGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.SumDecimal256GroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction"
     ));
 
@@ -335,6 +352,12 @@ public class GroupByFunctionOrderSensitivityTest {
      *   <li>ksum()/nsum() and the floating-point sums are order-dependent only in the last
      *       bits of rounding, which is not a semantic guarantee and already varies with
      *       worker count.</li>
+     *   <li>sum()/avg() over DECIMAL8/16/32/64/128 stay here because they WIDEN rather than
+     *       throw: the 8/16-bit ones accumulate into a plain {@code long}, the 32/64/128-bit
+     *       ones promote to a DECIMAL128/DECIMAL256 accumulator behind an "already promoted"
+     *       flag, and no reachable row count can exhaust the widened range. The DECIMAL256
+     *       members of the same family have nothing to widen to and are in
+     *       {@code ORDER_SENSITIVE}.</li>
      * </ul>
      */
     private static final Set<String> ORDER_INSENSITIVE = new TreeSet<>(Arrays.asList(
@@ -347,8 +370,6 @@ public class GroupByFunctionOrderSensitivityTest {
             "io.questdb.griffin.engine.functions.groupby.AvgDecimal128Rescale256GroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.AvgDecimal16GroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.AvgDecimal16Rescale256GroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.AvgDecimal256GroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.AvgDecimal256Rescale256GroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.AvgDecimal32GroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.AvgDecimal32Rescale256GroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.AvgDecimal64GroupByFunction",
@@ -458,7 +479,6 @@ public class GroupByFunctionOrderSensitivityTest {
             "io.questdb.griffin.engine.functions.groupby.StdDevSampleGroupByFunctionFactory$StdDevSampleGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.SumDecimal128GroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.SumDecimal16GroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.SumDecimal256GroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.SumDecimal32GroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.SumDecimal64GroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.SumDecimal8GroupByFunction",
