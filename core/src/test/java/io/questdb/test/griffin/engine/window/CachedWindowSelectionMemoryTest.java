@@ -40,7 +40,10 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -297,6 +300,95 @@ public class CachedWindowSelectionMemoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderedSelectionMappingAtScale() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, "true");
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4096L);
+            // 7919 is coprime to 2400, so k permutes 0..2399 and ORDER BY k is a traversal that is
+            // neither the incoming order nor its reverse. Every selection below keeps more than
+            // 600 rows spread over dozens of bitset words, so the ordered mapping runs its
+            // multi-word scan rather than a small-list special case.
+            execute("""
+                    CREATE TABLE tab AS (
+                      SELECT timestamp_sequence(0, 1000) ts, x v, (x * 7919) % 2400 k
+                      FROM long_sequence(2400)
+                    ) TIMESTAMP(ts)
+                    """);
+            final int rowCount = 2400;
+            final int[] valueAtKey = new int[rowCount];
+            for (int v = 1; v <= rowCount; v++) {
+                valueAtKey[(int) ((v * 7919L) % rowCount)] = v;
+            }
+            for (int stride = 2; stride <= 3; stride++) {
+                for (int source = 0; source < 3; source++) {
+                    final StringSink expected = new StringSink();
+                    expected.put("ts\tv\n");
+                    for (int i = 0; i < rowCount; i++) {
+                        final int v = source < 2 ? rowCount - i : valueAtKey[i];
+                        // cadence over ts keeps ordinal 0, every stride-th ordinal and the last one;
+                        // the ts ordinal of row v is v - 1.
+                        final int ordinal = v - 1;
+                        if (ordinal % stride == 0 || ordinal == rowCount - 1) {
+                            MicrosFormatUtils.appendDateTimeUSec(expected, ordinal * 1000L);
+                            expected.put('\t').put(v).put('\n');
+                        }
+                    }
+                    final String from = switch (source) {
+                        case 0 -> "(SELECT ts, v FROM tab ORDER BY ts DESC)";
+                        case 1 -> "(SELECT ts, v FROM tab ORDER BY v DESC)";
+                        default -> "(SELECT ts, v FROM tab ORDER BY k)";
+                    };
+                    final QueryAssertion assertion = assertQuery("SELECT ts, v FROM " + from + " SUBSAMPLE cadence(" + stride + ")")
+                            .withPlanContaining("CachedWindowLightSelect", "orderedFunctions: [[ts]");
+                    if (source == 0) {
+                        assertion.timestampDesc("ts");
+                    }
+                    assertion.returns(expected);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOrderedSparseSelectionUnderQueryMemoryLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, "true");
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4096L);
+            execute("CREATE TABLE tab AS (SELECT timestamp_sequence(0, 1000) ts, x v FROM long_sequence(1_000_000)) TIMESTAMP(ts)");
+            try (RecordCursorFactory factory = select("SELECT ts, v FROM (SELECT ts, v FROM tab ORDER BY ts DESC) SUBSAMPLE cadence(2)")) {
+                assertFusedPlan(factory, true);
+                // Unlimited: the charges left after computation are the query's high-water mark,
+                // because the ordered mapping allocates last and frees nothing before close.
+                final long peak = assertOrderedSparseSelection(factory);
+                // The bitset alone charges one bit per buffered row on top of the row-id lists.
+                Assert.assertTrue("peak " + peak, peak > ROW_COUNT * Long.BYTES + ROW_COUNT / Byte.SIZE);
+                // Pinned at the peak the same selection still fits ...
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, peak);
+                Assert.assertEquals(peak, assertOrderedSparseSelection(factory));
+                // ... and one byte under it the mapping's own allocation trips the limit, which
+                // must leave nothing charged and the factory reusable.
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, peak - 1);
+                MemoryTracker tracker;
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    tracker = sqlExecutionContext.getMemoryTracker();
+                    try {
+                        cursor.hasNext();
+                        Assert.fail("expected query memory limit during ordered selection mapping");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        assertFailureMethod(e, "mapSelectedRows");
+                    }
+                }
+                Assert.assertEquals(0, tracker.getUsed());
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
+                Assert.assertEquals(peak, assertOrderedSparseSelection(factory));
+            }
+        });
+    }
+
+    @Test
     public void testSelectionComputationFailureThenReuse() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, "true");
@@ -493,6 +585,40 @@ public class CachedWindowSelectionMemoryTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    // Iterates a cadence(2) selection over the ts-descending 1M-row table twice through the
+    // same cursor and returns the tracker charges while the cursor is still open.
+    private long assertOrderedSparseSelection(RecordCursorFactory factory) throws Exception {
+        final long expectedRows = ROW_COUNT / 2 + 1;
+        final long used;
+        MemoryTracker tracker = null;
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            tracker = sqlExecutionContext.getMemoryTracker();
+            Assert.assertNotNull(tracker);
+            for (int pass = 0; pass < 2; pass++) {
+                long rows = 0;
+                while (cursor.hasNext()) {
+                    // Descending output: kept ordinals are the last row, then every even ordinal.
+                    final long ordinal = rows == 0 ? ROW_COUNT - 1 : ROW_COUNT - 2 - 2 * (rows - 1);
+                    Assert.assertEquals(ordinal * 1000, cursor.getRecord().getTimestamp(0));
+                    Assert.assertEquals(ordinal + 1, cursor.getRecord().getLong(1));
+                    rows++;
+                }
+                Assert.assertEquals(expectedRows, rows);
+                cursor.toTop();
+            }
+            RecordCursor.Counter counter = new RecordCursor.Counter();
+            cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+            Assert.assertEquals(expectedRows, counter.get());
+            used = tracker.getUsed();
+            Assert.assertTrue(used > 0);
+        } finally {
+            if (tracker != null) {
+                Assert.assertEquals("cursor close must release query charges", 0, tracker.getUsed());
+            }
+        }
+        return used;
     }
 
     private void assertSelectedRows(RecordCursorFactory factory, DirectLongList selectedRows, boolean isAllRows, long... expected) throws Exception {

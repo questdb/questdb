@@ -48,6 +48,7 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -449,6 +450,11 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
         private final RecordArray narrowChain;
         private final WindowLightRecord recordA;
         private final WindowLightRecord recordB;
+        // Row-selecting ordered traversal only: one bit per buffered row, set for each selected
+        // absolute row. Scanning it ascending yields selectedRowIds in incoming order without a
+        // sort, so the mapping never leaves the per-query tracker (DirectLongList.sortAsUnsigned
+        // would malloc an untracked native copy of the list above 600 elements).
+        private final DirectLongList selectedRowBits;
         // Row-selecting mode only: ascending ABSOLUTE incoming-row indices emitted by this cursor.
         // Forward functions write directly here. Ordered/backward traversal ordinals use
         // selectedTraversalRows for translation before emission. Select-all uses neither list.
@@ -480,6 +486,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             this.lightSpi = new LightWindowSPI(sourceMap, narrowChain, baseRowIds);
             // Lazy (matches baseRowIds): reopen() under the tracker bound by the first of(). Only
             // allocated/used in row-selecting mode.
+            this.selectedRowBits = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
             this.selectedRowIds = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
             this.selectedTraversalRows = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
             // Lazy: the first of() binds the tracker and reopens the chain, row-id lists,
@@ -504,6 +511,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 Misc.free(baseCursor);
                 Misc.free(narrowChain);
                 Misc.free(baseRowIds);
+                Misc.free(selectedRowBits);
                 Misc.free(selectedRowIds);
                 Misc.free(selectedTraversalRows);
                 for (int i = 0, n = sortBuffers.size(); i < n; i++) {
@@ -726,9 +734,9 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
 
             // Row-selecting fusion: the function reports selected ordinals in its pass1 traversal.
             // Translate ordered traversal ordinals through the retained sort buffer to absolute
-            // incoming rows, then sort those rows so output preserves incoming cursor order; the
-            // forward branch validates its identity mapping as strictly ascending and skips the
-            // sort. This still skips the O(N) boolean pass2 write and downstream Filter.
+            // incoming rows, flagged in a bitset that an ascending scan turns into incoming cursor
+            // order; the forward branch validates its identity mapping as strictly ascending and
+            // needs no such pass. This still skips the O(N) boolean pass2 write and downstream Filter.
             if (rowSelecting) {
                 isSelectionAllRows = selectingFunction.isSelectionAllRows();
                 if (isSelectionAllRows) {
@@ -821,6 +829,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             narrowChain.clear();
             baseRowIds.clear();
             if (rowSelecting) {
+                selectedRowBits.clear();
                 selectedRowIds.clear();
                 selectedTraversalRows.clear();
             }
@@ -833,6 +842,8 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 baseRowIds.setMemoryTracker(memoryTracker);
                 baseRowIds.reopen();
                 if (rowSelecting) {
+                    selectedRowBits.setMemoryTracker(memoryTracker);
+                    selectedRowBits.reopen();
                     selectedRowIds.setMemoryTracker(memoryTracker);
                     selectedRowIds.reopen();
                     selectedTraversalRows.setMemoryTracker(memoryTracker);
@@ -867,7 +878,6 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             selectedRowIds.clear();
             selectedTraversalRows.clear();
 
-            boolean isSortNeeded = true;
             int orderedGroup = -1;
             for (int i = 0, n = orderedFunctions.size(); i < n && orderedGroup < 0; i++) {
                 final ObjList<WindowFunction> functions = orderedFunctions.getQuick(i);
@@ -882,6 +892,17 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             final boolean isForward = orderedGroup < 0 && containsFunction(forwardUnorderedFunctions, selectingFunction);
             selectingFunction.getSelectedRows(isForward ? selectedRowIds : selectedTraversalRows);
             if (orderedGroup >= 0) {
+                // The sorted traversal visits every buffered row exactly once, so the selected
+                // absolute rows are distinct values in [0, size). Flagging each in a bitset and
+                // scanning the words ascending is a linear-time sort whose only memory, one bit
+                // per buffered row (at most 1/64 of baseRowIds), the tracker charges up front.
+                final long wordCount = (size + 63) >>> 6;
+                if (wordCount > 0) {
+                    if (selectedRowBits.getCapacity() < wordCount) {
+                        selectedRowBits.setCapacity(wordCount);
+                    }
+                    Vect.memset(selectedRowBits.getAddress(), wordCount << 3, 0);
+                }
                 final WindowSortBuffer group = sortBuffers.getQuick(orderedGroup);
                 group.toTop();
                 long traversalOrdinal = 0;
@@ -892,7 +913,16 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                     final long absoluteRow = group.next();
                     final long wantedOrdinal = selectedTraversalRows.get(selectedIndex);
                     if (wantedOrdinal == traversalOrdinal) {
-                        selectedRowIds.add(absoluteRow);
+                        if (absoluteRow < 0 || absoluteRow >= size) {
+                            throw CairoException.nonCritical().put("row-selecting traversal index out of bounds");
+                        }
+                        final long word = absoluteRow >>> 6;
+                        final long bits = selectedRowBits.get(word);
+                        final long mask = 1L << (absoluteRow & 63);
+                        if ((bits & mask) != 0) {
+                            throw CairoException.nonCritical().put("invalid row-selecting traversal order");
+                        }
+                        selectedRowBits.set(word, bits | mask);
                         selectedIndex++;
                     } else if (wantedOrdinal < traversalOrdinal) {
                         throw CairoException.nonCritical().put("invalid row-selecting traversal order");
@@ -902,12 +932,21 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 if (selectedIndex != selectedCount) {
                     throw CairoException.nonCritical().put("row-selecting traversal index out of bounds");
                 }
+                // Emit each flagged row once, ascending: word order times bit order.
+                selectedRowIds.ensureCapacity(selectedCount);
+                for (long word = 0; word < wordCount; word++) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    long bits = selectedRowBits.get(word);
+                    while (bits != 0) {
+                        selectedRowIds.add((word << 6) + Long.numberOfTrailingZeros(bits));
+                        bits &= bits - 1;
+                    }
+                }
             } else if (isForward) {
                 // Forward pass1 traversal ordinal == absolute buffered-row index, so this identity
                 // mapping preserves the getSelectedRows contract order: strictly ascending ordinals
                 // in, strictly ascending row ids out. Enforce that strictness in-loop (prevOrdinal
-                // starts at -1 so ordinal 0 passes) instead of repairing violations with the tail
-                // sort, which is redundant work on already-sorted input.
+                // starts at -1 so ordinal 0 passes); nothing downstream re-sorts the list.
                 long prevOrdinal = -1;
                 for (long i = 0, n = selectedRowIds.size(); i < n; i++) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
@@ -920,21 +959,24 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                     }
                     prevOrdinal = traversalOrdinal;
                 }
-                isSortNeeded = false;
             } else if (containsFunction(backwardUnorderedFunctions, selectingFunction)) {
-                for (long i = 0, n = selectedTraversalRows.size(); i < n; i++) {
+                // Backward pass1 ordinal k is absolute row size-1-k, so walking the strictly
+                // ascending ordinals from the end emits absolute rows ascending without a sort.
+                long prevOrdinal = size;
+                for (long i = selectedTraversalRows.size() - 1; i >= 0; i--) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     final long traversalOrdinal = selectedTraversalRows.get(i);
                     if (traversalOrdinal < 0 || traversalOrdinal >= size) {
                         throw CairoException.nonCritical().put("row-selecting traversal index out of bounds");
                     }
+                    if (traversalOrdinal >= prevOrdinal) {
+                        throw CairoException.nonCritical().put("invalid row-selecting traversal order");
+                    }
+                    prevOrdinal = traversalOrdinal;
                     selectedRowIds.add(size - 1 - traversalOrdinal);
                 }
             } else {
                 throw CairoException.nonCritical().put("row-selecting function has no traversal group");
-            }
-            if (isSortNeeded) {
-                selectedRowIds.sortAsUnsigned();
             }
         }
 
