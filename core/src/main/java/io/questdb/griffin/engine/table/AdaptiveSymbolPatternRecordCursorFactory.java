@@ -409,12 +409,25 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         // bitmap-index delegate is deliberately absent: it has no page frames to give, and it is
         // unreachable even through getCursor() whenever a covering delegate exists, because that
         // open prefers the covering delegate unconditionally. Including it here -- as
-        // getScanDirection() must, for record-cursor callers -- made the order-sensitivity guard in
-        // SqlCodeGenerator refuse first()/last()/twap()/array_agg() over a pattern filter on a
-        // POSTING-indexed symbol, on the strength of a delegate that could not have executed the
-        // query. In self-filtering mode (coveringDelegate == null) this answer describes the scan
-        // delegate alone, which is honest: supportsPageFrameCursor() reports false in that mode, so
-        // no page-frame consumer reaches this factory at all.
+        // getScanDirection() must, for record-cursor callers -- made
+        // SqlCodeGenerator.validateOrderSensitiveAggregates() refuse first()/last()/array_agg()
+        // over a pattern filter on a POSTING-indexed symbol, on the strength of a delegate that
+        // could not have executed the query. In self-filtering mode (coveringDelegate == null)
+        // this answer describes the scan delegate alone, which is honest:
+        // supportsPageFrameCursor() reports false in that mode, so no page-frame consumer reaches
+        // this factory at all.
+        //
+        // twap() and sparkline() are NOT in that list, and this comment used to say they were.
+        // They are refused by a different guard -- SqlCodeGenerator.isBaseTimestampAscending(),
+        // which their single-batch step-function integration needs -- and that guard reads
+        // getScanDirection(), deliberately: its answer is baked into the assembled aggregate
+        // functions BEFORE codegen has decided between the parallel page-frame group by and the
+        // serial record-cursor one, so it has to hold for a record cursor too. Over a pattern
+        // filter on a POSTING-indexed symbol twap() and sparkline() therefore still throw
+        // "requires the base query to provide ascending designated timestamp order", measured
+        // both before and after this override was introduced, while array_agg() and first() over
+        // the identical base answer. Lifting that is a separate change: it would have to move the
+        // decision below the parallel/serial routing, not widen this method.
         if (scanDelegate.getPageFrameScanDirection() != SCAN_DIRECTION_FORWARD
                 || (coveringDelegate != null && coveringDelegate.getPageFrameScanDirection() != SCAN_DIRECTION_FORWARD)) {
             return SCAN_DIRECTION_OTHER;
