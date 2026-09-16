@@ -161,13 +161,17 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // way. There is deliberately no equivalent for the ceiling.
     @TestOnly
     static int perKeyMinRowsPerPairOverride = -1;
-    // Number of partition frames the density estimate samples, and the total number of
-    // (frame, key) metadata probes it may spend. Both are fixed, so admission costs O(1) per
-    // open no matter how large the scan is -- which matters because the estimate runs on the
-    // caller's thread before the first row, and because a shape with many (key, partition)
-    // pairs is precisely the shape whose full probe walk would cost what the gate exists to
-    // avoid. See estimateRowsPerPair() for what sampling instead of walking gives up.
-    private static final int PER_KEY_ESTIMATE_MAX_FRAMES = 4;
+    // The density estimate's probe budget, and the cap on how much of it may be spent on the
+    // key axis. Both are fixed, so admission costs a bounded number of index-metadata probes
+    // per open no matter how large the scan is -- which matters because the estimate runs on
+    // the caller's thread before the first row.
+    //
+    // The budget is spent on PAIRS, not on frames: the estimate samples
+    // min(K, PER_KEY_ESTIMATE_MAX_KEYS) keys and PER_KEY_ESTIMATE_MAX_PROBES / keysSampled
+    // partition frames. A four-key IN-list therefore covers up to 2048 partition frames --
+    // more than almost any real table has, so for those the estimate probes EVERY pair and
+    // its answer is exact rather than sampled. See estimateRowsPerPair().
+    private static final int PER_KEY_ESTIMATE_MAX_KEYS = 64;
     private static final int PER_KEY_ESTIMATE_MAX_PROBES = 8192;
     private static final ThreadLocal<MergeObserver> TEST_MERGE_OBSERVER = new ThreadLocal<>();
     // The plan this query would have got with /*+ no_covering *//*, held so a NULL key over a
@@ -1126,50 +1130,104 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // -1 ("no bounded answer") compares false, i.e. falls back to the merge, which is the
         // right default for every ambiguous case: it is the mode that exists today and the one
         // whose ordering matches what the factory advertises.
-        return estimateRowsPerPair(frameCursor, reader, keys) >= minRowsPerPair;
+        return estimateRowsPerPair(frameCursor, reader, keys, partitionUpperBound) >= minRowsPerPair;
     }
 
     /**
-     * Estimated rows per (key, partition-frame) pair, or {@code -1} when no bounded answer is
-     * available. This is the denominator of the performance crossover and the only input to
-     * either gate that is not free.
+     * Estimated rows per EMITTED (key, partition-frame) pair, or {@code -1} when no bounded
+     * answer is available. This is the denominator of the performance crossover and the only
+     * input to either gate that is not free.
      * <p>
-     * It samples: at most {@link #PER_KEY_ESTIMATE_MAX_FRAMES} partition frames from the front
-     * of the cursor, and at most {@code PER_KEY_ESTIMATE_MAX_PROBES / frames} keys from the
-     * front of the key list, so the whole estimate costs a fixed number of metadata probes per
-     * open regardless of the scan's size. Sampling rather than walking every pair is the one
-     * real compromise here: a full walk is exact, but for a high-K/high-P shape it costs the K
-     * x P index-reader probes that per-key mode is being judged on, on every execution of a
-     * cached plan. Rows-per-pair is a mean, so sampling a prefix of each axis estimates it
-     * directly; what it gives up is accuracy when density varies systematically along either
-     * axis -- a table whose oldest partitions are much sparser than its newest, or an IN-list
-     * whose first keys are much rarer than its last, will be mis-scored. Both directions of
-     * that error cost speed only.
+     * <b>Emitted pairs, not sampled pairs.</b> Per-key mode produces one frame per NON-EMPTY
+     * pair -- a key with no rows in a partition costs nothing, because
+     * {@code openForwardCoveringCursor} hands back an empty row cursor and the drain skips it.
+     * So the denominator counts only pairs the probe found rows in. Dividing by every sampled
+     * pair scores a shape by how many of its keys are absent rather than by how much work each
+     * emitted frame carries, and rejects shapes per-key wins by a wide margin: eight keys
+     * round-robined one per partition at 100 rows each is 100 rows per emitted frame, 3.1x the
+     * crossover, and scores 12 under the old denominator.
      * <p>
-     * {@code estimateMatchesClamped} answers from generation metadata with no O(rows) walk and
-     * returns an exact count for a sealed generation, a conservative upper bound otherwise.
-     * Its two non-numeric answers -- {@code ESTIMATE_REJECT} for a clipped legacy unranked
-     * Elias-Fano blob with no bounded rank metadata, and {@code LONG_NULL} for a key the reader
-     * cannot count -- both mean "no bounded answer", and so does a sample that found no usable
-     * frame at all.
+     * <b>Spread, not prefix.</b> Both axes are sampled by STRIDE across their whole range, not
+     * by taking a prefix. A prefix sample of the partition axis reads the OLDEST partitions of
+     * a full scan, which is the one end whose density is systematically unrepresentative:
+     * a single leading partition holding a handful of rows drags the mean of a four-frame
+     * prefix far enough to flip the decision on an otherwise uniform table, a symbol
+     * commissioned partway through history scores zero on every partition that predates it,
+     * and a dense head above a long sparse tail is ADMITTED -- the exact inversion this gate
+     * exists to prevent. Striding costs one extra walk of the frame cursor (see below) and
+     * removes all three.
+     * <p>
+     * <b>Budget and exactness.</b> The estimate probes at most
+     * {@link #PER_KEY_ESTIMATE_MAX_PROBES} (key, frame) pairs, split
+     * {@code min(K, PER_KEY_ESTIMATE_MAX_KEYS)} keys by
+     * {@code PER_KEY_ESTIMATE_MAX_PROBES / keysSampled} frames. When both strides come out at
+     * 1 -- which they do whenever {@code K <= 64} and the frame count fits the frame budget,
+     * i.e. for almost every real IN-list scan -- every pair is probed and the answer is EXACT,
+     * not sampled. Only a shape that exceeds the budget on an axis falls back to sampling it,
+     * and it then samples that axis evenly rather than from one end.
+     * <p>
+     * <b>Cost.</b> Up to {@link #PER_KEY_ESTIMATE_MAX_PROBES} calls to
+     * {@code estimateMatchesClamped}, which answers from generation metadata with no O(rows)
+     * walk; up to one {@code getIndexReader} per probed frame, which is NOT extra work -- both
+     * modes open the index reader of every partition they scan, so the estimate only pays them
+     * earlier and on the caller's thread; and one additional walk of the partition-frame cursor.
+     * That walk is the real added cost. Frames the stride skips are requested with a saturated
+     * skip target, which the full cursors answer from partition metadata without opening the
+     * partition; the interval cursors ignore the skip target and resolve every frame, so for
+     * them the estimate roughly doubles frame resolution -- O(partitions), against a scan that
+     * is O(rows).
+     * <p>
+     * {@code estimateMatchesClamped} returns an exact count for a sealed generation and a
+     * conservative upper bound otherwise; over-counting biases toward per-key, which costs
+     * speed only. Its two non-numeric answers -- {@code ESTIMATE_REJECT} for a clipped legacy
+     * unranked Elias-Fano blob with no bounded rank metadata, and {@code LONG_NULL} for a key
+     * the reader cannot count -- both mean "no bounded answer", and so does a sample that found
+     * no usable frame, or no non-empty pair, at all.
      * <p>
      * The cursor is single-pass but rewindable, and it is rewound in a {@code finally} before
      * the caller hands it to {@code MultiKeyCoveringPageFrameCursor.of()}. The same
      * walk-then-{@code toTop()} shape is used by {@code SingleKeyCoveringCursor.size()} in this
      * file and by {@code AdaptiveSymbolPatternRecordCursorFactory.estimate()}.
+     *
+     * @param frameCountUpperBound the caller's already-computed bound on the number of frames
+     *                             the cursor can produce; it may over-count but never
+     *                             under-counts, so a stride derived from it can only sample
+     *                             fewer frames than the budget allows, never bias the sample
      */
-    private long estimateRowsPerPair(PartitionFrameCursor frameCursor, TableReader reader, IntList keys) {
-        final int keysToSample = Math.min(keys.size(), PER_KEY_ESTIMATE_MAX_PROBES / PER_KEY_ESTIMATE_MAX_FRAMES);
-        if (keysToSample <= 0) {
+    private long estimateRowsPerPair(
+            PartitionFrameCursor frameCursor,
+            TableReader reader,
+            IntList keys,
+            long frameCountUpperBound
+    ) {
+        final int keyCount = keys.size();
+        if (keyCount <= 0) {
             return -1;
         }
+        final int keysToSample = Math.min(keyCount, PER_KEY_ESTIMATE_MAX_KEYS);
+        // Ceiling division on both axes: a stride that rounded down would run the sample past
+        // the end of the axis and spend budget on indices that do not exist.
+        final int keyStride = (keyCount + keysToSample - 1) / keysToSample;
+        final int framesToSample = Math.max(1, PER_KEY_ESTIMATE_MAX_PROBES / keysToSample);
+        final long frameCount = Math.max(1, frameCountUpperBound);
+        final long frameStride = Math.max(1, (frameCount + framesToSample - 1) / framesToSample);
         long matchedRows = 0;
-        int sampledFrames = 0;
+        long nonEmptyPairs = 0;
         try {
-            for (int visited = 0; visited < PER_KEY_ESTIMATE_MAX_FRAMES; visited++) {
-                final PartitionFrame frame = frameCursor.next();
+            long frameIndex = 0;
+            int probedFrames = 0;
+            while (probedFrames < framesToSample) {
+                final boolean probe = frameIndex % frameStride == 0;
+                // Long.MAX_VALUE says "skip this frame whatever it holds". FullFwd/FullBwd
+                // answer it from partition metadata and do not open the partition; the
+                // interval cursors ignore it. Nothing on a skipped frame is read.
+                final PartitionFrame frame = frameCursor.next(probe ? 0 : Long.MAX_VALUE);
                 if (frame == null) {
                     break;
+                }
+                frameIndex++;
+                if (!probe) {
+                    continue;
                 }
                 final IndexReader indexReader = reader.getIndexReader(
                         frame.getPartitionIndex(), indexColumnIndex, IndexReader.DIR_FORWARD);
@@ -1188,23 +1246,28 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 final long callerHiInclusive = frame.getRowHi() - 1;
                 final long entryMax = posting.getEntryMaxValue();
                 final long clampedMax = entryMax >= 0 ? Math.min(callerHiInclusive, entryMax) : callerHiInclusive;
-                for (int i = 0; i < keysToSample; i++) {
+                for (int i = 0; i < keyCount; i += keyStride) {
                     final long count = posting.estimateMatchesClamped(
                             TableUtils.toIndexKey(keys.getQuick(i)), rowLo, callerHiInclusive, clampedMax);
                     if (count == AbstractPostingIndexReader.ESTIMATE_REJECT || count == Numbers.LONG_NULL) {
                         return -1;
                     }
-                    matchedRows += count;
+                    if (count > 0) {
+                        matchedRows += count;
+                        nonEmptyPairs++;
+                    }
                 }
-                sampledFrames++;
+                probedFrames++;
             }
         } finally {
             frameCursor.toTop();
         }
-        if (sampledFrames == 0) {
+        if (nonEmptyPairs == 0) {
+            // Either no usable frame, or the sampled keys hold no rows anywhere the sample
+            // looked. Both are "no bounded answer", and both fall back to the merge.
             return -1;
         }
-        return matchedRows / ((long) keysToSample * sampledFrames);
+        return matchedRows / nonEmptyPairs;
     }
 
     private static abstract class CoveringCursor implements RecordCursor {
