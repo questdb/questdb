@@ -56,6 +56,11 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.function.UnaryOperator;
 
 public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFactory {
+    private static final int SELECTION_CHECK_MASK = 1023;
+    private static final int SMALL_SELECTION_SORT_THRESHOLD = 16;
+    // Keep the sequential bitmap path for dense selections. At most one selected row per
+    // 64 input rows leaves ample room for the sparse path's O(K log K) merge work.
+    private static final int SPARSE_SELECTION_DENSITY_SHIFT = 6;
     private final ObjList<WindowFunction> backwardUnorderedFunctions;
     private final GenericRecordMetadata chainMetadata;
     private final ObjList<WindowFunction> forwardUnorderedFunctions;
@@ -450,15 +455,15 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
         private final RecordArray narrowChain;
         private final WindowLightRecord recordA;
         private final WindowLightRecord recordB;
-        // Row-selecting ordered traversal only: one bit per buffered row, set for each selected
-        // absolute row. Scanning it ascending yields selectedRowIds in incoming order without a
-        // sort, so the mapping never leaves the per-query tracker (DirectLongList.sortAsUnsigned
-        // would malloc an untracked native copy of the list above 600 elements).
+        // Dense row-selecting ordered traversal only: one bit per buffered row. Scanning it
+        // ascending restores incoming order without sort scratch. Sparse selections instead
+        // sort selectedRowIds using selectedTraversalRows as tracker-bound merge scratch.
         private final DirectLongList selectedRowBits;
         // Row-selecting mode only: ascending ABSOLUTE incoming-row indices emitted by this cursor.
         // Forward functions write directly here. Ordered/backward traversal ordinals use
         // selectedTraversalRows for translation before emission. Select-all uses neither list.
         private final DirectLongList selectedRowIds;
+        // After sparse translation consumes the ordinals, this list doubles as merge scratch.
         private final DirectLongList selectedTraversalRows;
         private final ObjList<WindowSortBuffer> sortBuffers;
         private RecordCursor baseCursor;
@@ -734,9 +739,9 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
 
             // Row-selecting fusion: the function reports selected ordinals in its pass1 traversal.
             // Translate ordered traversal ordinals through the retained sort buffer to absolute
-            // incoming rows, flagged in a bitset that an ascending scan turns into incoming cursor
-            // order; the forward branch validates its identity mapping as strictly ascending and
-            // needs no such pass. This still skips the O(N) boolean pass2 write and downstream Filter.
+            // incoming rows. Sparse selections sort only those rows; dense selections use a bitset
+            // scan. The forward branch validates its identity mapping as strictly ascending and
+            // needs neither. This still skips the O(N) boolean pass2 write and downstream Filter.
             if (rowSelecting) {
                 isSelectionAllRows = selectingFunction.isSelectionAllRows();
                 if (isSelectionAllRows) {
@@ -892,6 +897,11 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             final boolean isForward = orderedGroup < 0 && containsFunction(forwardUnorderedFunctions, selectingFunction);
             selectingFunction.getSelectedRows(isForward ? selectedRowIds : selectedTraversalRows);
             if (orderedGroup >= 0) {
+                if (selectedTraversalRows.size() <= (size >>> SPARSE_SELECTION_DENSITY_SHIFT)
+                        && sortBuffers.getQuick(orderedGroup) instanceof EncodedWindowSortBuffer encoded) {
+                    mapSparseSelectedRows(encoded, selectedTraversalRows.size());
+                    return;
+                }
                 // The sorted traversal visits every buffered row exactly once, so the selected
                 // absolute rows are distinct values in [0, size). Flagging each in a bitset and
                 // scanning the words ascending is a linear-time sort whose only memory, one bit
@@ -977,6 +987,90 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 }
             } else {
                 throw CairoException.nonCritical().put("row-selecting function has no traversal group");
+            }
+        }
+
+        private void mapSparseSelectedRows(EncodedWindowSortBuffer group, long selectedCount) {
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            selectedRowIds.ensureCapacity(selectedCount);
+            long prevOrdinal = -1;
+            for (long i = 0; i < selectedCount; i++) {
+                if (i > 0 && (i & SELECTION_CHECK_MASK) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                }
+                final long ordinal = selectedTraversalRows.get(i);
+                if (ordinal < 0 || ordinal >= size) {
+                    throw CairoException.nonCritical().put("row-selecting traversal index out of bounds");
+                }
+                if (ordinal <= prevOrdinal) {
+                    throw CairoException.nonCritical().put("invalid row-selecting traversal order");
+                }
+                final long absoluteRow = group.getRowIdAt(ordinal);
+                if (absoluteRow < 0 || absoluteRow >= size) {
+                    throw CairoException.nonCritical().put("row-selecting traversal index out of bounds");
+                }
+                selectedRowIds.add(absoluteRow);
+                prevOrdinal = ordinal;
+            }
+            sortSparseSelectedRows(selectedCount);
+        }
+
+        private void sortSparseSelectedRows(long selectedCount) {
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            DirectLongList source = selectedRowIds;
+            if (selectedCount <= SMALL_SELECTION_SORT_THRESHOLD) {
+                // Bound the quadratic work: no scratch or merge setup for a handful of points.
+                for (long i = 1; i < selectedCount; i++) {
+                    final long row = selectedRowIds.get(i);
+                    long j = i;
+                    while (j > 0 && selectedRowIds.get(j - 1) > row) {
+                        selectedRowIds.set(j, selectedRowIds.get(j - 1));
+                        j--;
+                    }
+                    selectedRowIds.set(j, row);
+                }
+            } else {
+                // Translation has consumed every traversal ordinal. Reuse that list's existing
+                // K slots rather than allocating scratch (sortAsUnsigned mallocs an untracked
+                // native copy at 600 rows). Neither list grows during this bottom-up merge sort.
+                DirectLongList dest = selectedTraversalRows;
+                for (long width = 1; width < selectedCount; width <<= 1) {
+                    for (long lo = 0; lo < selectedCount; lo += width << 1) {
+                        final long mid = Math.min(lo + width, selectedCount);
+                        final long hi = Math.min(mid + width, selectedCount);
+                        long left = lo;
+                        long right = mid;
+                        for (long i = lo; i < hi; i++) {
+                            if ((i & SELECTION_CHECK_MASK) == 0) {
+                                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                            }
+                            if (right >= hi || (left < mid && source.get(left) <= source.get(right))) {
+                                dest.set(i, source.get(left++));
+                            } else {
+                                dest.set(i, source.get(right++));
+                            }
+                        }
+                    }
+                    final DirectLongList tmp = source;
+                    source = dest;
+                    dest = tmp;
+                }
+            }
+            // Preserve the bitmap path's uniqueness check. Copy back only when the last merge
+            // wrote to scratch; selectedRowIds must always hold the final incoming-order rows.
+            long prevRow = -1;
+            for (long i = 0; i < selectedCount; i++) {
+                if ((i & SELECTION_CHECK_MASK) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                }
+                final long row = source.get(i);
+                if (row <= prevRow) {
+                    throw CairoException.nonCritical().put("invalid row-selecting traversal order");
+                }
+                if (source != selectedRowIds) {
+                    selectedRowIds.set(i, row);
+                }
+                prevRow = row;
             }
         }
 
