@@ -28,6 +28,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -41,36 +42,40 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Stream;
 
 /**
- * Every aggregate must be deliberately classified as order-sensitive or not, because
- * {@link GroupByFunction#isOrderSensitive()} and
- * {@link VectorAggregateFunction#isOrderSensitive()} both default to {@code false} and a
- * wrong default is silent: a consumer with no order-sensitive aggregate tells its base it
- * no longer needs designated-timestamp order, and a covering scan then emits one frame per
- * index key. An unflagged order-sensitive aggregate over that base returns a plausible
- * wrong value rather than an error.
+ * Every aggregate must be deliberately classified as order-sensitive or not, because a wrong
+ * answer from {@link GroupByFunction#isOrderSensitive()} or
+ * {@link VectorAggregateFunction#isOrderSensitive()} is silent: a consumer with no
+ * order-sensitive aggregate tells its base it no longer needs designated-timestamp order, and
+ * a covering scan then emits one frame per index key. A misflagged order-sensitive aggregate
+ * over that base returns a plausible wrong value rather than an error.
  * <p>
- * Inverting the default to fail-closed would touch hundreds of classes and disable the
- * optimisation for everything unannotated, so THIS TEST is the fail-closed mechanism: it
- * enumerates every concrete implementation of both interfaces off the compiled class tree
- * and fails on any class that is in neither list below. A new aggregate that nobody
- * classified fails here rather than in production.
+ * Both methods are abstract, so a NEW aggregate cannot compile without stating an answer -- the
+ * compiler, not this test, is what stops an author from saying nothing. What the compiler cannot
+ * see is the 40-odd concrete classes that inherit a declaration from a concrete ancestor (the
+ * {@code First*}/{@code Last*} Decimal, GeoHash and IPv4 family, including the anonymous classes
+ * in {@code LastGeoHashGroupByFunctionFactory}). Adding a subclass there compiles silently with
+ * whatever the parent said. THIS TEST is what covers them: it enumerates every concrete
+ * implementation of both interfaces off the compiled class tree and fails on any class that is
+ * in neither list below, so an inherited answer nobody re-examined fails here rather than in
+ * production.
  * <p>
  * The two interfaces are disjoint -- they share no supertype carrying the method -- so both
  * hierarchies are enumerated separately.
  * <p>
- * <b>What the check can and cannot see.</b> These classes take constructor arguments, so the
- * test cannot instantiate them; it asserts that the class (or a superclass) DECLARES an
- * {@code isOrderSensitive} override, not what the override returns. A class listed as
- * order-sensitive whose override returned {@code false} would still pass here. The
- * behavioural half of the contract lives in
- * {@code io.questdb.test.cairo.covering.CoveringIndexOrderSensitiveTest}, which compares the
- * per-key arm against a full scan for the aggregates that actually reach the covering path.
+ * <b>What the check can and cannot see.</b> Every {@code isOrderSensitive()} body in the tree is
+ * a constant return, so the test reads the effective VALUE off an instance allocated without a
+ * constructor and asserts it matches the list the class is in. It does not check that the value
+ * is RIGHT -- that judgement lives in the list javadocs below. The behavioural half of the
+ * contract lives in {@code io.questdb.test.cairo.covering.CoveringIndexOrderSensitiveTest},
+ * which compares the per-key arm against a full scan for the aggregates that actually reach the
+ * covering path.
  */
 public class GroupByFunctionOrderSensitivityTest {
 
@@ -130,8 +135,33 @@ public class GroupByFunctionOrderSensitivityTest {
      *       gets back for a tied key. "Unspecified" in the docs is not the same as "changed by
      *       a patch that claims to be an optimisation".</li>
      * </ul>
+     * <p>
+     * mode() over LONG/DOUBLE/STRING/VARCHAR/SYMBOL is here for the same reason as
+     * arg_min()/arg_max(). The per-value counts are order-invariant, but the winner is picked by
+     * scanning the open-addressed count map in SLOT order and taking the first strict
+     * {@code >}, and a key's slot under linear probing -- and its position after a rehash, which
+     * reinserts in slot-scan order -- depends on insertion order. So among values tied on count,
+     * which one wins is a function of the order rows arrived in. That is already unspecified at a
+     * parallel site (these functions supportsParallelism(), and merge() combines in
+     * nondeterministic worker order), which is exactly the argument that was previously used to
+     * leave them in the insensitive list. It is not a good enough argument: at a SERIAL site
+     * there is no merge(), the slot-order tie-break is deterministic today, and per-key frames
+     * would change it. mode() over BOOLEAN stays insensitive -- it keeps no map at all, just a
+     * {@code +1/-1} counter, so there is nothing order-dependent to break.
+     * <p>
+     * approx_percentile() over DOUBLE (packed and unpacked) is here because it accumulates into
+     * an HdrHistogram {@code DoubleHistogram} with {@code setAutoResize(true)}. Recording a value
+     * outside the currently covered range shifts the whole covered range and rescales the
+     * double-to-integer conversion ratio, which re-buckets every value ALREADY recorded. The
+     * approximation therefore depends on the sequence values arrived in. This is latent today --
+     * both report supportsParallelism() false, so nothing reorders their input yet -- and is
+     * flagged so it stays correct when something does. The LONG variants are genuinely
+     * insensitive and stay in the other list: their integer histogram only ever appends buckets
+     * on resize, leaving the value-to-bucket mapping of existing values untouched.
      */
     private static final Set<String> ORDER_SENSITIVE = new TreeSet<>(Arrays.asList(
+            "io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoublePackedGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.ArgMaxCharDoubleGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.ArgMaxCharLongGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.ArgMaxCharTimestampGroupByFunction",
@@ -179,8 +209,8 @@ public class GroupByFunctionOrderSensitivityTest {
             "io.questdb.griffin.engine.functions.groupby.FirstGeoHashGroupByFunctionInt",
             "io.questdb.griffin.engine.functions.groupby.FirstGeoHashGroupByFunctionLong",
             "io.questdb.griffin.engine.functions.groupby.FirstGeoHashGroupByFunctionShort",
-            "io.questdb.griffin.engine.functions.groupby.FirstIntGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.FirstIPv4GroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.FirstIntGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.FirstLongGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.FirstNotNullArrayGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.FirstNotNullCharGroupByFunction",
@@ -197,8 +227,8 @@ public class GroupByFunctionOrderSensitivityTest {
             "io.questdb.griffin.engine.functions.groupby.FirstNotNullGeoHashGroupByFunctionFactory$FirstNotNullGeoHashGroupByFunctionInt",
             "io.questdb.griffin.engine.functions.groupby.FirstNotNullGeoHashGroupByFunctionFactory$FirstNotNullGeoHashGroupByFunctionLong",
             "io.questdb.griffin.engine.functions.groupby.FirstNotNullGeoHashGroupByFunctionFactory$FirstNotNullGeoHashGroupByFunctionShort",
-            "io.questdb.griffin.engine.functions.groupby.FirstNotNullIntGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.FirstNotNullIPv4GroupByFunctionFactory$Func",
+            "io.questdb.griffin.engine.functions.groupby.FirstNotNullIntGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.FirstNotNullLongGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.FirstNotNullStrGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.FirstNotNullSymbolGroupByFunction",
@@ -231,8 +261,8 @@ public class GroupByFunctionOrderSensitivityTest {
             "io.questdb.griffin.engine.functions.groupby.LastGeoHashGroupByFunctionFactory$2",
             "io.questdb.griffin.engine.functions.groupby.LastGeoHashGroupByFunctionFactory$3",
             "io.questdb.griffin.engine.functions.groupby.LastGeoHashGroupByFunctionFactory$4",
-            "io.questdb.griffin.engine.functions.groupby.LastIntGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.LastIPv4GroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.LastIntGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.LastLongGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.LastNotNullArrayGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.LastNotNullCharGroupByFunction",
@@ -249,8 +279,8 @@ public class GroupByFunctionOrderSensitivityTest {
             "io.questdb.griffin.engine.functions.groupby.LastNotNullGeoHashGroupByFunctionFactory$LastNotNullGeoHashGroupByFunctionInt",
             "io.questdb.griffin.engine.functions.groupby.LastNotNullGeoHashGroupByFunctionFactory$LastNotNullGeoHashGroupByFunctionLong",
             "io.questdb.griffin.engine.functions.groupby.LastNotNullGeoHashGroupByFunctionFactory$LastNotNullGeoHashGroupByFunctionShort",
-            "io.questdb.griffin.engine.functions.groupby.LastNotNullIntGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.LastNotNullIPv4GroupByFunctionFactory$Func",
+            "io.questdb.griffin.engine.functions.groupby.LastNotNullIntGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.LastNotNullLongGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.LastNotNullStrGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.LastNotNullSymbolGroupByFunction",
@@ -263,6 +293,11 @@ public class GroupByFunctionOrderSensitivityTest {
             "io.questdb.griffin.engine.functions.groupby.LastTimestampGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.LastUuidGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.LastVarcharGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ModeDoubleGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ModeLongGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ModeStringGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ModeSymbolGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.ModeVarcharGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.SparklineGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.StringAggGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.StringAggVarcharGroupByFunction",
@@ -290,12 +325,13 @@ public class GroupByFunctionOrderSensitivityTest {
      * <ul>
      *   <li>vwap() looks like twap() but is notional/volume -- a pure ratio of two sums, so
      *       it is order-invariant despite the name similarity.</li>
-     *   <li>mode() counts occurrences per distinct value, and the counts themselves are
-     *       order-invariant, so the winning value is stable whenever one value is strictly
-     *       the most frequent. Ties are decided by which of the tied values the slot scan
-     *       reaches first; probe position in an open-addressed map IS influenced by insertion
-     *       order when keys collide, so that tie-break is unspecified today regardless of
-     *       frame order, and per-key frames cannot make it worse than it already is.</li>
+     *   <li>mode() over BOOLEAN keeps no map -- it sums {@code +1} for true and {@code -1} for
+     *       false and reads the sign -- so it has no slot order to be sensitive to. The other
+     *       mode() overloads DO, and are in {@code ORDER_SENSITIVE}.</li>
+     *   <li>approx_percentile() over LONG accumulates into a fixed-lowest-value integer
+     *       histogram; its auto-resize only appends buckets and never re-buckets what is
+     *       already recorded. The DOUBLE overloads rescale on resize and are in
+     *       {@code ORDER_SENSITIVE}.</li>
      *   <li>ksum()/nsum() and the floating-point sums are order-dependent only in the last
      *       bits of rounding, which is not a semantic guarantee and already varies with
      *       worker count.</li>
@@ -305,8 +341,6 @@ public class GroupByFunctionOrderSensitivityTest {
             "io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIntGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIPv4GroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctLongGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoublePackedGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.ApproxPercentileLongGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.ApproxPercentileLongPackedGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.AvgDecimal128GroupByFunction",
@@ -414,11 +448,6 @@ public class GroupByFunctionOrderSensitivityTest {
             "io.questdb.griffin.engine.functions.groupby.MinTimestampGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.MinVarcharGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.ModeBooleanGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ModeDoubleGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ModeLongGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ModeStringGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ModeSymbolGroupByFunction",
-            "io.questdb.griffin.engine.functions.groupby.ModeVarcharGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.NSumDoubleGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.RegressionInterceptFunctionFactory$RegressionInterceptFunction",
             "io.questdb.griffin.engine.functions.groupby.RegressionR2FunctionFactory$RegressionR2Function",
@@ -497,7 +526,8 @@ public class GroupByFunctionOrderSensitivityTest {
                 "ORDER_SENSITIVE",
                 union(ORDER_SENSITIVE, ORDER_SENSITIVE_DELEGATING),
                 "ORDER_INSENSITIVE",
-                ORDER_INSENSITIVE
+                ORDER_INSENSITIVE,
+                ORDER_SENSITIVE_DELEGATING
         );
     }
 
@@ -508,7 +538,8 @@ public class GroupByFunctionOrderSensitivityTest {
                 "VECT_ORDER_SENSITIVE",
                 VECT_ORDER_SENSITIVE,
                 "VECT_ORDER_INSENSITIVE",
-                VECT_ORDER_INSENSITIVE
+                VECT_ORDER_INSENSITIVE,
+                Collections.emptySet()
         );
     }
 
@@ -517,7 +548,8 @@ public class GroupByFunctionOrderSensitivityTest {
             String sensitiveListName,
             Set<String> sensitive,
             String insensitiveListName,
-            Set<String> insensitive
+            Set<String> insensitive,
+            Set<String> valueCheckExempt
     ) {
         final Set<String> overlap = new TreeSet<>(sensitive);
         overlap.retainAll(insensitive);
@@ -560,40 +592,37 @@ public class GroupByFunctionOrderSensitivityTest {
             Assert.fail(sb.toString());
         }
 
-        final Set<String> missingOverride = new TreeSet<>();
-        final Set<String> unexpectedOverride = new TreeSet<>();
+        final Set<String> saysFalse = new TreeSet<>();
+        final Set<String> saysTrue = new TreeSet<>();
         for (int i = 0, n = found.size(); i < n; i++) {
             final Class<?> c = found.get(i);
-            final boolean declares = declaresOrderSensitive(c);
-            if (sensitive.contains(c.getName()) && !declares) {
-                missingOverride.add(c.getName());
-            } else if (insensitive.contains(c.getName()) && declares) {
-                unexpectedOverride.add(c.getName());
+            if (valueCheckExempt.contains(c.getName())) {
+                continue;
+            }
+            final boolean value = readOrderSensitive(c);
+            if (sensitive.contains(c.getName()) && !value) {
+                saysFalse.add(c.getName());
+            } else if (insensitive.contains(c.getName()) && value) {
+                saysTrue.add(c.getName());
             }
         }
-        if (!missingOverride.isEmpty() || !unexpectedOverride.isEmpty()) {
+        if (!saysFalse.isEmpty() || !saysTrue.isEmpty()) {
             final StringBuilder sb = new StringBuilder();
-            sb.append("isOrderSensitive() overrides do not match the classification for ")
+            sb.append("isOrderSensitive() values do not match the classification for ")
                     .append(iface.getSimpleName())
-                    .append('.');
-            if (!missingOverride.isEmpty()) {
+                    .append(". Either the code or the list is wrong -- decide which, and if it")
+                    .append("\n  is the list, move the class AND write down why in the list javadoc.");
+            if (!saysFalse.isEmpty()) {
                 sb.append("\n  LISTED IN ").append(sensitiveListName)
-                        .append(" BUT NEITHER IT NOR A SUPERCLASS DECLARES isOrderSensitive():");
-                for (String name : missingOverride) {
+                        .append(" BUT isOrderSensitive() RETURNS false:");
+                for (String name : saysFalse) {
                     sb.append("\n    ").append(name);
                 }
             }
-            if (!unexpectedOverride.isEmpty()) {
+            if (!saysTrue.isEmpty()) {
                 sb.append("\n  LISTED IN ").append(insensitiveListName)
-                        .append(" BUT DECLARES isOrderSensitive(). This check sees only")
-                        .append("\n  the PRESENCE of the override, never its return value, so an override written")
-                        .append("\n  to return false on purpose -- to record a considered decision at the class --")
-                        .append("\n  fails here exactly like one that wrongly returns true. Not an accusation:")
-                        .append("\n  either move the class to ").append(sensitiveListName)
-                        .append(" if the override returns true, or")
-                        .append("\n  delete the override and record the decision in the ").append(insensitiveListName)
-                        .append("\n  javadoc, which is where this test expects to find it:");
-                for (String name : unexpectedOverride) {
+                        .append(" BUT isOrderSensitive() RETURNS true:");
+                for (String name : saysTrue) {
                     sb.append("\n    ").append(name);
                 }
             }
@@ -602,19 +631,24 @@ public class GroupByFunctionOrderSensitivityTest {
     }
 
     /**
-     * True when the class or any of its superclasses declares {@code isOrderSensitive}. The
-     * interface default does not count: {@link Class#getDeclaredMethod} is asked of classes
-     * only, and the walk stops at {@link Object}.
+     * The value {@code isOrderSensitive()} returns for this class, read off an instance allocated
+     * WITHOUT running a constructor -- these aggregates all take constructor arguments, and some
+     * allocate native memory, so constructing them here is neither possible nor desirable.
+     * <p>
+     * This is sound only because every {@code isOrderSensitive()} body in the tree is a constant
+     * return, which is what the mandatory-declaration convention produces. An implementation that
+     * computed the answer from instance state would read it off a zeroed object and could answer
+     * wrongly here; the one implementation that delegates rather than returning a constant,
+     * {@code InterpolationGroupByFunction}, is passed in as exempt for exactly this reason. If a
+     * second delegating implementation ever appears, exempt it too and say why.
      */
-    private static boolean declaresOrderSensitive(Class<?> c) {
-        for (Class<?> k = c; k != null && k != Object.class; k = k.getSuperclass()) {
-            try {
-                k.getDeclaredMethod("isOrderSensitive");
-                return true;
-            } catch (NoSuchMethodException ignored) {
-            }
+    private static boolean readOrderSensitive(Class<?> c) {
+        try {
+            final Object instance = Unsafe.getUnsafe().allocateInstance(c);
+            return (Boolean) c.getMethod("isOrderSensitive").invoke(instance);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError("could not read isOrderSensitive() from " + c.getName(), e);
         }
-        return false;
     }
 
     private static List<Class<?>> enumerateConcreteImplementations(Class<?> iface) {

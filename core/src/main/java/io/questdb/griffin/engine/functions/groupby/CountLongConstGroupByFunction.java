@@ -104,6 +104,11 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return true;
     }

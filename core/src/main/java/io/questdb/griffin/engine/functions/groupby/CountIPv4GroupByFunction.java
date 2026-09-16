@@ -122,6 +122,11 @@ public class CountIPv4GroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean supportsBatchComputation() {
         return true;
     }

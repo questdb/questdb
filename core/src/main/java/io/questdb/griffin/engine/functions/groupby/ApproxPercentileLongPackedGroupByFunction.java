@@ -160,6 +160,11 @@ public class ApproxPercentileLongPackedGroupByFunction extends DoubleFunction im
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }

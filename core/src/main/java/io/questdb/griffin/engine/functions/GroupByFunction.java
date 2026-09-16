@@ -331,10 +331,18 @@ public interface GroupByFunction extends Function, Mutable {
      * a multi-key covering scan emitting one frame per key -- silently produces the
      * wrong value otherwise, because "first" becomes "whichever key was scanned
      * first" rather than the earliest row.
+     * <p>
+     * Every implementation must declare this explicitly rather than inherit a default.
+     * The safe-looking answer, false, is the dangerous one: it tells the planner it may
+     * reorder this aggregate's input freely, so an aggregate that says nothing by
+     * accident makes the strongest claim of all. A wrong answer here corrupts results
+     * silently, with no error and no plan difference, so an implementation that says
+     * nothing must not compile.
+     *
+     * @return true if row order affects the result (e.g. {@code first()}, {@code last()}),
+     * false if the aggregate is order-invariant (e.g. {@code sum()}, {@code count()})
      */
-    default boolean isOrderSensitive() {
-        return false;
-    }
+    boolean isOrderSensitive();
 
     default boolean isScalar() {
         return true;

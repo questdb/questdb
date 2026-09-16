@@ -154,6 +154,11 @@ public class MaxShortGroupByFunction extends IntFunction implements GroupByFunct
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return UnaryFunction.super.isThreadSafe();
     }

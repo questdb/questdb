@@ -111,6 +111,11 @@ public class DoubleArrayElemSumGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
+
+        @Override
         protected void mergeOne(long destDataPtr, int destFi, double srcVal, int srcFi) {
             long destAddr = destDataPtr + (long) destFi * Double.BYTES;
             double destVal = Unsafe.getDouble(destAddr);

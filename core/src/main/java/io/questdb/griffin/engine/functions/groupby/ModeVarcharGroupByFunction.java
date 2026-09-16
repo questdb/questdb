@@ -135,6 +135,11 @@ public class ModeVarcharGroupByFunction extends VarcharFunction implements Unary
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }

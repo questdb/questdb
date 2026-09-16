@@ -136,6 +136,11 @@ class AvgDecimal256GroupByFunction extends Decimal256Function implements GroupBy
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }

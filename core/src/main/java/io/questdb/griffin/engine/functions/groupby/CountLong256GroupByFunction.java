@@ -110,4 +110,9 @@ public class CountLong256GroupByFunction extends AbstractCountGroupByFunction {
     public int getComputeBatchArgType() {
         return ColumnType.LONG256;
     }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
 }
