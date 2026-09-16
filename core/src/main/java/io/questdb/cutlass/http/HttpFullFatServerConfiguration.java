@@ -145,5 +145,7 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
 
     boolean isQueryCacheEnabled();
 
+    boolean isQwpBrowserTlsTerminationEnabled();
+
     boolean isSettingsReadOnly();
 }
