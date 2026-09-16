@@ -494,6 +494,11 @@ stages:
           QDB_VMCRASH_STATE: /home/agent/qdb-vmcrash-state
           DURABILITY_RESULTS: $(Build.ArtifactStagingDirectory)/durability-results
           MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx4096m -XX:+UseParallelGC"
+          # Every step in templates/build-client-native.yml is conditioned on this. The other
+          # jobs get it from their matrix leg; this job has no matrix, so without it the
+          # template is included and does nothing -- a green build producing a client jar the
+          # product arm cannot load.
+          os: Linux
         steps:
           - template: templates/checkout-source.yml
           - template: templates/use-hetzner-apt-mirrors.yml
@@ -839,6 +844,21 @@ stages:
           # ^ Not optional: benchmarks needs a questdb-client SNAPSHOT that Maven Central
           #   does not have. The other jobs get this via steps.yml, which this job omits.
 
+          - template: templates/build-client-native.yml
+          # ^ Also not optional, and for the same reason: steps.yml carries it and this job
+          #   omits steps.yml. The client submodule does not commit libquestdb.so, and no pom
+          #   builds it -- CMake does, from this template. Without it the reactor produces a
+          #   client jar with no native library, the build stays green, and the PRODUCT arm
+          #   dies at class load inside the guest:
+          #     FatalError: cannot find /io/questdb/client/bin/linux-x86-64/libquestdb.so
+          #   which the sweep reports as "no commit in 24s" -- indistinguishable from host
+          #   contention, and the contention reading is the one the pool invites (build
+          #   270618). The reference arms never touch the client, so they pass either way.
+          #
+          #   The template has its own conditions and cannot take ours, so a provision run
+          #   pays ~2 minutes for a native library it will not use. That is cheap next to
+          #   another 14-minute run that measures two arms out of three.
+
           - bash: |
               set -uo pipefail
               python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
@@ -864,6 +884,20 @@ stages:
               find core/target -maxdepth 1 -name 'questdb-*-no-jre-bin.tar.gz' -ls
               [ "$n" -eq 1 ] || {
                 echo "##vso[task.logissue type=error]expected exactly 1 no-jre release tarball in core/target, found $n — the product arm refuses an ambiguous target dir"; exit 1; }
+
+              # Asserted on the jar that ships into the guest, not on the source tree it was
+              # built from: the shade step is between the two, and the product arm loads this
+              # library at class load. A jar without it builds green and fails four minutes
+              # into the product sweep, wearing the mask of host contention (build 270618).
+              if [ -n "$(CLIENT_PROFILE)" ]; then
+                if "${JAVA_HOME}/bin/jar" tf benchmarks/target/benchmarks.jar \
+                     | grep -q '^io/questdb/client/bin/linux-x86-64/libquestdb\.so$'; then
+                  echo "client native library present in benchmarks.jar"
+                else
+                  echo "##vso[task.logissue type=error]benchmarks.jar carries no io/questdb/client/bin/linux-x86-64/libquestdb.so. The local-client reactor built a client jar the product arm cannot load; templates/build-client-native.yml must run, and its steps need os=Linux."
+                  exit 1
+                fi
+              fi
             displayName: "Build benchmarks.jar + release tarball"
             timeoutInMinutes: 40
             condition: and(succeeded(), ne(variables['DURABILITY_SKIP'], 'true'), ne('${{ parameters.durabilityMode }}', 'provision'))

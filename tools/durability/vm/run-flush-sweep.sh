@@ -224,6 +224,16 @@ if [ "$anchored" != true ]; then
         > "$OUTDIR/anchor-failure.out" 2>&1 || true
     echo "  guest logs: $OUTDIR/anchor-failure.out"
     sed -n '1,12p' "$OUTDIR/anchor-failure.out" | sed 's/^/      /'
+    # The head above is the arm's startup banner, so a crash lands below it and never reaches
+    # the console. Three SLF4J warnings were enough to hide a fatal client error 15 lines in,
+    # leaving only "no commit in 24s" -- which reads as host contention, the one explanation
+    # this pool always makes plausible (build 270618). Name the fault where it is read.
+    fatal=$(grep -m3 -E 'Exception in thread|FatalError|Caused by:|[A-Za-z]+(Exception|Error):' \
+            "$OUTDIR/anchor-failure.out" 2>/dev/null || true)
+    if [ -n "$fatal" ]; then
+        echo "  the guest reported a fatal error, so this is NOT contention:"
+        echo "$fatal" | sed 's/^/      /'
+    fi
     keep; echo "LOUD_FAILURE: no commit in 24s; every boundary would measure nothing"; exit 1
 fi
 sleep 8
