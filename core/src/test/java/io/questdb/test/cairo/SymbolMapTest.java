@@ -93,36 +93,6 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testClosedViewsAreReusedWithIndependentFlyweights() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table pooled_symbols (s symbol cache)");
-            execute("insert into pooled_symbols values ('one'), ('two')");
-            try (io.questdb.cairo.TableReader reader = engine.getReader("pooled_symbols")) {
-                SymbolMapReaderImpl symbols = (SymbolMapReaderImpl) reader.getSymbolMapReader(0);
-                StaticSymbolTable first = symbols.newSymbolTableView();
-                StaticSymbolTable second = symbols.newSymbolTableView();
-                Assert.assertNotSame(first, second);
-                CharSequence one = first.valueOf(0);
-                TestUtils.assertEquals("two", second.valueOf(1));
-                TestUtils.assertEquals("one", one);
-                Assert.assertEquals(1, first.keyOf("two"));
-                Misc.freeIfCloseable(first);
-                Misc.freeIfCloseable(first); // Idempotent close must not duplicate a pool entry.
-                StaticSymbolTable reused = symbols.newSymbolTableView();
-                Assert.assertSame(first, reused);
-                StaticSymbolTable third = symbols.newSymbolTableView();
-                Assert.assertNotSame(reused, third);
-                TestUtils.assertEquals("two", reused.valueBOf(1));
-                Assert.assertEquals(0, reused.keyOf("one"));
-                Assert.assertEquals(0, symbols.getCacheSize());
-                Misc.freeIfCloseable(reused);
-                Misc.freeIfCloseable(second);
-                Misc.freeIfCloseable(third);
-            }
-        });
-    }
-
-    @Test
     public void testAppend() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 1000;

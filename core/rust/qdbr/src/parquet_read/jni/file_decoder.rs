@@ -72,18 +72,13 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileD
 }
 
 #[no_mangle]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_createTrackedDecodeContext(
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_createDecodeContext(
     _env: JNIEnv,
     _class: JClass,
     file_ptr: *const u8,
     file_size: u64,
-    allocator: *const QdbAllocator,
 ) -> *mut DecodeContext {
-    let allocator = unsafe { &*allocator }.clone();
-    Box::into_raw(Box::new(DecodeContext::new_in(
-        file_ptr, file_size, allocator,
-    )))
+    Box::into_raw(Box::new(DecodeContext::new(file_ptr, file_size)))
 }
 
 #[no_mangle]

@@ -151,7 +151,7 @@ impl RowGroupBuffers {
 /// aux entries point directly into the page buffer, so it must persist.
 pub(crate) fn decompress_varchar_slice_data<'a>(
     page: &'a SlicedDataPage<'a>,
-    reusable_buf: &'a mut impl crate::parquet_read::decode::DecompressionBuffer,
+    reusable_buf: &'a mut Vec<u8>,
     persistent_bufs: &'a mut Vec<Vec<u8>>,
     buf_pool: &mut Vec<Vec<u8>>,
 ) -> ParquetResult<DataPage<'a>> {
@@ -3926,7 +3926,7 @@ impl ParquetDecoder {
         row_lo: usize,
         row_hi: usize,
     ) -> ParquetResult<i64> {
-        let mut ctx = DecodeContext::new_in(file_ptr, file_size, self.allocator.clone());
+        let mut ctx = DecodeContext::new(file_ptr, file_size);
         let mut bufs = ColumnChunkBuffers::new(self.allocator.clone());
         let col_info = QdbMetaCol {
             column_type: ColumnType::new(ColumnTypeTag::Timestamp, 0),

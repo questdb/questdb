@@ -94,6 +94,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.sql.async.SlotGatedWorkStealingStrategy;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.LimitedMemoryTracker;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -119,6 +120,12 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     private static final int WORKERS = 3;
     private int frameRows;
     private int factoryWorkerCount = WORKERS;
+
+    @After
+    public void restorePageFrameSizes() {
+        // Fixture cursors change page frame sizes on the shared execution context.
+        sqlExecutionContext.restoreToDefaultPageFrameSizes();
+    }
 
     @Before
     public void setUp() {
@@ -441,52 +448,6 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFrameCacheGrowthMemoryLimitAndReuse() throws Exception {
-        assertMemoryLeak(() -> {
-            createTables();
-            execute("insert into r select 1, timestamp_sequence('2021-02-01', 1000000), 1.0, 2.0 from long_sequence(1024)");
-            frameRows = 1;
-            for (String projection : new String[]{AGGREGATES, SCALAR_AGGREGATES}) {
-                String sql = projection + OUTER;
-                try (Fixture f = new Fixture(sql);
-                     LimitedMemoryTracker first = new LimitedMemoryTracker(0);
-                     LimitedMemoryTracker second = new LimitedMemoryTracker(0)) {
-                    MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
-                    try {
-                        sqlExecutionContext.setMemoryTracker(first);
-                        try (RecordCursor cursor = f.getRawCursor()) {
-                            // The build and initial slot/cache backing fit together. Only
-                            // the frame address cache grows before any reducer is dispatched.
-                            Assert.assertTrue(first.getUsed() > f.factory.getMetrics().getBuildBytes());
-                            first.setLimit(first.getUsed());
-                            try {
-                                cursor.hasNext();
-                                Assert.fail("expected frame cache growth to breach the query limit");
-                            } catch (CairoException ex) {
-                                Assert.assertTrue(ex.isOutOfMemory());
-                            }
-                            Assert.assertEquals(0, f.factory.getMetrics().getScannedRows());
-                        }
-                        Assert.assertEquals(0, first.getUsed());
-                        Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                        // A fresh unlimited tracker must own every allocation on reuse.
-                        sqlExecutionContext.setMemoryTracker(second);
-                        try (RecordCursor cursor = f.getRawCursor()) {
-                            Assert.assertTrue(cursor.hasNext());
-                            Assert.assertTrue(second.getUsed() > f.factory.getMetrics().getBuildBytes());
-                            Assert.assertEquals(0, first.getUsed());
-                        }
-                        Assert.assertEquals(0, second.getUsed());
-                    } finally {
-                        sqlExecutionContext.setMemoryTracker(previous);
-                    }
-                    f.assertResults(sql);
-                }
-            }
-        });
-    }
-
-    @Test
     public void testMemoryLimitsDuringBuildAndReduceAndReuse() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -574,7 +535,6 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                 Assert.assertTrue(ex.isCancellation());
                             }
                             Assert.assertEquals(0, tracker.getUsed());
-                            Assert.assertEquals(0, f.factory.getMetrics().getScannedRows());
                             Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                             ((SqlExecutionContextImpl) sqlExecutionContext).with(previousBreaker);
                             sqlExecutionContext.setMemoryTracker(previousTracker);
@@ -613,7 +573,6 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                             Assert.assertEquals(hook.buildOpens, hook.buildCloses);
                             Assert.assertEquals(failAt, hook.buildReads);
                             Assert.assertEquals(0, tracker.getUsed());
-                            Assert.assertEquals(0, f.factory.getMetrics().getScannedRows());
                             Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                             hook.buildFailAt = 0;
                             sqlExecutionContext.setMemoryTracker(previous);
@@ -770,49 +729,6 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 }
             } finally {
                 ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
-            }
-        });
-    }
-
-    @Test
-    public void testRejectedCountOnlyFilterCancellationAndReuse() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table p as (select x::int id, x d, x v, x w from long_sequence(100000))");
-            execute("alter table p add column top_col int");
-            SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
-            AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine, 0);
-            try {
-                for (int mode : new int[]{1, 2}) {
-                    Hook hook = new Hook();
-                    hook.buildFilterMode = mode;
-                    try (RecordCursorFactory factory = new QueryProgress(engine.getQueryRegistry(), "count-only filter test",
-                            filterBuild(childFactory("p"), hook))) {
-                        ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
-                        hook.cancel = breaker;
-                        sqlExecutionContext.changePageFrameSizes(4096, 4096);
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            cursor.calculateSize(breaker, new RecordCursor.Counter());
-                            Assert.fail("expected cancellation inside count-only filter");
-                        } catch (CairoException ex) {
-                            Assert.assertTrue(ex.isCancellation());
-                        }
-                        // Count-only filters observe cancellation at frame boundaries; native frames absorb short tails.
-                        Assert.assertTrue("rejected rows must stop at the next frame boundary: " + hook.calls.get(),
-                                hook.calls.get() >= 32 && hook.calls.get() <= 2 * 4096);
-                        Assert.assertNull(sqlExecutionContext.getMemoryTracker());
-                        breaker.reset();
-                        hook.cancel = null;
-                        hook.isBuildAccepted = true;
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            RecordCursor.Counter counter = new RecordCursor.Counter();
-                            cursor.calculateSize(breaker, counter);
-                            Assert.assertEquals(100_000, counter.get());
-                        }
-                    }
-                }
-            } finally {
-                ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
-                sqlExecutionContext.restoreToDefaultPageFrameSizes();
             }
         });
     }
@@ -1139,47 +1055,6 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 Assert.assertTrue(hook.maxActive.get() >= 2);
                 Assert.assertTrue(hook.mergeCalls.get() > 0);
                 Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-            }
-        });
-    }
-
-    @Test
-    public void testScalarStateMemoryLimitAndReuse() throws Exception {
-        assertMemoryLeak(() -> {
-            createTables();
-            String sql = SCALAR_AGGREGATES + OUTER;
-            try (Fixture f = new Fixture(sql); LimitedMemoryTracker tracker = new LimitedMemoryTracker(100_000_000)) {
-                MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
-                sqlExecutionContext.setMemoryTracker(tracker);
-                try {
-                    long initializedBytes;
-                    try (RecordCursor cursor = f.getRawCursor()) {
-                        initializedBytes = tracker.getUsed();
-                        Assert.assertTrue(initializedBytes > f.factory.getMetrics().getBuildBytes());
-                        Assert.assertTrue(cursor.hasNext());
-                        Assert.assertFalse(f.factory.getAtom().isSharded());
-                    }
-                    Assert.assertEquals(0, tracker.getUsed());
-                    // The build still fits. Reject the final slot's scalar allocation
-                    // after earlier scalar states have been allocated under this tracker.
-                    Assert.assertTrue(initializedBytes - 1 > f.factory.getMetrics().getBuildBytes());
-                    tracker.setLimit(initializedBytes - 1);
-                    try (RecordCursor ignored = f.getRawCursor()) {
-                        Assert.fail("expected scalar state allocation to breach the query limit");
-                    } catch (CairoException expected) {
-                        Assert.assertTrue(expected.isOutOfMemory());
-                    }
-                    Assert.assertEquals(0, tracker.getUsed());
-                    Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                    tracker.setLimit(100_000_000);
-                    try (RecordCursor cursor = f.getRawCursor()) {
-                        Assert.assertTrue(cursor.hasNext());
-                    }
-                    Assert.assertEquals(0, tracker.getUsed());
-                } finally {
-                    sqlExecutionContext.setMemoryTracker(previous);
-                }
-                f.assertResults(sql);
             }
         });
     }

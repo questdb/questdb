@@ -106,7 +106,7 @@ fn test_row_group_index_out_of_range() {
         .expect("ParquetDecoder::read");
 
     let mut rgb = RowGroupBuffers::new(allocator.clone());
-    let mut ctx = DecodeContext::new_in(buf.as_ptr(), buf_len, allocator.clone());
+    let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
     let col_type = decoder.columns[0].column_type.unwrap();
     let columns = vec![(0i32, col_type)];
 
@@ -152,7 +152,7 @@ fn test_column_type_mismatch() {
         .expect("ParquetDecoder::read");
 
     let mut rgb = RowGroupBuffers::new(allocator.clone());
-    let mut ctx = DecodeContext::new_in(buf.as_ptr(), buf_len, allocator.clone());
+    let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
 
     // Request it as Uuid (no conversion path exists from Long to Uuid).
     let wrong_type = ColumnType::new(ColumnTypeTag::Uuid, 0);

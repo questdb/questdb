@@ -1603,23 +1603,13 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean isSymbolPredicateCacheEnabled() {
-            return sqlExecutionContext.isSymbolPredicateCacheEnabled();
-        }
-
-        @Override
-        public void setSymbolPredicateCacheEnabled(boolean enabled) {
-            sqlExecutionContext.setSymbolPredicateCacheEnabled(enabled);
+        public boolean isParallelGroupByEnabled() {
+            return sqlExecutionContext.isParallelGroupByEnabled();
         }
 
         @Override
         public boolean isParallelHashJoinGroupByEnabled() {
             return sqlExecutionContext.isParallelHashJoinGroupByEnabled();
-        }
-
-        @Override
-        public boolean isParallelGroupByEnabled() {
-            return sqlExecutionContext.isParallelGroupByEnabled();
         }
 
         @Override
@@ -1749,13 +1739,13 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public void setParallelHashJoinGroupByEnabled(boolean enabled) {
-            sqlExecutionContext.setParallelHashJoinGroupByEnabled(enabled);
+        public void setParallelGroupByEnabled(boolean parallelGroupByEnabled) {
+            sqlExecutionContext.setParallelGroupByEnabled(parallelGroupByEnabled);
         }
 
         @Override
-        public void setParallelGroupByEnabled(boolean parallelGroupByEnabled) {
-            sqlExecutionContext.setParallelGroupByEnabled(parallelGroupByEnabled);
+        public void setParallelHashJoinGroupByEnabled(boolean enabled) {
+            sqlExecutionContext.setParallelHashJoinGroupByEnabled(enabled);
         }
 
         @Override

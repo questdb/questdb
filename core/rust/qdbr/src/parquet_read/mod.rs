@@ -1,4 +1,4 @@
-use crate::allocator::{AcVec, QdbAllocator};
+use crate::allocator::AcVec;
 use qdb_core::col_type::ColumnType;
 
 pub mod column_sink;
@@ -18,8 +18,8 @@ pub use row_groups::{ParquetDecoder, RowGroupBuffers};
 pub struct DecodeContext {
     pub file_ptr: *const u8,
     pub file_size: u64,
-    pub dict_decompress_buffer: AcVec<u8>,
-    pub decompress_buffer: AcVec<u8>,
+    pub dict_decompress_buffer: Vec<u8>,
+    pub decompress_buffer: Vec<u8>,
     pub varchar_slice_buf_pool: Vec<Vec<u8>>,
     /// Scratch outer-vec for varchar_slice data-page buffers, hoisted out of the
     /// per-column-chunk decode loop so the heap-allocated outer storage is reused
@@ -32,21 +32,12 @@ pub struct DecodeContext {
 }
 
 impl DecodeContext {
-    #[cfg(test)]
     pub fn new(file_ptr: *const u8, file_size: u64) -> Self {
-        Self::new_in(
-            file_ptr,
-            file_size,
-            crate::allocator::TestAllocatorState::new().allocator(),
-        )
-    }
-
-    pub fn new_in(file_ptr: *const u8, file_size: u64, allocator: QdbAllocator) -> Self {
         Self {
             file_ptr,
             file_size,
-            dict_decompress_buffer: AcVec::new_in(allocator.clone()),
-            decompress_buffer: AcVec::new_in(allocator),
+            dict_decompress_buffer: Vec::new(),
+            decompress_buffer: Vec::new(),
             varchar_slice_buf_pool: Vec::new(),
             varchar_slice_page_bufs_scratch: Vec::new(),
             varchar_slice_dict_bufs_scratch: Vec::new(),

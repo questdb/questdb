@@ -292,16 +292,9 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
 
         Function.init(keyExcludedValueFunctions, pageFrameCursor, executionContext, null);
         recalculateIncludedValues(pageFrameCursor);
-        try {
-            cursor.of(pageFrameCursor, executionContext);
-            if (filter != null) {
-                filter.init(cursor, executionContext);
-            }
-        } catch (Throwable th) {
-            // cursor.of() charges the address cache to the per-query tracker, which the caller
-            // releases on failure; free the cache while that tracker is still bound
-            Misc.free(cursor, th);
-            throw th;
+        cursor.of(pageFrameCursor, executionContext);
+        if (filter != null) {
+            filter.init(cursor, executionContext);
         }
         return cursor;
     }

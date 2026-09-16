@@ -29,7 +29,6 @@ import io.questdb.cairo.Reopenable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.Utf16Sink;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -42,7 +41,6 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     private long address;
     private long capacity;
     private long limit;
-    private @Nullable MemoryTracker memoryTracker;
     private long pos;
 
     public DirectIntList(long capacity, int memoryTag) {
@@ -55,7 +53,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
         final long capacityBytes = capacity * Integer.BYTES;
         this.initialCapacity = capacityBytes;
         if (!keepClosed) {
-            this.address = capacityBytes > 0 ? Unsafe.malloc(capacityBytes, memoryTag, memoryTracker) : 0;
+            this.address = capacityBytes > 0 ? Unsafe.malloc(capacityBytes, memoryTag) : 0;
             this.capacity = capacityBytes;
             this.pos = address;
             this.limit = pos + capacityBytes;
@@ -97,7 +95,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     @Override
     public void close() {
         if (address != 0) {
-            address = Unsafe.free(address, capacity, memoryTag, memoryTracker);
+            address = Unsafe.free(address, capacity, memoryTag);
             limit = 0;
             pos = 0;
             capacity = 0;
@@ -169,10 +167,6 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
         setCapacityBytes(capacity << 2);
     }
 
-    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-        this.memoryTracker = tracker;
-    }
-
     public void setPos(long p) {
         assert p * Integer.BYTES <= capacity;
         pos = address + (p << 2);
@@ -220,7 +214,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
             }
             final long oldCapacity = this.capacity;
             final long oldSize = this.pos - this.address;
-            final long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag, memoryTracker);
+            final long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
             this.capacity = capacity;
             this.address = address;
             this.limit = address + capacity;

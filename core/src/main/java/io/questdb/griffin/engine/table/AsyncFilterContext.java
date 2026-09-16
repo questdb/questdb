@@ -116,10 +116,10 @@ public class AsyncFilterContext implements Closeable {
 
         try {
             ownerMemoryPool = new PageFrameMemoryPool(configuration, ownerMemoryPoolMaxBytes);
-            ownerFilteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD, true);
+            ownerFilteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD);
             if (compiledFilter != null) {
-                ownerDataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD, true);
-                ownerAuxAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD, true);
+                ownerDataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
+                ownerAuxAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
             } else {
                 ownerDataAddresses = null;
                 ownerAuxAddresses = null;
@@ -132,10 +132,10 @@ public class AsyncFilterContext implements Closeable {
             perWorkerSelectivityStats = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
                 perWorkerMemoryPools.extendAndSet(i, new PageFrameMemoryPool(configuration, perWorkerMemoryPoolMaxBytes));
-                perWorkerFilteredRows.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD, true));
+                perWorkerFilteredRows.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD));
                 if (compiledFilter != null) {
-                    perWorkerDataAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD, true));
-                    perWorkerAuxAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD, true));
+                    perWorkerDataAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD));
+                    perWorkerAuxAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD));
                 }
                 perWorkerSelectivityStats.extendAndSet(i, new SelectivityStats());
             }
@@ -161,12 +161,18 @@ public class AsyncFilterContext implements Closeable {
         Misc.freeObjListAndKeepObjects(perWorkerMemoryPools);
         ownerSelectivityStats.clear();
         Misc.clearObjList(perWorkerSelectivityStats);
-        Misc.free(ownerFilteredRows);
-        Misc.free(ownerDataAddresses);
-        Misc.free(ownerAuxAddresses);
-        Misc.freeObjListAndKeepObjects(perWorkerFilteredRows);
-        Misc.freeObjListAndKeepObjects(perWorkerDataAddresses);
-        Misc.freeObjListAndKeepObjects(perWorkerAuxAddresses);
+        // Shrink the row-id and column-address lists back to initial capacity,
+        // mirroring the per-task reset in PageFrameReduceTask.clear(). Under a JIT
+        // filter the row-id lists grow to a full page frame (up to
+        // cairo.sql.page.frame.max.rows longs = 8 MB each) and only ever grow, so an
+        // idle or cached factory would otherwise pin peak-sized NATIVE_OFFLOAD buffers
+        // until eviction.
+        resetCapacity(ownerFilteredRows);
+        resetCapacity(ownerDataAddresses);
+        resetCapacity(ownerAuxAddresses);
+        resetCapacity(perWorkerFilteredRows);
+        resetCapacity(perWorkerDataAddresses);
+        resetCapacity(perWorkerAuxAddresses);
     }
 
     @Override
@@ -191,11 +197,10 @@ public class AsyncFilterContext implements Closeable {
     }
 
     public DirectLongList getAuxAddresses(int slotId) {
-        DirectLongList list = slotId == -1 ? ownerAuxAddresses : perWorkerAuxAddresses.getQuick(slotId);
-        if (list != null) {
-            list.reopen();
+        if (slotId == -1) {
+            return ownerAuxAddresses;
         }
-        return list;
+        return perWorkerAuxAddresses.getQuick(slotId);
     }
 
     public ObjList<Function> getBindVarFunctions() {
@@ -211,11 +216,10 @@ public class AsyncFilterContext implements Closeable {
     }
 
     public DirectLongList getDataAddresses(int slotId) {
-        DirectLongList list = slotId == -1 ? ownerDataAddresses : perWorkerDataAddresses.getQuick(slotId);
-        if (list != null) {
-            list.reopen();
+        if (slotId == -1) {
+            return ownerDataAddresses;
         }
-        return list;
+        return perWorkerDataAddresses.getQuick(slotId);
     }
 
     public Function getFilter(int slotId) {
@@ -230,11 +234,10 @@ public class AsyncFilterContext implements Closeable {
     }
 
     public DirectLongList getFilteredRows(int slotId) {
-        DirectLongList list = slotId == -1 ? ownerFilteredRows : perWorkerFilteredRows.getQuick(slotId);
-        if (list != null) {
-            list.reopen();
+        if (slotId == -1) {
+            return ownerFilteredRows;
         }
-        return list;
+        return perWorkerFilteredRows.getQuick(slotId);
     }
 
     public PageFrameMemoryPool getMemoryPool(int slotId) {
@@ -267,17 +270,6 @@ public class AsyncFilterContext implements Closeable {
     }
 
     public void initFilters(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        MemoryTracker tracker = executionContext.getMemoryTracker();
-        bindTracker(ownerFilteredRows, tracker);
-        bindTracker(ownerDataAddresses, tracker);
-        bindTracker(ownerAuxAddresses, tracker);
-        for (int i = 0; i < perWorkerFilteredRows.size(); i++) {
-            bindTracker(perWorkerFilteredRows.getQuick(i), tracker);
-        }
-        for (int i = 0; i < perWorkerDataAddresses.size(); i++) {
-            bindTracker(perWorkerDataAddresses.getQuick(i), tracker);
-            bindTracker(perWorkerAuxAddresses.getQuick(i), tracker);
-        }
         if (ownerFilter != null) {
             ownerFilter.init(symbolTableSource, executionContext);
         }
@@ -324,10 +316,19 @@ public class AsyncFilterContext implements Closeable {
         sink.val(ownerFilter);
     }
 
-    private static void bindTracker(@Nullable DirectLongList list, MemoryTracker tracker) {
-        if (list != null) {
-            list.close();
-            list.setMemoryTracker(tracker);
+    private static void resetCapacity(@Nullable DirectLongList list) {
+        // Skip closed lists: resetCapacity() on a capacity-0 list would re-malloc
+        // (resurrect) it. clear() can run after close() on the horizon-join error path.
+        if (list != null && list.getCapacity() > 0) {
+            list.resetCapacity();
+        }
+    }
+
+    private static void resetCapacity(@Nullable ObjList<DirectLongList> lists) {
+        if (lists != null) {
+            for (int i = 0, n = lists.size(); i < n; i++) {
+                resetCapacity(lists.getQuick(i));
+            }
         }
     }
 }

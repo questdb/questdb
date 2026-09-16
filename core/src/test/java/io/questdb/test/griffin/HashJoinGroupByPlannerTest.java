@@ -35,8 +35,8 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
+import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
-import io.questdb.griffin.engine.table.HashJoinGroupByMetrics;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -216,7 +216,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMetricsExplainAndReuse() throws Exception {
+    public void testBuildExplainAndReuse() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             try (SqlExecutionContextImpl context = enabledContext()) {
@@ -224,30 +224,25 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                         + " where p.installed_kwp is null order by r.plant_id";
                 try (RecordCursorFactory factory = engine.select(sql, context)) {
                     AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
-                    HashJoinGroupByMetrics metrics = fused.getMetrics();
                     plan(factory, context);
-                    Assert.assertEquals(0, metrics.getBuildRows());
-                    Assert.assertEquals(0, metrics.getBuildNanos());
+                    Assert.assertNull(fused.getAtom().getFrozenBuild());
                     String expected = result(factory, context);
-                    Assert.assertEquals(5, metrics.getBuildRows());
-                    Assert.assertEquals(3, metrics.getBuildKeys());
-                    Assert.assertTrue(metrics.getBuildBytes() > 0);
-                    Assert.assertEquals(5, metrics.getScannedRows());
-                    Assert.assertEquals(8, metrics.getMatchedPairs());
-                    Assert.assertEquals(1, metrics.getNullExtendedRows());
-                    Assert.assertEquals(4, metrics.getSurvivingRows());
-                    Assert.assertEquals(3, metrics.getMergeCardinality());
-                    Assert.assertTrue(metrics.getBuildNanos() > 0);
-                    Assert.assertTrue(metrics.getProbeNanos() > 0);
-                    Assert.assertTrue(metrics.getMergeNanos() > 0);
+                    // Cursor close releases the build.
+                    Assert.assertNull(fused.getAtom().getFrozenBuild());
+                    try (RecordCursor cursor = factory.getCursor(context)) {
+                        FrozenHashJoinBuild build = fused.getAtom().getFrozenBuild();
+                        Assert.assertEquals(5, build.getRowCount());
+                        Assert.assertEquals(3, build.getKeyCount());
+                        Assert.assertTrue(build.getSizeInBytes() > 0);
+                        Assert.assertTrue(cursor.hasNext());
+                    }
                     Assert.assertEquals(expected, result(factory, context));
-                    Assert.assertEquals(5, metrics.getScannedRows());
                     execute("truncate table p");
-                    result(factory, context);
-                    Assert.assertEquals(0, metrics.getBuildRows());
-                    Assert.assertEquals(0, metrics.getMatchedPairs());
-                    Assert.assertEquals(5, metrics.getNullExtendedRows());
-                    Assert.assertEquals(5, metrics.getSurvivingRows());
+                    try (RecordCursor cursor = factory.getCursor(context)) {
+                        Assert.assertEquals(0, fused.getAtom().getFrozenBuild().getRowCount());
+                        Assert.assertTrue(cursor.hasNext());
+                    }
+                    Assert.assertNull(fused.getAtom().getFrozenBuild());
                 }
             }
         });
@@ -415,7 +410,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testScalarEmptyInputMetricsAndCursorReuse() throws Exception {
+    public void testScalarEmptyInputAndCursorReuse() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             try (SqlExecutionContextImpl context = enabledContext()) {
@@ -425,7 +420,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                         AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
                         Assert.assertFalse(fused.recordCursorSupportsRandomAccess());
                         Assert.assertTrue(plan(factory, context).contains("aggregation: scalar"));
-                        Assert.assertEquals(0, fused.getMetrics().getBuildRows());
+                        Assert.assertNull(fused.getAtom().getFrozenBuild());
                         // Close before dispatch, and then consume and reread the same factory.
                         try (RecordCursor cursor = factory.getCursor(context)) {
                             Assert.assertEquals(1, cursor.size());
@@ -450,12 +445,10 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                         }
                         execute("truncate table p");
                         Assert.assertEquals("n\tc\ts\ta\n" + (j == 0 ? "0" : "5") + ":LONG\t0:LONG\tnull:DOUBLE\tnull:DOUBLE\n", result(factory, context));
-                        HashJoinGroupByMetrics metrics = fused.getMetrics();
-                        Assert.assertEquals(0, metrics.getBuildRows());
-                        Assert.assertEquals(0, metrics.getMatchedPairs());
-                        Assert.assertEquals(j == 0 ? 0 : 5, metrics.getScannedRows());
-                        Assert.assertEquals(j == 0 ? 0 : 5, metrics.getNullExtendedRows());
-                        Assert.assertEquals(1, metrics.getMergeCardinality());
+                        try (RecordCursor cursor = factory.getCursor(context)) {
+                            Assert.assertEquals(0, fused.getAtom().getFrozenBuild().getRowCount());
+                            Assert.assertTrue(cursor.hasNext());
+                        }
                         Assert.assertFalse(fused.getAtom().isSharded());
                         execute("insert into p values (1,'ES',5), (1,'ES',7), (1,'IT',null), (2,null,null), (null,'ES',11)");
                         Assert.assertEquals(expected, result(factory, context));

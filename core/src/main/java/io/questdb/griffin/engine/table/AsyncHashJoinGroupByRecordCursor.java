@@ -48,7 +48,6 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
     private final CairoEngine engine;
     private final UnorderedPageFrameSequence<AsyncHashJoinGroupByAtom> frameSequence;
     private final HashJoinGroupByFunctions functions;
-    private final HashJoinGroupByMetrics metrics;
     private final PostAggregationCircuitBreaker mergeCircuitBreaker;
     private final SOUnboundedCountDownLatch mergeDoneLatch = new SOUnboundedCountDownLatch();
     private final AtomicInteger mergeStartedCounter = new AtomicInteger();
@@ -62,9 +61,8 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
     private MapRecordCursor mapCursor;
 
     AsyncHashJoinGroupByRecordCursor(CairoEngine engine, UnorderedPageFrameSequence<AsyncHashJoinGroupByAtom> frameSequence,
-                                    HashJoinGroupByFunctions functions, HashJoinGroupByMetrics metrics) {
+                                    HashJoinGroupByFunctions functions) {
         this.engine = engine;
-        this.metrics = metrics;
         this.mergeCircuitBreaker = new PostAggregationCircuitBreaker(engine);
         this.frameSequence = frameSequence;
         this.functions = functions;
@@ -172,15 +170,11 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
             try {
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 AsyncHashJoinGroupByAtom atom = frameSequence.getAtom();
-                long start = System.nanoTime();
                 if (atom.shouldProbe()) {
                     frameSequence.prepareForDispatch();
                     atom.getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
                     frameSequence.dispatchAndAwait();
                 }
-                metrics.probeNanos = System.nanoTime() - start;
-                atom.collectMetrics(metrics);
-                start = System.nanoTime();
                 circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                 if (functions.isKeyed()) {
                     final GroupByShardingContext sharding = atom.getShardingContext();
@@ -201,16 +195,13 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
                     } else {
                         mapCursor = sharding.mergeOwnerMap().getCursor();
                     }
-                    metrics.mergeCardinality = mapCursor.size();
                     recordA.of(mapCursor.getRecord());
                     recordB.of(mapCursor.getRecordB());
                 } else {
                     recordA.of(atom.mergeScalar());
-                    metrics.mergeCardinality = 1;
                 }
                 // Observe cancellation during the last frame or merge before exposing output.
                 circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                metrics.mergeNanos = System.nanoTime() - start;
                 isBuilt = true;
             } catch (Throwable th) {
                 Misc.free(this, th);

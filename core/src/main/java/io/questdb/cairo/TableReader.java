@@ -479,13 +479,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return mem != null && mem.isOpen() ? mem.size() : 0;
     }
 
-    /** Read-only lookup after frame enumeration has opened and published the partition. */
-    public ParquetPartitionDecoder getParquetPartitionDecoder(int partitionIndex) {
-        final ParquetPartitionDecoder decoder = parquetMetaDecoders.getQuick(partitionIndex);
-        assert decoder != null;
-        return decoder;
-    }
-
     public int getPartitionCount() {
         return partitionCount;
     }

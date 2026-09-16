@@ -62,7 +62,7 @@ public class EqSymFunctionFactory implements FunctionFactory {
     ) {
         final Function leftFunc = args.getQuick(0);
         final Function rightFunc = args.getQuick(1);
-        if (sqlExecutionContext.isSymbolPredicateCacheEnabled() && isSymbolTableStatic(leftFunc) && isSymbolTableStatic(rightFunc)) {
+        if (isSymbolTableStatic(leftFunc) && isSymbolTableStatic(rightFunc)) {
             return new Func(leftFunc, rightFunc);
         }
         // SYMBOL cannot be constant, so we can't use any of the half-constant functions

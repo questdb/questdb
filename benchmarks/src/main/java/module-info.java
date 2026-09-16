@@ -29,8 +29,6 @@ module io.questdb.benchmarks {
     requires simpleclient;
     requires simpleclient.common;
     requires org.jetbrains.annotations;
-    requires java.management;
-    requires java.instrument;
     requires java.sql;
     requires io.questdb.client;
 

@@ -58,62 +58,7 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
             + "count(r.s) rs, count(p.s) ps, sum(r.d) rd, sum(p.d) pd, avg(r.d) ra, avg(p.d) pa";
 
     @Test
-    public void testBuildAndOwnerProbePredicatesDoNotPopulateSourceSymbolCaches() throws Exception {
-        assertMemoryLeak(() -> {
-            for (String table : new String[]{"r", "p"}) {
-                execute("create table " + table + " as (select x::int id, ('s'||x)::symbol s, 1.0 d from long_sequence(8192))");
-            }
-            try (SqlExecutionContextImpl context = context(engine, 1)) {
-                context.changePageFrameSizes(32, 32);
-                context.setParallelHashJoinGroupByEnabled(true);
-                int[] returned = {0};
-                context.setReaderPoolSupervisor(new ResourcePoolSupervisor<>() {
-                    @Override
-                    public void onResourceBorrowed(TableReader reader) {
-                    }
-
-                    @Override
-                    public void onResourceReturned(TableReader reader) {
-                        returned[0]++;
-                        for (int i = 0; i < reader.getMetadata().getColumnCount(); i++) {
-                            if (ColumnType.isSymbol(reader.getMetadata().getColumnType(i))) {
-                                Assert.assertEquals("source cache: " + reader.getTableToken(), 0,
-                                        ((SymbolMapReaderImpl) reader.getSymbolMapReader(i)).getCacheSize());
-                            }
-                        }
-                    }
-                });
-                try {
-                    for (boolean keyed : new boolean[]{true, false}) {
-                        String sql = "select " + (keyed ? "r.s, p.s, " : "")
-                                + "count(*) from r left join p on r.id=p.id and p.s like 's%' where r.s ilike 'S%'";
-                        try (RecordCursorFactory factory = engine.select(sql, context)) {
-                            Assert.assertTrue(plan(factory, context).contains("Async Hash Join Group By"));
-                            for (int execution = 0; execution < 2; execution++) {
-                                int groups = 0;
-                                try (RecordCursor cursor = factory.getCursor(context)) {
-                                    while (cursor.hasNext()) {
-                                        if (keyed) {
-                                            Assert.assertNotNull(cursor.getRecord().getSymA(0));
-                                            Assert.assertNotNull(cursor.getRecord().getSymA(1));
-                                        }
-                                        groups++;
-                                    }
-                                }
-                                Assert.assertEquals(keyed ? 8192 : 1, groups);
-                            }
-                        }
-                    }
-                    Assert.assertTrue(returned[0] >= 8);
-                } finally {
-                    context.setReaderPoolSupervisor(null);
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testHighCardinalitySymbolPredicatesAndCompilerSettingReuse() throws Exception {
+    public void testHighCardinalitySymbolPredicatesAndReuse() throws Exception {
         assertMemoryLeak(() -> {
             for (String table : new String[]{"r", "p"}) {
                 execute("create table " + table + " as (select x::int id, ('s'||x)::symbol s, ('s'||x)::symbol s2, "
@@ -130,11 +75,9 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                         String from = " from r left join p on r.id=p.id and p.s like 's%' and p.s=p.s2 where " + predicate;
                         assertDifferential("select r.s, count(*), sum(p.d)" + from + " order by r.s", context, !predicate.equals("r.s = p.s"));
                         assertDifferential("select count(*), sum(p.d)" + from, context, !predicate.equals("r.s = p.s"));
-                        Assert.assertTrue(context.isSymbolPredicateCacheEnabled());
                     }
                 }
                 assertDifferential("select min(r.d) from r join p on r.id=p.id where r.s like 's%'", context, false);
-                Assert.assertTrue(context.isSymbolPredicateCacheEnabled());
             }
         });
     }
@@ -314,7 +257,6 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                             Assert.assertTrue(plan(baseline, context), plan(baseline, context).contains("CoveringIndex"));
                         }
                         assertDifferential(sql, context, false);
-                        Assert.assertTrue(context.isSymbolPredicateCacheEnabled());
                     }
                 }
             }

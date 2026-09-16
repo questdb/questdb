@@ -251,7 +251,7 @@ fn run_e2e_pipeline(parquet_bytes: &[u8]) {
                 repetition,
             );
 
-            let mut ctx = DecodeContext::new_in(parquet_bytes.as_ptr(), buf_len, allocator.clone());
+            let mut ctx = DecodeContext::new(parquet_bytes.as_ptr(), buf_len);
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
 
             let col_start = chunk.byte_range_start as usize;
@@ -396,7 +396,7 @@ fn run_e2e_pipeline_multi(parquet_bytes: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) 
                 repetition,
             );
 
-            let mut ctx = DecodeContext::new_in(parquet_bytes.as_ptr(), buf_len, allocator.clone());
+            let mut ctx = DecodeContext::new(parquet_bytes.as_ptr(), buf_len);
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
 
             let col_start = chunk.byte_range_start as usize;
@@ -669,8 +669,8 @@ fn e2e_multi_column() {
     let decoder =
         ParquetDecoder::read(allocator.clone(), &mut r2, buf_len).expect("ParquetDecoder::read");
 
-    let mut rgb = questdbr::parquet_read::RowGroupBuffers::new(allocator.clone());
-    let mut ctx = DecodeContext::new_in(parquet_bytes.as_ptr(), buf_len, allocator.clone());
+    let mut rgb = questdbr::parquet_read::RowGroupBuffers::new(allocator);
+    let mut ctx = DecodeContext::new(parquet_bytes.as_ptr(), buf_len);
 
     let columns: Vec<(i32, qdb_core::col_type::ColumnType)> = (0..4)
         .map(|i| {
@@ -1063,7 +1063,7 @@ fn e2e_multiple_row_groups() {
             repetition,
         );
 
-        let mut ctx = DecodeContext::new_in(parquet_bytes.as_ptr(), buf_len, allocator.clone());
+        let mut ctx = DecodeContext::new(parquet_bytes.as_ptr(), buf_len);
         let mut bufs = ColumnChunkBuffers::new(allocator.clone());
 
         let col_start = chunk.byte_range_start as usize;
@@ -1168,7 +1168,7 @@ fn run_e2e_filtered<const FILL_NULLS: bool>(parquet_bytes: &[u8], rows_filter: &
         repetition,
     );
 
-    let mut ctx = DecodeContext::new_in(parquet_bytes.as_ptr(), buf_len, allocator.clone());
+    let mut ctx = DecodeContext::new(parquet_bytes.as_ptr(), buf_len);
     let mut bufs = ColumnChunkBuffers::new(allocator);
 
     let col_start = chunk.byte_range_start as usize;

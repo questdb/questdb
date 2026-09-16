@@ -118,7 +118,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private Rnd random;
     private ResourcePoolSupervisor<TableReader> readerPoolSupervisor;
     private long requestFd = -1;
-    private boolean isSymbolPredicateCacheEnabled = true;
     private boolean useSimpleCircuitBreaker;
     private boolean validationOnly = false;
     private SecurityContext validationSecurityContext;
@@ -448,6 +447,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isParallelHashJoinGroupByEnabled() {
+        return parallelHashJoinGroupByEnabled && isParallelGroupByEnabled() && sharedQueryWorkerCount > 0;
+    }
+
+    @Override
     public boolean isParallelReadParquetEnabled() {
         return parallelReadParquetEnabled;
     }
@@ -463,11 +467,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public boolean isParallelHashJoinGroupByEnabled() {
-        return parallelHashJoinGroupByEnabled && isParallelGroupByEnabled() && sharedQueryWorkerCount > 0;
-    }
-
-    @Override
     public boolean isParallelHorizonJoinEnabled() {
         return parallelHorizonJoinEnabled;
     }
@@ -475,11 +474,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public boolean isParallelWindowJoinEnabled() {
         return parallelWindowJoinEnabled;
-    }
-
-    @Override
-    public boolean isSymbolPredicateCacheEnabled() {
-        return isSymbolPredicateCacheEnabled;
     }
 
     @Override
@@ -708,11 +702,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setReaderPoolSupervisor(@Nullable ResourcePoolSupervisor<TableReader> supervisor) {
         this.readerPoolSupervisor = supervisor;
-    }
-
-    @Override
-    public void setSymbolPredicateCacheEnabled(boolean enabled) {
-        isSymbolPredicateCacheEnabled = enabled;
     }
 
     @Override

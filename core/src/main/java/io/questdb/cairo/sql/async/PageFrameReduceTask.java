@@ -55,6 +55,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private final StringSink errorMsg = new StringSink();
     private final DirectLongList filteredRows; // Used for TYPE_FILTER and TYPE_WINDOW_JOIN.
     private final PageFrameMemoryPool frameMemoryPool;
+    private final long frameQueueCapacity;
     private int errno = CairoException.NON_CRITICAL;
     private byte errorKind = AsyncQueryErrorKind.KIND_NONE;
     private int errorMessagePosition;
@@ -72,9 +73,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     public PageFrameReduceTask(CairoConfiguration configuration, int memoryTag) {
         try {
-            this.filteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag, true);
-            this.dataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag, true);
-            this.auxAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag, true);
+            this.frameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
+            this.filteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
+            this.dataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
+            this.auxAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
             this.frameMemoryPool = new PageFrameMemoryPool(configuration, 0L);
         } catch (Throwable th) {
             close();
@@ -133,9 +135,9 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public void clear() {
         filteredRowCount = 0;
         isCountOnly = false;
-        filteredRows.close();
-        dataAddresses.close();
-        auxAddresses.close();
+        filteredRows.resetCapacity();
+        dataAddresses.resetCapacity();
+        auxAddresses.resetCapacity();
         frameMemoryPool.clear();
     }
 
@@ -153,7 +155,6 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
      * Returns list of pointers to aux vectors (var-size columns only).
      */
     public DirectLongList getAuxAddresses() {
-        auxAddresses.reopen();
         return auxAddresses;
     }
 
@@ -161,7 +162,6 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
      * Returns list of pointers to data vectors.
      */
     public DirectLongList getDataAddresses() {
-        dataAddresses.reopen();
         return dataAddresses;
     }
 
@@ -170,7 +170,6 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     }
 
     public DirectLongList getFilteredRows() {
-        filteredRows.reopen();
         return filteredRows;
     }
 
@@ -201,8 +200,8 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     /**
      * Returns the per-query memory tracker captured by the owning frame sequence
-     * at workload start, including unlimited queries, or {@code null} between
-     * workloads / for unregistered work. Workers use it for allocation-time tracking.
+     * at workload start, or {@code null} between workloads / when no per-query
+     * limit is configured. Workers feed this to tracker-aware allocation paths.
      */
     public MemoryTracker getMemoryTracker() {
         return frameSequence != null ? frameSequence.getMemoryTracker() : null;
@@ -234,11 +233,6 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     public void of(PageFrameSequence<?> frameSequence, int frameIndex, boolean countOnly) {
         this.frameSequence = frameSequence;
-        // No allocation while claiming a publication slot. Reducers open these
-        // lists lazily, so a limit breach follows the normal task error path.
-        filteredRows.setMemoryTracker(frameSequence.getMemoryTracker());
-        dataAddresses.setMemoryTracker(frameSequence.getMemoryTracker());
-        auxAddresses.setMemoryTracker(frameSequence.getMemoryTracker());
         final boolean sameQueryExecution = frameSequenceId == frameSequence.getId();
         this.frameSequenceId = frameSequence.getId();
         this.taskType = frameSequence.getTaskType();
@@ -284,7 +278,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     // Useful when using external frame memory pool.
     public void populateJitData(@NotNull PageFrameMemory frameMemory) {
         assert frameMemory.getFrameIndex() == frameIndex;
-        populateJitAddresses(frameMemory, frameSequence.getPageFrameAddressCache(), getDataAddresses(), getAuxAddresses());
+        populateJitAddresses(frameMemory, frameSequence.getPageFrameAddressCache(), dataAddresses, auxAddresses);
         if (!isCountOnly) {
             final long rowCount = getFrameRowCount();
             if (filteredRows.getCapacity() < rowCount) {
@@ -302,7 +296,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     }
 
     public void releaseFrameMemory() {
-        frameMemoryPool.clear();
+        frameMemoryPool.releaseParquetBuffers();
         frameMemory = null;
     }
 
@@ -348,9 +342,15 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         frameSequence = null;
         frameMemory = null;
 
-        // A shared queue entry may next serve another query, even before this
-        // producer reaches its final frames. Release all query-owned allocations
-        // while its tracker is alive; retaining buffers here can pin a stale tracker.
-        clear();
+        // We have to reset capacity only on max all queue items
+        // What we are avoiding here is resetting capacity on 1000 frames given our queue size
+        // is 32 items. If our particular producer resizes queue items to 10x of the initial size
+        // we let these sizes stick until produce starts to wind down.
+        if (forceCollect || frameIndex >= frameCount - frameQueueCapacity) {
+            clear();
+        } else {
+            // Never keep parquet buffers around to avoid OOM even if there is an ongoing query.
+            releaseFrameMemory();
+        }
     }
 }

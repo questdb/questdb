@@ -140,15 +140,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
             PageFrameCursor frameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        try {
-            cursor.of(frameCursor, executionContext);
-        } catch (Throwable th) {
-            // The wrapper's of() opens the subquery cursor and charges the delegate's address cache
-            // to the per-query tracker, which the caller releases on failure; free both while that
-            // tracker is still bound
-            Misc.free(cursor, th);
-            throw th;
-        }
+        cursor.of(frameCursor, executionContext);
         return cursor;
     }
 

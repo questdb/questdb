@@ -43,6 +43,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectString;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -105,6 +106,7 @@ public final class IntHashJoinBuild implements Closeable {
     private int symbolSlotCount;
 
     /** Payload types/indexes are in the same order; indexes address the source record. */
+    @TestOnly
     public IntHashJoinBuild(ColumnTypes payloadTypes, IntList sourceColumns, int initialSlots, long initialRowCapacity) {
         this(payloadTypes, sourceColumns, initialSlots, initialRowCapacity, false);
     }
@@ -220,7 +222,7 @@ public final class IntHashJoinBuild implements Closeable {
     public FrozenHashJoinBuild freeze() {
         requireBuilding();
         try {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             // Text interning is build-only; readers resolve IDs through symbolEntries.
             symbolSlots.close();
             frozen = reusableFrozen != null ? reusableFrozen : new Frozen();
@@ -244,7 +246,7 @@ public final class IntHashJoinBuild implements Closeable {
         this.memoryTracker = memoryTracker;
         this.circuitBreaker = circuitBreaker;
         try {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             keys.allocate((long) initialSlots * SLOT_SIZE, true);
             keySlotCount = initialSlots;
             open = true;

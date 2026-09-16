@@ -217,21 +217,12 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     }
 
     @Override
-    public boolean isSymbolPredicateCacheEnabled() {
-        return true;
-    }
-
-    @Override
-    public void setSymbolPredicateCacheEnabled(boolean enabled) {
-    }
-
-    @Override
-    public boolean isParallelHashJoinGroupByEnabled() {
+    public boolean isParallelGroupByEnabled() {
         return false;
     }
 
     @Override
-    public boolean isParallelGroupByEnabled() {
+    public boolean isParallelHashJoinGroupByEnabled() {
         return false;
     }
 
@@ -345,11 +336,11 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     }
 
     @Override
-    public void setParallelHashJoinGroupByEnabled(boolean enabled) {
+    public void setParallelGroupByEnabled(boolean parallelGroupByEnabled) {
     }
 
     @Override
-    public void setParallelGroupByEnabled(boolean parallelGroupByEnabled) {
+    public void setParallelHashJoinGroupByEnabled(boolean enabled) {
     }
 
     @Override

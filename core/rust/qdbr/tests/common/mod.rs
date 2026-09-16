@@ -144,8 +144,8 @@ pub fn decode_file(buf: &[u8]) -> (Vec<u8>, Vec<u8>) {
 
     let row_group_count = decoder.row_group_count;
 
-    let mut rgb = RowGroupBuffers::new(allocator.clone());
-    let mut ctx = DecodeContext::new_in(buf.as_ptr(), buf_len, allocator.clone());
+    let mut rgb = RowGroupBuffers::new(allocator);
+    let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
 
     let columns = vec![(0i32, col_type)];
 
@@ -185,8 +185,8 @@ pub fn decode_file_filtered_fill_nulls(buf: &[u8], rows_filter: &[i64]) -> (Vec<
 
     let row_group_count = decoder.row_group_count;
 
-    let mut rgb = RowGroupBuffers::new(allocator.clone());
-    let mut ctx = DecodeContext::new_in(buf.as_ptr(), buf_len, allocator.clone());
+    let mut rgb = RowGroupBuffers::new(allocator);
+    let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
 
     let columns = vec![(0i32, col_type)];
 
@@ -235,8 +235,8 @@ pub fn decode_file_filtered(buf: &[u8], rows_filter: &[i64]) -> (Vec<u8>, Vec<u8
 
     let row_group_count = decoder.row_group_count;
 
-    let mut rgb = RowGroupBuffers::new(allocator.clone());
-    let mut ctx = DecodeContext::new_in(buf.as_ptr(), buf_len, allocator.clone());
+    let mut rgb = RowGroupBuffers::new(allocator);
+    let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
 
     let columns = vec![(0i32, col_type)];
 

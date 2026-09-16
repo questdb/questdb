@@ -35,7 +35,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
@@ -68,11 +67,7 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
     private long ptr;
     private long rowGroupSizesPtr;
 
-    public static long createDecodeContext(long addr, long fileSize) {
-        return createTrackedDecodeContext(addr, fileSize, Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER));
-    }
-
-    public static native long createTrackedDecodeContext(long addr, long fileSize, long allocator);
+    public static native long createDecodeContext(long addr, long fileSize);
 
     public static native void destroyDecodeContext(long decodeContextPtr);
 
@@ -121,7 +116,7 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
         assert ptr != 0;
         if (decodeContextPtr == 0) {
             // lazy init
-            decodeContextPtr = createTrackedDecodeContext(fileAddr, fileSize, rowGroupBuffers.getNativeAllocator());
+            decodeContextPtr = createDecodeContext(fileAddr, fileSize);
         }
         return decodeRowGroup( // throws CairoException on error
                 ptr,
@@ -147,7 +142,7 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
         assert ptr != 0;
         if (decodeContextPtr == 0) {
             // lazy init
-            decodeContextPtr = createTrackedDecodeContext(fileAddr, fileSize, rowGroupBuffers.getNativeAllocator());
+            decodeContextPtr = createDecodeContext(fileAddr, fileSize);
         }
         decodeRowGroupWithRowFilter(
                 ptr,
@@ -192,7 +187,7 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
         assert ptr != 0;
         if (decodeContextPtr == 0) {
             // lazy init
-            decodeContextPtr = createTrackedDecodeContext(fileAddr, fileSize, rowGroupBuffers.getNativeAllocator());
+            decodeContextPtr = createDecodeContext(fileAddr, fileSize);
         }
         decodeRowGroupWithRowFilterFillNulls(
                 ptr,

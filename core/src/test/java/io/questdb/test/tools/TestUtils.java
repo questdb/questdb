@@ -991,22 +991,6 @@ public final class TestUtils {
             SqlExecutionContext ctx,
             String query
     ) throws SqlException {
-        assertNoSlotLeakOnBreach(compiler, ctx, query, null);
-    }
-
-    /**
-     * Same as {@link #assertNoSlotLeakOnBreach(SqlCompiler, SqlExecutionContext, String)}, and also
-     * requires every breach message to contain {@code expectedBreachFragment}, such as the
-     * {@code size=} of the allocation the test means to fault. That pins which statement breached:
-     * without it, a reducer that stopped reaching the targeted allocation could breach somewhere
-     * else inside the try, release its slot, and pass for the wrong reason.
-     */
-    public static void assertNoSlotLeakOnBreach(
-            SqlCompiler compiler,
-            SqlExecutionContext ctx,
-            String query,
-            @Nullable String expectedBreachFragment
-    ) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
             final PerWorkerLocks locks = findPerWorkerLocks(factory, query);
             for (int i = 0; i < 2; i++) {
@@ -1025,9 +1009,6 @@ public final class TestUtils {
                     } catch (CairoException e) {
                         Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
                         assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
-                        if (expectedBreachFragment != null) {
-                            assertContains(e.getFlyweightMessage(), expectedBreachFragment);
-                        }
                     }
                     assertNoSlotLeak(factory, query);
                     // The latch is the tally: a worker counts it down as it takes a slot, so a

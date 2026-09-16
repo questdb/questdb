@@ -281,7 +281,6 @@ import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.orderby.SortKeyMaterializingRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
-import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilterContext;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
@@ -294,6 +293,7 @@ import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
+import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexFilteredRowCursorFactory;
@@ -797,14 +797,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int workerCount,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        final boolean wasSymbolPredicateCacheEnabled = executionContext.isSymbolPredicateCacheEnabled();
-        executionContext.setSymbolPredicateCacheEnabled(false);
-        try {
-            return new HashJoinGroupByFunctions(this, configuration, asm, functionParser,
-                    model, metadata, workerCount, executionContext);
-        } finally {
-            executionContext.setSymbolPredicateCacheEnabled(wasSymbolPredicateCacheEnabled);
-        }
+        return new HashJoinGroupByFunctions(this, configuration, asm, functionParser,
+                model, metadata, workerCount, executionContext);
     }
 
     /**
@@ -1119,9 +1113,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * Examines an optimized GROUP BY before generateSubQuery constructs the ordinary join.
-     * RFC 130 phase 0 exposes the contract for tests and the comparison harness; automatic
-     * selection is deliberately deferred until the fused operator is implemented and qualified.
+     * Examines an optimized GROUP BY before generateSubQuery constructs the ordinary join and
+     * returns the fused hash join aggregation shape, or null when the query does not qualify.
+     * generateSelectGroupBy() compiles the returned candidate into the fused factory when the
+     * parallel hash join GROUP BY flag is enabled, and falls back to the ordinary plan otherwise.
      */
     @Nullable
     public static HashJoinGroupByCandidate getHashJoinGroupByCandidate(
@@ -5022,10 +5017,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // Child compilation can overwrite the models' usual backup fields. Preserve
         // separate snapshots so a rejected candidate leaves the ordinary plan intact.
         snapshotHashJoinFilters(model, inputModels, whereClauses, backups);
-        // Select existing uncached predicate implementations throughout both children
-        // and the joined functions. Restore this compiler setting even on fallback.
-        final boolean wasSymbolPredicateCacheEnabled = executionContext.isSymbolPredicateCacheEnabled();
-        executionContext.setSymbolPredicateCacheEnabled(false);
         executionContext.pushTimestampRequiredFlag(false);
         try {
             // These children stay under the enclosing query registration and memory tracker.
@@ -5071,7 +5062,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     filterFactory.halfClose();
                     probe = filterFactory.getBaseFactory();
                     filter = borrowedFilter;
-                    // V1 reads logical rows and evaluates the interpreted filter, including
+                    // The fused reducer reads logical rows and evaluates the interpreted filter, including
                     // converted Parquet columns. Discard the unused JIT resources after transfer.
                     Throwable failure = Misc.freeBestEffort(null, filterFactory.getCompiledFilter());
                     failure = Misc.freeBestEffort(failure, filterFactory.getBindVarMemory());
@@ -5098,7 +5089,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         candidate.getLogicalJoinType(), candidate.isInputSwapped());
             }
         } finally {
-            executionContext.setSymbolPredicateCacheEnabled(wasSymbolPredicateCacheEnabled);
             executionContext.popTimestampRequiredFlag();
             for (int i = 0; i < inputModels.size(); i++) {
                 inputModels.getQuick(i).setWhereClause(whereClauses.getQuick(i));
@@ -5114,6 +5104,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    /**
+     * Generates the factories for HORIZON JOIN.
+     */
     private RecordCursorFactory generateHorizonJoinFactory(
             IQueryModel parentModel,
             HorizonJoinContext horizonContext,

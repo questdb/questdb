@@ -103,7 +103,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             for (int i = -1; i < workerCount; i++) {
                 Slot slot = new Slot(metadata.newRecord());
                 if (!functions.isKeyed()) {
-                    slot.value = new SimpleMapValue(functions.getValueTypes().getColumnCount(), null, false);
+                    slot.value = new SimpleMapValue(functions.getValueTypes().getColumnCount());
                 }
                 slots.add(slot);
                 records.add(slot.joinedRecord);
@@ -138,7 +138,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         }
         for (int i = 0; i < slots.size(); i++) {
             try {
-                slots.getQuick(i).clear();
+                slots.getQuick(i).clear(functions.getUpdater(i - 1));
             } catch (Throwable th) {
                 failure = addFailure(failure, th);
             }
@@ -176,6 +176,12 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         CairoException.rethrowCleanupFailure(failure);
     }
 
+    /** The build published for the open cursor, or null when no cursor is open. */
+    @TestOnly
+    public FrozenHashJoinBuild getFrozenBuild() {
+        return frozen;
+    }
+
     @Override
     @TestOnly
     public PerWorkerLocks getPerWorkerLocks() {
@@ -195,8 +201,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             for (int i = 0; i < slots.size(); i++) {
                 Slot slot = slots.getQuick(i);
                 if (!functions.isKeyed()) {
-                    // Allocate under the execution tracker, alongside the live frozen build.
-                    slot.value.reopen(executionContext.getMemoryTracker());
                     functions.getUpdater(i - 1).updateEmpty(slot.value);
                     slot.value.setNew(true);
                 }
@@ -209,15 +213,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                 slot.joinedRecord.of(slot.probeRecord, slot.probeRecord, slot.probe);
             }
             filtersInitialized = true;
-            // The owner predicate also needs an uncached view: its source is the
-            // table frame cursor, unlike joined functions' slot-local symbol source.
-            final boolean wasCloneSymbolTables = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                filterContext.initFilters(symbolTableSource, executionContext);
-            } finally {
-                executionContext.setCloneSymbolTables(wasCloneSymbolTables);
-            }
+            filterContext.initFilters(symbolTableSource, executionContext);
             functionsInitialized = true;
             functions.init(records, executionContext);
         } catch (Throwable th) {
@@ -253,25 +249,12 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         return failure;
     }
 
-    void build(RecordCursor cursor, SqlExecutionContext executionContext, HashJoinGroupByMetrics metrics) {
+    void build(RecordCursor cursor, SqlExecutionContext executionContext) {
         // The child cursor is fresh. Unknown/filtered sizes retain incremental growth.
         final long rowCountHint = cursor.size();
         build.open(executionContext.getMemoryTracker(), executionContext.getCircuitBreaker());
         frozen = build.build(cursor, buildKeyColumn, rowCountHint);
         isBuildUnique = frozen.getRowCount() == frozen.getKeyCount();
-        metrics.buildRows = frozen.getRowCount();
-        metrics.buildKeys = frozen.getKeyCount();
-        metrics.buildBytes = frozen.getSizeInBytes();
-    }
-
-    void collectMetrics(HashJoinGroupByMetrics metrics) {
-        for (int i = 0; i < slots.size(); i++) {
-            Slot slot = slots.getQuick(i);
-            metrics.scannedRows += slot.scannedRows;
-            metrics.matchedPairs += slot.matchedPairs;
-            metrics.nullExtendedRows += slot.nullExtendedRows;
-            metrics.survivingRows += slot.survivingRows;
-        }
     }
 
     AsyncFilterContext getFilterContext() {
@@ -348,10 +331,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         final ProbeRecord probeRecord = new ProbeRecord();
         FrozenHashJoinBuild.Probe probe;
         SimpleMapValue value;
-        long scannedRows;
-        long matchedPairs;
-        long nullExtendedRows;
-        long survivingRows;
 
         Slot(HashJoinGroupByRecord joinedRecord) {
             this.joinedRecord = joinedRecord;
@@ -365,9 +344,11 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             CairoException.rethrowCleanupFailure(failure);
         }
 
-        void clear() {
-            Misc.free(value);
-            scannedRows = matchedPairs = nullExtendedRows = survivingRows = 0;
+        void clear(GroupByFunctionsUpdater updater) {
+            if (value != null) {
+                updater.updateEmpty(value);
+                value.setNew(true);
+            }
             joinedRecord.clear();
             probeRecord.of(null);
         }

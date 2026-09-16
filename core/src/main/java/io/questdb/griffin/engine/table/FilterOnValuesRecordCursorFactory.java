@@ -266,16 +266,9 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
 
         findDuplicates();
 
-        try {
-            cursor.of(pageFrameCursor, sqlExecutionContext);
-            if (filter != null) {
-                filter.init(cursor, sqlExecutionContext);
-            }
-        } catch (Throwable th) {
-            // cursor.of() charges the address cache to the per-query tracker, which the caller
-            // releases on failure; free the cache while that tracker is still bound
-            Misc.free(cursor, th);
-            throw th;
+        cursor.of(pageFrameCursor, sqlExecutionContext);
+        if (filter != null) {
+            filter.init(cursor, sqlExecutionContext);
         }
         return cursor;
     }

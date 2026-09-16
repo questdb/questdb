@@ -67,7 +67,6 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
     private final boolean inputSwapped;
     private final RecordMetadata joinedMetadata;
     private final int logicalJoinType;
-    private final HashJoinGroupByMetrics metrics = new HashJoinGroupByMetrics();
     private final boolean outer;
     private final int workerCount;
     private RecordCursorFactory buildFactory;
@@ -77,6 +76,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
     private HashJoinGroupByFunctions functions;
     private RecordCursorFactory probeFactory;
 
+    @TestOnly
     public AsyncHashJoinGroupByRecordCursorFactory(
             CairoEngine engine,
             RecordCursorFactory probeFactory,
@@ -125,7 +125,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             // The sequence takes atom ownership on entry, also on constructor failure.
             frameSequence = new UnorderedPageFrameSequence<>(engine, engine.getConfiguration(),
                     engine.getMessageBus(), atom, AsyncHashJoinGroupByRecordCursorFactory::aggregate, workerCount);
-            cursor = new AsyncHashJoinGroupByRecordCursor(engine, frameSequence, functions, metrics);
+            cursor = new AsyncHashJoinGroupByRecordCursor(engine, frameSequence, functions);
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;
@@ -146,33 +146,19 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         cursor.close();
-        metrics.clear();
         cursor.open(executionContext.getCircuitBreaker());
         try {
             executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
-            long start = System.nanoTime();
-            final boolean wasCloneSymbolTables = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
             try (RecordCursor buildCursor = buildFactory.getCursor(executionContext)) {
-                frameSequence.getAtom().build(buildCursor, executionContext, metrics);
-            } finally {
-                executionContext.setCloneSymbolTables(wasCloneSymbolTables);
+                frameSequence.getAtom().build(buildCursor, executionContext);
             }
-            metrics.buildNanos = System.nanoTime() - start;
-            start = System.nanoTime();
             final int order = probeFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
             frameSequence.of(probeFactory, executionContext, order);
-            metrics.initNanos = System.nanoTime() - start;
             return cursor;
         } catch (Throwable th) {
             Misc.free(cursor, th);
             throw th;
         }
-    }
-
-    /** Last execution's counters, retained through cursor close and reset on acquisition. */
-    public HashJoinGroupByMetrics getMetrics() {
-        return metrics;
     }
 
     @Override
@@ -230,7 +216,6 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         try {
             final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
             final PageFrameMemoryPool pool = atom.getFilterContext().getMemoryPool(slotId);
-            long matchedPairs = 0;
             try {
                 // Decoder initialization and map allocation must both release the acquired slot on failure.
                 final PageFrameMemoryRecord probeRecord = slot.probeRecord;
@@ -260,7 +245,6 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                     final long pairsPerCheck = atom.getPairsPerCheck();
                     long pairsUntilCheck = pairsPerCheck;
                     for (long r = 0; r < rowCount; r++) {
-                        slot.scannedRows++;
                         probeRecord.setRowIndex(r);
                         if (probeFilter != null && !probeFilter.getBool(probeRecord)) {
                             continue;
@@ -277,12 +261,10 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                                     pairsUntilCheck = pairsPerCheck;
                                 }
                                 probe.next();
-                                matchedPairs++;
                                 update(slot, fragment, map, sink, updater, record, postJoinFilter, rowId);
                             } while (probe.hasNext());
                         } else if (outer) {
                             record.setHasMatch(false);
-                            slot.nullExtendedRows++;
                             update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                         }
                     }
@@ -291,7 +273,6 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                     atom.getShardingContext().maybeEnableSharding(fragment, 0);
                 }
             } finally {
-                slot.matchedPairs += matchedPairs;
                 pool.releaseParquetBuffers();
             }
         } finally {
@@ -319,26 +300,18 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final Function postJoinFilter = functions.getFilter(slotId);
         final int probeKeyColumn = atom.getProbeKeyColumn();
         final boolean outer = atom.isOuter();
-        long matchedPairs = 0;
-        try {
-            for (long r = 0; r < rowCount; r++) {
-                slot.scannedRows++;
-                probeRecord.setRowIndex(r);
-                if (probeFilter != null && !probeFilter.getBool(probeRecord)) {
-                    continue;
-                }
-                if (probe.findSingleUnchecked(probeRecord.getInt(probeKeyColumn))) {
-                    record.setHasMatch(true);
-                    matchedPairs++;
-                    update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
-                } else if (outer) {
-                    record.setHasMatch(false);
-                    slot.nullExtendedRows++;
-                    update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
-                }
+        for (long r = 0; r < rowCount; r++) {
+            probeRecord.setRowIndex(r);
+            if (probeFilter != null && !probeFilter.getBool(probeRecord)) {
+                continue;
             }
-        } finally {
-            slot.matchedPairs += matchedPairs;
+            if (probe.findSingleUnchecked(probeRecord.getInt(probeKeyColumn))) {
+                record.setHasMatch(true);
+                update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+            } else if (outer) {
+                record.setHasMatch(false);
+                update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+            }
         }
     }
 
@@ -361,7 +334,6 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
     private static void update(AsyncHashJoinGroupByAtom.Slot slot, GroupByMapFragment fragment, Map map, RecordSink sink, GroupByFunctionsUpdater updater,
                                HashJoinGroupByRecord record, Function filter, long rowId) {
         if (filter == null || filter.getBool(record)) {
-            slot.survivingRows++;
             final MapValue value;
             if (slot.value != null) {
                 value = slot.value;

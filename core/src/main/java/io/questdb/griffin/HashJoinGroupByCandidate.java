@@ -56,7 +56,7 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Pre-construction eligibility contract for RFC 130. This descriptor borrows optimized models:
+ * Pre-construction eligibility contract for the fused parallel hash join GROUP BY. This descriptor borrows optimized models:
  * use it before ordinary join generation mutates them, and never retain it in a cursor factory.
  * Analysis does not move filters, swap models, initialize functions, or adopt child factories.
  * The planner selects only after verifying the compiled children and aggregate functions.
@@ -161,7 +161,7 @@ public final class HashJoinGroupByCandidate {
                 || (type == CountSymbolGroupByFunction.class && argType == ColumnType.SYMBOL);
     }
 
-    /** Covering-index frame descriptors and decode caches are outside the V1 scan path. */
+    /** The fused scan reads page frames directly and does not support covering-index frame descriptors or their decode caches. */
     public static boolean supportsInputFactory(RecordCursorFactory factory) {
         for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
             if (current instanceof CoveringIndexRecordCursorFactory) {
@@ -172,8 +172,8 @@ public final class HashJoinGroupByCandidate {
     }
 
     /**
-     * Compile-time frame capability only. Execution must use logical typed frame reads and
-     * qualify native/Parquet/conversion paths before selection is enabled; see the RFC contract.
+     * Compile-time frame capability only: the probe must expose page frames, either directly or under a
+     * stealable, parallel-safe filter. Execution reads typed logical frame values, including Parquet columns.
      * This check borrows the filter. Transfer follows all capability checks and worker compilation.
      */
     public static boolean supportsProbeFactory(RecordCursorFactory factory) {

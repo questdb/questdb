@@ -588,11 +588,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
-        public ParquetDecoder getParquetDecoder(int partitionIndex) {
-            return baseCursor.getParquetDecoder(partitionIndex);
-        }
-
-        @Override
         public long getRemainingRowsInInterval() {
             return baseCursor.getRemainingRowsInInterval();
         }
@@ -636,11 +631,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public long size() {
             return baseCursor.size();
-        }
-
-        @Override
-        public boolean supportsParquetDecoderLookup() {
-            return baseCursor.supportsParquetDecoderLookup();
         }
 
         @Override

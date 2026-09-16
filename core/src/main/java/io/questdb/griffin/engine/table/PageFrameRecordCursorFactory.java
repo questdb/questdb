@@ -540,16 +540,9 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             PageFrameCursor frameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        try {
-            cursor.of(frameCursor, executionContext);
-            if (filter != null) {
-                filter.init(cursor, executionContext);
-            }
-        } catch (Throwable th) {
-            // cursor.of() charges the address cache to the per-query tracker, which the caller
-            // releases on failure; free the cache while that tracker is still bound
-            Misc.free(cursor, th);
-            throw th;
+        cursor.of(frameCursor, executionContext);
+        if (filter != null) {
+            filter.init(cursor, executionContext);
         }
         return cursor;
     }
