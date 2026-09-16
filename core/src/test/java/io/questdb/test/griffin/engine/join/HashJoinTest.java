@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -38,6 +39,36 @@ import org.junit.Test;
 
 
 public class HashJoinTest extends AbstractCairoTest {
+
+    @Test
+    public void testHashJoinBuildSideSwapDrivesOutputWhenNoTimestampIsInPlay() throws Exception {
+        // Companion to testHashJoinScanDirectionDoesNotChangeRows: neither side carries a
+        // designated timestamp, so the master's forward scan direction claims nothing about the
+        // join's row order and the build-side swap is taken. The rows below are the swapped ones -
+        // the (larger) slave drives the output - so the expectation changes if the swap stops
+        // firing, rather than the optimisation going quietly dead.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (k SYMBOL, v INT)");
+            execute("CREATE TABLE s (k SYMBOL, w INT)");
+            execute("INSERT INTO m SELECT 'k' || (x % 5), x::int FROM long_sequence(30)");
+            execute("INSERT INTO s SELECT 'k' || (x % 5), x::int FROM long_sequence(300)");
+
+            // These are the swapped rows - the larger slave drives the output. If the swap stops
+            // firing, the master drives instead and this order changes, so the optimisation cannot
+            // go quietly dead.
+            assertQuery("SELECT m.k, m.v, s.w FROM m JOIN s ON m.k = s.k LIMIT 5")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k	v	w
+                            k1	26	1
+                            k1	21	1
+                            k1	16	1
+                            k1	11	1
+                            k1	6	1
+                            """);
+        });
+    }
 
     /**
      * Check that hash join factory doesn't allocate substantial amounts of memory prior to- and after cursor execution.
@@ -176,6 +207,68 @@ public class HashJoinTest extends AbstractCairoTest {
                             1\t10
                             2\t20
                             """);
+        });
+    }
+
+    @Test
+    public void testHashJoinKeepsMasterOrderWhenMasterHasDesignatedTimestamp() throws Exception {
+        // The safety side of the same decision: the master's rows are in designated timestamp
+        // order and the join publishes that order as its own, so the swap must not fire, and the
+        // rows must not depend on whether anyone asked for the scan direction first.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (ts TIMESTAMP, k SYMBOL, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s (k SYMBOL, w INT)");
+            execute("INSERT INTO m SELECT (x * 1000000)::timestamp, 'k' || (x % 5), x::int FROM long_sequence(30)");
+            execute("INSERT INTO s SELECT 'k' || (x % 5), x::int FROM long_sequence(300)");
+
+            try (RecordCursorFactory factory = select("SELECT m.ts, m.k, m.v, s.w FROM m JOIN s ON m.k = s.k LIMIT 5")) {
+                Assert.assertNotEquals("the master must actually carry a designated timestamp, or this test proves nothing",
+                        -1, factory.getMetadata().getTimestampIndex());
+                StringSink first = new StringSink();
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    println(factory.getMetadata(), cursor, first);
+                }
+
+                Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_FORWARD, factory.getScanDirection());
+
+                StringSink second = new StringSink();
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    println(factory.getMetadata(), cursor, second);
+                }
+
+                TestUtils.assertEquals(first, second);
+            }
+        });
+    }
+
+    @Test
+    public void testHashJoinScanDirectionDoesNotChangeRows() throws Exception {
+        // A cached factory is asked for its scan direction between two executions, exactly as
+        // /exp does on a cached plan before opening the cursor. The getter must not change the
+        // answer the next execution produces.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (k SYMBOL, v INT)");
+            execute("CREATE TABLE s (k SYMBOL, w INT)");
+            // master is smaller than the slave and supports random access, so the build-side swap
+            // is eligible; the swap reverses which side drives the output, which LIMIT then cuts.
+            execute("INSERT INTO m SELECT 'k' || (x % 5), x::int FROM long_sequence(30)");
+            execute("INSERT INTO s SELECT 'k' || (x % 5), x::int FROM long_sequence(300)");
+
+            try (RecordCursorFactory factory = select("SELECT m.k, m.v, s.w FROM m JOIN s ON m.k = s.k LIMIT 5")) {
+                StringSink first = new StringSink();
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    println(factory.getMetadata(), cursor, first);
+                }
+
+                factory.getScanDirection();
+
+                StringSink second = new StringSink();
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    println(factory.getMetadata(), cursor, second);
+                }
+
+                TestUtils.assertEquals(first, second);
+            }
         });
     }
 

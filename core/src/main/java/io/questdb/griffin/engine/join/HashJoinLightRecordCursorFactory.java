@@ -55,7 +55,6 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
     private final RecordSink slaveKeySink;
     private final int @Nullable [] slaveSymbolKeyColumnIndices;
     private HashJoinRecordCursor cursor;
-    private boolean masterDetermined = false;
     private @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
 
     public HashJoinLightRecordCursorFactory(
@@ -90,9 +89,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public boolean followedOrderByAdvice() {
-        boolean followOrderBy = masterFactory.followedOrderByAdvice();
-        masterDetermined |= followOrderBy;
-        return followOrderBy;
+        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -101,8 +98,23 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         RecordCursor masterCursor = null;
         try {
             masterCursor = masterFactory.getCursor(executionContext);
+            // Swapping makes the slave drive the output, so it is only allowed while this factory
+            // makes no claim about the order its rows come out in. The claim is read here, per
+            // execution, from the master: accumulating it in the getters instead made a single
+            // getScanDirection() call - which /exp makes on a cached factory before opening its
+            // cursor - change the rows the next execution of that factory returned.
+            //
+            // followedOrderByAdvice() is a claim about any column, so it always blocks the swap.
+            // A forward/backward scan direction says only that rows arrive in designated timestamp
+            // order (see RecordCursorFactory.getScanDirection), so it blocks the swap only when
+            // there is a designated timestamp for it to describe. The master's metadata is
+            // consulted along with this factory's because an enclosing timestamp(col) clause can
+            // re-attach, by name, a timestamp that the join metadata dropped.
+            final boolean masterOrderClaimed = masterFactory.followedOrderByAdvice()
+                    || ((getMetadata().getTimestampIndex() != -1 || masterFactory.getMetadata().getTimestampIndex() != -1)
+                    && masterFactory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER);
             boolean swapped = false;
-            if (masterFactory.recordCursorSupportsRandomAccess() && !masterDetermined) {
+            if (masterFactory.recordCursorSupportsRandomAccess() && !masterOrderClaimed) {
                 long masterSize = masterCursor.size();
                 long slaveSize = slaveCursor.size();
 
@@ -129,9 +141,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public int getScanDirection() {
-        int scanDirection = masterFactory.getScanDirection();
-        masterDetermined |= scanDirection != RecordCursorFactory.SCAN_DIRECTION_OTHER;
-        return scanDirection;
+        return masterFactory.getScanDirection();
     }
 
     @Override
