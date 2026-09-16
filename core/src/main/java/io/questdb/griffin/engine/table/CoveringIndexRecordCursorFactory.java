@@ -64,6 +64,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlHints;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -146,11 +148,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // Test-only crossover override; -1 means "use HEAP_MERGE_MIN_KEYS".
     @TestOnly
     static int heapMergeMinKeysOverride = -1;
-    // Test-only count of opens that granted per-key mode / fell back to the merge. Nothing
-    // user-visible distinguishes the two: the plan prints the plan-stable PERMISSION (see toPlan),
-    // the advertised scan direction is the union over both modes, and a merged answer is also the
-    // correct answer -- so a gate that wrongly fell back would leave every result assertion
-    // passing. These counters are the only observable of the mode an execution actually chose.
+    // Test-only count of opens that granted per-key mode / fell back to the merge. Neither the
+    // plan nor the rows distinguish the two: the plan prints the plan-stable PERMISSION (see
+    // toPlan), the advertised scan direction is the union over both modes, and a merged answer is
+    // also the correct answer -- so a gate that wrongly fell back would leave every result
+    // assertion passing. These counters are how a TEST reads the mode an execution chose; a user
+    // reads the same fact, with the numbers behind it, from the record logFrameMode() writes.
     // Reset with resetModeSelectionsForTesting().
     @TestOnly
     static volatile long mergedModeOpensForTesting;
@@ -173,6 +176,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // its answer is exact rather than sampled. See estimateRowsPerPair().
     private static final int PER_KEY_ESTIMATE_MAX_KEYS = 64;
     private static final int PER_KEY_ESTIMATE_MAX_PROBES = 8192;
+    private static final Log LOG = LogFactory.getLog(CoveringIndexRecordCursorFactory.class);
     private static final ThreadLocal<MergeObserver> TEST_MERGE_OBSERVER = new ThreadLocal<>();
     // The plan this query would have got with /*+ no_covering *//*, held so a NULL key over a
     // partition that carries a column top can be served by it instead. Non-null only when the
@@ -416,7 +420,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * Test-only count of page-frame opens that actually ran the per-key (unordered) scan.
      * A test asserting that a shape still WINS per-key mode must assert on this and not on
      * the plan: the plan prints the plan-stable permission and says nothing about the mode
-     * an execution chose.
+     * an execution chose, and a plan assertion has already survived three mutations that broke
+     * per-key mode outright.
      */
     @TestOnly
     public static long getPerKeyModeOpensForTesting() {
@@ -1096,6 +1101,55 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
     }
 
+    /**
+     * The per-execution frame-mode decision, as a log record.
+     * <p>
+     * Nothing else surfaces it. {@code EXPLAIN} prints the plan-stable PERMISSION and must keep
+     * doing so -- a plan that changed with the data would be worse than one that is blind to it
+     * -- the advertised scan direction is the union over both modes, and a merged answer is also
+     * the correct answer, so a shape that fell back leaves every result identical. A user whose
+     * query quietly took the slower path has nothing to look at.
+     * <p>
+     * This is the channel the engine already uses for per-execution operator facts (see
+     * {@code IntervalFwdPartitionFrameCursor.next()}, {@code AsyncFilteredRecordCursor.close()},
+     * {@code GroupByShardingContext}), and the only one available: there is no EXPLAIN ANALYZE in
+     * this codebase, {@code _query_trace} carries a fixed five-field statement-level struct with
+     * no operator slot, and {@code Metrics} has no query or operator family at all.
+     * <p>
+     * INFO, because a record a user has to reconfigure the server to see does not answer the
+     * question that motivated it, and because the frequency is bounded: this runs only when the
+     * ordering opt-out was GRANTED, i.e. only for a GROUP BY whose grouping columns are exactly
+     * this scan's index key. Every other covering scan returns from {@code selectFrameMode}
+     * before reaching here and logs nothing. That is one record per execution of a query that is
+     * already eligible for per-key mode -- the same order as the one
+     * {@code QueryProgress} already writes per SQL execution.
+     * <p>
+     * Every number the decision rests on is in the record, so it answers "why" and not just
+     * "which": {@code rowsPerPair} against {@code crossover} for the density gate, and
+     * {@code framesUpper} against {@code frameCeiling} for the correctness bound. A
+     * {@code rowsPerPair} of -1 means the estimate found no bounded answer.
+     */
+    private void logFrameMode(
+            boolean perKey,
+            String reason,
+            long keyCount,
+            long partitionUpperBound,
+            long frameUpperBound,
+            long rowsPerPair,
+            int minRowsPerPair
+    ) {
+        LOG.info().$("covering scan frame mode [table=").$safe(dfcFactory.getTableToken().getTableName())
+                .$(", mode=").$(perKey ? "per-key" : "merged")
+                .$(", reason=").$(reason)
+                .$(", keys=").$(keyCount)
+                .$(", partitionsUpper=").$(partitionUpperBound)
+                .$(", framesUpper=").$(frameUpperBound)
+                .$(", frameCeiling=").$(MAX_PER_KEY_PAGE_FRAMES)
+                .$(", rowsPerPair=").$(rowsPerPair)
+                .$(", crossover=").$(minRowsPerPair)
+                .I$();
+    }
+
     private boolean admitsPerKeyMode(
             PartitionFrameCursor frameCursor,
             TableReader reader,
@@ -1106,6 +1160,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         if (keyCount == 0) {
             // No key resolved: the cursor emits nothing either way. Merged keeps the
             // no-rows path on the mode the factory advertises without a special case.
+            logFrameMode(false, "no-keys", 0, -1, -1, -1, -1);
             return false;
         }
         final long boundFromMetadata = frameCursor.getFrameCountUpperBound();
@@ -1126,16 +1181,21 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             // The correctness ceiling. Checked FIRST, and entirely from O(1) metadata, so the
             // shapes with the most (key, partition) pairs -- the ones whose density probe would
             // cost the most -- never pay for one.
+            logFrameMode(false, "frame-ceiling", keyCount, partitionUpperBound, frameUpperBound, -1, -1);
             return false;
         }
         final int minRowsPerPair = effectivePerKeyMinRowsPerPair();
         if (minRowsPerPair <= 0) {
+            logFrameMode(true, "density-gate-off", keyCount, partitionUpperBound, frameUpperBound, -1, minRowsPerPair);
             return true;
         }
         // -1 ("no bounded answer") compares false, i.e. falls back to the merge, which is the
         // right default for every ambiguous case: it is the mode that exists today and the one
         // whose ordering matches what the factory advertises.
-        return estimateRowsPerPair(frameCursor, reader, keys, partitionUpperBound) >= minRowsPerPair;
+        final long rowsPerPair = estimateRowsPerPair(frameCursor, reader, keys, partitionUpperBound);
+        final boolean perKey = rowsPerPair >= minRowsPerPair;
+        logFrameMode(perKey, "density", keyCount, partitionUpperBound, frameUpperBound, rowsPerPair, minRowsPerPair);
+        return perKey;
     }
 
     /**

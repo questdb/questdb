@@ -110,33 +110,29 @@ public class CoveringIndexPerKeyResumeTest extends AbstractCoveringIndexQueryTes
             // runs repeatedly instead of never.
             createTelemetryLarge();
             final String where = " WHERE param_id IN ('SFID','HOTMIC','KCAS','CALT') ORDER BY param_id";
-            // Vacuity guard 1 (routing): confirm the query actually routes through the
-            // per-key (unordered) scan before trusting the comparisons below -- otherwise
-            // a regression that silently fell back to the merge would pass this test
-            // having exercised nothing it claims to. Note this guard holds at ANY frame
-            // size, so it does NOT on its own prove the resume branch ran; that is what
-            // vacuity guard 2 is for.
-            assertQuery("SELECT param_id, max(value), count() FROM telemetry" + where)
-                    .noLeakCheck()
-                    .assertsPlanContaining("frames: per-key (unordered)");
             // count() is the arm that catches the original bug: if the per-key loop
             // re-opens a drained key instead of advancing past it, the key emits its rows
             // forever and the cursor never terminates -- the @Test timeout above, not a
             // row mismatch, is what reports that. max()/first()/last() catch the weaker
             // failure where a chunk boundary drops or duplicates a bounded number of rows.
             CoveringIndexRecordCursorFactory.resetKeyDrainResumesForTesting();
+            CoveringIndexRecordCursorFactory.resetModeSelectionsForTesting();
             assertSameResult(
                     "SELECT param_id, max(value), count() FROM telemetry" + where,
                     "SELECT /*+ no_index */ param_id, max(value), count() FROM telemetry" + where
             );
-            // Vacuity guard 2 (the drain really spanned frames).
+            // Vacuity guard 1 (the execution really ran per-key) and 2 (the drain really
+            // spanned frames).
+            assertRanPerKey();
             assertDrainSpannedFrames();
 
             CoveringIndexRecordCursorFactory.resetKeyDrainResumesForTesting();
+            CoveringIndexRecordCursorFactory.resetModeSelectionsForTesting();
             assertSameResult(
                     "SELECT param_id, first(value), last(value) FROM telemetry" + where,
                     "SELECT /*+ no_index */ param_id, first(value), last(value) FROM telemetry" + where
             );
+            assertRanPerKey();
             assertDrainSpannedFrames();
         });
     }
@@ -153,6 +149,35 @@ public class CoveringIndexPerKeyResumeTest extends AbstractCoveringIndexQueryTes
      * happened here once already -- leaves every assertion in this class still
      * passing while the branch under test never executes.
      */
+    /**
+     * Non-vacuity guard: prove the execution really took the per-key mode.
+     * <p>
+     * This used to assert the PLAN -- {@code frames: per-key (unordered)} -- which is blind to
+     * it. The plan prints the plan-stable PERMISSION, granted at code generation; whether a
+     * given open exercises the permission is decided per execution by the density and
+     * frame-count gates, and merged returns the same rows. The plan assertion therefore passed
+     * under three separate mutations that broke per-key mode outright. The mode-selection
+     * counters are the per-execution answer, and the log record the factory writes at INFO is
+     * the same fact for a user who is not running a test.
+     */
+    private static void assertRanPerKey() {
+        Assert.assertTrue(
+                "the execution fell back to the timestamp-ordered merge, so nothing below this"
+                        + " point exercised the per-key resume branch. Merged returns the same rows,"
+                        + " and the plan prints the plan-stable permission either way, so only this"
+                        + " assertion can tell the difference. Check the density and frame-count"
+                        + " gates against this fixture: "
+                        + CoveringIndexRecordCursorFactory.getPerKeyModeOpensForTesting() + " per-key open(s), "
+                        + CoveringIndexRecordCursorFactory.getMergedModeOpensForTesting() + " merged.",
+                CoveringIndexRecordCursorFactory.getPerKeyModeOpensForTesting() > 0
+        );
+        Assert.assertEquals(
+                "some open of this query fell back to the merge while another took per-key",
+                0,
+                CoveringIndexRecordCursorFactory.getMergedModeOpensForTesting()
+        );
+    }
+
     private static void assertDrainSpannedFrames() {
         final long resumes = CoveringIndexRecordCursorFactory.getKeyDrainResumesForTesting();
         Assert.assertTrue(
