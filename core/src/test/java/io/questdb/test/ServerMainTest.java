@@ -1464,7 +1464,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "wal.apply.worker.nap.threshold\tQDB_WAL_APPLY_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.yield.threshold\tQDB_WAL_APPLY_WORKER_YIELD_THRESHOLD\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.checkpoint.recovery.enabled\tQDB_CAIRO_CHECKPOINT_RECOVERY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
-                                    "log.sql.query.progress.enabled\tQDB_LOG_SQL_QUERY_PROGRESS_ENABLED\ttrue\tdefault\tfalse\ttrue\n" +
+                                    "log.sql.query.progress.enabled\tQDB_LOG_SQL_QUERY_PROGRESS_ENABLED\tfalse\tdefault\tfalse\ttrue\n" +
                                     "log.sql.query.progress.exe\tQDB_LOG_SQL_QUERY_PROGRESS_EXE\ttrue\tdefault\tfalse\tfalse\n" +
                                     "log.level.verbose\tQDB_LOG_LEVEL_VERBOSE\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.bloom.filter.fpp\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_BLOOM_FILTER_FPP\t0.01\tdefault\tfalse\tfalse\n" +
@@ -1489,7 +1489,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "log.timestamp.format\tQDB_LOG_TIMESTAMP_FORMAT\tyyyy-MM-ddTHH:mm:ss.SSSUUUz\tdefault\tfalse\tfalse\n" +
                                     "log.timestamp.locale\tQDB_LOG_TIMESTAMP_LOCALE\ten\tdefault\tfalse\tfalse\n" +
                                     "log.timestamp.timezone\tQDB_LOG_TIMESTAMP_TIMEZONE\tZ\tdefault\tfalse\tfalse\n" +
-                                    "query.tracing.enabled\tQDB_QUERY_TRACING_ENABLED\tfalse\tdefault\tfalse\ttrue\n" +
+                                    "query.tracing.enabled\tQDB_QUERY_TRACING_ENABLED\ttrue\tdefault\tfalse\ttrue\n" +
                                     "http.json.query.connection.limit\tQDB_HTTP_JSON_QUERY_CONNECTION_LIMIT\t-1\tdefault\tfalse\ttrue\n" +
                                     "http.ilp.connection.limit\tQDB_HTTP_ILP_CONNECTION_LIMIT\t-1\tdefault\tfalse\ttrue\n" +
                                     "query.timeout\tQDB_QUERY_TIMEOUT\t60000\tdefault\tfalse\tfalse\n" +

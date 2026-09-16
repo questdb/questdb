@@ -17,6 +17,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Map;
+
 public class SqlLoggingTest extends AbstractCairoTest {
     private static final LogCapture capture = new LogCapture();
 
@@ -39,7 +41,7 @@ public class SqlLoggingTest extends AbstractCairoTest {
     @Test
     public void testCreateLiveView() throws Exception {
         assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root)) {
+            try (final ServerMain serverMain = createServerWithQueryProgressLogging()) {
                 serverMain.start();
 
                 try (TestHttpClient httpClient = new TestHttpClient(HttpClientFactory.newPlainTextInstance())) {
@@ -123,7 +125,7 @@ public class SqlLoggingTest extends AbstractCairoTest {
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root)) {
+            try (final ServerMain serverMain = createServerWithQueryProgressLogging()) {
                 serverMain.start();
 
                 // HTTP JSON test
@@ -175,6 +177,13 @@ public class SqlLoggingTest extends AbstractCairoTest {
                 null,
                 null,
                 null
+        );
+    }
+
+    private static ServerMain createServerWithQueryProgressLogging() {
+        return ServerMain.create(
+                root,
+                Map.of(PropertyKey.LOG_SQL_QUERY_PROGRESS_ENABLED.getEnvVarName(), "true")
         );
     }
 

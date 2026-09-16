@@ -162,7 +162,6 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         if (traceQuery) {
             queryTrace.executionNanos = durationNanos;
             queryTrace.isJit = isJit;
-            queryTrace.timestamp = config.getMicrosecondClock().getTicks();
             queryTrace.principal = executionContext.getSecurityContext().getPrincipal().toString();
             engine.getMessageBus().getQueryTraceQueue().enqueue(queryTrace);
         }
@@ -300,6 +299,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             this.executionContext = executionContext;
             CharSequence sqlText = queryTrace.queryText;
             sqlId = registry.register(sqlText, executionContext);
+            queryTrace.queryStartTimestamp = executionContext.getCairoEngine().getConfiguration().getMicrosecondClock().getTicks();
             beginNanos = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks();
             logStart(sqlId, sqlText, executionContext, jit);
             final ExecutionState executionState = executionContext.getExecutionState();
@@ -350,6 +350,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             this.executionContext = executionContext;
             CharSequence sqlText = queryTrace.queryText;
             sqlId = registry.register(sqlText, executionContext);
+            queryTrace.queryStartTimestamp = executionContext.getCairoEngine().getConfiguration().getMicrosecondClock().getTicks();
             beginNanos = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks();
             logStart(sqlId, sqlText, executionContext, jit);
             final ExecutionState executionState = executionContext.getExecutionState();

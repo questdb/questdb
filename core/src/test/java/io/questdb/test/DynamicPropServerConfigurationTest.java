@@ -1229,6 +1229,9 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     @Test
     public void testQueryTracingReload() throws Exception {
         assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("query.tracing.enabled=false\n");
+            }
             try (ServerMain serverMain = new ServerMain(getBootstrap())) {
                 serverMain.start();
 
@@ -1280,12 +1283,6 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
         assertMemoryLeak(() -> {
             try (ServerMain serverMain = new ServerMain(getBootstrap())) {
                 serverMain.start();
-                Assert.assertTrue(serverMain.getConfiguration().getCairoConfiguration().isLogSqlQueryProgressEnabled());
-
-                try (FileWriter w = new FileWriter(serverConf)) {
-                    w.write("log.sql.query.progress.enabled=false\n");
-                }
-                assertReloadConfigEventually();
                 Assert.assertFalse(serverMain.getConfiguration().getCairoConfiguration().isLogSqlQueryProgressEnabled());
 
                 try (FileWriter w = new FileWriter(serverConf)) {
@@ -1293,6 +1290,12 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 }
                 assertReloadConfigEventually();
                 Assert.assertTrue(serverMain.getConfiguration().getCairoConfiguration().isLogSqlQueryProgressEnabled());
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("log.sql.query.progress.enabled=false\n");
+                }
+                assertReloadConfigEventually();
+                Assert.assertFalse(serverMain.getConfiguration().getCairoConfiguration().isLogSqlQueryProgressEnabled());
             }
         });
     }

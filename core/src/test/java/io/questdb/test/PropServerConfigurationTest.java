@@ -203,7 +203,7 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().getCircuitBreakerConfiguration().isEnabled());
         Assert.assertEquals(2_000_000, configuration.getCairoConfiguration().getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
 
-        Assert.assertTrue(configuration.getCairoConfiguration().isLogSqlQueryProgressEnabled());
+        Assert.assertFalse(configuration.getCairoConfiguration().isLogSqlQueryProgressEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().getLogSqlQueryProgressExe());
 
         Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
@@ -433,7 +433,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
         Assert.assertTrue(configuration.getMemoryConfiguration().isMemoryUsageLogEnabled());
         Assert.assertEquals(60_000, configuration.getMemoryConfiguration().getMemoryUsageLogInterval());
-        Assert.assertFalse(configuration.getCairoConfiguration().isQueryTracingEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isQueryTracingEnabled());
 
         Assert.assertEquals(4, configuration.getCairoConfiguration().getQueryCacheEventQueueCapacity());
         Assert.assertEquals(16777216, configuration.getCairoConfiguration().getDataAppendPageSize());
@@ -535,13 +535,13 @@ public class PropServerConfigurationTest {
     }
 
     @Test
-    public void testSqlQueryProgressLoggingCanBeDisabled() throws Exception {
+    public void testSqlQueryProgressLoggingCanBeEnabled() throws Exception {
         Properties properties = new Properties();
-        properties.setProperty(PropertyKey.LOG_SQL_QUERY_PROGRESS_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.LOG_SQL_QUERY_PROGRESS_ENABLED.getPropertyPath(), "true");
 
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
 
-        Assert.assertFalse(configuration.getCairoConfiguration().isLogSqlQueryProgressEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isLogSqlQueryProgressEnabled());
     }
 
     @Test
