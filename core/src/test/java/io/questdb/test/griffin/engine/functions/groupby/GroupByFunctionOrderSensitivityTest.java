@@ -334,9 +334,42 @@ public class GroupByFunctionOrderSensitivityTest {
     ));
 
     /**
-     * Order-invariant: the result is a commutative, associative combine of the values (sum,
-     * count, bitwise, boolean, min/max, set cardinality, sketches) or a pure ratio of such
-     * sums, and nothing in computeNext/merge reads the row id or the frame index.
+     * Order-invariant. The admission rule is NOT "the combine is commutative and associative, or
+     * a ratio of such sums" -- that test is too narrow to describe this list and too weak to be
+     * safe. Fourteen of the functions below (stddev, variance, corr, covar, the regr_* family,
+     * skewness, kurtosis) are Welford/Chan ONLINE RECURRENCES: each row updates a running mean
+     * and a set of central moments through a step that divides by the count so far, which is
+     * neither commutative nor associative and is not a ratio of sums. They belong here anyway.
+     * Meanwhile an accumulator can be exactly, algebraically commutative and associative and
+     * still not belong -- sum() over DECIMAL256 is, and it is in {@code ORDER_SENSITIVE}.
+     * <p>
+     * <b>What actually admits a function.</b> Both halves must hold.
+     * <ul>
+     *   <li>Reordering the input perturbs the result only within floating-point ROUNDING. The
+     *       aggregate must reach the same answer up to the accumulated error of reassociating
+     *       the same arithmetic, which is already unspecified: worker count varies it today.
+     *       Anything that changes the answer by more than that -- a different row selected, a
+     *       different element order rendered, a different bucketing -- is order-sensitive.</li>
+     *   <li>Nothing in computeNext()/merge() can THROW, SATURATE, or SELECT A PARTICULAR ROW
+     *       rather than combine values. Any of those three makes the aggregate order-sensitive
+     *       no matter how its algebra looks, because each turns an order difference into a
+     *       result difference that no rounding bound covers: a partial sum that overflows a
+     *       fixed-width accumulator raises an error the same rows in another order would not,
+     *       a clamp at a type boundary is lossy and therefore not associative, and a row
+     *       selection reads arrival position rather than values. Nothing may read the row id
+     *       or the frame index, which is the explicit form of that third case.</li>
+     * </ul>
+     * <p>
+     * <b>The tolerance is RELATIVE, not absolute.</b> Measured over a covering scan in per-key
+     * mode against the same query with {@code no_index}: var_pop() moved from {@code 8333334.25}
+     * to {@code 8333334.24999999}, stddev_pop() from {@code 2886.7515047194483} to
+     * {@code 2886.7515047194465}, kurtosis() in the 13th significant digit. On data symmetric
+     * about its mean, where the true skewness is 0, skewness() moved from
+     * {@code -4.707887656719998E-17} to {@code 3.2079622631234974E-16} -- it FLIPPED SIGN. Both
+     * values are zero to within the rounding of the recurrence that produced them, so that is
+     * admitted; an absolute or sign-based comparison would call it a corruption. A behavioural
+     * check over these functions must compare relative magnitude against a floor, never the
+     * sign and never an exact value.
      * <p>
      * Deliberately left here after inspection, with the reason:
      * <ul>
@@ -352,6 +385,12 @@ public class GroupByFunctionOrderSensitivityTest {
      *   <li>ksum()/nsum() and the floating-point sums are order-dependent only in the last
      *       bits of rounding, which is not a semantic guarantee and already varies with
      *       worker count.</li>
+     *   <li>the Welford/Chan recurrences -- stddev_pop/samp, var_pop/samp, corr, covar_pop/samp,
+     *       regr_slope/intercept/r2, skewness_pop/samp, kurtosis_pop/samp, and the two
+     *       weighted_stddev_* variants -- are admitted by the rounding clause above, not by any
+     *       algebraic property. Their merge() is Chan's parallel combination, which is the same
+     *       recurrence applied to partials, so nothing about reordering is new to them; the
+     *       parallel group-by already reorders their input by worker count.</li>
      *   <li>sum()/avg() over DECIMAL8/16/32/64/128 stay here because they WIDEN rather than
      *       throw: the 8/16-bit ones accumulate into a plain {@code long}, the 32/64/128-bit
      *       ones promote to a DECIMAL128/DECIMAL256 accumulator behind an "already promoted"
