@@ -313,9 +313,20 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         }
         PageFrame pageFrame;
         while ((pageFrame = frameCursor.next(skipTarget)) != null) {
-            frameAddressCache.add(frameCount++, pageFrame);
+            final long frameSize = pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
+            // A skip-only skeleton stands for a span the scan discards, so it must not take a slot in the
+            // address cache: it carries no addresses, and its span is cut where the skip landed rather than
+            // where a readable scan cuts a frame. The cache indexes frames by their position in the scan and
+            // keeps the first entry it is given for an index, so a skeleton parked at an index would either
+            // serve its own zero addresses to a later readable scan, or push every frame after it onto the
+            // index of a different frame. Only the frames the scan goes on to read are numbered here.
+            if (!pageFrame.isSkipSkeleton()) {
+                frameAddressCache.add(frameCount++, pageFrame);
+            } else {
+                assert frameSize <= skipTarget : "skip skeleton overshot the skip target [frameSize=" + frameSize
+                        + ", skipTarget=" + skipTarget + ']';
+            }
 
-            long frameSize = pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
             if (frameSize > skipTarget) {
                 rowCount.dec(skipTarget);
                 break;
