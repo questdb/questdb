@@ -328,6 +328,41 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestKeyPushdownQuotedDottedAliases() throws Exception {
+        // A dot inside a quoted alias is not a qualifier separator. The pushdown routes the key
+        // predicate through LiteralCheckingVisitor, which split on the first dot and failed its
+        // pre-validated alias lookup (AssertionError, or NPE without -ea).
+        assertMemoryLeak(() -> {
+            for (int index = 0; index < 2; index++) {
+                String table = "quoted_" + index;
+                createLatestKeyFixture(table, index == 1 ? " INDEX" : "");
+                String singleKeyPlan = index == 1 ? "Index backward scan" : "symbolFilter:";
+                String listPlan = index == 1 ? "symbolFilter:" : "includedSymbols:";
+                String latest = "SELECT s AS \"key.dot\", v FROM " + table + " LATEST ON ts PARTITION BY s";
+                // quoted dotted column alias, qualified by the sub-query alias
+                assertQuery("SELECT v FROM (" + latest + ") q WHERE q.\"key.dot\" = 'a'")
+                        .withPlanContaining(singleKeyPlan).withPlanNotContaining("Filter filter:")
+                        .sizeMayVary().returns("v\n11.0\n");
+                assertQuery("SELECT v FROM (" + latest + ") q WHERE q.\"key.dot\" = 'a' OR 'b' = q.\"key.dot\" ORDER BY v")
+                        .withPlanContaining(listPlan).withPlanNotContaining("Filter filter:")
+                        .sizeMayVary().returns("v\n11.0\n20.0\n");
+                assertQuery("SELECT v FROM (" + latest + ") q WHERE q.\"key.dot\" IN ('a', 'b') ORDER BY v")
+                        .withPlanContaining(listPlan).withPlanNotContaining("Filter filter:")
+                        .sizeMayVary().returns("v\n11.0\n20.0\n");
+                // quoted dotted sub-query alias qualifying a plain column
+                assertQuery("SELECT v FROM (SELECT s, v FROM " + table + " LATEST ON ts PARTITION BY s) \"t.q\" "
+                        + "WHERE \"t.q\".s = 'a' OR 'b' = \"t.q\".s ORDER BY v")
+                        .withPlanContaining(listPlan).withPlanNotContaining("Filter filter:")
+                        .sizeMayVary().returns("v\n11.0\n20.0\n");
+                // the same visitor serves every sub-query pushdown, not only LATEST
+                assertQuery("SELECT v FROM (SELECT s AS \"key.dot\", v FROM " + table + ") q "
+                        + "WHERE q.\"key.dot\" = 'a' OR 'b' = q.\"key.dot\" ORDER BY v")
+                        .sizeMayVary().returns("v\n1.0\n2.0\n10.0\n11.0\n20.0\n");
+            }
+        });
+    }
+
+    @Test
     public void testLatestKeyPushdownOuterResiduals() throws Exception {
         assertMemoryLeak(() -> {
             for (int index = 0; index < 2; index++) {

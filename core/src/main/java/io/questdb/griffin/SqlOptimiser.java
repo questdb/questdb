@@ -13936,7 +13936,9 @@ public class SqlOptimiser implements Mutable {
         public void visit(ExpressionNode node) {
             if (node.type == LITERAL) {
                 final int len = node.token.length();
-                final int dot = Chars.indexOf(node.token, 0, len, '.');
+                // a dot inside a quoted identifier ("key.dot", "t.q".s) is not a qualifier separator;
+                // split the same way LiteralRewritingVisitor does, or the pre-validated lookup misses
+                final int dot = Chars.indexOfLastUnquoted(node.token, '.');
                 int index = nameTypeMap.keyIndex(node.token, dot + 1, len);
                 // these columns are pre-validated
                 assert index < 0;
