@@ -4425,7 +4425,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
             final AtomicInteger reduced = new AtomicInteger();
             final PageFrameSequence<StatefulAtom> frameSequence = new PageFrameSequence<>(
                     engine, configuration, engine.getMessageBus(), new StatefulAtom() {
-                    },
+            },
                     (_, _, _, _, _) -> Assert.assertEquals(reduced.getAndIncrement() / 10, controller.getCooperativePollCount()),
                     () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD), 1, PageFrameReduceTask.TYPE_FILTER
             ) {

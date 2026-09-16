@@ -1124,15 +1124,6 @@ public final class FiberRuntime {
         }
     }
 
-    private void beginMountOrThrow(Fiber fiber, @Nullable OwnerContext ownerContext) {
-        if (!fiber.beginMount()) {
-            throw mountInvariantFailed(fiber.getExecutionState());
-        }
-        fiber.setLastMountWorkerId(ownerContext != null ? ownerContext.workerId : NO_WORKER);
-        mountedCount.increment();
-        mountCount.increment();
-    }
-
     private static void clearOwnedDrain(SuspensionScope.CarrierScope scope) {
         scope.fiberDrainLocalQueue = null;
         scope.fiberDrainMountCount = 0;
@@ -1220,6 +1211,15 @@ public final class FiberRuntime {
         }
     }
 
+    private void beginMountOrThrow(Fiber fiber, @Nullable OwnerContext ownerContext) {
+        if (!fiber.beginMount()) {
+            throw mountInvariantFailed(fiber.getExecutionState());
+        }
+        fiber.setLastMountWorkerId(ownerContext != null ? ownerContext.workerId : NO_WORKER);
+        mountedCount.increment();
+        mountCount.increment();
+    }
+
     private void beginQuiesceListeners() {
         for (int i = 0, n = quiesceListeners.size(); i < n; i++) {
             try {
@@ -1303,6 +1303,7 @@ public final class FiberRuntime {
             return;
         }
         try {
+            assert dispatchSession != null;
             dispatchSession.completeDispatch(requireDispatchRequest(fiber), ticket, completedEpoch, true, false);
         } catch (Throwable th) {
             LOG.critical().$("fiber dispatch completion failed [error=").$(th).I$();
@@ -1320,6 +1321,7 @@ public final class FiberRuntime {
             @Nullable Throwable failure
     ) {
         try {
+            assert dispatchSession != null;
             dispatchSession.completeDispatch(request, ticket, epoch, wasMounted, false);
         } catch (Throwable th) {
             failure = Misc.foldCleanupFailure(failure, th);
@@ -1839,6 +1841,19 @@ public final class FiberRuntime {
         }
     }
 
+    private void releaseTaskSlot() {
+        final int count = outstandingTaskCount.decrementAndGet();
+        if (count < 0) {
+            outstandingTaskCount.incrementAndGet();
+            throw new IllegalStateException("fiber runtime task slot underflow");
+        }
+        try {
+            signalCapacity();
+        } catch (Throwable th) {
+            LOG.critical().$("fiber capacity signal failed [error=").$(th).I$();
+        }
+    }
+
     /**
      * Asks the dispatch session for an immediate grant. Returns true once the request holds a
      * ticket or a recorded failure, false when the session left it pending.
@@ -1846,6 +1861,7 @@ public final class FiberRuntime {
     private boolean resolveDirectDispatch(FiberDispatchRequest request, long dispatchEpoch) {
         final FiberDispatchTicket ticket;
         try {
+            assert dispatchSession != null;
             ticket = dispatchSession.tryDispatchDirect(request);
         } catch (Throwable th) {
             if (!request.grantFailure(dispatchEpoch, th, FAILED_DISPATCH_TICKET)) {
@@ -1861,19 +1877,6 @@ public final class FiberRuntime {
             throw new IllegalStateException("Fiber direct dispatch request was resolved concurrently");
         }
         return true;
-    }
-
-    private void releaseTaskSlot() {
-        final int count = outstandingTaskCount.decrementAndGet();
-        if (count < 0) {
-            outstandingTaskCount.incrementAndGet();
-            throw new IllegalStateException("fiber runtime task slot underflow");
-        }
-        try {
-            signalCapacity();
-        } catch (Throwable th) {
-            LOG.critical().$("fiber capacity signal failed [error=").$(th).I$();
-        }
     }
 
     private void runControlledMount(
@@ -2066,6 +2069,7 @@ public final class FiberRuntime {
         final long completedEpoch = fiber.getPendingDispatchEpoch();
         final FiberDispatchTicket completedTicket = fiber.takePendingDispatchTicket();
         try {
+            assert dispatchSession != null;
             if (completedTicket != null) {
                 dispatchSession.completeDispatch(request, completedTicket, completedEpoch, true, true);
             } else {
@@ -2228,10 +2232,10 @@ public final class FiberRuntime {
             final FiberDispatchRoute route = fiber.isShutdownRequested()
                     ? FiberDispatchRoute.SHUTDOWN_CLEANUP
                     : switch (fiber.getYieldReason()) {
-                        case Fiber.YIELD_DISPATCH -> FiberDispatchRoute.DISPATCH_YIELD;
-                        case Fiber.YIELD_PREEMPTED -> FiberDispatchRoute.PREEMPTED;
-                        default -> FiberDispatchRoute.POST_PROCESS_RESIGNAL;
-                    };
+                case Fiber.YIELD_DISPATCH -> FiberDispatchRoute.DISPATCH_YIELD;
+                case Fiber.YIELD_PREEMPTED -> FiberDispatchRoute.PREEMPTED;
+                default -> FiberDispatchRoute.POST_PROCESS_RESIGNAL;
+            };
             final long nextDispatchEpoch = request.begin(route, ownerContext);
             submitDispatch(request, nextDispatchEpoch);
             return;
@@ -2359,16 +2363,7 @@ public final class FiberRuntime {
         STANDALONE_TEST
     }
 
-    private static final class Configuration {
-        private final int maxLiveFiberCount;
-        private final int maxRetainedFiberCount;
-        private final int mountBudget;
-
-        private Configuration(int maxLiveFiberCount, int maxRetainedFiberCount, int mountBudget) {
-            this.maxLiveFiberCount = maxLiveFiberCount;
-            this.maxRetainedFiberCount = maxRetainedFiberCount;
-            this.mountBudget = mountBudget;
-        }
+    private record Configuration(int maxLiveFiberCount, int maxRetainedFiberCount, int mountBudget) {
     }
 
     public static final class OwnerContext {
