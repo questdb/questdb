@@ -371,6 +371,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final DateLocale locale;
     private final Log log;
     private final boolean logLevelVerbose;
+    private final boolean logSqlQueryProgressEnabled;
     private final boolean logSqlQueryProgressExe;
     private final DateFormat logTimestampFormat;
     private final DateLocale logTimestampLocale;
@@ -925,6 +926,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.validator = newValidator();
         this.staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
         this.dynamicProperties = dynamicProperties;
+        this.logSqlQueryProgressEnabled = getBoolean(properties, env, PropertyKey.LOG_SQL_QUERY_PROGRESS_ENABLED, true);
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
         final boolean memoryUsageLogEnabled = getBoolean(properties, env, PropertyKey.MEMORY_USAGE_LOG_ENABLED, true);
@@ -4571,6 +4573,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getLogLevelVerbose() {
             return logLevelVerbose;
+        }
+
+        @Override
+        public boolean isLogSqlQueryProgressEnabled() {
+            return logSqlQueryProgressEnabled;
         }
 
         @Override

@@ -96,6 +96,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.HTTP_WORKER_FIBER_MOUNT_BUDGET,
             PropertyKey.LINE_HTTP_MAX_RECV_BUFFER_SIZE,
             PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT,
+            PropertyKey.LOG_SQL_QUERY_PROGRESS_ENABLED,
             PropertyKey.QUERY_TRACING_ENABLED,
             PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE,
             PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE,

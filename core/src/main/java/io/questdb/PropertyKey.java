@@ -678,6 +678,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     LOG_TIMESTAMP_TIMEZONE("log.timestamp.timezone"),
     LOG_TIMESTAMP_LOCALE("log.timestamp.locale"),
     LOG_TIMESTAMP_FORMAT("log.timestamp.format"),
+    LOG_SQL_QUERY_PROGRESS_ENABLED("log.sql.query.progress.enabled"),
     LOG_SQL_QUERY_PROGRESS_EXE("log.sql.query.progress.exe"),
     CAIRO_PARTITION_ENCODER_PARQUET_BLOOM_FILTER_FPP("cairo.partition.encoder.parquet.bloom.filter.fpp"),
     CAIRO_PARTITION_ENCODER_PARQUET_VERSION("cairo.partition.encoder.parquet.version"),

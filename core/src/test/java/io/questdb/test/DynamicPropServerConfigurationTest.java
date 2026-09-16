@@ -1276,6 +1276,28 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testSqlQueryProgressLoggingReload() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                Assert.assertTrue(serverMain.getConfiguration().getCairoConfiguration().isLogSqlQueryProgressEnabled());
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("log.sql.query.progress.enabled=false\n");
+                }
+                assertReloadConfigEventually();
+                Assert.assertFalse(serverMain.getConfiguration().getCairoConfiguration().isLogSqlQueryProgressEnabled());
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("log.sql.query.progress.enabled=true\n");
+                }
+                assertReloadConfigEventually();
+                Assert.assertTrue(serverMain.getConfiguration().getCairoConfiguration().isLogSqlQueryProgressEnabled());
+            }
+        });
+    }
+
+    @Test
     public void testQwpBrowserTlsTerminationEnabled() throws Exception {
         // The QWP upgrade processors read this flag off the object
         // ServerConfiguration.getHttpServerConfiguration() returns, which is

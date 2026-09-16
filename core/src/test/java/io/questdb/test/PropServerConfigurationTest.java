@@ -203,6 +203,7 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().getCircuitBreakerConfiguration().isEnabled());
         Assert.assertEquals(2_000_000, configuration.getCairoConfiguration().getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
 
+        Assert.assertTrue(configuration.getCairoConfiguration().isLogSqlQueryProgressEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().getLogSqlQueryProgressExe());
 
         Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
@@ -531,6 +532,16 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1000, configuration.getExportPoolConfiguration().getYieldThreshold());
 
         Assert.assertFalse(configuration.getCairoConfiguration().useWithinLatestByOptimisation());
+    }
+
+    @Test
+    public void testSqlQueryProgressLoggingCanBeDisabled() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.LOG_SQL_QUERY_PROGRESS_ENABLED.getPropertyPath(), "false");
+
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+
+        Assert.assertFalse(configuration.getCairoConfiguration().isLogSqlQueryProgressEnabled());
     }
 
     @Test

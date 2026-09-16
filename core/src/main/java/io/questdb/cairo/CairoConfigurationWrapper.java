@@ -580,6 +580,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isLogSqlQueryProgressEnabled() {
+        return getDelegate().isLogSqlQueryProgressEnabled();
+    }
+
+    @Override
     public DateFormat getLogTimestampFormat() {
         return getDelegate().getLogTimestampFormat();
     }

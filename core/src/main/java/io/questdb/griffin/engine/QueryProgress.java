@@ -108,54 +108,62 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             @Nullable QueryTrace queryTrace
     ) {
         final int leakedReadersCount = leakedReaders != null ? leakedReaders.size() : 0;
+        final boolean shouldLogSql = executionContext.shouldLogSql();
         // Validation only compiles the SQL to check it; suppress the normal query-progress
         // line so the validation endpoint does not pollute the log. Still report reader leaks,
         // as those indicate a real bug regardless of validation mode.
-        if ((!executionContext.shouldLogSql() && leakedReadersCount == 0) || sqlText == null) {
+        if ((!shouldLogSql && leakedReadersCount == 0) || sqlText == null) {
             return;
         }
 
         CairoEngine engine = executionContext.getCairoEngine();
         CairoConfiguration config = engine.getConfiguration();
+        final boolean traceQuery = queryTrace != null && shouldLogSql && config.isQueryTracingEnabled();
+        final boolean logQueryProgress = shouldLogSql && config.isLogSqlQueryProgressEnabled();
+        if (leakedReadersCount == 0 && !logQueryProgress && !traceQuery) {
+            return;
+        }
+
         long durationNanos = config.getNanosecondClock().getTicks() - beginNanos;
         boolean isJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED;
 
-        CharSequence principal = executionContext.getSecurityContext().getPrincipal();
-        LogRecord log = null;
-        try {
-            if (leakedReadersCount > 0) {
-                log = LOG.errorW();
-                executionContext.getCairoEngine().getMetrics().healthMetrics()
-                        .incrementReaderLeakCounter(leakedReadersCount);
-                log.$("brk");
-            } else {
-                log = LOG.info();
-                log.$("fin");
-            }
-            log.$(" [id=").$(sqlId)
-                    .$(", sql=`").$safe(sqlText)
-                    .$("`, ").$(executionContext)
-                    .$(", jit=").$(isJit)
-                    .$(", time=").$(durationNanos);
+        if (leakedReadersCount > 0 || logQueryProgress) {
+            LogRecord log = null;
+            try {
+                if (leakedReadersCount > 0) {
+                    log = LOG.errorW();
+                    executionContext.getCairoEngine().getMetrics().healthMetrics()
+                            .incrementReaderLeakCounter(leakedReadersCount);
+                    log.$("brk");
+                } else {
+                    log = LOG.info();
+                    log.$("fin");
+                }
+                log.$(" [id=").$(sqlId)
+                        .$(", sql=`").$safe(sqlText)
+                        .$("`, ").$(executionContext)
+                        .$(", jit=").$(isJit)
+                        .$(", time=").$(durationNanos);
 
-            appendLeakedReaderNames(leakedReaders, leakedReadersCount, log);
-        } catch (Throwable e) {
-            // Game over, we can't log anything
-            System.err.print("could not log exception message");
-            e.printStackTrace(System.err);
-        } finally {
-            if (log != null) {
-                log.I$();
+                appendLeakedReaderNames(leakedReaders, leakedReadersCount, log);
+            } catch (Throwable e) {
+                // Game over, we can't log anything
+                System.err.print("could not log exception message");
+                e.printStackTrace(System.err);
+            } finally {
+                if (log != null) {
+                    log.I$();
+                }
             }
         }
         // When queryTrace is not null, queryTrace.queryText is already set and equal to sqlText,
         // as well as already converted to an immutable String, as needed to queue it up for handling
         // at a later time. For this reason, do not assign queryTrace.queryText = sqlText here.
-        if (queryTrace != null && executionContext.shouldLogSql() && engine.getConfiguration().isQueryTracingEnabled()) {
+        if (traceQuery) {
             queryTrace.executionNanos = durationNanos;
             queryTrace.isJit = isJit;
             queryTrace.timestamp = config.getMicrosecondClock().getTicks();
-            queryTrace.principal = principal.toString();
+            queryTrace.principal = executionContext.getSecurityContext().getPrincipal().toString();
             engine.getMessageBus().getQueryTraceQueue().enqueue(queryTrace);
         }
     }
@@ -246,7 +254,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             @NotNull SqlExecutionContext executionContext,
             boolean jit
     ) {
-        if (executionContext.shouldLogSql() && executionContext.getCairoEngine().getConfiguration().getLogSqlQueryProgressExe() && sqlText != null) {
+        final CairoConfiguration config = executionContext.getCairoEngine().getConfiguration();
+        if (executionContext.shouldLogSql()
+                && config.isLogSqlQueryProgressEnabled()
+                && config.getLogSqlQueryProgressExe()
+                && sqlText != null) {
             LOG.info()
                     .$("exe")
                     .$(" [id=").$(sqlId)

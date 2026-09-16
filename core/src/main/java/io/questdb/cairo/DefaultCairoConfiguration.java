@@ -605,6 +605,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isLogSqlQueryProgressEnabled() {
+        return true;
+    }
+
+    @Override
     public DateFormat getLogTimestampFormat() {
         return null;
     }
