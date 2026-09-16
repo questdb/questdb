@@ -59,13 +59,11 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
     private static final int INITIAL_CAPACITY = 128;
     private static final Log LOG = LogFactory.getLog(QueryTracingJob.class.getName());
     private final ValueHolderList<QueryTrace> buffer;
-    private final CairoEngine engine;
     private final int executionMicrosColumnIndex;
     private final int principalColumnIndex;
     private final int queryStartColumnIndex;
     private final int queryTextColumnIndex;
     private final ConcurrentQueue<QueryTrace> queue;
-    private final SqlExecutionContextImpl sqlExecutionContext;
     private final TableWriter tableWriter;
     private final TimestampDriver timestampDriver;
     private final QueryTrace trace = new QueryTrace();
@@ -75,13 +73,12 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
     public QueryTracingJob(CairoEngine engine) throws SqlException {
         this.queue = engine.getMessageBus().getQueryTraceQueue();
         this.buffer = new ValueHolderList<>(QueryTrace.ITEM_FACTORY, INITIAL_CAPACITY);
-        this.engine = engine;
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(
+        final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(
                 engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
                 null,
                 null
         );
-        this.tableWriter = acquireTableWriter();
+        this.tableWriter = acquireTableWriter(engine, sqlExecutionContext);
         this.timestampDriver = ColumnType.getTimestampDriver(tableWriter.getTimestampType());
         final TableRecordMetadata metadata = tableWriter.getMetadata();
         this.queryTextColumnIndex = metadata.getColumnIndex(COLUMN_QUERY_TEXT);
@@ -95,7 +92,10 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
         tableWriter.close();
     }
 
-    private TableWriter acquireTableWriter() throws SqlException {
+    private static TableWriter acquireTableWriter(
+            CairoEngine engine,
+            SqlExecutionContextImpl sqlExecutionContext
+    ) throws SqlException {
         TableToken tableToken;
         try {
             tableToken = engine.verifyTableName(TABLE_NAME);

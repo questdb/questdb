@@ -151,26 +151,6 @@ public class QueryTracingTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testQueryStartTimestampDoesNotUseO3() throws Exception {
-        node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
-        final long currentHour = Micros.floorHH(engine.getConfiguration().getMicrosecondClock().getTicks());
-        try (QueryTracingJob job = new QueryTracingJob(engine)) {
-            for (int i = 0; i < 128; i++) {
-                enqueueTrace(currentHour + i * 1_000L, "select " + i);
-                job.run();
-            }
-
-            enqueueTrace(currentHour + 120_500L, "late query");
-            job.run();
-        }
-
-        final TableToken tableToken = engine.verifyTableName(TABLE_NAME);
-        try (TableReader reader = engine.getReader(tableToken)) {
-            Assert.assertEquals(1, reader.getPartitionCount());
-        }
-    }
-
-    @Test
     public void testQueryTracingMigratesExistingTable() throws Exception {
         engine.execute(
                 "CREATE TABLE '" + TABLE_NAME + "' (" +

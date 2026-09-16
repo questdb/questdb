@@ -509,7 +509,9 @@ public interface CairoConfiguration {
 
     boolean getLogSqlQueryProgressExe();
 
-    boolean isLogSqlQueryProgressEnabled();
+    default boolean isLogSqlQueryProgressEnabled() {
+        return true;
+    }
 
     DateFormat getLogTimestampFormat();
 
