@@ -693,10 +693,23 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 this.timestampIndex = timestampIndex;
                 timestampType = metadata.getTimestampType();
                 if (scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
-                    // Only a forward scan is recorded: this feeds the HTTP temp-table parquet export,
-                    // which re-reads the temp table in the SELECT's own direction. A partitioned temp
-                    // table has already been O3-sorted into ascending order by the time it is read
-                    // back, so a non-forward SELECT has no order left to preserve.
+                    // Deliberately narrower than the timestamp inheritance above, and unchanged from
+                    // master: the only value this field ever holds is SCAN_DIRECTION_FORWARD or the
+                    // SCAN_DIRECTION_OTHER it is default-initialised to. BACKWARD is never recorded,
+                    // by either revision.
+                    //
+                    // The single reader is HTTPSerialParquetExporter, which tests the getter against
+                    // SCAN_DIRECTION_BACKWARD to decide whether to re-read the temp table with an
+                    // "order by <ts> desc" appended. That test is therefore dead code at master and
+                    // here alike; the export always re-reads ascending. It is left in place because
+                    // removing it would orphan getSelectSqlScanDirection() on the CreateTableOperation
+                    // interface, which is a wider change than this branch should make - but do not
+                    // read it as evidence that a descending re-read is reachable, and do not widen
+                    // this assignment to make it so without first working out what a descending
+                    // re-read would mean: the temp table is written through TableWriter, so a
+                    // partitioned one has been O3-sorted into ascending order before it is read back
+                    // and a non-partitioned one refuses out-of-order rows outright. In neither case
+                    // does the SELECT's own scan order survive into the stored rows.
                     this.selectSqlScanDirection = scanDirection;
                 }
             }

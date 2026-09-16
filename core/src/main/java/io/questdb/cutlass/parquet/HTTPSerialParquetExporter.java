@@ -102,6 +102,11 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
 
                 try (SqlCompiler compiler = cairoEngine.getSqlCompiler()) {
                     int timestampIndex = createOp.getTimestampIndex();
+                    // Always false today: CreateTableOperationImpl records only SCAN_DIRECTION_FORWARD
+                    // (or leaves the field at its SCAN_DIRECTION_OTHER default), never BACKWARD - see
+                    // the comment on that assignment. The descending re-read below is consequently
+                    // unreachable at this revision and at master. Kept as the shape a future
+                    // descending export would take, not as live behaviour.
                     boolean descending = timestampIndex > -1 && createOp.getSelectSqlScanDirection() == SCAN_DIRECTION_BACKWARD;
                     CharSequence sql = task.getTableName();
                     if (descending) {
