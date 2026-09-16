@@ -43,8 +43,8 @@ import java.lang.reflect.Method;
  * the insertion point over the same (partitionTimestamp, nameTxn) ordering {@code findResolved} already
  * binary-searches. Two things have to hold: the search lands on the SAME slot the linear scan did (so the
  * cache stays sorted, the invariant {@code findResolved} depends on), and its cost is log-linear, not
- * quadratic. The reflection tests pin the first on the production method; the counter tests pin the second
- * on an exact operation count.
+ * quadratic. Both are pinned on the production method: the sorted-cache tests drive it by reflection, and
+ * the cost test counts the slot reads it makes over a {@link LongList} that counts its own reads.
  */
 public class PartitionGeometryInsertResolvedTest {
 
@@ -53,35 +53,32 @@ public class PartitionGeometryInsertResolvedTest {
     private static final int RES_PARTITION_TS = staticInt("RES_PARTITION_TS");
 
     /**
-     * The exact insert cost the OLD linear scan and the NEW binary search each pay, in slot comparisons,
-     * to resolve C composite partitions on the ascending walk the sweep drives. The linear count is the
-     * closed form C*(C-1)/2 - every insert appends at the tail but scans every slot to find that out - and
-     * the binary count grows as C*log(C). Doubling C therefore near-quadruples the linear work and only
-     * a bit more than doubles the binary work; the ratio is the proof, independent of any wall clock.
+     * The insert cost the REAL insertResolved pays, in slot reads, to resolve C composite partitions on the
+     * ascending partition walk the sweep drives. The old linear scan read every slot already present before
+     * appending at the tail - the closed form C*(C-1)/2 - while the binary search stays under
+     * C*(ceil(log2 C)+1). Doubling C therefore near-quadruples the old cost and only a bit more than doubles
+     * the current one, so the ratio is the regression signal, independent of any wall clock.
      */
     @Test
-    public void testInsertCostIsLogLinearNotQuadratic() {
+    public void testInsertCostIsLogLinearNotQuadratic() throws Exception {
         final int c = 4096;
 
-        final long linearC = linearInsertComparisons(c);
-        final long linear2C = linearInsertComparisons(2 * c);
-        final long binaryC = binaryInsertComparisons(c);
-        final long binary2C = binaryInsertComparisons(2 * c);
+        final long readsC = productionInsertSlotReads(c);
+        final long reads2C = productionInsertSlotReads(2 * c);
 
-        // The linear scan is exactly quadratic: it appends at the tail every time yet reads every slot.
-        Assert.assertEquals((long) c * (c - 1) / 2, linearC);
-        Assert.assertEquals((long) (2 * c) * (2 * c - 1) / 2, linear2C);
+        // Log-linear: one slot read per binary-search step, C inserts deep.
+        Assert.assertTrue("reads(C)=" + readsC, readsC <= (long) c * (ceilLog2(c) + 1));
+        Assert.assertTrue("reads(2C)=" + reads2C, reads2C <= (long) (2 * c) * (ceilLog2(2 * c) + 1));
 
-        // The binary search is bounded by C*(ceil(log2 C)+1) comparisons - log-linear.
-        Assert.assertTrue("binary(C)=" + binaryC, binaryC <= (long) c * (ceilLog2(c) + 1));
-        Assert.assertTrue("binary(2C)=" + binary2C, binary2C <= (long) (2 * c) * (ceilLog2(2 * c) + 1));
+        // Doubling C barely more than doubles the work (<2.5x); a quadratic insert near-quadruples it.
+        Assert.assertTrue("reads ratio " + ((double) reads2C / readsC), (double) reads2C / readsC < 2.5);
 
-        // Doubling C: linear work near-quadruples (~4x), binary work barely more than doubles (<2.5x).
-        Assert.assertTrue("linear ratio " + ((double) linear2C / linearC), (double) linear2C / linearC > 3.9);
-        Assert.assertTrue("binary ratio " + ((double) binary2C / binaryC), (double) binary2C / binaryC < 2.5);
+        // The gap over the linear scan's closed form at C=4096: the scan pays more than 150x the reads.
+        final long linearScanReads = (long) c * (c - 1) / 2;
+        Assert.assertTrue("gap " + ((double) linearScanReads / readsC), (double) linearScanReads / readsC > 150);
 
-        // And the gap the fix closes: at C=4096 the linear scan pays ~200x the binary search's comparisons.
-        Assert.assertTrue("gap " + ((double) linearC / binaryC), (double) linearC / binaryC > 150);
+        // A count, not a timing: the same C reports the same count on every run.
+        Assert.assertEquals(readsC, productionInsertSlotReads(c));
     }
 
     /**
@@ -201,22 +198,15 @@ public class PartitionGeometryInsertResolvedTest {
     }
 
     /**
-     * The new insertResolved search, instrumented to count slot comparisons. Kept byte-for-byte equivalent
-     * to the production loop so the count it reports is the count the real method pays.
+     * The new insertResolved search. Kept byte-for-byte equivalent to the production loop so the index it
+     * reports is the index the real method picks.
      */
     private static int binaryInsertPosition(LongList resolved, long partitionTimestamp, long nameTxn) {
-        return binaryInsertPosition(resolved, partitionTimestamp, nameTxn, null);
-    }
-
-    private static int binaryInsertPosition(LongList resolved, long partitionTimestamp, long nameTxn, long[] comparisons) {
         final int blocks = resolved.size() / LONGS_PER_RESOLVED;
         int lo = 0;
         int hi = blocks;
         while (lo < hi) {
             final int mid = (lo + hi) >>> 1;
-            if (comparisons != null) {
-                comparisons[0]++;
-            }
             final long ts = resolved.getQuick(mid * LONGS_PER_RESOLVED + RES_PARTITION_TS);
             if (ts < partitionTimestamp
                     || (ts == partitionTimestamp && resolved.getQuick(mid * LONGS_PER_RESOLVED + RES_NAME_TXN) <= nameTxn)) {
@@ -226,21 +216,6 @@ public class PartitionGeometryInsertResolvedTest {
             }
         }
         return lo * LONGS_PER_RESOLVED;
-    }
-
-    private static long binaryInsertComparisons(int c) {
-        final LongList resolved = new LongList();
-        final long[] comparisons = {0};
-        for (int i = 0; i < c; i++) {
-            final long ts = i * 1000L;
-            final int at = binaryInsertPosition(resolved, ts, 0, comparisons);
-            resolved.insert(at, LONGS_PER_RESOLVED);
-            for (int s = 0; s < LONGS_PER_RESOLVED; s++) {
-                resolved.setQuick(at + s, 0);
-            }
-            resolved.setQuick(at + RES_PARTITION_TS, ts);
-        }
-        return comparisons[0];
     }
 
     private static int ceilLog2(int n) {
@@ -263,19 +238,12 @@ public class PartitionGeometryInsertResolvedTest {
     }
 
     /**
-     * The OLD insertResolved search, instrumented to count slot comparisons - the linear scan from index 0.
+     * The OLD insertResolved search - the linear scan from index 0.
      */
     private static int linearInsertPosition(LongList resolved, long partitionTimestamp, long nameTxn) {
-        return linearInsertPosition(resolved, partitionTimestamp, nameTxn, null);
-    }
-
-    private static int linearInsertPosition(LongList resolved, long partitionTimestamp, long nameTxn, long[] comparisons) {
         final int n = resolved.size();
         int at = n;
         for (int i = 0; i < n; i += LONGS_PER_RESOLVED) {
-            if (comparisons != null) {
-                comparisons[0]++;
-            }
             final long ts = resolved.getQuick(i + RES_PARTITION_TS);
             if (ts > partitionTimestamp || (ts == partitionTimestamp && resolved.getQuick(i + RES_NAME_TXN) > nameTxn)) {
                 at = i;
@@ -285,19 +253,29 @@ public class PartitionGeometryInsertResolvedTest {
         return at;
     }
 
-    private static long linearInsertComparisons(int c) {
-        final LongList resolved = new LongList();
-        final long[] comparisons = {0};
-        for (int i = 0; i < c; i++) {
-            final long ts = i * 1000L;
-            final int at = linearInsertPosition(resolved, ts, 0, comparisons);
-            resolved.insert(at, LONGS_PER_RESOLVED);
-            for (int s = 0; s < LONGS_PER_RESOLVED; s++) {
-                resolved.setQuick(at + s, 0);
+    /**
+     * Slot reads the REAL insertResolved makes while resolving {@code compositeCount} composite partitions in
+     * ascending partition order, the order the compaction sweep walks them in. The production method reaches
+     * its resolved cache only through {@link LongList#getQuick}, so a cache that counts its own reads,
+     * installed over the private field, reports the production search's own cost.
+     */
+    private static long productionInsertSlotReads(int compositeCount) throws Exception {
+        final Method insertResolved = privateMethod("insertResolved", long.class, long.class);
+        final Field resolvedField = privateField("resolved");
+        final PartitionGeometry geometry = new PartitionGeometry();
+        try {
+            final CountingLongList resolved = new CountingLongList();
+            resolvedField.set(geometry, resolved);
+            for (int i = 0; i < compositeCount; i++) {
+                final int at = (int) insertResolved.invoke(geometry, i * 1000L, 0L);
+                // Ascending keys append at the tail, which is what makes the linear scan's cost quadratic.
+                Assert.assertEquals(i * LONGS_PER_RESOLVED, at);
             }
-            resolved.setQuick(at + RES_PARTITION_TS, ts);
+            Assert.assertEquals(compositeCount * LONGS_PER_RESOLVED, resolved.size());
+            return resolved.getReadCount();
+        } finally {
+            geometry.close();
         }
-        return comparisons[0];
     }
 
     private static Field privateField(String name) throws NoSuchFieldException {
@@ -319,6 +297,25 @@ public class PartitionGeometryInsertResolvedTest {
             return field.getInt(null);
         } catch (ReflectiveOperationException e) {
             throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    /**
+     * A resolved cache that counts the slot reads made over it. PartitionGeometry reads every slot through
+     * {@link LongList#getQuick}, so overriding that one method turns the production search's cost into an
+     * observable count and needs no instrumentation in production code.
+     */
+    private static final class CountingLongList extends LongList {
+        private long readCount;
+
+        @Override
+        public long getQuick(int index) {
+            readCount++;
+            return super.getQuick(index);
+        }
+
+        long getReadCount() {
+            return readCount;
         }
     }
 }

@@ -337,6 +337,36 @@ public class PartitionGeometry implements Closeable, Mutable {
         return dirtyCount > 0;
     }
 
+    /**
+     * Whether a {@link #publish} of a {@code pieceCount}-piece record for {@code partitionIndex} has a generation to
+     * land on. Answers the SAME question {@link #publish} answers for itself a moment later, off the same {@link
+     * #nextPublishGeneration} decision, so the two cannot drift: {@code false} here means that publish would throw
+     * "partition geometry generations exhausted".
+     * <p>
+     * Callers ask BEFORE they write the commit's bytes, because the answer chooses which of two ways the commit is
+     * written: growing the chain in this directory, or assembling the partition afresh under a new {@code nameTxn},
+     * where no {@code _geometry} file exists and all sixteen generations are free again. A caller that does not ask
+     * is not silently wrong - it simply meets publish's exception, which is the pre-existing behaviour.
+     * <p>
+     * {@code pieceCount} may overstate the record publish will actually write (a caller counting planned actions
+     * cannot know which of them fold or drop). That is safe in one direction only, and this is that direction: a
+     * larger record can only bring the size-cap rotation forward, so a {@code true} answer holds for every smaller
+     * record too.
+     */
+    public boolean hasGenerationForNextPublish(int partitionIndex, int pieceCount) {
+        final long committedRef = txReader.getGeometryRef(partitionIndex);
+        final long committedRecordSize = getCommittedRecordSize(partitionIndex);
+        final Path path = Path.getThreadLocal(tableRoot);
+        TableUtils.setPathForNativePartition(
+                path,
+                timestampType,
+                partitionBy,
+                txReader.getPartitionTimestampByIndex(partitionIndex),
+                txReader.getPartitionNameTxn(partitionIndex)
+        );
+        return nextPublishGeneration(path, committedRef, committedRecordSize, PartitionGeometryFile.recordSize(pieceCount)) > -1;
+    }
+
     public boolean isComposite(int partitionIndex) {
         final int res = resolveInternal(partitionIndex);
         if (res < 0) {
@@ -521,23 +551,26 @@ public class PartitionGeometry implements Closeable, Mutable {
         geometryFile.setLiveRows(liveRows);
         geometryFile.setLastWriteMicros(nowMicros);
 
+        final Path path = Path.getThreadLocal(tableRoot);
+        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, nameTxn);
         final long committedRef = resolved.getQuick(slot + RES_GEOMETRY_REF);
-        int generation = committedRef == -1L ? 0 : TxReader.geometryGeneration(committedRef);
-        long offset = committedRef == -1L
-                ? 0
-                : TxReader.geometryOffset(committedRef) + resolved.getQuick(slot + RES_COMMITTED_RECORD_SIZE);
-        // Every record is a full snapshot (see the class doc), so rotating costs nothing beyond starting a fresh file:
-        // this record, not a copy of what came before, is what the new generation opens with.
-        if (committedRef != -1L && offset + geometryFile.getRecordSize() > PartitionGeometryFile.MAX_FILE_SIZE) {
-            generation++;
-            offset = 0;
-            if (generation > TxReader.PARTITION_GEOMETRY_MAX_GENERATION) {
-                throw CairoException.critical(0)
-                        .put("partition geometry generations exhausted [partitionTimestamp=").put(partitionTimestamp)
-                        .put(", nameTxn=").put(nameTxn)
-                        .put(']');
-            }
+        final long committedRecordSize = resolved.getQuick(slot + RES_COMMITTED_RECORD_SIZE);
+        final int generation = nextPublishGeneration(path, committedRef, committedRecordSize, geometryFile.getRecordSize());
+        if (generation < 0) {
+            // Reachable only for a caller that did not consult hasGenerationForNextPublish, or could not act on
+            // the answer. O3PartitionJob's commit path does both and assembles a fresh partition version instead,
+            // so this stays as the loud last resort rather than the ordinary outcome.
+            throw CairoException.critical(0)
+                    .put("partition geometry generations exhausted [partitionTimestamp=").put(partitionTimestamp)
+                    .put(", nameTxn=").put(nameTxn)
+                    .put(", generations=").put(TxReader.PARTITION_GEOMETRY_MAX_GENERATION + 1)
+                    .put(']');
         }
+        // A generation the committed record does not already own opens at offset 0, whether this is a chain start
+        // or a size-cap rotation; growing the committed generation appends strictly past that record.
+        final long offset = committedRef != -1L && generation == TxReader.geometryGeneration(committedRef)
+                ? TxReader.geometryOffset(committedRef) + committedRecordSize
+                : 0;
         assert (offset & ((1L << TxReader.PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT) - 1)) == 0
                 : "geometry offset must be 8-byte aligned";
         final long packedOffset = offset >>> TxReader.PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT;
@@ -548,8 +581,6 @@ public class PartitionGeometry implements Closeable, Mutable {
                     .put(", offset=").put(offset)
                     .put(']');
         }
-        final Path path = Path.getThreadLocal(tableRoot);
-        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, nameTxn);
         final long size = geometryFile.append(ff, path, generation, offset, commitMode);
 
         resolved.setQuick(slot + RES_COMMITTED_RECORD_SIZE, size);
@@ -647,6 +678,77 @@ public class PartitionGeometry implements Closeable, Mutable {
             }
         }
         return -1;
+    }
+
+    /**
+     * The lowest generation at or above {@code from} that no {@code _geometry.<generation>} file in {@code
+     * partitionDir} occupies, or {@code -1} when every generation up to {@link
+     * TxReader#PARTITION_GEOMETRY_MAX_GENERATION} is taken. A generation whose file still holds a record may be one a
+     * pinned reader resolves records out of, so it is not a generation a new chain may open on.
+     * <p>
+     * A file shorter than one complete record does NOT occupy its generation. Such a file is what an {@link
+     * PartitionGeometryFile#append} that failed its write leaves behind - it creates the file before writing it - and
+     * nothing reclaims it afterwards: the ordinary partition purge never sees it (same directory, same {@code
+     * nameTxn}), {@code VACUUM TABLE} does not know the name, and a transaction that rolled back never queues
+     * {@link ColumnPurgeOperator} the retirement note it would work from. Left occupying a generation it would spend
+     * one of the sixteen permanently.
+     * <p>
+     * The length is what makes that safe, rather than the weaker "the record at offset 0 does not verify": a reader
+     * names a record by {@code (generation, offset)} out of a {@code _txn} that COMMITTED it, and
+     * {@link #publish} writes a generation's first record at offset 0 and every later one strictly past it, so a
+     * generation any reader can name holds at least one whole record. Reusing a generation whose offset-0 record
+     * merely fails to verify would be the wider rule {@code ColumnPurgeOperator.readGeometryGenerationFirstWriterTxn}
+     * deletes on - that rule deletes a generation whose offset-0 record does not verify and leaves alone, for a later
+     * retry, one it could not read at all - but deleting a file a reader still names fails that reader loudly, while
+     * re-opening a chain on it hands the reader a valid checksum over a record its own transaction never pointed at,
+     * which is the silent corruption this method exists to prevent.
+     */
+    private int firstFreeGeneration(Path partitionDir, int from) {
+        final int dirLen = partitionDir.size();
+        try {
+            for (int generation = from; generation <= TxReader.PARTITION_GEOMETRY_MAX_GENERATION; generation++) {
+                // -1 when there is no file at all, which is the ordinary case.
+                if (ff.length(PartitionGeometryFile.geometryFileName(partitionDir, generation)) < PartitionGeometryFile.recordSize(1)) {
+                    return generation;
+                }
+                partitionDir.trimTo(dirLen);
+            }
+            return -1;
+        } finally {
+            partitionDir.trimTo(dirLen);
+        }
+    }
+
+    /**
+     * The generation a {@link #publish} of a {@code recordSize}-byte record lands on, given the directory's committed
+     * geometry ref and the size of the record that ref names, or {@code -1} when no generation is free. The single
+     * decision {@code publish} and {@link #hasGenerationForNextPublish} both go through.
+     * <p>
+     * A chain STARTING in this directory is not the same thing as generation 0 being free. MAKE-PLAIN, and a JOIN
+     * that folds a partition back to the ordinary shape, clear the geometry ref while the directory stays put; a
+     * reader pinned before that commit still names the record it was resolving by {@code (generation, offset)} alone,
+     * and resolves it lazily, long afterwards. Read validation checks structure and checksum, never identity, so
+     * opening a fresh chain on a generation still on disk would write over that record and hand the reader a shape
+     * its own transaction never pointed at - the same rows resolved against different pieces. {@link
+     * ColumnPurgeOperator} removes a retired generation only once no reader can still resolve it, so a generation
+     * holding no record is a generation no live transaction can reach.
+     * <p>
+     * Every record is a full snapshot (see the class doc), so rotating past {@link PartitionGeometryFile#MAX_FILE_SIZE}
+     * costs nothing beyond starting a fresh file: the new record, not a copy of what came before, is what the new
+     * generation opens with. The rotation skips occupied generations for the same reason a fresh chain does, and it
+     * only ever moves UP - a lower generation is free because the purge released it, and a chain that walked back
+     * down into it would leave the reader window {@code ColumnPurgeOperator} derives from a generation's offset-0
+     * record no longer monotonic in the generation number.
+     */
+    private int nextPublishGeneration(Path partitionDir, long committedRef, long committedRecordSize, long recordSize) {
+        if (committedRef == -1L) {
+            return firstFreeGeneration(partitionDir, 0);
+        }
+        final int generation = TxReader.geometryGeneration(committedRef);
+        if (TxReader.geometryOffset(committedRef) + committedRecordSize + recordSize > PartitionGeometryFile.MAX_FILE_SIZE) {
+            return firstFreeGeneration(partitionDir, generation + 1);
+        }
+        return generation;
     }
 
     private int insertResolved(long partitionTimestamp, long nameTxn) {

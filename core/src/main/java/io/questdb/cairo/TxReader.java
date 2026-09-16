@@ -615,7 +615,8 @@ public class TxReader implements Closeable, Mutable {
     public long getGeometryRef(int partitionIndex) {
         final int rawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
         if (!isPartitionCompositeByRawIndex(rawIndex)) {
-            // -1 is the "no committed geometry record yet" sentinel that starts a chain at generation 0, offset 0.
+            // -1 is the "no committed geometry record yet" sentinel that starts a chain at offset 0 of the first
+            // generation with no file in the directory - see PartitionGeometry#publish.
             return -1L;
         }
         // Strip the flags that are not ours - REMOTE and SEQ_TXN_VALID share this word - so a ref only

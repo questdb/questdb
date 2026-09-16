@@ -181,7 +181,11 @@ public class Overrides {
             properties.setProperty(propertyPath, value);
             changed = changed || !Chars.equalsNc(value, existing);
         } else {
-            changed = changed || properties.remove(propertyPath) != null;
+            // Remove first, fold into the flag second: writing this as changed || remove(...) lets
+            // the short-circuit skip the removal outright whenever changed is already true, which
+            // leaves the cancelled override standing.
+            final boolean hasRemoved = properties.remove(propertyPath) != null;
+            changed = changed || hasRemoved;
         }
     }
 

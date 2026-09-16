@@ -26,6 +26,7 @@ package io.questdb.test.cairo.composite;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionCompactionPolicy;
 import io.questdb.cairo.PartitionCompactionScanJob;
@@ -475,6 +476,98 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
+     * A reader pinned AFTER the current geometry record was published must keep reading that record for as
+     * long as it lives, across MAKE-PLAIN and the composite commits that follow it into the SAME directory.
+     * <p>
+     * {@link io.questdb.cairo.TableReader} takes its transaction without resolving geometry and reads
+     * {@code _geometry} only when a query first needs a piece, so such a reader holds nothing but the
+     * {@code (generation, offset)} reference its {@code _txn} snapshot carries. MAKE-PLAIN retires that
+     * generation and the next composite commit restarts the chain at generation 0, offset 0 in the unchanged
+     * directory - so without a guard covering readers pinned past the record, the recreated chain writes over
+     * the very bytes the pinned reader has still to read, and record validation (structure plus checksum,
+     * never identity) accepts the newer record in its place.
+     * <p>
+     * The sibling {@link #testMakePlainTrimsUnderAReaderPinnedAfterMoveTail} pins the same kind of reader but
+     * lets it go before anything recreates the chain, and
+     * {@link #testPassiveReaderReloadsGeometryAfterCompositePlainCompositeRefReuse} reloads its reader onto
+     * the recreated chain; this one holds the snapshot open across both.
+     */
+    @Test
+    public void testMakePlainKeepsAPinnedReadersSnapshotAcrossGeometryRecreation() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            enableCompaction();
+            letPreSplitCut();
+            setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+
+            execute("CREATE TABLE y AS (SELECT x::INT i, ('v' || x) s," +
+                    " timestamp_sequence('2024-01-01', 1000000L) ts FROM long_sequence(20000))" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            for (int i = 0; i < 3; i++) {
+                execute("INSERT INTO y SELECT x::INT + 500000, 'b' || x," +
+                        " timestamp_sequence('2024-01-01T05:00:00', 1000000L) FROM long_sequence(200)");
+                drainWalQueue();
+            }
+            pinPieceCap(2);
+
+            // A first pinned reader gets the day to a composite shape MAKE-PLAIN can act on, then goes.
+            try (TableReader warmup = engine.getReader(engine.verifyTableName("y"))) {
+                Assert.assertNotNull(warmup);
+                runCompactionPassesVarSize("y");
+            }
+            engine.releaseInactive();
+            Assert.assertTrue("fixture did not leave the day composite", isComposite("y", "2024-01-01"));
+
+            final String before = fingerprintOfDayVarSize("y", "2024-01-01");
+            // Clear the backoff the decline above started, so what happens next is not suppressed.
+            setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
+            engine.releaseAllReaders();
+
+            final long nameTxnBefore = frontNameTxnOfDay("y", "2024-01-01");
+            try (TableReader pinned = engine.getReader(engine.verifyTableName("y"))) {
+                // Pinned past the current geometry record's publishing txn, and with nothing resolved yet.
+                Assert.assertTrue("fixture must pin a composite day", pinned.getTxFile().isPartitionComposite(0));
+                final long pinnedGeometryRef = pinned.getTxFile().getGeometryRef(0);
+
+                runCompactionPassesVarSize("y");
+                Assert.assertFalse("fixture did not reach MAKE-PLAIN", isComposite("y", "2024-01-01"));
+                enableCompaction();
+                letPreSplitCut();
+                // Backdated commits make the day composite again, in the directory the pinned reader is
+                // still reading, and grow the recreated chain well past the pinned reference's own offset.
+                for (int i = 0; i < 20; i++) {
+                    execute("INSERT INTO y SELECT x::INT + 700000, 'new' || x," +
+                            " timestamp_sequence('2024-01-01T01:00:00', 1000000L) FROM long_sequence(200)");
+                    drainWalQueue();
+                }
+                Assert.assertTrue("fixture did not make the day composite again", isComposite("y", "2024-01-01"));
+                Assert.assertEquals(
+                        "fixture must recreate the chain in the SAME directory",
+                        nameTxnBefore,
+                        frontNameTxnOfDay("y", "2024-01-01")
+                );
+
+                try (TestTableReaderRecordCursor c = new TestTableReaderRecordCursor().of(pinned)) {
+                    Assert.assertEquals(
+                            "the pinned reader's snapshot changed across MAKE-PLAIN and geometry recreation",
+                            before,
+                            fingerprintOfDayVarSize(c, "2024-01-02")
+                    );
+                }
+                Assert.assertFalse(
+                        "the recreated chain grew back over an offset the pinned reader can still resolve",
+                        geometryChainReaches("y", "2024-01-01", pinnedGeometryRef)
+                );
+            }
+        });
+    }
+
+    /**
      * MAKE-PLAIN's own success path: a successful MOVE-TAIL is immediately followed, in the same
      * housekeeping pass, by an attempt at MAKE-PLAIN on the front it just left behind - the front is
      * exactly MAKE-PLAIN's own eligible shape (one piece, row 0, dead space above it), and with no reader
@@ -806,6 +899,12 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                 runCompactionPasses("x");
                 Assert.assertFalse("fixture must reach plain", isComposite("x", "2024-01-01"));
                 Assert.assertEquals("fixture must retain directory", nameTxn, frontNameTxnOfDay("x", "2024-01-01"));
+                // The retired generation's file has to go before a later composite commit can legitimately
+                // restart the chain at generation 0 and reuse the reference: PartitionGeometry.publish opens
+                // a fresh chain on the first generation with NO file on disk, precisely so a recreation
+                // cannot write over a record a pinned reader still resolves. This reader is passive, so it
+                // holds nothing up and the purge job clears generation 0 for reuse.
+                runColumnPurgeJob();
 
                 enableCompaction();
                 letPreSplitCut();
@@ -1428,6 +1527,28 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
+     * {@link #fingerprintOfDayVarSize(String, String)} taken from a reader's OWN cursor rather than from a
+     * fresh query, so it reports what that reader's pinned snapshot resolves. Fixtures put every row of the
+     * day under test below {@code dayHiExclusive} and every housekeeping row above it.
+     */
+    private static String fingerprintOfDayVarSize(RecordCursor c, String dayHiExclusive) throws Exception {
+        final long dayHi = parseMicros(dayHiExclusive + "T00:00:00.000000Z");
+        long count = 0;
+        long intSum = 0;
+        long strLenSum = 0;
+        while (c.hasNext()) {
+            if (c.getRecord().getTimestamp(2) >= dayHi) {
+                continue;
+            }
+            count++;
+            intSum += c.getRecord().getInt(0);
+            final CharSequence s = c.getRecord().getStrA(1);
+            strLenSum += s == null ? 0 : s.length();
+        }
+        return count + "/" + intSum + "/" + strLenSum;
+    }
+
+    /**
      * The {@code nameTxn} of the day's OWN (first, front) partition - unchanged by MOVE-TAIL.
      */
     private static long frontNameTxnOfDay(String table, String day) throws Exception {
@@ -1437,6 +1558,25 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             final int partitionIndex = txReader.getPartitionIndex(parseMicros(day + "T00:00:00.000000Z"));
             Assert.assertTrue("day has no partition", partitionIndex > -1);
             return txReader.getPartitionNameTxn(partitionIndex);
+        }
+    }
+
+    /**
+     * Whether the day's live geometry chain has grown back over {@code ref}: same generation, and a record
+     * published at or past that reference's own offset. That is the condition under which a pinned reader
+     * still holding {@code ref} reads bytes a later commit wrote.
+     */
+    private static boolean geometryChainReaches(String table, String day, long ref) throws Exception {
+        final TableToken tt = engine.verifyTableName(table);
+        try (TableReader reader = engine.getReader(tt)) {
+            final TxReader txReader = reader.getTxFile();
+            final int partitionIndex = txReader.getPartitionIndex(parseMicros(day + "T00:00:00.000000Z"));
+            if (partitionIndex < 0 || !txReader.isPartitionComposite(partitionIndex)) {
+                return false;
+            }
+            final long live = txReader.getGeometryRef(partitionIndex);
+            return TxReader.geometryGeneration(live) == TxReader.geometryGeneration(ref)
+                    && TxReader.geometryOffset(live) >= TxReader.geometryOffset(ref);
         }
     }
 
@@ -1488,6 +1628,23 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             final TxReader txReader = reader.getTxFile();
             final int partitionIndex = txReader.getPartitionIndex(parseMicros(day + "T00:00:00.000000Z"));
             return partitionIndex > -1 ? reader.getGeometry().getPieceCount(partitionIndex) : 0;
+        }
+    }
+
+    /**
+     * One drain of the column purge queue into the log table, then one processing pass - the job schedules the
+     * queued note {@code column.purge.retry.delay} into the future, so the clock has to move between the two.
+     * This is what deletes a retired {@code _geometry.<generation>} file, and so what frees that generation
+     * number for a later chain to open on. Note this is the COLUMN purge job, not
+     * {@link AbstractCairoTest#drainPurgeJob()}, which drains the WAL.
+     */
+    private static void runColumnPurgeJob() throws Exception {
+        engine.releaseInactive();
+        try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+            setCurrentMicros(currentMicros + Micros.SECOND_MICROS);
+            purgeJob.run();
+            setCurrentMicros(currentMicros + Micros.SECOND_MICROS);
+            purgeJob.run();
         }
     }
 

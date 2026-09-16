@@ -263,9 +263,11 @@ public class PartitionGeometryFile implements Closeable, Mutable {
             fd = TableUtils.openRO(ff, geometryFileName(partitionDir, generation), LOG);
             ensureCapacity(HEADER_SIZE);
             if (ff.read(fd, buf, HEADER_SIZE, offset) != HEADER_SIZE) {
-                throw CairoException.critical(ff.errno())
+                final long fileSize = ff.length(fd);
+                throw CairoException.critical(shortReadErrno(ff, fileSize, offset + HEADER_SIZE))
                         .put("could not read partition geometry header [path=").put(partitionDir)
                         .put(", offset=").put(offset)
+                        .put(", fileSize=").put(fileSize)
                         .put(']');
             }
             final int magic = Unsafe.getInt(buf + HEADER_OFFSET_MAGIC_32);
@@ -282,10 +284,12 @@ public class PartitionGeometryFile implements Closeable, Mutable {
             ensureCapacity(size);
             final long tail = size - HEADER_SIZE;
             if (ff.read(fd, buf + HEADER_SIZE, tail, offset + HEADER_SIZE) != tail) {
-                throw CairoException.critical(ff.errno())
+                final long fileSize = ff.length(fd);
+                throw CairoException.critical(shortReadErrno(ff, fileSize, offset + size))
                         .put("could not read partition geometry pieces [path=").put(partitionDir)
                         .put(", offset=").put(offset)
                         .put(", pieceCount=").put(count)
+                        .put(", fileSize=").put(fileSize)
                         .put(']');
             }
             final long stored = Unsafe.getLong(buf + HEADER_OFFSET_CHECKSUM_64);
@@ -332,6 +336,23 @@ public class PartitionGeometryFile implements Closeable, Mutable {
             h = mix(h, Unsafe.getLong(p));
         }
         return h;
+    }
+
+    /**
+     * The errno a read that returned fewer bytes than it asked for must carry, given the file's size and the size the
+     * record needs it to have. A read stops short WITHOUT failing only when the file ends first: {@code Files.read}
+     * loops over partial transfers and restarts on EINTR, returning early only at end of file, and Windows'
+     * {@code ReadFile} fills the buffer unless it reaches the end of the file. Neither path sets errno, so
+     * {@link FilesFacade#errno()} still carries whatever the calling thread last left there - and
+     * {@code ColumnPurgeOperator.readGeometryGenerationFirstWriterTxn} classifies a geometry read by exactly that
+     * value, reading non-zero as "the file could not be read at all, keep it and retry". A file too short for the
+     * record is not unreadable, it is a file that does not verify: the record it would have to hold is not on disk,
+     * so no reader can resolve it and the purge may reclaim its generation. Only when the bytes ARE on disk - or
+     * when the size itself could not be read, which {@link FilesFacade#length(long)} reports as -1 - does the OS
+     * errno mean anything here, and then it is the failing syscall's own.
+     */
+    private static int shortReadErrno(FilesFacade ff, long fileSize, long requiredSize) {
+        return fileSize > -1 && fileSize < requiredSize ? 0 : ff.errno();
     }
 
     private static long mix(long h, long v) {

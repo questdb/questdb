@@ -60,15 +60,18 @@ import java.util.concurrent.ConcurrentHashMap;
  * genuine composite partition, without changing a single row.
  * <p>
  * A test opts in with {@code AbstractCairoTest#enableCompositePartitionRandomisation(Rnd)},
- * which flips a 50% coin. On the runs the coin picks, every {@code CREATE TABLE}
- * or {@code INSERT} the test executes is followed by {@link #apply}, which
- * sweeps the tables and round-trips the middle of each one's timestamp range:
- * stash that range into a scratch table, cut it out with a REPLACE RANGE commit
- * carrying zero new rows, then insert the stash straight back. The cut alone
- * already leaves the range composite - a relocated front/back pair with dead
- * space where the cut range used to be - and the reinsert is what makes the
- * whole round-trip content-neutral, so every caller's existing, hardcoded
- * expected results still hold.
+ * which flips a 50% coin. On the runs the coin picks, every {@code CREATE TABLE},
+ * {@code INSERT} or other data statement the test executes is followed by
+ * {@link #sweepAfter}; a test that needs a sweep at another point calls
+ * {@link #sweep} itself. The sweep drains the WAL queue, then round-trips the
+ * middle half of the timestamp range of every WAL table that is not composite
+ * already: {@code makeComposite()} selects that range's own rows, stages them
+ * into a {@code WalWriter} and commits them back over the range in a SINGLE
+ * REPLACE RANGE transaction. The replace cuts the range out - leaving a
+ * relocated front/back pair with dead space where the cut range used to be,
+ * which is the composite shape this class exists to produce - and the staged
+ * rows land straight back in, so the round-trip is content-neutral and every
+ * caller's existing, hardcoded expected results still hold.
  * <p>
  * The REPLACE RANGE commit only exists on the WAL path, so opting in also turns
  * on {@code cairo.wal.enabled.default}. Tests that assert on non-WAL specifics -
@@ -78,10 +81,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * Two things the round-trip does NOT preserve, both of which are reasons for an
  * individual test to call {@code AbstractCairoTest#disableCompositePartitionRandomisation()}:
  * <ul>
- * <li>the table's TRANSACTION number, since the cut is a commit of its own. See
- * {@link #injectedTxnCount} for the count a test can subtract back out.</li>
- * <li>the physical ORDER of rows sharing a timestamp, since the cut range is
- * reinserted after the rows that stayed. The row SET is identical, so only a
+ * <li>the table's TRANSACTION number, since the replace is a commit of its own.
+ * See {@link #injectedTxnCount} for the count a test can subtract back out.</li>
+ * <li>the physical ORDER of rows sharing a timestamp, since the replace re-appends
+ * the cut range after the rows that stayed. The row SET is identical, so only a
  * query that neither orders nor aggregates within a timestamp can tell.</li>
  * </ul>
  */

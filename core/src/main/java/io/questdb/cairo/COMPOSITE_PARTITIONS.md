@@ -133,6 +133,22 @@ to the one offset `_txn` publishes and is done. The writer appends and syncs the
 committed offset are unreachable by construction. A generation rotates when a record would push the
 file past its size cap.
 
+A chain opens on the first generation whose file holds no record - not on generation 0. MAKE-PLAIN and the
+JOIN that folds a partition back to the ordinary shape clear a partition's geometry ref while its directory
+stays put, so the next composite commit starts a chain in a directory that still carries the generations
+the purge below has yet to reclaim. Opening on one of those would write over the record a lazy reader
+pinned under it still names, so occupied generations are skipped, and a publish with none of the sixteen
+left fails rather than reuse one.
+
+An O3 commit never has to take that failure. `O3PartitionJob.shouldAssembleFreshPartitionVersion` asks
+`PartitionGeometry.hasGenerationForNextPublish` before it writes any of the plan's bytes, and assembles the
+partition afresh under a new `nameTxn` when the answer is no - a directory that carries no `_geometry` file
+at all, hence all sixteen generations free again. That rewrite is the only thing that reclaims a stray
+geometry file: the ordinary partition purge never sees one in a directory that stays put, and `VACUUM
+TABLE` does not know the name. The compaction, squash and trim publish sites in `TableWriter` have no such
+escape - none of them can start a chain, so only a size-cap rotation reaches the failure there - and they
+still fail loudly rather than reuse a generation.
+
 `PartitionGeometry` resolves lazily: a table with no composite partition never opens the file, and a
 query over one partition of a thousand opens one file.
 

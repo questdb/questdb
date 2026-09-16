@@ -1350,22 +1350,28 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             ObjList<O3CompositeMergeStrategy.Action> actions,
             int actionCount
     ) {
+        // The geometry ref packs four bits of generation, and a generation whose file still holds a record is one a
+        // pinned reader may resolve out of, so it is not one a chain may open on or rotate to. With none left,
+        // PartitionGeometry.publish throws - on a WAL apply that suspends the table, and RESUME re-throws, because
+        // nothing reclaims a stray _geometry file in a directory that stays put. A fresh partition version is the
+        // reclaim: a directory under a new nameTxn holds no _geometry file at all, so it starts with all sixteen
+        // generations free. Asked here, before executeCompositePlan moves a byte, so the answer picks which path
+        // writes this commit rather than having to unwind one that already wrote it. It covers the chain START of a
+        // partition that is not composite yet as well as the rotation of one that is, which is why it precedes the
+        // composite guard below.
+        if (!geometry.hasGenerationForNextPublish(partitionIndex, actionCount)) {
+            final long committedRef = txReader.getGeometryRef(partitionIndex);
+            LOG.info().$("assembling fresh partition version: geometry generations exhausted [table=")
+                    .$(tableWriter.getTableToken())
+                    .$(", partitionIndex=").$(partitionIndex)
+                    // -1 when the partition is not composite yet, i.e. this commit would have STARTED the chain.
+                    .$(", generation=").$(committedRef == -1L ? -1 : TxReader.geometryGeneration(committedRef))
+                    .$(", generations=").$(TxReader.PARTITION_GEOMETRY_MAX_GENERATION + 1)
+                    .I$();
+            return true;
+        }
         if (!txReader.isPartitionComposite(partitionIndex)) {
             return false;
-        }
-        final long committedRef = txReader.getGeometryRef(partitionIndex);
-        if (TxReader.geometryGeneration(committedRef) >= TxReader.PARTITION_GEOMETRY_MAX_GENERATION) {
-            final long nextOffset = TxReader.geometryOffset(committedRef) + geometry.getCommittedRecordSize(partitionIndex);
-            if (nextOffset + PartitionGeometryFile.recordSize(actionCount) > PartitionGeometryFile.MAX_FILE_SIZE) {
-                LOG.info().$("assembling fresh composite partition version: geometry chain exhausted [table=")
-                        .$(tableWriter.getTableToken())
-                        .$(", partitionIndex=").$(partitionIndex)
-                        .$(", generation=").$(TxReader.geometryGeneration(committedRef))
-                        .$(", nextOffset=").$(nextOffset)
-                        .$(", maxFileSize=").$(PartitionGeometryFile.MAX_FILE_SIZE)
-                        .I$();
-                return true;
-            }
         }
         if (!tableWriter.wouldBreachCompactionThresholds(partitionIndex, geometry, bounds, actions, actionCount)) {
             return false;
