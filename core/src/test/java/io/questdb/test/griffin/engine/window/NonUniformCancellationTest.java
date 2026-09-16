@@ -62,6 +62,13 @@ public class NonUniformCancellationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBucketSparseSelectionWithNulls() throws Exception {
+        for (String selection : List.of("lttb(v, $1)", "lttb(v, $1, '1s')", "m4(v, $1)", "minmax(v, $1)")) {
+            assertBothCancellations(selection, Phase.COPY_SELECTED, Input.SPARSE_NULL);
+        }
+    }
+
+    @Test
     public void testCadence() throws Exception {
         assertCadence("cadence($1)");
     }
@@ -126,6 +133,9 @@ public class NonUniformCancellationTest extends AbstractCairoTest {
             final boolean isCadence = selection.startsWith("cadence");
             if (isCadence) {
                 bindVariableService.setLong(0, phase == Phase.COPY_ALL ? 1 : 2);
+            } else if (input == Input.SPARSE_NULL) {
+                // One NULL and two keeps must take the word-wise ordinal remapper.
+                bindVariableService.setLong(0, 2);
             } else {
                 // A smaller bucket target on NULL-free input reaches the direct ordinal copy.
                 bindVariableService.setLong(0, phase == Phase.COPY_SELECTED && input == Input.LINEAR ? ROWS / 2 : ROWS);
@@ -217,7 +227,7 @@ public class NonUniformCancellationTest extends AbstractCairoTest {
     }
 
     private enum Input {
-        LINEAR, SINGLE_NULL, NULL_PREFIX, ZIGZAG
+        LINEAR, SINGLE_NULL, SPARSE_NULL, NULL_PREFIX, ZIGZAG
     }
 
     private enum Phase {
@@ -263,7 +273,7 @@ public class NonUniformCancellationTest extends AbstractCairoTest {
         @Override
         public double getDouble(int col) {
             return switch (input) {
-                case SINGLE_NULL -> row == ROWS / 2 ? Double.NaN : row + 1;
+                case SINGLE_NULL, SPARSE_NULL -> row == ROWS / 2 ? Double.NaN : row + 1;
                 case NULL_PREFIX -> row < ROWS - 1 ? Double.NaN : row + 1;
                 case ZIGZAG -> (row & 1) * 4.0;
                 default -> row + 1;

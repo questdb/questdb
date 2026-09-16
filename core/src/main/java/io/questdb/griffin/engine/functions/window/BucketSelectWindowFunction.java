@@ -73,6 +73,9 @@ class BucketSelectWindowFunction extends BaseWindowFunction implements Reopenabl
 
     private static final int CIRCUIT_BREAKER_CHECK_MASK = 1023;
     private static final long INITIAL_CAPACITY = 64;
+    // Keep the scalar nullable walk for dense selections, just as the executor keeps its
+    // dense row-mapping path above one selected row per 64 physical input rows.
+    private static final int SPARSE_SELECTION_DENSITY_SHIFT = 6;
     private final SubsampleAlgorithm algorithm;
     private final int functionPosition;
     private final long maxRows;
@@ -263,6 +266,10 @@ class BucketSelectWindowFunction extends BaseWindowFunction implements Reopenabl
                 }
                 dest.add(selected.get(i));
             }
+            return;
+        }
+        if (selected.size() <= (rowCount >>> SPARSE_SELECTION_DENSITY_SHIFT)) {
+            getSparseSelectedRows(dest);
             return;
         }
         // Map `selected` (ascending non-null BUFFER ordinals chosen by preparePass2) back to
@@ -566,6 +573,47 @@ class BucketSelectWindowFunction extends BaseWindowFunction implements Reopenabl
             );
             buffer = 0;
             bufferCapacity = 0;
+        }
+    }
+
+    private void getSparseSelectedRows(DirectLongList dest) {
+        long selIdx = 0;
+        long nonNullOrdinal = 0;
+        final long selSize = selected.size();
+        for (long absRow = 0; absRow < rowCount && selIdx < selSize; absRow += 64) {
+            // Check every 1024 input rows, even when whole NULL words emit nothing.
+            if ((absRow & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            }
+            final int validRows = (int) Math.min(64, rowCount - absRow);
+            final long validBits = -1L >>> (64 - validRows);
+            final long nonNullBits = ~nullBits.get(absRow >>> 6) & validBits;
+            final long nextOrdinal = nonNullOrdinal + Long.bitCount(nonNullBits);
+            // nonNullOrdinal counts all buffered rows before this word. A selection at or
+            // beyond nextOrdinal needs no positions from this word, only its population count.
+            long remainingBits = nonNullBits;
+            long wordOrdinal = nonNullOrdinal;
+            while (selIdx < selSize) {
+                final long wanted = selected.get(selIdx);
+                if (wanted >= nextOrdinal) {
+                    break;
+                }
+                if (nonNullBits == validBits) {
+                    dest.add(absRow + wanted - nonNullOrdinal);
+                } else {
+                    // Resolve the exact non-NULL rank, not a new sample. Reuse the remaining
+                    // bits across keeps so a mixed word clears at most 64 bits in total.
+                    while (wordOrdinal < wanted) {
+                        remainingBits &= remainingBits - 1;
+                        wordOrdinal++;
+                    }
+                    dest.add(absRow + Long.numberOfTrailingZeros(remainingBits));
+                    remainingBits &= remainingBits - 1;
+                    wordOrdinal++;
+                }
+                selIdx++;
+            }
+            nonNullOrdinal = nextOrdinal;
         }
     }
 
