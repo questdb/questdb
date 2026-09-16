@@ -657,6 +657,27 @@ public class CreateTableOperationImpl implements CreateTableOperation {
 
     @Override
     public void validateAndUpdateMetadataFromSelect(RecordMetadata metadata, int scanDirection) throws SqlException {
+        validateAndUpdateMetadataFromSelect(metadata, scanDirection, true);
+    }
+
+    /**
+     * Folds the compiled SELECT's metadata into this operation, validating it against the
+     * CREATE TABLE clauses on the way.
+     *
+     * @param metadata                     metadata of the compiled SELECT
+     * @param scanDirection                scan direction the SELECT's factory declares
+     * @param failOnUninheritableTimestamp when true, a SELECT that carries a designated timestamp
+     *                                     the target cannot take is reported as an error rather
+     *                                     than dropped. Only a real, user-visible table wants
+     *                                     that; a view, a materialized view and the parquet-export
+     *                                     temp table all pass false, each for its own reason,
+     *                                     documented at the call site.
+     */
+    public void validateAndUpdateMetadataFromSelect(
+            RecordMetadata metadata,
+            int scanDirection,
+            boolean failOnUninheritableTimestamp
+    ) throws SqlException {
         // This method must only be called in case of "create-as-select".
         // Here we remap data keyed on column names (from cast maps) to
         // data keyed on column index. We assume that "columnBits" are free to use
@@ -692,6 +713,24 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     // back, so a non-forward SELECT has no order left to preserve.
                     this.selectSqlScanDirection = scanDirection;
                 }
+            } else if (timestampIndex > -1
+                    && failOnUninheritableTimestamp
+                    && scanDirection == RecordCursorFactory.SCAN_DIRECTION_OTHER) {
+                // The SELECT carries a designated timestamp, the target is not partitioned, and the
+                // SELECT emits rows in no declared timestamp order at all. There is nowhere for that
+                // timestamp to go: ROW_ACTION_NO_PARTITION would reject the first row that arrives
+                // below maxTimestamp. Dropping it silently hands the user a table that is not a
+                // time-series table, with no designated timestamp and no SAMPLE BY / LATEST ON /
+                // ASOF JOIN, and says nothing. Say it instead, and name both ways out - both work:
+                // PARTITION BY moves the target onto the O3 path, which sorts on commit, and an
+                // explicit ORDER BY makes the SELECT itself scan forward.
+                final CharSequence timestampName = metadata.getColumnName(timestampIndex);
+                throw SqlException.position(this.selectTextPosition)
+                        .put("cannot inherit the designated timestamp of an unordered SELECT into a non-partitioned table [timestamp=")
+                        .put(timestampName)
+                        .put("]; add PARTITION BY so the writer sorts the rows, or ORDER BY ")
+                        .put(timestampName)
+                        .put(" to order the SELECT");
             }
         } else {
             this.timestampIndex = metadata.getColumnIndexQuiet(this.timestampColumnName);

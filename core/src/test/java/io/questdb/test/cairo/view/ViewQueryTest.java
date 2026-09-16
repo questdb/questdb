@@ -113,6 +113,41 @@ public class ViewQueryTest extends AbstractViewTest {
     }
 
     @Test
+    public void testCreateViewOverUnorderedSelectWithDesignatedTimestamp() throws Exception {
+        // A non-partitioned CREATE TABLE ... AS SELECT rejects a select that declares
+        // SCAN_DIRECTION_OTHER while carrying a designated timestamp: the writer runs
+        // ROW_ACTION_NO_PARTITION and the timestamp would otherwise be dropped without a word.
+        // A view has no writer - it stores the query, not the rows - and PARTITION BY is not even
+        // valid syntax on one, so that rule must not reach here. It is the same code path, so this
+        // is not self-evident: without the opt-out in CreateViewOperationImpl this statement fails
+        // with "cannot inherit the designated timestamp of an unordered SELECT ...".
+        assertMemoryLeak(() -> {
+            execute("create table pa (ts timestamp, v long) timestamp(ts) partition by day");
+            execute("create table pb (ts timestamp, v long) timestamp(ts) partition by day");
+            execute("insert into pa values ('2024-01-01T00:00:00.000000Z', 1), ('2024-01-03T00:00:00.000000Z', 2)");
+            execute("insert into pb values ('2024-01-02T00:00:00.000000Z', 3)");
+
+            execute("create view " + VIEW1 + " as ((pa union all pb) timestamp(ts))");
+
+            // The view keeps the designated timestamp - view metadata is derived by recompiling the
+            // stored query, so the CTAS-side drop never applied to it anyway - but the union
+            // concatenates its branches rather than merging them, so the rows are not in ascending
+            // order and pb's row comes last. The view hands back exactly what the select produces.
+            assertQuery("select ts, v from " + VIEW1)
+                    .noLeakCheck()
+                    .timestampUnordered("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-03T00:00:00.000000Z\t2
+                            2024-01-02T00:00:00.000000Z\t3
+                            """);
+        });
+    }
+
+    @Test
     public void testDeclareAsofJoinBetweenViews() throws Exception {
         // Test: DECLARE + ASOF JOIN between two VIEWs with different parameters
         assertMemoryLeak(() -> {

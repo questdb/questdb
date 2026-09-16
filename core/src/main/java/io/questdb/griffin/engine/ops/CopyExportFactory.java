@@ -172,8 +172,11 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                             );
                             createOp.setTableKind(TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
                             createOp.setBatchSize(engine.getConfiguration().getParquetExportBatchSize());
+                            // Export staging, not a table the user keeps - see the same call in
+                            // CopyExportContext.createTableOperation(). No designated timestamp
+                            // survives into the parquet files, so nothing is silently lost here.
                             createOp.validateAndUpdateMetadataFromSelect(
-                                    rcf.getMetadata(), rcf.getScanDirection()
+                                    rcf.getMetadata(), rcf.getScanDirection(), false
                             );
                             CopyExportRequestTask.validateBloomFilterColumns(
                                     bloomFilterColumns, rcf.getMetadata(), bloomFilterColumnsPosition - tableOrSelectTextPos

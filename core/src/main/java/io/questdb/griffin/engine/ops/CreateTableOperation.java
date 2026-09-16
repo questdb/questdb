@@ -76,5 +76,13 @@ public interface CreateTableOperation extends TableStructure, Operation {
 
     void updateOperationFutureTableToken(TableToken tableToken);
 
+    /**
+     * Validates the compiled SELECT against the CREATE TABLE clauses and folds its metadata into
+     * this operation. This is the plain "CREATE TABLE ... AS SELECT" entry point: a SELECT whose
+     * designated timestamp cannot be handed to the target is an error, not a silent drop. Callers
+     * that create something other than a user-visible table - a view, a materialized view, a
+     * parquet-export temp table - use the three-argument overload on
+     * {@link CreateTableOperationImpl} to opt out of that error.
+     */
     void validateAndUpdateMetadataFromSelect(RecordMetadata metadata, int scanDirection) throws SqlException;
 }

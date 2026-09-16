@@ -39,6 +39,9 @@ import java.io.File;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class CreateTableAsSelectTest extends AbstractCairoTest {
+    private static final String UNINHERITABLE_TIMESTAMP_ERROR =
+            "cannot inherit the designated timestamp of an unordered SELECT into a non-partitioned table " +
+                    "[timestamp=ts]; add PARTITION BY so the writer sorts the rows, or ORDER BY ts to order the SELECT";
 
     @Test
     public void testCreateAsSelectAndLikeIsInvalid() throws Exception {
@@ -134,26 +137,75 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateNonPartitionedTableAsSelectOverUnionAllDoesNotInheritTimestamp() throws Exception {
+    public void testCreateNonPartitionedTableAsSelectOverKeyedGroupByFails() throws Exception {
         assertMemoryLeak(() -> {
             createInterleavedSrcTables();
 
-            // No PARTITION BY: the target cannot absorb out-of-order rows, so the non-forward
-            // select's designated timestamp is deliberately NOT inherited. The result is a table
-            // without a designated timestamp that holds the rows in the order the union produced
-            // them - rows 25..29 come from pa's second day (2024-01-03), not from pb's first.
-            execute("create table dest as ((pa union all pb) timestamp(ts));");
+            // The same defect through a second, unrelated shape: a keyed GROUP BY returns its rows
+            // in hash-table order, so it declares SCAN_DIRECTION_OTHER just as the union does. The
+            // GROUP BY itself drops the designated timestamp, so timestamp(ts) puts one back - that
+            // is the select that carries a timestamp it cannot hand over. No union and no index is
+            // involved, which is what makes this the branch's behaviour rather than a feature's.
+            assertQuery("create table dest as (select * from (select ts, count() c from pa group by ts) timestamp(ts));")
+                    .fails(22, UNINHERITABLE_TIMESTAMP_ERROR);
 
-            // no timestamp() step: the assertion fails if `dest` gained a designated timestamp
-            assertQuery("select ts, v from dest limit 24,29")
+            Assert.assertNull("dest must not exist after the error", engine.getTableTokenIfExists("dest"));
+        });
+    }
+
+    @Test
+    public void testCreateNonPartitionedTableAsSelectOverUnionAllFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createInterleavedSrcTables();
+
+            // No PARTITION BY, over a select that declares SCAN_DIRECTION_OTHER while carrying a
+            // designated timestamp. The target runs ROW_ACTION_NO_PARTITION and cannot take that
+            // timestamp. It used to be dropped without a word, handing back a table that was not a
+            // time-series table at all; now the statement says so, and names both ways out.
+            assertQuery("create table dest as ((pa union all pb) timestamp(ts));")
+                    .fails(22, UNINHERITABLE_TIMESTAMP_ERROR);
+
+            Assert.assertNull("dest must not exist after the error", engine.getTableTokenIfExists("dest"));
+        });
+    }
+
+    @Test
+    public void testCreateNonPartitionedTableAsSelectOverUnionAllOrderedSucceeds() throws Exception {
+        assertMemoryLeak(() -> {
+            createInterleavedSrcTables();
+
+            // The second remedy the error names: ORDER BY ts makes the select scan forward, so a
+            // non-partitioned target can take the timestamp after all.
+            execute("create table dest as (((pa union all pb) timestamp(ts)) order by ts);");
+
+            assertQuery("select ts, v from dest limit 24,26")
+                    .timestamp("ts")
                     .expectSize()
                     .returns("""
                             ts\tv
-                            2024-01-03T00:00:00.000000Z\t101
-                            2024-01-03T01:00:00.000000Z\t102
-                            2024-01-03T02:00:00.000000Z\t103
-                            2024-01-03T03:00:00.000000Z\t104
-                            2024-01-03T04:00:00.000000Z\t105
+                            2024-01-02T00:00:00.000000Z\t301
+                            2024-01-02T01:00:00.000000Z\t302
+                            """);
+            assertSqlCursors("select ts, v from ((pa union all pb) timestamp(ts)) order by ts", "select ts, v from dest");
+        });
+    }
+
+    @Test
+    public void testCreateNonPartitionedTableAsSelectOverUnionAllWithoutTimestampSucceeds() throws Exception {
+        assertMemoryLeak(() -> {
+            createInterleavedSrcTables();
+
+            // The same SCAN_DIRECTION_OTHER select, but with no designated timestamp to inherit -
+            // the union is not wrapped in timestamp(ts). Nothing is being thrown away, so there is
+            // nothing to report, and this must keep working exactly as it did.
+            execute("create table dest as (pa union all pb);");
+
+            assertQuery("select count() c, min(ts) lo, max(ts) hi from dest")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            c\tlo\thi
+                            144\t2024-01-01T00:00:00.000000Z\t2024-01-06T23:00:00.000000Z
                             """);
         });
     }
