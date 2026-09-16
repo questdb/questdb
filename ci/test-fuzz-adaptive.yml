@@ -47,10 +47,62 @@
 # value is in uninterrupted seed runs, not in runs per day.
 #
 # If you raise the cadence again, cut TOTAL_RUN_MINUTES to match: keep run-minutes per slot under ~60%.
+#
+# ======================================================================================
+# The durability battery (RunDurabilitySweep) shares this definition because it needs the
+# same single agent, and a second definition cannot see this one's schedule.
+#
+# RunContinuousSoak selects itself negatively -- "any schedule that is not the nightly" --
+# so every cron added to this file must also be named in its exclusion list, or that cron
+# starts a 65-minute soak on a one-agent pool.
+#
+# The battery runs a QEMU-guest crash harness (tools/durability/vm) in the gap between the
+# 22:00 soak and the 01:00 nightly, protected by a wall-clock deadline rather than a
+# timeout: a scheduled build's start time drifts with the queue while 01:00 does not.
+# ======================================================================================
 
 trigger: none
 
 pr: none
+
+# Queue-time knobs for RunDurabilitySweep only; they do not touch the soak or the nightly.
+# Scheduled runs take the defaults.
+parameters:
+  # nightly   -- the scheduled battery: controls, then sweeps, deadline-trimmed.
+  # provision -- build the golden guest image and accept it with t01, no sweeps. Run once
+  #              per agent, by hand and outside the window; it takes 10-15 min.
+  # smoke     -- the battery at minimum point counts, to measure this agent. Run this
+  #              first: no timing in this file was measured on the CI agent.
+  - name: durabilityMode
+    type: string
+    default: nightly
+    values:
+      - nightly
+      - provision
+      - smoke
+  # Points per reference sweep; 40 is the harness default.
+  # Raise only from a measured per-point rate printed by a previous run's TIMING block.
+  - name: refPoints
+    type: number
+    default: 40
+  # The product arm pays 11-14 s per point (recovery pass + replay server) against ~2-7 s
+  # for the reference arm, so it runs at far fewer points.
+  - name: productPoints
+    type: number
+    default: 12
+  # Manual escape hatch: a run queued by hand at 10:00 would otherwise refuse, its
+  # pre-nightly deadline being in the past. Never set on the schedule.
+  - name: ignoreWindow
+    type: boolean
+    default: false
+  # The deliberate way in by hand. RunDurabilitySweep selects itself on the cron's
+  # displayName, which is undefined for a manual queue, so a stray click cannot boot a VM --
+  # and a manual queue could not otherwise run the battery at all. Tick this in the Run
+  # dialog. It also suppresses the soak for that run, which would run first on the
+  # one-agent pool and eat the window.
+  - name: forceDurability
+    type: boolean
+    default: false
 
 schedules:
   - cron: "0 2-22/2 * * *"
@@ -65,6 +117,33 @@ schedules:
       include:
         - nw_adaptive_commit
     always: true
+  # THE DURABILITY CRON IS COMMENTED OUT UNTIL THE BATTERY HAS RUN BY HAND. Nothing has
+  # measured this agent yet: the golden image does not exist on it, and whether its
+  # containers can use /dev/kvm at all is unanswered. A schedule that goes live before
+  # those are settled spends the one clean gap in the day failing, nightly, on a pool that
+  # the 01:00 nightly shares.
+  #
+  # Run it manually first, from the Run dialog, ticking forceDurability:
+  #     1. durabilityMode=provision, ignoreWindow=true   build the image, accept it with t01
+  #     2. durabilityMode=smoke,     ignoreWindow=true   controls + the per-point rate HERE
+  #     3. durabilityMode=nightly,   ignoreWindow=true   the real battery, off-schedule
+  # Set refPoints/productPoints from run 2's measured rate rather than from the defaults,
+  # which were measured on a developer box. Then uncomment the cron below.
+  #
+  # 23:00 UTC is the gap between the last soak and the nightly, and the cron may queue
+  # before the 22:00 soak finishes: ADO starts the job when the agent frees, and an early
+  # start buys sweep points. What protects the 01:00 nightly is DURABILITY_DEADLINE_UTC in
+  # the job below, not this cron. If the nightly cron moves, move that deadline with it.
+  #
+  # RunContinuousSoak's condition already excludes this cron by name. Leave that exclusion
+  # in place while the cron is commented out -- it is a no-op until the cron exists, and
+  # restoring it later is the step everyone forgets.
+  # - cron: "0 23 * * *"
+  #   displayName: Run durability sweep
+  #   branches:
+  #     include:
+  #       - nw_adaptive_commit
+  #   always: true
 
 variables:
   QDB_LOG_W_FILE_LOCATION: "$(Build.BinariesDirectory)/tests.log"
@@ -91,7 +170,13 @@ stages:
 
     jobs:
       - job: RunContinuousSoak
-        condition: ne(variables['Build.CronSchedule.DisplayName'], 'Run adaptive crash nightly')
+        # An explicit exclusion list, not a single ne(). This job selects itself negatively
+        # -- "whatever schedule is not the nightly" -- which silently means "and every
+        # schedule added to this file in future". Name every schedule it must NOT run on,
+        # and add to this list whenever a schedule is added above.
+        # The last clause covers a manual queue with forceDurability=true: that is a
+        # dedicated durability run, and a soak running first would eat its window.
+        condition: and(ne(variables['Build.CronSchedule.DisplayName'], 'Run adaptive crash nightly'), ne(variables['Build.CronSchedule.DisplayName'], 'Run durability sweep'), ne('${{ parameters.forceDurability }}', 'true'))
         workspace:
           clean: all
         displayName: "continuous soak"
@@ -350,6 +435,623 @@ stages:
               testTimeoutInMinutes: 315
               artifactNameSuffix: "-$(System.JobName)"
 
+      # ===================================================================================
+      # THE DURABILITY BATTERY. QEMU-guest crash harness, tools/durability/vm: one workload
+      # run recorded by dm-log-writes, then replayed to every flush boundary and verified
+      # (run-flush-sweep.sh).
+      #
+      # The interlock with the 01:00 nightly is a wall-clock deadline, not timeoutInMinutes.
+      # ADO measures a step timeout from job start, and a scheduled build's start drifts with
+      # the queue while 01:00 does not; ADO will not cancel the nightly either, it will queue
+      # it behind us. So every phase below checks DURABILITY_DEADLINE_UTC, refuses to start a
+      # phase it cannot finish, and wraps it in `timeout`. A cut phase is recorded as skipped
+      # and never as a pass: a phase hard-killed by a step timeout reports as a failure
+      # indistinguishable from a real durability failure.
+      #
+      # When this goes away, four things go together, because three are invisible from this
+      # job: the RunDurabilitySweep job below, the "Run durability sweep" cron, the
+      # `parameters` block at the top of this file, and the exclusion for that cron in
+      # RunContinuousSoak's condition -- leaving the last one behind starts a soak in the
+      # 23:00 slot. Then reap $HOME/qdb-vmcrash-state on the agent: the golden image is ~3 GB
+      # and nothing else will remove it.
+      # ===================================================================================
+      - job: RunDurabilitySweep
+        displayName: "durability battery (${{ parameters.durabilityMode }})"
+        # Positive selection, unlike the soak: Build.CronSchedule.DisplayName is undefined
+        # for a manual queue, so clicking Run cannot boot a VM by accident and forceDurability
+        # is the deliberate way in. A boolean parameter interpolates as "True"/"False", which
+        # is safe in a condition() but not in bash -- the window gate below tests both.
+        condition: or(eq(variables['Build.CronSchedule.DisplayName'], 'Run durability sweep'), eq('${{ parameters.forceDurability }}', 'true'))
+        workspace:
+          clean: all
+        pool:
+          name: hetzner-adaptive-commit-fuzz
+        # Headroom only; the real control is DURABILITY_DEADLINE_UTC.
+        timeoutInMinutes: 90
+        cancelTimeoutInMinutes: 10
+        variables:
+          SOURCE_CODE_CHANGED: true
+          # Hard wall-clock stop, UTC, 15 minutes before the 01:00 nightly.
+          DURABILITY_DEADLINE_UTC: "00:45"
+          # Held back for publish + kill + reap, which must not be left without wall clock.
+          DURABILITY_RESERVE_MINUTES: 8
+          # Outside the workspace, which `clean: all` wipes, so the golden image survives.
+          # Keep "qdb-vmcrash" in the name: the orphan sweeper matches 'qemu.*qdb-vmcrash'.
+          QDB_VMCRASH_STATE: $(HOME)/qdb-vmcrash-state
+          DURABILITY_RESULTS: $(Build.ArtifactStagingDirectory)/durability-results
+          MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx4096m -XX:+UseParallelGC"
+        steps:
+          - template: templates/checkout-source.yml
+          - template: templates/use-hetzner-apt-mirrors.yml
+
+          # 0. BUDGET + LOCK + WINDOW GATE. Everything that can refuse the run cheaply
+          #    happens before a single package is installed.
+          - bash: |
+              set -uo pipefail
+              BUDGET_SH="$(Agent.TempDirectory)/durability-budget.sh"
+              now=$(date -u +%s)
+
+              dl_today=$(date -u -d "today $(DURABILITY_DEADLINE_UTC)" +%s)
+              if [ "$dl_today" -le "$now" ]; then
+                deadline=$(date -u -d "tomorrow $(DURABILITY_DEADLINE_UTC)" +%s)
+              else
+                deadline=$dl_today
+              fi
+
+              job_cap=$(( now + (90 - $(DURABILITY_RESERVE_MINUTES)) * 60 ))
+              dl_cap=$(( deadline - $(DURABILITY_RESERVE_MINUTES) * 60 ))
+              end=$(( dl_cap < job_cap ? dl_cap : job_cap ))
+
+              echo "now      $(date -u -d "@$now")"
+              echo "deadline $(date -u -d "@$deadline")   (DURABILITY_DEADLINE_UTC=$(DURABILITY_DEADLINE_UTC))"
+              echo "budget   ends $(date -u -d "@$end")  -> $(( (end - now) / 60 )) usable minutes"
+
+              # A phase begun with no budget runs into the job timeout and reports as a red
+              # indistinguishable from a durability failure.
+              usable=$(( (end - now) / 60 ))
+              if [ "$usable" -lt 20 ] && [ "${{ parameters.ignoreWindow }}" != "True" ] && [ "${{ parameters.ignoreWindow }}" != "true" ]; then
+                echo "##vso[task.logissue type=warning]only ${usable}m of budget before $(DURABILITY_DEADLINE_UTC) UTC; refusing to start so the 01:00 nightly is not delayed"
+                echo "##vso[task.setvariable variable=DURABILITY_SKIP]true"
+                # Skipped, never a pass: a green tick for a run that measured nothing reads
+                # as evidence.
+                mkdir -p "$(DURABILITY_RESULTS)"
+                cat > "$(DURABILITY_RESULTS)/window.xml" <<XML
+              <?xml version="1.0" encoding="UTF-8"?>
+              <testsuites><testsuite name="durability.window" tests="1" failures="0" skipped="1" errors="0" time="0">
+                <testcase classname="durability.window" name="pre-nightly-gap">
+                  <skipped message="only ${usable}m before the 01:00 nightly; no measurement taken"/>
+                </testcase>
+              </testsuite></testsuites>
+              XML
+                exit 0
+              fi
+
+              # ADO has no concurrency group for ordinary jobs, so a second agent would mean
+              # two qemus against one $QDB_VMCRASH_STATE.
+              LOCK="$(QDB_VMCRASH_STATE)/.durability-ci.lock"
+              mkdir -p "$(QDB_VMCRASH_STATE)"
+              if ! mkdir "$LOCK" 2>/dev/null; then
+                echo "lock held by: $(cat "$LOCK/owner" 2>/dev/null || echo unknown)"
+                age=$(( now - $(stat -c %Y "$LOCK" 2>/dev/null || echo "$now") ))
+                if [ "$age" -gt 10800 ]; then
+                  echo "##vso[task.logissue type=warning]stealing a $(( age / 60 ))m-old durability lock"
+                  rm -rf "$LOCK"; mkdir "$LOCK" || { echo "cannot take the lock"; exit 1; }
+                else
+                  echo "##vso[task.logissue type=error]another durability run holds the lock ($(( age / 60 ))m old); refusing to run a second VM"
+                  exit 1
+                fi
+              fi
+              echo "build=$(Build.BuildId) agent=${AGENT_MACHINENAME:-unknown} started=$(date -u)" > "$LOCK/owner"
+
+              # Orphaned qemu from a hard-cancelled build corrupts this run and pins its
+              # disks past every reap. Safe to kill only because we hold the lock.
+              if pgrep -af 'qemu.*qdb-vmcrash' ; then
+                echo "##vso[task.logissue type=warning]orphaned qemu from an earlier build; killing (we hold the lock, so none of these is live work)"
+                pkill -f 'qemu.*qdb-vmcrash' || true
+                sleep 3
+                pkill -9 -f 'qemu.*qdb-vmcrash' || true
+              else
+                echo "no orphaned qemu"
+              fi
+
+              cat > "$BUDGET_SH" <<EOF
+              DURABILITY_END=$end
+              remaining() { echo \$(( DURABILITY_END - \$(date -u +%s) )); }
+              phase_fits() { [ "\$(remaining)" -ge \$(( \$1 * 60 )) ]; }
+              # run_phase NAME MIN_MINUTES CMD... runs a phase inside the remaining budget,
+              # never starting one it cannot finish. A skip returns 0 -- a deadline skip is
+              # not a failure -- but it is not a pass either, so it is recorded in
+              # durability-skipped.txt and the controls step consults it before the sweeps.
+              run_phase() {
+                  local name="\$1" need="\$2"; shift 2
+                  local left=\$(( \$(remaining) / 60 )); [ \$left -lt 0 ] && left=0
+                  if ! phase_fits "\$need"; then
+                      echo "SKIPPED \$name — needs \${need}m, \${left}m left before the nightly"
+                      echo "\$name" >> "$(Agent.TempDirectory)/durability-skipped.txt"
+                      return 0
+                  fi
+                  echo "=== \$name (\$(( \$(remaining) / 60 ))m budget left) ==="
+                  local t0=\$(date +%s) rc=0
+                  timeout --signal=TERM --kill-after=60s "\$(remaining)s" "\$@"; rc=\$?
+                  echo "\$name \$(( \$(date +%s) - t0 ))s rc=\$rc" >> "$(Agent.TempDirectory)/durability-timing.txt"
+                  if [ \$rc -eq 124 ] || [ \$rc -eq 137 ]; then
+                      echo "CUT \$name — hit the pre-nightly deadline and was stopped cleanly; not a failure"
+                      echo "\$name (cut at the deadline)" >> "$(Agent.TempDirectory)/durability-skipped.txt"
+                      return 0
+                  fi
+                  return \$rc
+              }
+              EOF
+              : > "$(Agent.TempDirectory)/durability-timing.txt"
+              : > "$(Agent.TempDirectory)/durability-skipped.txt"
+              echo "##vso[task.setvariable variable=DURABILITY_SKIP]false"
+            displayName: "Budget, lock, and window gate"
+            timeoutInMinutes: 5
+
+          - bash: |
+              set -uo pipefail
+              sudo apt-get update
+              sudo apt-get install -y openjdk-25-jdk maven build-essential zip \
+                                      qemu-system-x86 qemu-utils genisoimage libcap2-bin
+              JAVA_PATH="/usr/lib/jvm/java-25-openjdk-amd64"
+              echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+              echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
+              echo "JAVA_HOME will be set to: $JAVA_PATH"
+              "$JAVA_PATH/bin/java" -version
+            displayName: "Install JDK 25, Maven, qemu, genisoimage"
+            timeoutInMinutes: 15
+            condition: and(succeeded(), ne(variables['DURABILITY_SKIP'], 'true'))
+
+          # 1. AGENT CAPABILITY FACTS — "can this agent run a VM at all?", answered inside
+          #    the run. Never fails the job; the gate is the next step.
+          - bash: |
+              set -uo pipefail
+              echo "##[group]QDB_AGENT facts (grep QDB_AGENT to read them all at once)"
+              f() { printf 'QDB_AGENT %s=%s\n' "$1" "$2"; }
+
+              # --- identity. Incus containers sharing the host kernel, so /dev/kvm is not
+              #     a given.
+              f agent "${AGENT_MACHINENAME:-unknown}"
+              f virt_container "$(systemd-detect-virt -c 2>/dev/null || echo detect-failed)"
+              f virt_vm "$(systemd-detect-virt -v 2>/dev/null || echo detect-failed)"
+
+              # --- /dev/kvm: present, char device, rw without sudo; all three required.
+              if [ -e /dev/kvm ]; then
+                f kvm_present yes
+                [ -c /dev/kvm ] && f kvm_chardev yes || f kvm_chardev no
+                [ -r /dev/kvm ] && f kvm_readable yes || f kvm_readable no
+                [ -w /dev/kvm ] && f kvm_writable yes || f kvm_writable no
+                ls -l /dev/kvm || true
+                getfacl -p /dev/kvm 2>/dev/null || echo "(getfacl unavailable)"
+              else
+                f kvm_present no; f kvm_chardev no; f kvm_readable no; f kvm_writable no
+              fi
+              if grep -qE '(vmx|svm)' /proc/cpuinfo; then
+                f cpu_virt "$(grep -oE '\b(vmx|svm)\b' /proc/cpuinfo | head -1)"
+              else
+                f cpu_virt none
+              fi
+
+              # --- capabilities and modules: decisive only to a VM-free fallback.
+              capeff=$(awk '/^CapEff/{print $2}' /proc/self/status)
+              f cap_eff "$capeff"
+              if command -v capsh >/dev/null 2>&1; then
+                dec=$(capsh --decode="$capeff" 2>/dev/null || echo)
+                case "$dec" in *cap_sys_admin*) f cap_sys_admin yes ;; *) f cap_sys_admin no ;; esac
+              else
+                f cap_sys_admin unknown
+              fi
+              if sudo -n true 2>/dev/null; then f sudo_nopasswd yes; else f sudo_nopasswd no; fi
+              for m in kvm kvm_amd kvm_intel dm_mod dm_log_writes loop; do
+                loaded=no; [ -d "/sys/module/${m}" ] && loaded=yes
+                info=no;   modinfo "$m" >/dev/null 2>&1 && info=yes
+                f "mod_${m}_loaded" "$loaded"
+                f "mod_${m}_modinfo" "$info"
+              done
+
+              # --- capacity. `free` reports the host's, so the cgroup limit is the number
+              #     that matters against the guest's 16 GiB.
+              f nproc "$(nproc)"
+              f mem_total_gb "$(awk '/MemTotal/{printf "%d", $2/1048576}' /proc/meminfo)"
+              f mem_avail_gb "$(awk '/MemAvailable/{printf "%d", $2/1048576}' /proc/meminfo)"
+              f cgroup_mem_max "$(cat /sys/fs/cgroup/memory.max 2>/dev/null \
+                                || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null \
+                                || echo unknown)"
+
+              f statedir "$(QDB_VMCRASH_STATE)"
+              f statedir_free_gb "$(df -BG --output=avail "$(QDB_VMCRASH_STATE)" 2>/dev/null | tail -1 | tr -dc '0-9')"
+              f home_free_gb "$(df -BG --output=avail "$HOME" 2>/dev/null | tail -1 | tr -dc '0-9')"
+              [ -d "$(MAVEN_CACHE_FOLDER)" ] && f home_persists likely || f home_persists unknown
+              [ -f "$(QDB_VMCRASH_STATE)/base/golden.qcow2" ] && f golden_image present || f golden_image absent
+              df -BG "$(QDB_VMCRASH_STATE)" "$HOME" / 2>&1 | sed 's/^/  /' || true
+
+              for u in "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img" \
+                       "https://api.adoptium.net/v3/info/available_releases"; do
+                code=$(curl -sS -o /dev/null -w '%{http_code}' -L --max-time 30 -I "$u" 2>/dev/null || echo 000)
+                f "egress_$(echo "$u" | awk -F/ '{print $3}' | tr . _)" "$code"
+              done
+
+              # --- the decisive test: QEMU with the harness's own -smp/-m, and
+              #     -mem-prealloc so a cgroup limit fails here rather than mid-workload.
+              if command -v qemu-system-x86_64 >/dev/null 2>&1; then
+                f qemu_version "$(qemu-system-x86_64 --version 2>/dev/null | head -1 | awk '{print $4}')"
+                if timeout 60 qemu-system-x86_64 -enable-kvm -smp 1 -m 128M -S -no-user-config \
+                     -nodefaults -display none -monitor none >/dev/null 2>&1; then
+                  f qemu_kvm_smoke_small pass
+                else
+                  f qemu_kvm_smoke_small fail
+                fi
+                if timeout 60 qemu-system-x86_64 -enable-kvm -cpu host -smp 8 -m 16G -mem-prealloc \
+                     -S -no-user-config -nodefaults -display none -monitor none >/dev/null 2>&1; then
+                  f qemu_kvm_smoke_harness pass
+                else
+                  f qemu_kvm_smoke_harness fail
+                fi
+              else
+                f qemu_version absent
+                f qemu_kvm_smoke_small fail
+                f qemu_kvm_smoke_harness fail
+              fi
+              echo "##[endgroup]"
+            displayName: "Agent capability facts (answers what the probe would have)"
+            timeoutInMinutes: 10
+            condition: and(succeededOrFailed(), ne(variables['DURABILITY_SKIP'], 'true'))
+
+          # 2. THE GATE. check-host.sh has the last word and names the first missing
+          #    prerequisite. No KVM, no run.
+          - bash: |
+              set -uo pipefail
+              cd tools/durability/vm
+              if bash check-host.sh; then
+                echo "##vso[task.setvariable variable=DURABILITY_AGENT_READY]true"
+              else
+                echo "##vso[task.setvariable variable=DURABILITY_AGENT_READY]false"
+                cat <<'BANNER'
+              ================================================================================
+              DURABILITY AGENT CAPABILITY: NOT READY
+
+              This is NOT a durability failure. Nothing about the product was measured. The
+              open question -- whether this pool's containers can run a VM at all -- has just
+              been answered by the first real run, which is what this run was for. Read the
+              cause above and the QDB_AGENT block earlier in this log.
+
+              There is NO slow fallback to rule out. lib/qemu.sh passes -enable-kvm
+              unconditionally, so without a usable /dev/kvm qemu REFUSES TO START; it does not
+              silently degrade to TCG emulation and produce slow, timing-shifted, still-green
+              results. The harness hard-fails by design.
+
+              NEXT DECISION, by cause:
+                no /dev/kvm, or present but not rw without sudo
+                    -> if it is a permissions problem, one agent-image fix settles it:
+                       setfacl -m u:<agent>:rw /dev/kvm, or add the agent user to the kvm group.
+                    -> if KVM is genuinely unavailable in an incus container on this pool, the
+                       VM design is dead here. Two options remain: a VM-free dm-log-writes
+                       backend, which needs dm_log_writes on the HOST kernel and real root
+                       (see mod_dm_log_writes_* and cap_sys_admin in the QDB_AGENT block), or
+                       a dedicated bare-metal agent. Both are Eugene's decision. Do not
+                       silently take either.
+                < 200 G free at the state dir
+                    -> point QDB_VMCRASH_STATE at a larger mount, or revisit the gate itself
+                       (the per-run disks are sparse, so the gate is conservative). Changing
+                       the gate is a HARNESS edit and its own ticket.
+                missing qemu/genisoimage
+                    -> the apt install step above failed, or the mirrors lack universe.
+              ================================================================================
+              BANNER
+                echo "##vso[task.logissue type=error]AGENT CANNOT RUN VMS — check-host.sh refused this agent. Infrastructure answer, not a durability result; see the banner above."
+                mkdir -p "$(DURABILITY_RESULTS)"
+                cat > "$(DURABILITY_RESULTS)/agent.xml" <<XML
+              <?xml version="1.0" encoding="UTF-8"?>
+              <testsuites><testsuite name="durability.agent" tests="1" failures="0" skipped="0" errors="1" time="0">
+                <testcase classname="durability.agent" name="capability">
+                  <error message="check-host.sh refused this agent; no measurement was taken" type="AGENT_NOT_READY"/>
+                </testcase>
+              </testsuite></testsuites>
+              XML
+                exit 1
+              fi
+              # Equals form only: reap-state.sh rejects "--state DIR" with exit 64.
+              bash reap-state.sh --state="$(QDB_VMCRASH_STATE)" || true
+            displayName: "GATE: check-host.sh (no KVM, no run)"
+            timeoutInMinutes: 5
+            condition: and(succeeded(), ne(variables['DURABILITY_SKIP'], 'true'))
+
+          # 3. THE GOLDEN IMAGE. Built only in provision mode, or when missing and there is
+          #    room: a nightly that spends its window rebuilding it measures nothing.
+          - bash: |
+              set -uo pipefail
+              source "$(Agent.TempDirectory)/durability-budget.sh"
+              GOLDEN="$(QDB_VMCRASH_STATE)/base/golden.qcow2"
+              cd tools/durability/vm
+
+              if [ -f "$GOLDEN" ] && [ "${{ parameters.durabilityMode }}" != "provision" ]; then
+                echo "golden image present: $(du -h "$GOLDEN" | cut -f1) — reusing"
+                echo "##vso[task.setvariable variable=DURABILITY_IMAGE_FRESH]false"
+                exit 0
+              fi
+
+              if [ "${{ parameters.durabilityMode }}" != "provision" ]; then
+                echo "##vso[task.logissue type=warning]no golden image on this agent; provisioning instead of measuring. This run takes NO measurement."
+              fi
+              if ! phase_fits 35; then
+                echo "##vso[task.logissue type=error]no golden image and only $(( $(remaining) / 60 ))m of budget; queue this pipeline manually with durabilityMode=provision outside the window"
+                exit 1
+              fi
+              run_phase build-image 35 bash build-image.sh || exit 1
+              echo "##vso[task.setvariable variable=DURABILITY_IMAGE_FRESH]true"
+            displayName: "Golden image (build only if missing, or durabilityMode=provision)"
+            timeoutInMinutes: 45
+            condition: and(succeeded(), ne(variables['DURABILITY_SKIP'], 'true'))
+
+          - bash: |
+              set -uo pipefail
+              source "$(Agent.TempDirectory)/durability-budget.sh"
+              cd tools/durability/vm
+              # Image acceptance, not a durability control: without it a missing guest
+              # module surfaces much later as "could not build the log-writes stack".
+              run_phase t01-golden-image 5 bash test/t01-golden-image.sh
+            displayName: "t01 — accept the golden image (fresh images only)"
+            timeoutInMinutes: 15
+            condition: and(succeeded(), ne(variables['DURABILITY_SKIP'], 'true'), eq(variables['DURABILITY_IMAGE_FRESH'], 'true'))
+
+          # 4. THE BUILD. benchmarks.jar is what every arm ships into the guest; the core
+          #    release tarball is what the product arm tests.
+          - template: templates/detect-local-client.yml
+          # ^ Not optional: benchmarks needs a questdb-client SNAPSHOT that Maven Central
+          #   does not have. The other jobs get this via steps.yml, which this job omits.
+
+          - bash: |
+              set -uo pipefail
+              python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
+            displayName: "Ensure Rust is installed"
+            timeoutInMinutes: 15
+            condition: and(succeeded(), ne(variables['DURABILITY_SKIP'], 'true'), ne('${{ parameters.durabilityMode }}', 'provision'))
+
+          - bash: |
+              set -uo pipefail
+              source "$(Agent.TempDirectory)/durability-budget.sh"
+              # One pass, both artifacts: benchmarks.jar for every arm, and the no-jre
+              # tarball the product arm runs. The harness never assembles one itself.
+              run_phase build-artifacts 30 \
+                mvn -f pom.xml -s ci/maven-settings-hetzner.xml \
+                  --batch-mode -pl benchmarks,core -am package \
+                  -P build-binaries $(CLIENT_PROFILE) -P qdbr-release \
+                  -Dmaven.test.skip=true $(MAVEN_RUN_OPTS) || exit 1
+
+              test -f benchmarks/target/benchmarks.jar || {
+                echo "##vso[task.logissue type=error]benchmarks/target/benchmarks.jar was not produced"; exit 1; }
+              ls -la benchmarks/target/benchmarks.jar
+              n=$(find core/target -maxdepth 1 -name 'questdb-*-no-jre-bin.tar.gz' | wc -l)
+              find core/target -maxdepth 1 -name 'questdb-*-no-jre-bin.tar.gz' -ls
+              [ "$n" -eq 1 ] || {
+                echo "##vso[task.logissue type=error]expected exactly 1 no-jre release tarball in core/target, found $n — the product arm refuses an ambiguous target dir"; exit 1; }
+            displayName: "Build benchmarks.jar + release tarball"
+            timeoutInMinutes: 40
+            condition: and(succeeded(), ne(variables['DURABILITY_SKIP'], 'true'), ne('${{ parameters.durabilityMode }}', 'provision'))
+
+          # 5. THE CONTROLS, FIRST AND UNCONDITIONALLY. A sweep whose controls did not run
+          #    that night is not evidence: they run before the sweeps so deadline trimming
+          #    falls on the sweeps, and a red control aborts them. A verdict from an
+          #    instrument known to be broken is worse than none, because it gets cited.
+          #      t06 boundaries discriminate   t07 the oracle can fail
+          #      t10 the barrier control       t08 the reaper keeps what it must
+          #      t09 the report is honest      t11 the env builders agree
+          #      t12 a verdict token means one thing
+          - bash: |
+              set -uo pipefail
+              source "$(Agent.TempDirectory)/durability-budget.sh"
+              cd tools/durability/vm
+              rc=0
+              # Seconds for the lot: the self-tests check the judging logic of the two most
+              # expensive VM controls below, t11 the builders they are configured by.
+              run_phase t10-judge-selftest 2 bash test/t10-wal-barrier-control.sh --self-test || rc=1
+              run_phase t06-selftest       2 bash test/t06-log-writes-replay.sh --self-test   || rc=1
+              run_phase t11-builder-parity 2 bash test/t11-builder-parity.sh                  || rc=1
+              run_phase t12-verdict-vocab  2 bash test/t12-verdict-vocabulary.sh              || rc=1
+              run_phase t08-state-reaper   2 bash test/t08-state-reaper.sh                    || rc=1
+              run_phase t09-junit-xml      2 bash test/t09-junit-xml.sh                       || rc=1
+
+              # As load-bearing as the VM controls, so they gate the sweeps the same way.
+              for t in t10-judge-selftest t06-selftest t11-builder-parity t12-verdict-vocab \
+                       t08-state-reaper t09-junit-xml; do
+                grep -q "^$t .* rc=0$" "$(Agent.TempDirectory)/durability-timing.txt" 2>/dev/null \
+                  || { echo "VM-free control did not complete: $t"; rc=1; }
+              done
+              exit $rc
+            displayName: "Controls: judges, builders, vocabulary, reaper, report (no VM)"
+            timeoutInMinutes: 10
+            condition: and(succeeded(), ne(variables['DURABILITY_SKIP'], 'true'), ne('${{ parameters.durabilityMode }}', 'provision'))
+
+          - bash: |
+              set -uo pipefail
+              source "$(Agent.TempDirectory)/durability-budget.sh"
+              cd tools/durability/vm
+              rc=0
+              # t06 first: if replay to boundary N leaks later writes, every verdict below
+              # is fiction.
+              run_phase t06-log-writes-replay 8  bash test/t06-log-writes-replay.sh      || rc=1
+              run_phase t07-oracle-control    10 bash test/t07-oracle-negative-control.sh || rc=1
+              run_phase t10-barrier-control    15 bash test/t10-wal-barrier-control.sh    || rc=1
+
+              # A control skipped by the deadline is not a control either, and run_phase
+              # returns 0 on a skip -- so "did every control run" is asserted separately.
+              complete=true
+              for t in t06-log-writes-replay t07-oracle-control t10-barrier-control; do
+                if ! grep -q "^$t .* rc=0$" "$(Agent.TempDirectory)/durability-timing.txt" 2>/dev/null; then
+                  echo "control did not complete: $t"
+                  complete=false
+                fi
+              done
+              echo "##vso[task.setvariable variable=DURABILITY_CONTROLS_COMPLETE]$complete"
+
+              if [ $rc -ne 0 ]; then
+                echo "##vso[task.logissue type=error]a CONTROL failed. The sweeps are skipped: a durability verdict from an instrument that cannot be trusted reads as evidence, which is worse than no verdict."
+              elif [ "$complete" != true ]; then
+                echo "##vso[task.logissue type=warning]a control was cut by the pre-nightly deadline; the sweeps are skipped. A sweep whose controls did not run that night is not evidence."
+              fi
+              exit $rc
+            displayName: "Controls: t06 boundaries, t07 oracle, t10 barrier (VM)"
+            timeoutInMinutes: 45
+            condition: and(succeeded(), ne(variables['DURABILITY_SKIP'], 'true'), ne('${{ parameters.durabilityMode }}', 'provision'))
+
+          # 6. THE SWEEPS. Three arms of one experiment, each its own step and JUnit suite:
+          #      reference W=0      — the zero-loss bar, F >= C
+          #      reference W=50000  — the RPO bar, F >= Wm, loss confined to (Wm, C]
+          #      product   W=50000  — the same bar on the shipped tarball, as a JPMS module
+          #    Leave QDB_REPLAY_RESET and QDB_VM_DATA_DISCARD unset: the sweep resets the data
+          #    device itself and asserts the reset is real, qemu's default discard=ignore
+          #    accepting a discard and reverting nothing.
+          - bash: |
+              set -uo pipefail
+              source "$(Agent.TempDirectory)/durability-budget.sh"
+              cd tools/durability/vm
+              mkdir -p "$(DURABILITY_RESULTS)"
+              REF=${{ parameters.refPoints }}
+              PROD=${{ parameters.productPoints }}
+              if [ "${{ parameters.durabilityMode }}" = "smoke" ]; then
+                REF=10; PROD=3
+                echo "smoke mode: refPoints=$REF productPoints=$PROD — this run MEASURES, it does not certify"
+              fi
+              rc=0
+              need_ref=$(( 4 + (REF * 7 + 59) / 60 ))
+              need_prod=$(( 4 + (PROD * 15 + 59) / 60 ))
+
+              run_phase "sweep-reference-W0"     "$need_ref" \
+                env QDB_SWEEP_POINTS="$REF"  QDB_JUNIT_XML="$(DURABILITY_RESULTS)/ref-w0.xml" \
+                    bash run-flush-sweep.sh adaptive 0 || rc=1
+              run_phase "sweep-reference-W50000" "$need_ref" \
+                env QDB_SWEEP_POINTS="$REF"  QDB_JUNIT_XML="$(DURABILITY_RESULTS)/ref-w50000.xml" \
+                    bash run-flush-sweep.sh adaptive 50000 || rc=1
+              # The tier the product arm needs exists only on the adaptive path.
+              run_phase "sweep-product-W50000"   "$need_prod" \
+                env QDB_ARM=product QDB_SWEEP_POINTS="$PROD" QDB_JUNIT_XML="$(DURABILITY_RESULTS)/product-w50000.xml" \
+                    bash run-flush-sweep.sh adaptive 50000 || rc=1
+              exit $rc
+            displayName: "Sweeps: reference W=0, reference W=50000, product W=50000"
+            timeoutInMinutes: 75
+            # DURABILITY_CONTROLS_COMPLETE is the teeth behind "a sweep whose controls did
+            # not run is not evidence": succeeded() alone lets a deadline-cut control through,
+            # a clean cut deliberately not being a failure.
+            condition: and(succeeded(), ne(variables['DURABILITY_SKIP'], 'true'), ne('${{ parameters.durabilityMode }}', 'provision'), eq(variables['DURABILITY_CONTROLS_COMPLETE'], 'true'))
+
+          # 7. STAGE THE EVIDENCE. always(): a failed run is when it is worth having.
+          - bash: |
+              set -uo pipefail
+              S="$(QDB_VMCRASH_STATE)"
+              D="$(DURABILITY_RESULTS)"
+              mkdir -p "$D/sweep-out" "$D/evidence"
+
+              # Never the disks, and an include list: an exclude list would start uploading
+              # gigabytes the day a new artifact kind appears.
+              find "$S/sweep-out" -type f \
+                   \( -name '*.xml' -o -name '*.out' -o -name '*.log' \) \
+                   -exec cp --parents -t "$D/sweep-out" {} + 2>/dev/null || true
+              [ -f "$S/flush-sweep.log" ] && cp "$S/flush-sweep.log" "$D/" || true
+              if [ -d "$S/evidence" ]; then
+                find "$S/evidence" -type f \
+                     \( -name 'cmdline' -o -name 'console.log' -o -name 'liveness-failure.out' \) \
+                     -exec cp --parents -t "$D/evidence" {} + 2>/dev/null || true
+              fi
+
+              {
+                echo "=== TIMING (seconds per phase, measured ON THIS AGENT) ==="
+                cat "$(Agent.TempDirectory)/durability-timing.txt" 2>/dev/null || echo "(none)"
+                echo
+                echo "=== NOT RUN ==="
+                if [ -s "$(Agent.TempDirectory)/durability-skipped.txt" ]; then
+                  cat "$(Agent.TempDirectory)/durability-skipped.txt"
+                else
+                  echo "(nothing skipped — the whole battery ran)"
+                fi
+              } | tee "$D/timing.txt"
+
+              # Assert what the publish step believes: a cut arm leaves no report, because
+              # the sweep's INT/TERM handlers exit rather than return. A handler that returned
+              # would let the loop run on against a dead guest and publish failures nobody
+              # measured, and the publisher globs every XML it finds.
+              while IFS= read -r skipped; do
+                case "$skipped" in
+                  *"(cut at the deadline)"*)
+                    arm="${skipped%% *}"
+                    found=$(find "$D" -name "${arm}*.xml" 2>/dev/null)
+                    if [ -n "$found" ]; then
+                      echo "##vso[task.logissue type=error]$arm was cut at the deadline but published a report: $found"
+                      echo "##vso[task.logissue type=error]those boundaries were not measured; the report must not reach the dashboard"
+                      rm -f $found
+                      exit 1
+                    fi ;;
+                esac
+              done < "$(Agent.TempDirectory)/durability-skipped.txt"
+
+              sz=$(du -sm "$D" | cut -f1)
+              echo "staged evidence: ${sz} MB"
+              if [ "${sz:-0}" -gt 300 ]; then
+                echo "##vso[task.logissue type=warning]staged evidence is ${sz} MB (> 300 MB cap); dropping per-boundary .out files, keeping XML and logs"
+                find "$D/sweep-out" -type f -name '*.out' -delete
+                du -sm "$D"
+              fi
+              ls -R "$D" | head -60
+            displayName: "Stage evidence (XML, per-boundary output, logs — never the disks)"
+            timeoutInMinutes: 10
+            condition: always()
+
+          - task: PublishTestResults@2
+            displayName: "Publish durability results"
+            # succeededOrFailed(): a sweep killed mid-flight leaves no file for that arm,
+            # which the staging step above asserts rather than trusts.
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: "JUnit"
+              testResultsFiles: "$(DURABILITY_RESULTS)/**/*.xml"
+              testRunTitle: "durability VM flush-boundary ($(Build.SourceBranchName))"
+              mergeTestResults: true
+              failTaskOnFailedTests: false
+
+          - task: PublishBuildArtifacts@1
+            displayName: "Upload durability evidence"
+            condition: always()
+            inputs:
+              pathToPublish: $(DURABILITY_RESULTS)
+              artifactName: "DurabilityEvidence"
+
+          # 8. REAP, after the upload and never before: a reaper that deletes first has
+          #    destroyed the thing the artifact was for. It must also run when the sweep
+          #    failed, failures keeping their disks by design.
+          - bash: |
+              set -uo pipefail
+              # Kill our VMs first: reap-state.sh keeps any directory whose qemu.pid lives.
+              if pgrep -af 'qemu.*qdb-vmcrash'; then
+                echo "killing VMs still alive at teardown"
+                pkill -f 'qemu.*qdb-vmcrash' || true
+                sleep 3
+                pkill -9 -f 'qemu.*qdb-vmcrash' || true
+              fi
+              cd tools/durability/vm 2>/dev/null || cd "$(Build.SourcesDirectory)/tools/durability/vm"
+              # The equals form is mandatory: the space form exits 64, so the reap would
+              # silently never run and the disk would fill. --keep=3 is enough kept disks to
+              # diagnose a regression; --keep-days=14 ages out the archives, which are never
+              # reaped by count.
+              bash reap-state.sh --state="$(QDB_VMCRASH_STATE)" --keep=3 --keep-days=14 --apply || \
+                echo "##vso[task.logissue type=warning]reap-state.sh exited $? (64=refused, 70=an rm failed); check free space before the next run"
+              df -BG "$(QDB_VMCRASH_STATE)" | sed 's/^/  /'
+            displayName: "Kill stray VMs, then reap state (after upload, always)"
+            timeoutInMinutes: 10
+            condition: always()
+
+          - bash: |
+              set -uo pipefail
+              rm -rf "$(QDB_VMCRASH_STATE)/.durability-ci.lock" && echo "lock released"
+              # An overrun past the nightly's cron is an incident on a one-agent pool, and
+              # invisible unless the run that caused it says so. 10# forces base 10: %H%M
+              # emits a leading zero and bash reads 0100 as octal.
+              now_hm=$((10#$(date -u +%H%M)))
+              if [ "$now_hm" -ge 100 ] && [ "$now_hm" -lt 600 ]; then
+                echo "##vso[task.logissue type=error]this build was still running at $(date -u +%H:%M) UTC, past the 01:00 nightly cron. It has delayed the nightly on a one-agent pool. Tighten DURABILITY_DEADLINE_UTC or reduce the point counts."
+              fi
+            displayName: "Release lock; flag any overrun past the nightly"
+            timeoutInMinutes: 5
+            condition: always()
+
       - job: NotifyOnFailure
         displayName: "Notify Slack on failure"
         # The notify job stays on the soak pool too; RunOn has released its
@@ -359,7 +1061,17 @@ stages:
           - RunContinuousSoak
           - RunAdaptiveCrashNightly
           - RunFullSuiteNightly
+          # A red durability night raises the same alarm. failed() is true when any
+          # dependency failed; jobs skipped on a given schedule are not failures.
+          - RunDurabilitySweep
         condition: failed()
+        variables:
+          # Which job failed. With four jobs on one definition the alert title alone is
+          # ambiguous, and a durability red needs a different response from a fuzz red.
+          RESULT_SOAK: $[ dependencies.RunContinuousSoak.result ]
+          RESULT_CRASH_NIGHTLY: $[ dependencies.RunAdaptiveCrashNightly.result ]
+          RESULT_FULL_SUITE: $[ dependencies.RunFullSuiteNightly.result ]
+          RESULT_DURABILITY: $[ dependencies.RunDurabilitySweep.result ]
         steps:
           - checkout: none
 
@@ -376,8 +1088,22 @@ stages:
                     exit 0
                     ;;
                 esac
+                # Name the failing job: a red soak or nightly is a product or test failure,
+                # while a red durability run may be the instrument, or the agent being unable
+                # to run a VM at all.
+                FAILED=""
+                [ "$RESULT_SOAK" = Failed ]          && FAILED="$FAILED soak"
+                [ "$RESULT_CRASH_NIGHTLY" = Failed ] && FAILED="$FAILED adaptive-crash-nightly"
+                [ "$RESULT_FULL_SUITE" = Failed ]    && FAILED="$FAILED full-suite-nightly"
+                [ "$RESULT_DURABILITY" = Failed ]    && FAILED="$FAILED durability-sweep"
+                FAILED="${FAILED# }"
+                [ -z "$FAILED" ] && FAILED="unknown (check the build)"
+                HINT=""
+                if [ "$RESULT_DURABILITY" = Failed ]; then
+                  HINT='\n\nFor durability-sweep: check the CONTROLS first (t06/t07/t10). A red control means the INSTRUMENT, not the product. Grep the log for AGENT CANNOT RUN VMS -- that is an infrastructure answer, not a durability result.'
+                fi
                 curl -X POST -H 'Content-type: application/json' \
-                  --data '{"text":"🚨 *Adaptive Commit Fuzz Failed (OSS)*\n\nBranch: `$(Build.SourceBranchName)`\nBuild: <$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)|#$(Build.BuildId)>\nCommit: `$(Build.SourceVersion)`"}' \
+                  --data '{"text":"🚨 *Adaptive Commit Fuzz Failed (OSS)*\n\nFailed job(s): `'"$FAILED"'`\nBranch: `$(Build.SourceBranchName)`\nBuild: <$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)|#$(Build.BuildId)>\nCommit: `$(Build.SourceVersion)`'"$HINT"'"}' \
                   "$TMP_ADAPTIVE_COMMIT_ALERT_WEBHOOK"
             env:
               TMP_ADAPTIVE_COMMIT_ALERT_WEBHOOK: $(TMP_ADAPTIVE_COMMIT_ALERT_WEBHOOK)
