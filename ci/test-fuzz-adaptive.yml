@@ -477,7 +477,21 @@ stages:
           DURABILITY_RESERVE_MINUTES: 8
           # Outside the workspace, which `clean: all` wipes, so the golden image survives.
           # Keep "qdb-vmcrash" in the name: the orphan sweeper matches 'qemu.*qdb-vmcrash'.
-          QDB_VMCRASH_STATE: $(HOME)/qdb-vmcrash-state
+          #
+          # Absolute and literal, never $(HOME)/...: ADO expands $(...) in a script body but
+          # exports job variables to the task environment RAW, and every harness script reads
+          # this one from the environment. As "$(HOME)/qdb-vmcrash-state" the two halves of
+          # the job disagreed inside a single step -- the inline `reap-state.sh --state=` saw
+          # /home/agent/qdb-vmcrash-state while check-host.sh saw the literal '$(HOME)/...' --
+          # so build-image.sh wrote the ~3 GB golden image into a directory named '$(HOME)'
+          # under the workspace, `clean: all` deleted it, and t01 died on a backing file that
+          # had never been where the overlay recorded it (build 270594).
+          #
+          # This is the persistent mount added by roles/incus/tasks/durability-devices.yml in
+          # azure-ci-runners. The budget step below refuses the run if it stops matching the
+          # agent's real $HOME, and check-host.sh independently refuses any state dir that is
+          # relative or still carries a macro.
+          QDB_VMCRASH_STATE: /home/agent/qdb-vmcrash-state
           DURABILITY_RESULTS: $(Build.ArtifactStagingDirectory)/durability-results
           MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx4096m -XX:+UseParallelGC"
         steps:
@@ -526,10 +540,27 @@ stages:
                 exit 0
               fi
 
+              # The state dir is a literal path (see QDB_VMCRASH_STATE above), so it is this
+              # job's business to prove it is still the right literal on the agent it landed
+              # on. Silent drift costs a ~3 GB image rebuild every run at best, and at worst
+              # writes it inside the workspace that `clean: all` wipes.
+              STATE="$(QDB_VMCRASH_STATE)"
+              if [ "$STATE" != "$HOME/qdb-vmcrash-state" ]; then
+                echo "##vso[task.logissue type=error]QDB_VMCRASH_STATE is '$STATE' but this agent's home is '$HOME'. The persistent mount is \$HOME/qdb-vmcrash-state (roles/incus/tasks/durability-devices.yml in azure-ci-runners); update the variable in ci/test-fuzz-adaptive.yml to match."
+                exit 1
+              fi
+
               # ADO has no concurrency group for ordinary jobs, so a second agent would mean
               # two qemus against one $QDB_VMCRASH_STATE.
-              LOCK="$(QDB_VMCRASH_STATE)/.durability-ci.lock"
-              mkdir -p "$(QDB_VMCRASH_STATE)"
+              LOCK="$STATE/.durability-ci.lock"
+              mkdir -p "$STATE"
+
+              # Warning, not a gate: a state dir that is not a mount still works, it just does
+              # not survive the container. This is what a host rebuild without the Ansible
+              # change looks like -- green runs that rebuild the image every night.
+              if command -v mountpoint >/dev/null 2>&1 && ! mountpoint -q "$STATE"; then
+                echo "##vso[task.logissue type=warning]$STATE is not a mount point, so the golden image will not outlive this ephemeral container. Apply roles/incus/tasks/durability-devices.yml (tag durability_devices) to this host."
+              fi
               if ! mkdir "$LOCK" 2>/dev/null; then
                 echo "lock held by: $(cat "$LOCK/owner" 2>/dev/null || echo unknown)"
                 age=$(( now - $(stat -c %Y "$LOCK" 2>/dev/null || echo "$now") ))
@@ -662,6 +693,14 @@ stages:
               f statedir_free_gb "$(df -BG --output=avail "$(QDB_VMCRASH_STATE)" 2>/dev/null | tail -1 | tr -dc '0-9')"
               f home_free_gb "$(df -BG --output=avail "$HOME" 2>/dev/null | tail -1 | tr -dc '0-9')"
               [ -d "$(MAVEN_CACHE_FOLDER)" ] && f home_persists likely || f home_persists unknown
+              # The decisive one for persistence, and home_persists is NOT a proxy for it: the
+              # agent containers are ephemeral, one per job, so $HOME never survives. Only the
+              # mounted state dir does, and only while the Ansible device is applied.
+              if command -v mountpoint >/dev/null 2>&1 && mountpoint -q "$(QDB_VMCRASH_STATE)"; then
+                f statedir_is_mount yes
+              else
+                f statedir_is_mount no
+              fi
               [ -f "$(QDB_VMCRASH_STATE)/base/golden.qcow2" ] && f golden_image present || f golden_image absent
               df -BG "$(QDB_VMCRASH_STATE)" "$HOME" / 2>&1 | sed 's/^/  /' || true
 

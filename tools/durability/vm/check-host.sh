@@ -37,6 +37,21 @@ done
 # 4. Run state with real headroom: 40G data + 20G overlay per run, and a failed run keeps its
 #    disks for inspection, so budget for several.
 STATE_DIR="${QDB_VMCRASH_STATE:-/data/qdb-vmcrash}"
+
+# 4a. The state dir must be absolute and fully expanded. mkdir -p accepts a relative path or
+#     an unexpanded macro just as happily, and then the run writes a ~3 GB golden image into
+#     the caller's cwd instead of the persistent mount. Azure DevOps expands $(...) in a script
+#     body but exports job variables to the task environment RAW, so this arrived here as the
+#     literal '$(HOME)/qdb-vmcrash-state': the gate said READY, build-image.sh built under the
+#     workspace, `clean: all` deleted it, and the first symptom was qemu-img failing two steps
+#     later on a backing file that was never where the overlay expected (build 270594).
+case "$STATE_DIR" in
+    *'$('* | *'${'* | *'`'*)
+        fail "QDB_VMCRASH_STATE carries an unexpanded variable reference: $STATE_DIR" ;;
+    /*) ;;
+    *)  fail "QDB_VMCRASH_STATE must be an absolute path, got: $STATE_DIR (it would be created under $PWD)" ;;
+esac
+
 mkdir -p "$STATE_DIR" || fail "cannot create state dir $STATE_DIR"
 avail_gb=$(df -BG --output=avail "$STATE_DIR" 2>/dev/null | tail -1 | tr -dc '0-9')
 [ "${avail_gb:-0}" -ge 200 ] || fail "only ${avail_gb:-0}G free at $STATE_DIR; need >= 200G"

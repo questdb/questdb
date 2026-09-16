@@ -256,7 +256,11 @@ configuration cannot see a common-mode fault: if the reset silently did nothing,
 `t06` would be wrong in the same direction. With `QDB_REPLAY_RESET=none` it fails outright —
 both files appear at the first boundary and the boundaries stop discriminating.
 
-Run state lives under `/data/qdb-vmcrash` (override with `QDB_VMCRASH_STATE`).
+Run state lives under `/data/qdb-vmcrash` (override with `QDB_VMCRASH_STATE`). The override must
+be an **absolute, fully expanded** path: `check-host.sh` refuses a relative one, or one still
+carrying a `$(...)`/`${...}` reference, rather than letting `mkdir -p` create it under the
+caller's cwd. A ~3 GB golden image built in the wrong place is not a visible failure — it is a
+rebuild every run, or a green run whose image the next workspace clean deletes.
 
 `run-sf-replay.sh` is a separate driver for the cross-machine claim: the client runs on the
 host, survives the cut, and replays from its store-and-forward buffer. It is not part of the
