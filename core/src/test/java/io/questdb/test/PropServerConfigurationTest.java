@@ -2759,7 +2759,10 @@ public class PropServerConfigurationTest {
         readOnly.setProperty(PropertyKey.SHARED_NETWORK_WORKER_COUNT.getPropertyPath(), "0");
         readOnly.setProperty(PropertyKey.SHARED_WRITE_WORKER_COUNT.getPropertyPath(), "0");
         readOnly.setProperty(PropertyKey.READ_ONLY_INSTANCE.getPropertyPath(), "true");
-        Assert.assertTrue(newPropServerConfiguration(readOnly).getCairoConfiguration().isReadOnlyInstance());
+        readOnly.setProperty(PropertyKey.QUERY_TRACING_ENABLED.getPropertyPath(), "true");
+        final CairoConfiguration readOnlyCairoConfiguration = newPropServerConfiguration(readOnly).getCairoConfiguration();
+        Assert.assertTrue(readOnlyCairoConfiguration.isReadOnlyInstance());
+        Assert.assertFalse(readOnlyCairoConfiguration.isQueryTracingEnabled());
     }
 
     @Test
