@@ -28,6 +28,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.OperationFuture;
@@ -36,6 +37,7 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.QueryBuilder;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
@@ -59,6 +61,33 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
     private final MicrosecondClock clock;
     private final ObjList<MetricColumn> columns = new ObjList<>();
     private final MetricsConfiguration configuration;
+    private final MetricSnapshotVisitor definitionVisitor = new MetricSnapshotVisitor() {
+        @Override
+        public void visitDouble(CharSequence name, double value) {
+            addPrecreatedColumn(name, MetricType.DOUBLE_GAUGE, null, null);
+        }
+
+        @Override
+        public void visitLong(CharSequence name, MetricType type, long value) {
+            addPrecreatedColumn(name, type, null, null);
+        }
+
+        @Override
+        public void visitLong(CharSequence name, MetricType type, CharSequence labelValue0, long value) {
+            addPrecreatedColumn(name, type, labelValue0, null);
+        }
+
+        @Override
+        public void visitLong(
+                CharSequence name,
+                MetricType type,
+                CharSequence labelValue0,
+                CharSequence labelValue1,
+                long value
+        ) {
+            addPrecreatedColumn(name, type, labelValue0, labelValue1);
+        }
+    };
     private final CairoEngine engine;
     private final Pattern excludePattern;
     private final Metrics metrics;
@@ -116,6 +145,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
     };
     private double[] doubleValues;
     private boolean isEnabled;
+    private boolean isInitialized;
     private boolean[] isSeen;
     private boolean isVirtualMetricsEnabled;
     private long lastDay = Long.MIN_VALUE;
@@ -141,13 +171,6 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
             }
         }
         this.excludePattern = pattern;
-        if (isEnabled) {
-            try {
-                initialize(engine);
-            } catch (Throwable th) {
-                disable(th);
-            }
-        }
     }
 
     @Override
@@ -166,16 +189,19 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
             return false;
         }
 
-        final long now = clock.getTicks();
-        if (now < nextSampleMicros) {
-            return false;
-        }
-        if (now <= lastTimestamp) {
-            nextSampleMicros = lastTimestamp + configuration.getPersistIntervalMicros();
-            return false;
-        }
-
         try {
+            if (!isInitialized) {
+                initialize(engine);
+                isInitialized = true;
+            }
+            final long now = clock.getTicks();
+            if (now < nextSampleMicros) {
+                return false;
+            }
+            if (now <= lastTimestamp) {
+                nextSampleMicros = lastTimestamp + configuration.getPersistIntervalMicros();
+                return false;
+            }
             sample(now);
             nextSampleMicros = now + configuration.getPersistIntervalMicros();
         } catch (Throwable th) {
@@ -192,16 +218,11 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
     }
 
     private int addColumn(CharSequence name, MetricType type) {
-        buildColumnName(name, null, null);
-        if (nameSink.length() == 0) {
-            throw new IllegalArgumentException("metric name is empty");
-        }
-        return addBuiltColumn(type);
+        return addColumn(name, type, null, null);
     }
 
     private int addColumn(CharSequence name, MetricType type, CharSequence labelValue0) {
-        buildColumnName(name, labelValue0, null);
-        return addBuiltColumn(type);
+        return addColumn(name, type, labelValue0, null);
     }
 
     private int addColumn(
@@ -211,75 +232,56 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
             CharSequence labelValue1
     ) {
         buildColumnName(name, labelValue0, labelValue1);
-        return addBuiltColumn(type);
+        return addBuiltColumn(type, true);
     }
 
-    private int addBuiltColumn(MetricType type) {
+    private int addBuiltColumn(MetricType type, boolean discovered) {
         if (excludePattern != null && excludePattern.matcher(nameSink).matches()) {
             return -1;
         }
+        if (nameSink.length() == 0) {
+            throw new IllegalArgumentException("metric name is empty");
+        }
         final int existingIndex = nameToIndex.get(nameSink);
         if (existingIndex > -1) {
-            throw new IllegalArgumentException("duplicate flattened metric name: " + nameSink);
+            final MetricColumn column = columns.getQuick(existingIndex);
+            if (column.type != type) {
+                throw new IllegalArgumentException("metric type changed: " + nameSink);
+            }
+            if (discovered && column.discovered) {
+                throw new IllegalArgumentException("duplicate flattened metric name: " + nameSink);
+            }
+            column.discovered |= discovered;
+            return existingIndex;
         }
         final String columnName = nameSink.toString();
         final int columnIndex = columns.size();
         nameToIndex.put(columnName, columnIndex);
-        columns.add(new MetricColumn(columnName, type));
+        columns.add(new MetricColumn(columnName, type, discovered));
         return columnIndex;
     }
 
-    private void alterMissingColumns(CairoEngine engine, SqlCompiler compiler, SqlExecutionContextImpl context) throws Exception {
-        final TableToken tableToken = engine.verifyTableName(TABLE_NAME);
-        try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
-            if (tableToken.isWal() || metadata.getPartitionBy() != PartitionBy.DAY) {
-                throw new IllegalStateException("sys.metrics must be a non-WAL table partitioned by day");
-            }
-            final int timestampIndex = metadata.getTimestampIndex();
-            if (timestampIndex < 0
-                    || ColumnType.tagOf(metadata.getColumnType(timestampIndex)) != ColumnType.TIMESTAMP
-                    || !Chars.equals("ts", metadata.getColumnName(timestampIndex))) {
-                throw new IllegalStateException("sys.metrics must have a designated ts timestamp column");
-            }
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                if (i != timestampIndex) {
-                    final int type = ColumnType.tagOf(metadata.getColumnType(i));
-                    if (type != ColumnType.LONG && type != ColumnType.DOUBLE) {
-                        throw new IllegalStateException("sys.metrics columns must be LONG or DOUBLE");
-                    }
-                }
-            }
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                final MetricColumn column = columns.getQuick(i);
-                final int columnIndex = metadata.getColumnIndexQuiet(column.name);
-                if (columnIndex > -1) {
-                    validateColumnType(metadata, column, columnIndex);
-                }
-            }
-        }
+    private int addPrecreatedColumn(
+            CharSequence name,
+            MetricType type,
+            CharSequence labelValue0,
+            CharSequence labelValue1
+    ) {
+        buildColumnName(name, labelValue0, labelValue1);
+        return addBuiltColumn(type, false);
+    }
 
+    private void addMissingColumns(TableWriter tableWriter, SecurityContext securityContext) {
+        final TableMetadata metadata = tableWriter.getMetadata();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final MetricColumn column = columns.getQuick(i);
-            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
-                if (metadata.getColumnIndexQuiet(column.name) > -1) {
-                    continue;
-                }
+            if (metadata.getColumnIndexQuiet(column.name) < 0) {
+                tableWriter.addColumn(
+                        column.name,
+                        column.isDouble ? ColumnType.DOUBLE : ColumnType.LONG,
+                        securityContext
+                );
             }
-            final CompiledQuery query = compiler.query()
-                    .$("ALTER TABLE \"").$(TABLE_NAME).$("\" ADD COLUMN IF NOT EXISTS \"")
-                    .$(column.name).$("\" ").$(column.isDouble ? "DOUBLE" : "LONG")
-                    .compile(context);
-            try (OperationFuture future = query.execute(operationSequence)) {
-                future.await();
-            }
-        }
-
-        final CompiledQuery ttlQuery = compiler.query()
-                .$("ALTER TABLE \"").$(TABLE_NAME).$("\" SET TTL ")
-                .$(configuration.getPersistTtl())
-                .compile(context);
-        try (OperationFuture future = ttlQuery.execute(operationSequence)) {
-            future.await();
         }
     }
 
@@ -345,12 +347,25 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
         LOG.error().$("metrics persistence disabled [error=").$(th).$(']').$();
     }
 
+    private void dropTable(SqlCompiler compiler, SqlExecutionContextImpl context) throws Exception {
+        try (
+                Operation operation = compiler.query()
+                        .$("DROP TABLE IF EXISTS \"").$(TABLE_NAME).$('\"')
+                        .compile(context)
+                        .getOperation();
+                OperationFuture future = operation.execute(context, null)
+        ) {
+            future.await();
+        }
+    }
+
     private int findColumn(CharSequence name, CharSequence labelValue0, CharSequence labelValue1) {
         buildColumnName(name, labelValue0, labelValue1);
         return nameToIndex.get(nameSink);
     }
 
     private void initialize(CairoEngine engine) throws Exception {
+        configuration.appendPersistedMetricDefinitions(definitionVisitor);
         metrics.snapshot(new MetricSnapshotVisitor() {
             @Override
             public void visitDouble(CharSequence name, double value) {
@@ -383,6 +398,10 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
         isSeen = new boolean[columns.size()];
         longValues = new long[columns.size()];
 
+        final SecurityContext securityContext = engine.getConfiguration()
+                .getFactoryProvider()
+                .getSecurityContextFactory()
+                .getRootContext();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             final SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1) {
                 @Override
@@ -390,33 +409,80 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
                     return false;
                 }
             };
-            context.with(
-                    engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
-                    null,
-                    null
-            );
-            createTable(compiler, context);
-            alterMissingColumns(engine, compiler, context);
+            context.with(securityContext, null, null);
+            prepareTable(engine, compiler, context);
         }
 
         final TableToken tableToken = engine.verifyTableName(TABLE_NAME);
-        try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                final MetricColumn column = columns.getQuick(i);
-                column.columnIndex = metadata.getColumnIndexQuiet(column.name);
-                if (column.columnIndex < 0) {
-                    throw new IllegalStateException("missing sys.metrics column: " + column.name);
-                }
-                validateColumnType(metadata, column, column.columnIndex);
-            }
-        }
         writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
+        addMissingColumns(writer, securityContext);
+        final TableMetadata metadata = writer.getMetadata();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final MetricColumn column = columns.getQuick(i);
+            column.columnIndex = metadata.getColumnIndexQuiet(column.name);
+            if (column.columnIndex < 0) {
+                throw new IllegalStateException("missing sys.metrics column: " + column.name);
+            }
+            validateColumnType(metadata, column, column.columnIndex);
+        }
         lastTimestamp = writer.getMaxTimestamp();
         if (lastTimestamp != Long.MIN_VALUE) {
             lastDay = Micros.floorDD(lastTimestamp);
             if (configuration.isPersistParquetEnabled()) {
                 convertPreviousPartitions(lastDay);
             }
+        }
+    }
+
+    private boolean isTableSchemaCompatible(CairoEngine engine) {
+        final TableToken tableToken = engine.verifyTableName(TABLE_NAME);
+        if (tableToken.isWal()) {
+            return false;
+        }
+        try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+            if (metadata.getPartitionBy() != PartitionBy.DAY) {
+                return false;
+            }
+            final int timestampIndex = metadata.getTimestampIndex();
+            if (timestampIndex < 0
+                    || ColumnType.tagOf(metadata.getColumnType(timestampIndex)) != ColumnType.TIMESTAMP
+                    || !Chars.equals("ts", metadata.getColumnName(timestampIndex))) {
+                return false;
+            }
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (i != timestampIndex) {
+                    final int type = ColumnType.tagOf(metadata.getColumnType(i));
+                    if (type != ColumnType.LONG && type != ColumnType.DOUBLE) {
+                        return false;
+                    }
+                }
+            }
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final MetricColumn column = columns.getQuick(i);
+                final int columnIndex = metadata.getColumnIndexQuiet(column.name);
+                if (columnIndex > -1) {
+                    final int expectedType = column.isDouble ? ColumnType.DOUBLE : ColumnType.LONG;
+                    if (ColumnType.tagOf(metadata.getColumnType(columnIndex)) != expectedType) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+    }
+
+    private void prepareTable(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContextImpl context
+    ) throws Exception {
+        createTable(compiler, context);
+        if (!isTableSchemaCompatible(engine)) {
+            LOG.info().$("recreating incompatible sys.metrics table").$();
+            dropTable(compiler, context);
+            createTable(compiler, context);
+        } else {
+            setTtl(compiler, context);
         }
     }
 
@@ -427,47 +493,34 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
             return;
         }
 
-        writer = Misc.free(writer);
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            final SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1) {
-                @Override
-                public boolean shouldLogSql() {
-                    return false;
-                }
-            };
-            context.with(
-                    engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
-                    null,
-                    null
-            );
-            alterMissingColumns(engine, compiler, context);
-        }
+        final SecurityContext securityContext = engine.getConfiguration()
+                .getFactoryProvider()
+                .getSecurityContextFactory()
+                .getRootContext();
+        addMissingColumns(writer, securityContext);
 
         doubleValues = Arrays.copyOf(doubleValues, newColumnCount);
         isSeen = Arrays.copyOf(isSeen, newColumnCount);
         longValues = Arrays.copyOf(longValues, newColumnCount);
-        final TableToken tableToken = engine.verifyTableName(TABLE_NAME);
-        try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
-            for (int i = oldColumnCount; i < newColumnCount; i++) {
-                final MetricColumn column = columns.getQuick(i);
-                column.columnIndex = metadata.getColumnIndexQuiet(column.name);
-                if (column.columnIndex < 0) {
-                    throw new IllegalStateException("missing sys.metrics column: " + column.name);
+        final TableMetadata metadata = writer.getMetadata();
+        for (int i = 0; i < newColumnCount; i++) {
+            final MetricColumn column = columns.getQuick(i);
+            column.columnIndex = metadata.getColumnIndexQuiet(column.name);
+            if (column.columnIndex < 0) {
+                throw new IllegalStateException("missing sys.metrics column: " + column.name);
+            }
+            validateColumnType(metadata, column, column.columnIndex);
+            if (column.pendingValue) {
+                if (column.isDouble) {
+                    doubleValues[i] = column.pendingDoubleValue;
+                } else {
+                    longValues[i] = column.pendingLongValue;
                 }
-                validateColumnType(metadata, column, column.columnIndex);
-                if (column.pendingValue) {
-                    if (column.isDouble) {
-                        doubleValues[i] = column.pendingDoubleValue;
-                    } else {
-                        longValues[i] = column.pendingLongValue;
-                    }
-                    isSeen[i] = true;
-                    column.hasValue = true;
-                    column.pendingValue = false;
-                }
+                isSeen[i] = true;
+                column.hasValue = true;
+                column.pendingValue = false;
             }
         }
-        writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
     }
 
     private void sample(long timestamp) throws Exception {
@@ -554,6 +607,16 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
         }
     }
 
+    private void setTtl(SqlCompiler compiler, SqlExecutionContextImpl context) throws Exception {
+        final CompiledQuery ttlQuery = compiler.query()
+                .$("ALTER TABLE \"").$(TABLE_NAME).$("\" SET TTL ")
+                .$(configuration.getPersistTtl())
+                .compile(context);
+        try (OperationFuture future = ttlQuery.execute(operationSequence)) {
+            future.await();
+        }
+    }
+
     private static void validateColumnType(TableMetadata metadata, MetricColumn column, int columnIndex) {
         final int expectedType = column.isDouble ? ColumnType.DOUBLE : ColumnType.LONG;
         if (ColumnType.tagOf(metadata.getColumnType(columnIndex)) != expectedType) {
@@ -563,6 +626,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
 
     private static final class MetricColumn {
         private int columnIndex;
+        private boolean discovered;
         private boolean hasValue;
         private final boolean isDouble;
         private final boolean isVirtual;
@@ -572,7 +636,8 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
         private boolean pendingValue;
         private final MetricType type;
 
-        private MetricColumn(String name, MetricType type) {
+        private MetricColumn(String name, MetricType type, boolean discovered) {
+            this.discovered = discovered;
             this.isDouble = type == MetricType.DOUBLE_GAUGE;
             this.isVirtual = type == MetricType.VIRTUAL_LONG_GAUGE;
             this.name = name;

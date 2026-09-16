@@ -24,6 +24,7 @@
 
 package io.questdb.test.metrics;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -43,6 +44,16 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class MetricsPersistenceJobTest extends AbstractCairoTest {
+
+    @Test
+    public void testConstructorDoesNotInitializeTable() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration(null))) {
+                Assert.assertTrue(job.isEnabled());
+                Assert.assertNull(engine.getTableTokenIfExists(MetricsPersistenceJob.TABLE_NAME));
+            }
+        });
+    }
 
     @Test
     public void testCreatesAndSamplesMetricsTable() throws Exception {
@@ -203,22 +214,6 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testDisablesItselfForIncompatibleSchema() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE "sys.metrics" (
-                        ts TIMESTAMP,
-                        unhandled_errors DOUBLE
-                    ) TIMESTAMP(ts) PARTITION BY DAY TTL 7 DAYS BYPASS WAL
-                    """);
-
-            try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration(null))) {
-                Assert.assertFalse(job.isEnabled());
-                Assert.assertFalse(job.runSerially());
-            }
-        });
-    }
 
     @Test
     public void testDiscoversTargetsAddedAfterStartup() throws Exception {
@@ -234,7 +229,8 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
                 }
             };
 
-            try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration(null))) {
+            try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration(null, false, 0))) {
+                job.runSerially();
                 engine.getMetrics().getRegistry().addTarget(target);
                 try {
                     job.runSerially();
@@ -243,8 +239,7 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
                 }
             }
 
-            assertQuery("SELECT late_metric FROM \"sys.metrics\"")
-                    .expectSize()
+            assertQuery("SELECT late_metric FROM \"sys.metrics\" WHERE late_metric IS NOT NULL")
                     .returns("""
                             late_metric
                             42
@@ -298,6 +293,120 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPrecreatesConfiguredMetricColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            final MetricsConfiguration configuration = new MetricsConfiguration() {
+                @Override
+                public void appendPersistedMetricDefinitions(MetricSnapshotVisitor visitor) {
+                    visitor.visitLong("precreated_only", MetricType.LONG_GAUGE, 0);
+                }
+
+                @Override
+                public boolean isEnabled() {
+                    return true;
+                }
+
+                @Override
+                public boolean isPersistEnabled() {
+                    return true;
+                }
+
+                @Override
+                public boolean isPersistParquetEnabled() {
+                    return false;
+                }
+            };
+
+            try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration)) {
+                job.runSerially();
+            }
+
+            final TableToken tableToken = engine.verifyTableName(MetricsPersistenceJob.TABLE_NAME);
+            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                Assert.assertTrue(metadata.getColumnIndexQuiet("precreated_only") > -1);
+            }
+        });
+    }
+
+    @Test
+    public void testRecreatesIncompatibleSchema() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE "sys.metrics" (
+                        ts TIMESTAMP,
+                        unhandled_errors DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY TTL 7 DAYS BYPASS WAL
+                    """);
+
+            try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration(null))) {
+                Assert.assertTrue(job.isEnabled());
+                job.runSerially();
+                Assert.assertTrue(job.isEnabled());
+            }
+
+            final TableToken tableToken = engine.verifyTableName(MetricsPersistenceJob.TABLE_NAME);
+            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                final int columnIndex = metadata.getColumnIndexQuiet("unhandled_errors");
+                Assert.assertTrue(columnIndex > -1);
+                Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(columnIndex));
+            }
+            assertQuery("SELECT count() FROM \"sys.metrics\"")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            1
+                            """);
+        });
+    }
+
+    @Test
+    public void testRecreatesSchemaWithInvalidTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE "sys.metrics" (
+                        ts LONG,
+                        event_ts TIMESTAMP
+                    ) TIMESTAMP(event_ts) PARTITION BY DAY TTL 7 DAYS BYPASS WAL
+                    """);
+
+            try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration(null))) {
+                job.runSerially();
+                Assert.assertTrue(job.isEnabled());
+            }
+
+            final TableToken tableToken = engine.verifyTableName(MetricsPersistenceJob.TABLE_NAME);
+            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                final int timestampIndex = metadata.getTimestampIndex();
+                Assert.assertEquals("ts", metadata.getColumnName(timestampIndex));
+                Assert.assertEquals(ColumnType.TIMESTAMP, metadata.getColumnType(timestampIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testRecreatesSchemaWithUnsupportedColumnType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE "sys.metrics" (
+                        ts TIMESTAMP,
+                        legacy VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY TTL 7 DAYS BYPASS WAL
+                    """);
+
+            try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration(null))) {
+                job.runSerially();
+                Assert.assertTrue(job.isEnabled());
+            }
+
+            final TableToken tableToken = engine.verifyTableName(MetricsPersistenceJob.TABLE_NAME);
+            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                Assert.assertEquals(-1, metadata.getColumnIndexQuiet("legacy"));
+            }
+        });
+    }
+
+    @Test
     public void testInvalidExclusionDisablesPersistence() throws Exception {
         assertMemoryLeak(() -> {
             try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration("["))) {
@@ -312,6 +421,10 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
     }
 
     private static MetricsConfiguration configuration(String exclude, boolean parquetEnabled) {
+        return configuration(exclude, parquetEnabled, 1_000_000);
+    }
+
+    private static MetricsConfiguration configuration(String exclude, boolean parquetEnabled, long intervalMicros) {
         return new MetricsConfiguration() {
             @Override
             public boolean isEnabled() {
@@ -321,6 +434,11 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
             @Override
             public CharSequence getPersistExclude() {
                 return exclude;
+            }
+
+            @Override
+            public long getPersistIntervalMicros() {
+                return intervalMicros;
             }
 
             @Override

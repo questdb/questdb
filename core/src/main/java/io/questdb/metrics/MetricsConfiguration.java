@@ -29,6 +29,9 @@ public interface MetricsConfiguration {
             "(max_live|mounted|retained|finalizing|outstanding|created|retired|mount|wake|launch|" +
             "scheduler_publication|scheduler_selection|orphan_recovery|mount_budget_exhaustion)(__.*)?";
 
+    default void appendPersistedMetricDefinitions(MetricSnapshotVisitor visitor) {
+    }
+
     default CharSequence getPersistExclude() {
         return DEFAULT_PERSIST_EXCLUDE;
     }
