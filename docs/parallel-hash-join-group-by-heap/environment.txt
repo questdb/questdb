@@ -1,7 +1,0 @@
-openjdk version "25.0.4" 2026-07-21
-OpenJDK Runtime Environment (build 25.0.4+7-1-24.04-Ubuntu)
-OpenJDK 64-Bit Server VM (build 25.0.4+7-1-24.04-Ubuntu, mixed mode, sharing)
-Linux andrei-desktop 7.0.0-30-generic #30~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Fri Aug  7 13:27:52 UTC 2 x86_64 x86_64 x86_64 GNU/Linux
-c09746fd94a5694ae496b44aee08f1dab027127a
-f460b24b8e270c285f453cf8ae492c47c6421c9751243e3417ae9a0439c8678b  -
-efdfb69d53e3286007ecd929419a528b9b5d198cb6f27cee3e15bec5d3d14df1  benchmarks/target/benchmarks.jar

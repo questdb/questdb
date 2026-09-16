@@ -25,9 +25,13 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -37,6 +41,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -45,8 +50,13 @@ import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.assertDif
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.context;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.fused;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.plan;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
 
 public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
+    // The optimiser pushes the interval below dateadd() as and_offset, which the fused analysis cannot
+    // parse, so the analysis falls back to the ordinary plan. The placeholder takes a join.
+    private static final String INTERVAL_FROM = " FROM (SELECT id, d, s, dateadd('d', -1, t) ts FROM a) r%sb p"
+            + " ON r.id = p.id WHERE r.ts IN '2020-01-01'";
     // Aliases denote SQL sides, including RIGHT: r is always the SQL LHS.
     private static final String[] JOINS = {" join ", " left join ", " right join "};
     private static final String PROJECTED_R = "(select s2, d, id, s, l, i, t, f from a) r";
@@ -364,13 +374,96 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantWhereKeepsOrdinaryResults() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables(false);
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                context.changePageFrameSizes(1, 2);
+                for (String join : JOINS) {
+                    for (boolean isKeyed : new boolean[]{false, true}) {
+                        String select = "SELECT " + (isKeyed ? "r.s, p.s, " : "") + aggregates(3, false);
+                        String order = isKeyed ? " ORDER BY r.s, p.s" : "";
+                        // generateJoins() replaces the whole join with an empty table for a constant-false WHERE.
+                        for (String where : new String[]{" WHERE 1 = 0", " WHERE false", " WHERE 1 = 0 AND r.d > 0"}) {
+                            assertOutcome(select + from(join) + where + order, context, false);
+                        }
+                        assertOutcome("DECLARE @x := 0 " + select + from(join) + " WHERE @x = 1" + order, context, false);
+                        // Only an INNER JOIN merges an ON constant into WHERE; an outer join filters its build input.
+                        assertOutcome(select + from(join) + " AND 1 = 0" + order, context, !join.equals(JOINS[0]));
+                        // The analysis does not evaluate functions, so a constant-true WHERE also keeps the ordinary plan.
+                        assertOutcome(select + from(join) + " WHERE 1 = 1" + order, context, false);
+                    }
+                    assertOutcome("SELECT count(*) n, sum(d) d FROM (SELECT p.d" + from(join) + " WHERE 1 = 0)", context, false);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLatestOnAboveJoinKeepsOrdinaryResults() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables(false);
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                context.changePageFrameSizes(1, 2);
+                for (String join : JOINS) {
+                    String rows = "SELECT r.t, r.s, p.s ps, p.d FROM a r" + join + "b p ON r.id = p.id";
+                    for (boolean isKeyed : new boolean[]{false, true}) {
+                        String select = "SELECT " + (isKeyed ? "s, " : "") + "count(*) n, sum(d) d, count(ps) ps FROM (";
+                        // generateLatestBy() filters the joined rows before the ordinary GROUP BY reads them.
+                        for (String latest : new String[]{
+                                "(" + rows + ") LATEST ON t PARTITION BY s",
+                                "(" + rows + " WHERE p.d > 0) LATEST ON t PARTITION BY s",
+                                "(" + rows + " ORDER BY r.t DESC) LATEST ON t PARTITION BY s, ps",
+                                "SELECT t, s, ps, d FROM (" + rows + ") LATEST ON t PARTITION BY s"
+                        }) {
+                            assertOutcome(select + latest + (isKeyed ? ") ORDER BY s" : ")"), context, false);
+                        }
+                    }
+                }
+                // Child compilation applies LATEST ON to a join input, so that shape keeps the fused plan.
+                assertOutcome("SELECT count(*) n, sum(p.d) d FROM a r JOIN ((SELECT id, d, t FROM b) LATEST ON t PARTITION BY id) p"
+                        + " ON r.id = p.id", context, true);
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByFillKeepsOrdinaryResults() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables(false);
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                context.changePageFrameSizes(1, 2);
+                for (String join : JOINS) {
+                    for (boolean isKeyed : new boolean[]{false, true}) {
+                        // The ordinary plan fails to compile FROM-TO and TIME ZONE over aliased inputs, so use table names.
+                        String select = "SELECT " + (isKeyed ? "a.s, " : "") + "count(*) n, sum(b.d) d, avg(a.d) a"
+                                + " FROM a" + join + "b ON a.id = b.id";
+                        // generateFill() wraps the ordinary GROUP BY in a fill cursor.
+                        for (String fill : new String[]{"FILL(NULL)", "FILL(PREV)", "FILL(0)", "FILL(NULL, 0, PREV)"}) {
+                            assertOutcome(select + " SAMPLE BY 1h " + fill + " ALIGN TO CALENDAR", context, false);
+                            assertOutcome(select + " SAMPLE BY 1h " + fill + " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'", context, false);
+                            assertOutcome(select + " SAMPLE BY 1h FROM '2019-12-31T22:00:00' TO '2020-01-03T06:00:00' " + fill, context, false);
+                        }
+                        // Without fill values generateFill() returns the GROUP BY unchanged.
+                        for (String fill : new String[]{"", " FILL(NONE)"}) {
+                            assertOutcome(select + " SAMPLE BY 1h" + fill + " ALIGN TO CALENDAR", context, true);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testInvalidSqlKeepsCompilationErrors() throws Exception {
         assertMemoryLeak(() -> {
             createTables(false);
             try (SqlExecutionContextImpl context = context(engine, 4)) {
                 for (String sql : new String[]{"select sum(r.d,p.d)" + from(JOINS[0]), "select avg()" + from(JOINS[2]),
                         "select count(r.missing)" + from(JOINS[1]), "select missing_function(r.d)" + from(JOINS[0]),
-                        "select sum(r.d) from a r join b p on r.missing=p.id"}) {
+                        "select sum(r.d) from a r join b p on r.missing=p.id",
+                        // The ordinary compile reaches the WHERE clause before the aggregate.
+                        "SELECT sum(missing_aggregate_arg(r.d)) FROM a r JOIN b p ON r.id = p.id WHERE missing_filter(r.d) > 0"}) {
                     String message = null;
                     int position = -1;
                     for (boolean enabled : new boolean[]{false, true}) {
@@ -393,6 +486,131 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testIntervalFilterThroughProjectionKeepsOrdinaryResults() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables(false);
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                context.changePageFrameSizes(1, 2);
+                for (String join : JOINS) {
+                    // The optimiser pushes the interval below dateadd() as an and_offset pseudo-function,
+                    // which only interval extraction and generateFilter() can compile.
+                    String from = " FROM (SELECT id, d, s, dateadd('d', -1, t) ts FROM a) r" + join + "b p ON r.id = p.id"
+                            + " WHERE r.ts IN '2020-01-01'";
+                    assertOutcome("SELECT r.s, count(*) n, sum(p.d) d" + from + " ORDER BY 1", context, false);
+                    assertOutcome("SELECT count(*) n, sum(p.d) d" + from, context, false);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testScalarSubqueryOnOrLhsKeepsOuterOperand() throws Exception {
+        assertSubqueryOperand("SELECT id, d FROM a", "d > (SELECT sum(p.d) d" + INTERVAL_FROM + ")", "OR", false);
+    }
+
+    @Test
+    public void testInSubqueryOnOrLhsKeepsOuterOperand() throws Exception {
+        assertSubqueryOperand("SELECT id, s FROM a",
+                "s IN (SELECT s FROM (SELECT r.s, count(*) n, sum(p.d) d" + INTERVAL_FROM + ") WHERE n > 0)", "OR", false);
+    }
+
+    @Test
+    public void testScalarSubqueryOnAndLhsKeepsOuterOperand() throws Exception {
+        assertSubqueryOperand("SELECT id, d FROM a", "d > (SELECT sum(p.d) d" + INTERVAL_FROM + ")", "AND", false);
+    }
+
+    @Test
+    public void testFusedSubqueryOnOrLhsKeepsOuterOperand() throws Exception {
+        // The analysis accepts this sub-query while the outer operand is pending.
+        assertSubqueryOperand("SELECT id, d FROM a", "d > (SELECT sum(p.d) d FROM a r%sb p ON r.id = p.id)", "OR", true);
+    }
+
+    @Test
+    public void testUndefinedBindVariablesKeepOrdinaryTypesAndErrors() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables(false);
+            for (String table : new String[]{"a", "b"}) {
+                execute("ALTER TABLE " + table + " ADD COLUMN n SYMBOL");
+                execute("ALTER TABLE " + table + " ADD COLUMN str STRING");
+                execute("UPDATE " + table + " SET n = CASE WHEN s = 'shared' THEN '1' ELSE s END,"
+                        + " str = CASE WHEN s = 'shared' THEN '1' ELSE s END");
+            }
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                context.with(AllowAllSecurityContext.INSTANCE, bindVariableService, null, -1, null);
+                context.changePageFrameSizes(1, 2);
+                // Collect every shape before comparing, so a regression reports all divergent outcomes.
+                StringBuilder expected = new StringBuilder();
+                StringBuilder actual = new StringBuilder();
+                for (String join : JOINS) {
+                    String from = " FROM a r" + join + "b p ON r.id = p.id";
+                    // The ordinary compile infers $1 from each WHERE or ON clause before it parses the aggregate.
+                    for (String sql : new String[]{
+                            "SELECT sum(r.d + $1)" + from + " WHERE r.n = $1",
+                            "SELECT sum(r.d + $1)" + from + " WHERE r.str = $1",
+                            "SELECT sum(r.d * length($1))" + from + " WHERE r.d > $1",
+                            "SELECT sum(r.d * length($1))" + from + " WHERE p.d > $1",
+                            "SELECT sum(r.d * length($1))" + from + " AND p.d > $1",
+                            // The ordinary compile generates the SQL LHS input first, the fused plan its probe input.
+                            "SELECT sum(p.d) FROM (SELECT * FROM a WHERE d > $1) r" + join
+                                    + "(SELECT * FROM b WHERE length($1) > 0) p ON r.id = p.id",
+                            "SELECT sum(p.d) FROM (SELECT * FROM a WHERE length($1) > 0) r" + join
+                                    + "(SELECT * FROM b WHERE d > $1) p ON r.id = p.id"
+                    }) {
+                        expected.append(sql).append('\n').append(bindOutcome(sql, context, false, ColumnType.UNDEFINED, "1")).append('\n');
+                        actual.append(sql).append('\n').append(bindOutcome(sql, context, true, ColumnType.UNDEFINED, "1")).append('\n');
+                    }
+                }
+                Assert.assertEquals(expected.toString(), actual.toString());
+                // A client-typed bind variable needs no inference, so it keeps the fused plan.
+                bindVariableService.clear();
+                bindVariableService.setStr(0, "1");
+                assertOutcome("SELECT sum(r.d + $1) FROM a r JOIN b p ON r.id = p.id WHERE r.n = $1", context, true);
+            }
+        });
+    }
+
+    @Test
+    public void testWeakDimensionArrayBindVariablesKeepOrdinaryTypesAndErrors() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables(false);
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                context.with(AllowAllSecurityContext.INSTANCE, bindVariableService, null, -1, null);
+                context.changePageFrameSizes(1, 2);
+                // PG Parse defines a float8[] parameter with weak dimensions, and the first cast that
+                // FunctionParser compiles gives it concrete dimensions.
+                int weakDims = ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true);
+                StringBuilder expected = new StringBuilder();
+                StringBuilder actual = new StringBuilder();
+                for (String join : JOINS) {
+                    String from = " FROM a r" + join + "b p ON r.id = p.id";
+                    for (String[] casts : new String[][]{{"DOUBLE[]", "DOUBLE[][]"}, {"DOUBLE[][]", "DOUBLE[]"}}) {
+                        // A later cast to fewer dimensions than the first one fails to compile.
+                        String first = "array_sum($1::" + casts[0] + ")";
+                        String second = "array_sum($1::" + casts[1] + ")";
+                        for (String sql : new String[]{
+                                "SELECT sum(r.d + " + second + ")" + from + " WHERE r.d > " + first,
+                                "SELECT sum(r.d + " + second + ")" + from + " WHERE p.d > " + first,
+                                "SELECT sum(r.d + " + second + ")" + from + " AND p.d > " + first,
+                                "SELECT sum(p.d) FROM (SELECT * FROM a WHERE d > " + first + ") r" + join
+                                        + "(SELECT * FROM b WHERE d > " + second + ") p ON r.id = p.id"
+                        }) {
+                            expected.append(sql).append('\n').append(bindOutcome(sql, context, false, weakDims, "0.5")).append('\n');
+                            actual.append(sql).append('\n').append(bindOutcome(sql, context, true, weakDims, "0.5")).append('\n');
+                        }
+                    }
+                }
+                Assert.assertEquals(expected.toString(), actual.toString());
+                // Casts leave an array with concrete dimensions unchanged, so it keeps the fused plan.
+                bindVariableService.clear();
+                bindVariableService.define(0, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1), 0);
+                bindVariableService.setStr(0, "{0.5}");
+                assertOutcome("SELECT sum(r.d + array_sum($1::DOUBLE[][])) FROM a r JOIN b p ON r.id = p.id"
+                        + " WHERE r.d > array_sum($1::DOUBLE[])", context, true);
+            }
+        });
+    }
+
     private static String aggregates(int roles, boolean symbols) {
         String sql = "count(*) pairs, count() pairs_again";
         for (int side = 1; side <= 2; side++) {
@@ -411,6 +629,41 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
             }
         }
         return sql;
+    }
+
+    // Compares outcomes before plans, so a regression reports the wrong answer rather than only the plan.
+    private static void assertOutcome(String sql, SqlExecutionContextImpl context, boolean isFused) throws Exception {
+        String expected;
+        context.setParallelHashJoinGroupByEnabled(false);
+        try (RecordCursorFactory baseline = context.getCairoEngine().select(sql, context)) {
+            Assert.assertFalse(plan(baseline, context).contains("Async Hash Join Group By"));
+            expected = outcome(baseline, context);
+        } finally {
+            context.setParallelHashJoinGroupByEnabled(true);
+        }
+        try (RecordCursorFactory factory = context.getCairoEngine().select(sql, context)) {
+            Assert.assertEquals(sql, expected, outcome(factory, context));
+            String actualPlan = plan(factory, context);
+            Assert.assertEquals(sql + "\n" + actualPlan, isFused, actualPlan.contains("Async Hash Join Group By"));
+        }
+        Assert.assertNull(context.getMemoryTracker());
+    }
+
+    // FunctionParser visits a binary operator's right operand first, so a sub-query on the left compiles,
+    // fused analysis included, while the right operand's function is pending in the same parser. The
+    // mirrored placement, which compiles the sub-query before any outer operand, runs first as a control.
+    private void assertSubqueryOperand(String select, String operand, String operator, boolean isFused) throws Exception {
+        assertMemoryLeak(() -> {
+            createTables(false);
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                context.changePageFrameSizes(1, 2);
+                for (String join : isFused ? new String[]{JOINS[0]} : JOINS) {
+                    String subquery = String.format(operand, join);
+                    assertOutcome(select + " WHERE i = 1 " + operator + " " + subquery, context, isFused);
+                    assertOutcome(select + " WHERE " + subquery + " " + operator + " i = 1", context, isFused);
+                }
+            }
+        });
     }
 
     private static void assertSymbolClones(RecordCursorFactory factory, SqlExecutionContextImpl context) throws Exception {
@@ -450,6 +703,50 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
         }
         Assert.assertEquals(0, fused(factory).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
         Assert.assertNull(context.getMemoryTracker());
+    }
+
+    // Compiles with $1 left to the parser, as a client that leaves parameter types unspecified or
+    // weakly typed does: an UNDEFINED type leaves $1 undefined. Binds the value, nested to the
+    // dimensionality compilation gave $1 when it is an array, and executes.
+    private static String bindOutcome(
+            String sql,
+            SqlExecutionContextImpl context,
+            boolean isEnabled,
+            int type,
+            String value
+    ) throws Exception {
+        BindVariableService bindVariables = context.getBindVariableService();
+        bindVariables.clear();
+        if (type != ColumnType.UNDEFINED) {
+            bindVariables.define(0, type, 0);
+        }
+        context.setParallelHashJoinGroupByEnabled(isEnabled);
+        try (RecordCursorFactory factory = context.getCairoEngine().select(sql, context)) {
+            // PG Describe reports these inferred types for parameters the client left unspecified.
+            StringBuilder types = new StringBuilder("types:");
+            for (int i = 0, n = bindVariables.getIndexedVariableCount(); i < n; i++) {
+                Function variable = bindVariables.getFunction(i);
+                if (variable == null) {
+                    types.append(" null");
+                } else {
+                    int variableType = variable.getType();
+                    types.append(' ').append(ColumnType.nameOf(variableType));
+                    if (variableType != ColumnType.UNDEFINED && ColumnType.isUndefined(variableType)) {
+                        types.append(" (undefined)");
+                    }
+                }
+            }
+            bindVariables.setStr(0, nestedValue(bindVariables.getFunction(0), value));
+            try {
+                return types + "\n" + outcome(factory, context);
+            } catch (ImplicitCastException e) {
+                return types + "\nexecution error: " + e.getFlyweightMessage();
+            }
+        } catch (SqlException e) {
+            return "compile error: [" + e.getPosition() + "] " + e.getFlyweightMessage();
+        } finally {
+            context.setParallelHashJoinGroupByEnabled(true);
+        }
     }
 
     private static String columns(int roles, boolean symbols) {
@@ -496,6 +793,23 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                 + "(2147483647,4,40,4,'maximum',null,'drop','2020-01-03'),"
                 + "(null,null,null,null,null,'null-key',null,'2020-01-03T01'),"
                 + "(" + (reverse ? 7 : 9) + ",8,80,8,'miss',null,'keep','2020-01-03T02')");
+    }
+
+    private static String nestedValue(@Nullable Function variable, String value) {
+        if (variable == null || !ColumnType.isArray(variable.getType())) {
+            return value;
+        }
+        int dims = Math.max(1, ColumnType.decodeWeakArrayDimensionality(variable.getType()));
+        return "{".repeat(dims) + value + "}".repeat(dims);
+    }
+
+    private static String outcome(RecordCursorFactory factory, SqlExecutionContextImpl context) throws Exception {
+        try {
+            // The second read catches cursor reuse defects as well as wrong values.
+            return result(factory, context) + result(factory, context);
+        } catch (CairoException e) {
+            return "error: " + e.getFlyweightMessage();
+        }
     }
 
     private void storage(String table, int format) throws Exception {

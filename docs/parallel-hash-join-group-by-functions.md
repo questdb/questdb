@@ -104,7 +104,7 @@ execution, bind rebinding and dictionary replacement. Injected functions verify
 owner state donation, initialization counts, partial compile cleanup, context
 restoration and successful initialization after failure.
 
-The benchmark package builds; no new performance claim is made. The committed
-[component measurements](parallel-hash-join-group-by-build-results.csv) and
-[ordinary-plan baseline](parallel-hash-join-group-by-baseline.md) remain the available
-measurements. RFC task 7's four-worker end-to-end 2× gate remains pending.
+The benchmark package builds; no new performance claim is made. The component
+measurements and the ordinary-plan baseline report were the available
+measurements; the branch does not retain either. RFC task 7's four-worker
+end-to-end 2× gate remains pending.

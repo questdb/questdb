@@ -43,7 +43,6 @@ import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.QueryAssertion;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -125,12 +124,13 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             createTables();
             execute("insert into r values (1, '2020-01-01', 10, 100, 1, 'a'), (2, '2020-01-02', 20, 200, 2, 'b'), (3, '2020-01-03', 30, 300, 3, 'c'), (null, '2020-01-04', 40, 400, null, null)");
             execute("insert into p values (1, 'ES', 5, 1, 'a'), (1, 'IT', 7, 1, 'a'), (2, 'DE', 9, 2, 'b'), (null, null, null, null, null)");
-            assertSql("country\tsum\nES\t10.0\nIT\t10.0\n", "select p.country, sum(r.energy_kwh)" + JOIN + " where p.country in ('ES','IT') order by p.country");
+            // The keyed group-by and its sort support random access; the scalar aggregates do not.
+            assertSql("country\tsum\nES\t10.0\nIT\t10.0\n", "select p.country, sum(r.energy_kwh)" + JOIN + " where p.country in ('ES','IT') order by p.country", true);
             String outer = " from r left join p on r.plant_id=p.plant_id";
-            assertSql("count\tcount1\tsum\n2\t0\t70.0\n", "select count(*), count(p.plant_id), sum(r.energy_kwh)" + outer + " where p.installed_kwp is null");
-            assertSql("count\n0\n", "select count(*)" + outer + " where p.installed_kwp = 42");
-            assertSql("count\n5\n", "select count(*) from r left join p on r.plant_id=p.plant_id and p.country in ('ES','IT')");
-            assertSql("country\tfirst\tlast\n\t40.0\t40.0\nDE\t20.0\t20.0\nES\t10.0\t10.0\nIT\t10.0\t10.0\n", "select p.country, first(r.energy_kwh), last(r.energy_kwh)" + JOIN + " order by p.country");
+            assertSql("count\tcount1\tsum\n2\t0\t70.0\n", "select count(*), count(p.plant_id), sum(r.energy_kwh)" + outer + " where p.installed_kwp is null", false);
+            assertSql("count\n0\n", "select count(*)" + outer + " where p.installed_kwp = 42", false);
+            assertSql("count\n5\n", "select count(*) from r left join p on r.plant_id=p.plant_id and p.country in ('ES','IT')", false);
+            assertSql("country\tfirst\tlast\n\t40.0\t40.0\nDE\t20.0\t20.0\nES\t10.0\t10.0\nIT\t10.0\t10.0\n", "select p.country, first(r.energy_kwh), last(r.energy_kwh)" + JOIN + " order by p.country", true);
             assertPlanContains("select p.country, sum(r.energy_kwh)" + JOIN, "Hash Join Light");
             assertPlanContains("select p.country, sum(r.energy_kwh)" + outer, "Hash Left Outer Join Light");
             assertPlanContains("select p.country, first(r.energy_kwh)" + JOIN, "Hash Join Light");
@@ -295,14 +295,8 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         }
     }
 
-    private void assertSql(String expected, String sql) throws Exception {
-        try (RecordCursorFactory factory = select(sql)) {
-            QueryAssertion assertion = assertQuery(sql).noLeakCheck().expectSize();
-            if (!factory.recordCursorSupportsRandomAccess()) {
-                assertion.noRandomAccess();
-            }
-            assertion.returns(expected);
-        }
+    private void assertSql(String expected, String sql, boolean isRandomAccessSupported) throws Exception {
+        assertQuery(sql).noLeakCheck().expectSize().supportsRandomAccess(isRandomAccessSupported).returns(expected);
     }
 
     private HashJoinGroupByCandidate candidate(SqlCompiler compiler, String sql) throws Exception {

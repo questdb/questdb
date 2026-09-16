@@ -6,7 +6,8 @@ scalar reducer checks rejected/missed probe rows at frame boundaries and retains
 throttled duplicate-pair checks. The later boundary simplification removes polling
 inside hash-collision walks, map redistribution and map merge loops.
 
-The experimental flag remains false. The [shared-throttle follow-up](parallel-hash-join-group-by-throttling.md)
+The experimental flag remains false. The shared-throttle follow-up, whose report
+the branch does not retain,
 replaces task 9f's operator-specific counters with the standard
 `statefulThrowExceptionIfTripped()` API. The [boundary-check follow-up](https://github.com/questdb/questdb/blob/4a05a7eb242e1225e57b3f1bd7d3798059a2820c/core/src/main/java/io/questdb/cairo/sql/async/UnorderedPageFrameReduceJob.java)
 aligns probe and merge polling with the existing parallel GROUP BY factories.
@@ -76,8 +77,9 @@ on rebinding. The global network breaker and wrapper implementations are unchang
 The shared `PostAggregationCircuitBreaker` uses its existing non-mutating flag
 check before each shard task. The temporary stateful overrides and map-entry
 breaker plumbing have been removed.
-See the [follow-up audit](parallel-hash-join-group-by-throttling.md) for the parallel
-factory survey and updated cancellation, allocation and performance evidence.
+The follow-up audit covered the parallel
+factory survey and updated cancellation, allocation and performance evidence; the
+branch does not retain that report.
 
 ## Named regression coverage
 
@@ -113,15 +115,15 @@ returned another group after cancellation; the serial filter evaluated all
 ## Validation and reproduction
 
 **2,384 Java tests pass across 70 suites**, with 26 existing conditional skips
-and zero failures/errors (2,410 total). The [per-suite results](parallel-hash-join-group-by-cancellation/regressions.csv)
+and zero failures/errors (2,410 total). The per-suite results, which the branch does not retain,
 count rerun suites once, using their final result.
-The benchmark package and all **43 ordered smoke-result checks** pass; the
-[smoke output](parallel-hash-join-group-by-cancellation/smoke.log.gz) is retained.
+The benchmark package and all **43 ordered smoke-result checks** pass; the branch
+does not retain the smoke output.
 
 The allocation rerun initially found a 160-byte source SYMBOL-view allocation
 when two owners interchanged readers after the scheduling-dependent warmup. The
-[original failure census](parallel-hash-join-group-by-cancellation/symbol-view-setup-failure.log.gz)
-is retained. The harness now deterministically seeds the existing bounded view
+branch does not retain the original failure census.
+The harness now deterministically seeds the existing bounded view
 pools during reported setup: 21 empty views per dictionary for one owner, or 42
 for each of two simultaneously acquired source readers. The bound comes from
 four source SYMBOL references per owner/worker slot and one build-copy view per
@@ -136,11 +138,9 @@ all four workers participating in each census case. It includes native/mixed/
 Parquet inputs, owner/sharded/scalar modes, INNER/LEFT/normalized RIGHT, logical
 conversion, one/two owners, 8,192/65,536 new symbols, forced native growth,
 output, close, cancellation cleanup and same-factory reuse. Every case matches
-the ordinary plan. See the [per-thread summary](parallel-hash-join-group-by-cancellation/allocation/summary.csv),
-[case matrix](parallel-hash-join-group-by-cancellation/allocation/cases.csv),
-[commands](parallel-hash-join-group-by-cancellation/allocation/commands.txt),
-[environment and source hashes](parallel-hash-join-group-by-cancellation/allocation/environment.txt)
-and paired byte/site logs in that directory. Compiler, bounded setup, deliberate
+the ordinary plan. The branch does not retain the per-thread summary, the case
+matrix, the commands, the environment and source hashes, or the paired byte/site
+logs. Compiler, bounded setup, deliberate
 failures and shared-framework allocations retain the task 9c measurement
 boundaries; this does not assert zero allocation under the default JVM.
 
@@ -149,13 +149,10 @@ Java only. The small smoke and allocation checks are integration evidence, not
 the pending task 10 latency gate.
 
 ```bash
-cancellation_test_suites=$(python3 - <<'SUITES'
-import csv
-with open('docs/parallel-hash-join-group-by-cancellation/regressions.csv') as source:
-    print(','.join(row['suite'].rsplit('.', 1)[-1] for row in csv.DictReader(source)))
-SUITES
-)
+# The branch does not retain the per-suite results CSV that produced this list;
+# supply the affected suite simple names, comma-separated.
+cancellation_test_suites=<comma-separated suite simple names>
 mvn -pl core test -P build-rust-library,qdbr-release -Dtest="$cancellation_test_suites"
 mvn -pl benchmarks -am package -P build-rust-library,qdbr-release -DskipTests -Dmaven.test.skip=true
-bash benchmarks/parallel-hash-join-group-by-allocation.sh docs/parallel-hash-join-group-by-cancellation/allocation
+# The allocation harness script ran next; the branch does not retain it.
 ```

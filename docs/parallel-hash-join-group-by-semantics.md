@@ -72,7 +72,7 @@ with SYMBOL lifetime and column mapping. Unsupported cases remain excluded.
 **2,392 Java tests passed across 71 suites**, with 26 existing conditional skips
 and zero failures/errors (2,418 total). This combines the complete affected
 regression run with the final semantic/concurrent fixture reruns, counting each
-test once. The [per-suite results](parallel-hash-join-group-by-semantics/regressions.csv)
+test once. The per-suite results, which the branch does not retain,
 include the planner, join, aggregate, frame/Parquet, SYMBOL, query-memory and
 cancellation/dispatcher regressions from task 9d plus the new semantic suite.
 
@@ -87,18 +87,15 @@ No production behavior was changed to satisfy these tests.
 
 The benchmark package build passed, and the 100,000-row/four-worker smoke
 comparison passed all **43 ordered result checks**, including all 40 measured
-executions. The [smoke output](parallel-hash-join-group-by-semantics/smoke.log.gz)
-retains commands/configuration, both plans, ordered results and every sample.
+executions. The branch does not retain the smoke output, which captured
+commands/configuration, both plans, ordered results and every sample.
 
 Run with JDK 25 and Maven 3; the native profiles build task 9a's tracked decoder:
 
 ```bash
-semantic_test_suites=$(python3 - <<'SUITES'
-import csv
-with open('docs/parallel-hash-join-group-by-semantics/regressions.csv') as source:
-    print(','.join(row['suite'].rsplit('.', 1)[-1] for row in csv.DictReader(source)))
-SUITES
-)
+# The branch does not retain the per-suite results CSV that produced this list;
+# supply the affected suite simple names, comma-separated.
+semantic_test_suites=<comma-separated suite simple names>
 mvn -pl core test -P build-rust-library,qdbr-release -Dtest="$semantic_test_suites"
 mvn -pl benchmarks -am package -P build-rust-library,qdbr-release -DskipTests -Dmaven.test.skip=true
 java --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED \

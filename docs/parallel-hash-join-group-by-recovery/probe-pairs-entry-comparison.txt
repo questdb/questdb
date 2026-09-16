@@ -1,4 +1,0 @@
-Compared ZIP entry names and uncompressed bytes for probe-pairs.jar and probe-pairs-matrix.jar.
-14692 entries; zero differences.
-0856e0199285ee2ce41f64b1ffaf7e16e4d05d0dec7348ab19c602703556f988  probe-pairs.jar
-be7aeec835028de26ab27951c5e6d8de41ab59f661d6ea0f4a78f1bec6053cbd  probe-pairs-matrix.jar

@@ -106,7 +106,7 @@ bind rebinding, and changing symbol dictionaries).
 
 ## Reproduce the baseline
 
-The [captured primary baseline](parallel-hash-join-group-by-baseline.md) includes
+The branch does not retain the captured primary baseline report, which held
 the existing plan, every measurement, and all 120 ordered result rows.
 
 Build with JDK 25 and Maven 3:
@@ -173,13 +173,14 @@ gate. The small smoke run establishes reproducibility, not the RFC's 2x gate.
 
 ## Run the task 7 acceptance gate and variants
 
-[The keyed prototype report](parallel-hash-join-group-by-benchmark.md) records the
+The keyed prototype report, which the branch does not retain, recorded the
 primary gate and worker/build/selectivity comparisons. Reproduce the sequential
 matrix with JDK 25, Maven 3, Bash, and the Linux system-information tools:
 
 ```bash
 mvn -pl benchmarks -am package -DskipTests -Dmaven.test.skip=true
-bash benchmarks/parallel-hash-join-group-by.sh /tmp/hash-join-task7-results
+# The task 7 matrix harness script ran next against a fresh output directory; the
+# branch does not retain it.
 ```
 
 The output directory must not already exist. Each case retains a separate fresh

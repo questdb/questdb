@@ -1,7 +1,7 @@
 # Parallel hash join / group by: V1 qualification
 
-> Completed-V1 measurements and the current rollout decision are in the
-> [task 10 report](parallel-hash-join-group-by-v1.md). This report retains its historical task scope.
+> The branch does not retain the task 10 report that held the completed-V1
+> measurements and the current rollout decision. This report retains its historical task scope.
 
 [RFC 130](https://github.com/questdb/rfc/discussions/130), task 9.
 

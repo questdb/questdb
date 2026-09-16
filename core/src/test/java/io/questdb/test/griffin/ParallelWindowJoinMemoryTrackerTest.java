@@ -388,9 +388,11 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testWindowJoinFilterReducersReleaseWorkerSlotsOnRowIdListBreach() throws Exception {
         // The eight filterAndAggregate* reducers acquire a per-worker slot and then open the reduce
-        // task's row id list, which allocates against the per-query tracker. With the default
-        // 256-entry list that open fits, so testWindowJoinReleasesWorkerSlotsOnBreach breaches them
-        // elsewhere. Here the list alone is larger than the whole limit, so opening it is the
+        // task's row id list, which allocates against the per-query tracker. The default 256-entry
+        // list takes 2,048 bytes, and testWindowJoinReleasesWorkerSlotsOnBreach does not cover this
+        // open: under its 8 KiB limit the 6,656-byte frame address cache plus that list already
+        // breach, and its first row opens the list in an aggregate* reducer before any slot is
+        // acquired. Here the list alone is larger than the whole limit, so opening it is the
         // allocation that breaches on every execution, whatever else the query has charged, and the
         // size fragment pins it. The open must therefore sit inside the try that releases the slot.
         //

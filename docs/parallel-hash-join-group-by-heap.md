@@ -110,11 +110,10 @@ peak-allocation measurements. The allocation/limit regressions cover transient
 growth charges and failure cleanup.
 
 
-Artifacts: [per-snapshot measurements](parallel-hash-join-group-by-heap/summary.csv),
-[per-class totals](parallel-hash-join-group-by-heap/classes.csv.gz), and
-[environment/source/jar hashes](parallel-hash-join-group-by-heap/environment.txt).
-The environment records the task 9a base commit and the Java diff hash used to
-build the measured jar. The nine `storage-mode.log.gz` files in that directory retain every plan and
+The branch does not retain the raw artifacts: the per-snapshot measurements, the
+per-class totals, and the environment/source/jar hashes.
+The environment recorded the task 9a base commit and the Java diff hash used to
+build the measured jar. Nine per-storage-mode logs captured every plan and
 sample alongside the original engine output.
 
 ## Regression evidence and reproduction
@@ -135,14 +134,14 @@ New regression assertions cover:
 - Covering-index plans on either input retain ordinary selection and results.
 
 The final Java run passed 1,933 tests across 52 suites, with two existing
-conditional skips and no failures/errors (1,935 total). The [per-suite totals](parallel-hash-join-group-by-heap/regressions.csv)
+conditional skips and no failures/errors (1,935 total). The per-suite totals, which the branch does not retain,
 include fused selection/results, ordinary callers, storage, concurrency,
 cancellation, failure and reuse. Rust sources are unchanged in task 9b; the task
 9a native build remains required. The benchmark package passed and
 the 100,000-row/four-worker smoke run passed all 43 explicit ordered result
 comparisons, including 40 measured executions. This is integration evidence,
-not a repeat of the task 10 performance gate. The [smoke output](parallel-hash-join-group-by-heap/smoke.log.gz)
-retains the plans, counters and result-check count.
+not a repeat of the task 10 performance gate. The branch does not retain the smoke
+output, which captured the plans, counters and result-check count.
 
 Use JDK 25 and Maven 3 with the pinned Rust toolchain. Do not run Maven builds or
 tests concurrently in one checkout: they share `target` output. The benchmark
@@ -150,7 +149,7 @@ runner can use the completed jar while Maven tests execute.
 
 ```bash
 mvn -pl benchmarks -am package -P build-rust-library,qdbr-release -DskipTests -Dmaven.test.skip=true
-bash benchmarks/parallel-hash-join-group-by-heap.sh
+# The retained-heap harness script ran next; the branch does not retain it.
 ```
 
 ```bash

@@ -1,5 +1,0 @@
-The initial matrix stopped with exit 134 during right-swapped warmup at 2026-09-14T10:49:31Z.
-The owner executor thread pool-1-thread-1 received SIGSEGV with instruction pointer 0x1.
-No measured right-swapped samples were emitted. Cause is unresolved; the crash is not a timing sample.
-Retain the first 11 completed cases; retry right-swapped and run the remaining 15 cases with the same jar, JVM flags and workload settings.
-Do not treat a successful retry as proof that the crash is resolved.

@@ -31,8 +31,8 @@ tradeoffs from task 9b.
 
 ## Measurement method
 
-The standalone sources in `benchmarks/allocation` use JDK 25's per-thread
-allocation counters and an ASM 9.9.1 javaagent. Both passes instrument the same code; they have distinct jobs:
+The standalone allocation-agent sources, which the branch does not retain, use
+JDK 25's per-thread allocation counters and an ASM 9.9.1 javaagent. Both passes instrument the same code; they have distinct jobs:
 
 - **Byte counters:** allocation-site hooks increment fixed primitive counters;
   stack capture is disabled. The hooks do not allocate. The agent independently
@@ -60,8 +60,8 @@ thread-local allocation buffers (`-XX:-UseTLAB`). This prevents allocation
 elimination from concealing sites and removes TLAB bookkeeping from the byte
 windows. A C2 diagnostic recorded 160 bytes of String/byte-array allocation at
 the allocation-free `PerWorkerFunctionList.isOwned()` type check during close;
-the [exact diagnostic stacks](parallel-hash-join-group-by-allocation/compiler-diagnostic.txt.gz)
-are retained. C1 separates this JVM behavior from the source-level execution
+the branch does not retain the exact diagnostic stacks.
+C1 separates this JVM behavior from the source-level execution
 allocation gate. Default-JVM regression, retained-heap and smoke checks are
 reported separately; these allocation runs make no latency claim. The harness
 warms growth and merge code in a disposable factory. That factory closes and all source
@@ -141,16 +141,14 @@ Keyed output grows to 131,072 groups. Each measured execution is checked for
 reuse consistency; concurrent peers must agree, and the last successful result
 and post-cancellation reuse are compared with ordinary execution. The byte and
 census passes must agree. Plans, compiler/setup/failure bytes, every thread/phase
-sample, allocation counts and stacks are retained in compressed case logs.
+sample, allocation counts and stacks went into compressed case logs.
 
-Artifacts live in [the allocation results directory](parallel-hash-join-group-by-allocation/):
-[case matrix](parallel-hash-join-group-by-allocation/cases.csv),
-[per-thread attribution](parallel-hash-join-group-by-allocation/summary.csv),
-and [source, jar and environment hashes](parallel-hash-join-group-by-allocation/environment.txt).
-The [retained-heap rerun](parallel-hash-join-group-by-allocation/heap/summary.csv)
+The branch does not retain the allocation results directory: the case matrix, the
+per-thread attribution, and the source, jar and environment hashes.
+The retained-heap rerun
 uses the task 9b graph boundary, increasing rows/keys/symbols/groups/fanout,
 fresh/reused execution, and live/output/closed snapshots. Its per-class totals,
-plans, native balances and separate environment are retained beside the summary.
+plans, native balances and separate environment are likewise not retained.
 
 ## Reproduction and validation
 
@@ -162,11 +160,11 @@ jar while Java tests execute.
 ```bash
 mvn dependency:get -Dartifact=org.ow2.asm:asm:9.9.1
 mvn -pl benchmarks -am package -P build-rust-library,qdbr-release -DskipTests -Dmaven.test.skip=true
-bash benchmarks/parallel-hash-join-group-by-allocation.sh
-bash benchmarks/parallel-hash-join-group-by-heap.sh docs/parallel-hash-join-group-by-allocation/heap
+# The allocation and retained-heap harness scripts ran next; the branch does not
+# retain them.
 ```
 
-`validate.py` rejects missing cases, thread stages or participating workers,
+The harness validator rejects missing cases, thread stages or participating workers,
 result differences, missing positive/normalized plans, and any unexplained
 successful-execution bytes. The small direct build regression additionally
 measures zero heap bytes for two fresh 65,536-symbol builds with forced growth,
@@ -182,17 +180,13 @@ zero; maximum fixed-case heap growth was **1,256 bytes**, with a largest array o
 **16,400 bytes**. The default-JVM smoke passed all **43 ordered result checks**,
 including 40 measured comparisons.
 
-The exact [per-suite totals](parallel-hash-join-group-by-allocation/regressions.csv)
-and [smoke output](parallel-hash-join-group-by-allocation/smoke.log.gz) are retained.
+The branch does not retain the exact per-suite totals or the smoke output.
 Reproduce the Java run with:
 
 ```bash
-allocation_test_suites=$(python3 - <<'SUITES'
-import csv
-with open('docs/parallel-hash-join-group-by-allocation/regressions.csv') as source:
-    print(','.join(row['suite'].rsplit('.', 1)[-1] for row in csv.DictReader(source)))
-SUITES
-)
+# The branch does not retain the per-suite results CSV that produced this list;
+# supply the affected suite simple names, comma-separated.
+allocation_test_suites=<comma-separated suite simple names>
 mvn -pl core test -P build-rust-library,qdbr-release -Dtest="$allocation_test_suites"
 ```
 

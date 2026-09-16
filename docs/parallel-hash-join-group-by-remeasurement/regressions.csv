@@ -1,5 +1,0 @@
-name,tests,failures,errors,skipped,time
-io.questdb.test.griffin.AsyncHashJoinGroupByTest,45,0,0,0,10.761
-io.questdb.test.griffin.HashJoinGroupByPlannerTest,12,0,0,0,2.649
-io.questdb.test.griffin.HashJoinGroupByConcurrentTest,3,0,0,0,1.169
-io.questdb.test.griffin.engine.join.IntHashJoinBuildTest,23,0,0,0,0.326

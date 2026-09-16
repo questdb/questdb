@@ -1,3 +1,0 @@
-User confirmation: "The machine is idle now, so feel free to run the benchmarks"
-Recorded UTC: 2026-09-14T09:35:30.018975+00:00
-Runs are sequential; no compilation or tests overlap latency collection.

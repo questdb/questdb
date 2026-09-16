@@ -149,16 +149,16 @@ java --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED \
   '--candidate-compiler=org.questdb.HashJoinGroupByBenchmark$PlannerCandidateCompiler'
 ```
 
-The benchmark package passed. The [smoke report](parallel-hash-join-group-by-planner-smoke.txt)
-retains both plans, generator/environment, ordered results and all 40 measured
+The benchmark package passed. The branch does not retain the smoke report, which
+captured both plans, generator/environment, ordered results and all 40 measured
 samples across two alternating repetitions. Every result check passed. All 20
 fused samples reported 100 build rows/keys, 8,320 retained build bytes, 100,000
 scanned rows, 9,946 matched/surviving pairs, zero null extensions and 120 final
 groups, with nonzero build/init/probe/merge timings.
 
 The small smoke workload validates integration only. Task 7 subsequently passed
-the primary 100-million-row, repeatable 2× end-to-end performance gate; see the
-[keyed prototype benchmark](parallel-hash-join-group-by-benchmark.md). Default
+the primary 100-million-row, repeatable 2× end-to-end performance gate; the branch
+does not retain the keyed prototype benchmark report. Default
 enablement remains a separate rollout decision after V1 qualification.
 
 

@@ -29,6 +29,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -49,6 +50,8 @@ import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
@@ -197,24 +200,33 @@ public final class HashJoinGroupByCandidate {
         };
     }
 
+    /**
+     * Returns null for a shape the fused plan does not support, and when analysis throws SqlException,
+     * so that the ordinary compile reports its own error. Analysis parses an expression only when each
+     * of its bind variables has a type that FunctionParser does not refine (not ColumnType.isUndefined()),
+     * so analysis leaves every bind variable type unchanged.
+     */
     @Nullable
     static HashJoinGroupByCandidate analyse(
             IQueryModel groupBy,
             FunctionParser parser,
             SqlExecutionContext executionContext
-    ) throws SqlException {
+    ) {
         if (groupBy.getSelectModelType() != IQueryModel.SELECT_MODEL_GROUP_BY || groupBy.getSampleBy() != null
-                || !groupBy.isOptimisable() || groupBy.getSharedRefCount() > 0) {
+                || !groupBy.isOptimisable() || groupBy.getSharedRefCount() > 0 || hasFill(groupBy)) {
             return null;
         }
+        // The fused factory replaces the generation of every model down to the join, so it must
+        // reject the clauses that generateLatestBy() and generateJoins() apply to their output.
         IQueryModel join = groupBy.getNestedModel();
         while (join != null && join.getJoinModels().size() == 1) {
-            if (!isProjection(join)) {
+            if (!isProjection(join) || join.getLatestBy().size() > 0) {
                 return null;
             }
             join = join.getNestedModel();
         }
-        if (join == null || join.getJoinModels().size() != 2 || hasBarrier(join)) {
+        if (join == null || join.getJoinModels().size() != 2 || hasBarrier(join)
+                || join.getLatestBy().size() > 0 || join.getConstWhereClause() != null) {
             return null;
         }
         IntList order = join.getOrderedJoinModels();
@@ -283,9 +295,19 @@ public final class HashJoinGroupByCandidate {
                 }
             }
             analyzer.captureInputColumns();
+            // captureInputColumns() tolerates unresolvable input columns, so check the flag after it.
+            if (analyzer.hasUndefinedBindVariable) {
+                return null;
+            }
             int buildKey = keys.aIndexes.getQuick(0) == analyzer.buildIndex ? a : b;
             int probeKey = buildKey == a ? b : a;
             return new HashJoinGroupByCandidate(analyzer, analyzer.columnIndexes.getQuick(probeKey), analyzer.columnIndexes.getQuick(buildKey));
+        } catch (SqlException e) {
+            // The ordinary plan reports errors in its own compile order, and only its interval extraction
+            // and generateFilter() compile optimiser-internal nodes such as and_offset. A failed
+            // parseFunction() releases only its own functions, so when this GROUP BY is a sub-query
+            // operand, the enclosing expression's parse keeps its pending operands.
+            return null;
         }
     }
 
@@ -366,6 +388,21 @@ public final class HashJoinGroupByCandidate {
                 || model.getSampleBy() != null;
     }
 
+    /**
+     * Mirrors generateFill(): the first fill stride on the nested chain wraps the GROUP BY, or
+     * fails compilation, unless its value list is empty or a lone NONE.
+     */
+    private static boolean hasFill(IQueryModel groupBy) {
+        for (IQueryModel model = groupBy; model != null; model = model.getNestedModel()) {
+            if (model.getFillStride() != null) {
+                ObjList<ExpressionNode> values = model.getFillValues();
+                return values == null || (values.size() > 0
+                        && !(values.size() == 1 && SqlKeywords.isNoneKeyword(values.getQuick(0).token)));
+            }
+        }
+        return false;
+    }
+
     private static boolean isProjection(IQueryModel model) {
         return !hasBarrier(model) && (model.getSelectModelType() == IQueryModel.SELECT_MODEL_CHOOSE
                 || model.getSelectModelType() == IQueryModel.SELECT_MODEL_VIRTUAL
@@ -406,6 +443,7 @@ public final class HashJoinGroupByCandidate {
         private final ObjList<ExpressionNode> resolvedPostJoinFilters = new ObjList<>();
         private final RecordMetadata[] sources;
         private ExpressionNode buildOnFilter;
+        private boolean hasUndefinedBindVariable;
         private ExpressionNode resolvedBuildOnFilter;
         private int usedSources;
 
@@ -518,6 +556,27 @@ public final class HashJoinGroupByCandidate {
             return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, metadata.getColumnName(index), 0, position);
         }
 
+        private boolean isBindVariableTypeDefined(CharSequence token) {
+            final BindVariableService bindVariables = executionContext.getBindVariableService();
+            if (bindVariables == null || token.length() < 2) {
+                return false;
+            }
+            final Function variable;
+            if (token.charAt(0) == ':') {
+                variable = bindVariables.getFunction(token);
+            } else {
+                try {
+                    final int index = Numbers.parseInt(token, 1, token.length());
+                    variable = index > 0 ? bindVariables.getFunction(index - 1) : null;
+                } catch (NumericException e) {
+                    return false;
+                }
+            }
+            // FunctionParser refines exactly the types ColumnType.isUndefined() accepts, which includes
+            // the weak-dimension arrays that PG Parse defines for array parameters.
+            return variable != null && !ColumnType.isUndefined(variable.getType());
+        }
+
         private ExpressionNode resolve(ExpressionNode node, IQueryModel model, int source, int depth) {
             if (node == null || depth > 128) {
                 return null;
@@ -562,6 +621,13 @@ public final class HashJoinGroupByCandidate {
             }
             // Scalar subqueries and array/record access need separate ownership and storage contracts.
             if (node.queryModel != null || node.windowExpression != null) {
+                return null;
+            }
+            // Type inference depends on parse order, and the fused plan parses its WHERE, ON and
+            // aggregate expressions in a different order than the ordinary plan. Resolving before
+            // parsing also keeps this analysis from defining the type itself.
+            if (node.type == ExpressionNode.BIND_VARIABLE && !isBindVariableTypeDefined(node.token)) {
+                hasUndefinedBindVariable = true;
                 return null;
             }
             ExpressionNode copy = ExpressionNode.FACTORY.newInstance().of(node.type, node.token, node.precedence, node.position);

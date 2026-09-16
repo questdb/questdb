@@ -165,6 +165,57 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClausesOutsideTheJoinKeepOrdinaryPlans() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                assertQuery("SELECT count(*) pairs, sum(r.energy_kwh) energy" + JOINS[0] + " WHERE 1 = 0")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("Empty table")
+                        .withPlanNotContaining("Async Hash Join Group By")
+                        .returns("""
+                                pairs\tenergy
+                                0\tnull
+                                """);
+                assertQuery("SELECT reading_ts, count(*) pairs, sum(r.energy_kwh) energy" + JOINS[0]
+                        + " WHERE r.reading_ts < '2020-01-04' SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("reading_ts")
+                        .withPlanContaining("Sample By Fill")
+                        .withPlanNotContaining("Async Hash Join Group By")
+                        .returns("""
+                                reading_ts\tpairs\tenergy
+                                2020-01-01T00:00:00.000000Z\t3\t30.0
+                                2020-01-02T00:00:00.000000Z\tnull\tnull
+                                2020-01-03T00:00:00.000000Z\t3\t60.0
+                                """);
+                assertQuery("SELECT count(*) pairs, sum(energy) energy FROM ((SELECT r.reading_ts ts, p.country, r.energy_kwh energy"
+                        + JOINS[0] + ") LATEST ON ts PARTITION BY country)")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("LatestBy")
+                        .withPlanNotContaining("Async Hash Join Group By")
+                        .returns("""
+                                pairs\tenergy
+                                3\t110.0
+                                """);
+                // Without fill values generateFill() returns the GROUP BY unchanged, so SAMPLE BY stays fused.
+                for (String fill : new String[]{"", " FILL(NONE)"}) {
+                    assertDifferential("SELECT reading_ts, count(*) pairs, sum(r.energy_kwh) energy" + JOINS[0]
+                            + " SAMPLE BY 1d" + fill + " ALIGN TO CALENDAR", context, true);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMetricsExplainAndReuse() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
