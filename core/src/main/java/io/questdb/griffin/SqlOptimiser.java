@@ -347,6 +347,63 @@ public class SqlOptimiser implements Mutable {
         return appearsInArgs;
     }
 
+    /**
+     * True when any column of {@code model} calls an aggregate that needs its base in ascending
+     * designated-timestamp order - twap(), sparkline(). Asked before the functions are built, by both the
+     * optimiser (to restate the ordering requirement so an ordered plan is chosen) and the code generator
+     * (to sort when no ordered plan exists). See
+     * {@link FunctionFactory#requiresAscendingDesignatedTimestamp()}.
+     */
+    public static boolean hasAscendingTimestampGroupByFunc(
+            ArrayDeque<ExpressionNode> sqlNodeStack,
+            FunctionFactoryCache functionFactoryCache,
+            ObjList<QueryColumn> columns
+    ) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (hasAscendingTimestampGroupByFunc(sqlNodeStack, functionFactoryCache, columns.getQuick(i).getAst())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static boolean hasAscendingTimestampGroupByFunc(
+            ArrayDeque<ExpressionNode> sqlNodeStack,
+            FunctionFactoryCache functionFactoryCache,
+            ExpressionNode node
+    ) {
+        sqlNodeStack.clear();
+
+        // pre-order iterative tree traversal, as hasGroupByFunc below
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                switch (node.type) {
+                    case LITERAL:
+                        node = null;
+                        continue;
+                    case FUNCTION:
+                        if (functionFactoryCache.isAscendingTimestampOrdered(node.token)) {
+                            return true;
+                        }
+                        // fall through to traverse rhs and args
+                    default:
+                        for (int i = 0, n = node.args.size(); i < n; i++) {
+                            sqlNodeStack.add(node.args.getQuick(i));
+                        }
+                        if (node.rhs != null) {
+                            sqlNodeStack.push(node.rhs);
+                        }
+                        break;
+                }
+
+                node = node.lhs;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+        return false;
+    }
+
     public static boolean hasGroupByFunc(ArrayDeque<ExpressionNode> sqlNodeStack, FunctionFactoryCache functionFactoryCache, ExpressionNode node) {
         sqlNodeStack.clear();
 
@@ -8416,8 +8473,10 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Writes onto the model directly below a SAMPLE BY the {@code ORDER BY <designated timestamp>} the
-     * upgrade notes already tell users to write, when that SAMPLE BY sits over a UNION ALL.
+     * Writes onto the model directly below an order-sensitive consumer the
+     * {@code ORDER BY <designated timestamp>} the upgrade notes already tell users to write, when that
+     * consumer sits over a UNION ALL. The consumers are a SAMPLE BY and an aggregate that declares
+     * {@link FunctionFactory#requiresAscendingDesignatedTimestamp()} - twap(), sparkline().
      * <p>
      * A SAMPLE BY that walks buckets forward in a single pass - FILL other than NONE, ALIGN TO FIRST
      * OBSERVATION, FROM ... TO - needs its base in ascending designated-timestamp order, and a UNION ALL
@@ -8441,10 +8500,13 @@ public class SqlOptimiser implements Mutable {
      * parent, only one of which asked for this order.
      */
     private void restateTimestampOrderForOrderSensitiveBase(IQueryModel model) {
-        if (model.getSampleBy() == null
-                || model.getOrderBy().size() > 0
+        if (model.getOrderBy().size() > 0
                 || model.getOrderByAdvice().size() > 0
                 || !hasNestedUnionAll(model)) {
+            return;
+        }
+        if (model.getSampleBy() == null
+                && !hasAscendingTimestampGroupByFunc(sqlNodeStack, functionParser.getFunctionFactoryCache(), model.getColumns())) {
             return;
         }
         final IQueryModel base = model.getNestedModel();

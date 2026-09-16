@@ -718,4 +718,30 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                             """);
         });
     }
+
+    @Test
+    public void testTwapOverUnorderedUnionMatchesTheOrderedForm() throws Exception {
+        // A UNION ALL emits branch A then branch B, so its rows are not ascending by the
+        // designated timestamp even though TIMESTAMP(ts) re-attaches one. twap() integrates
+        // across adjacent rows, so on master this silently returned a wrong answer - the
+        // backward jump between branches cancelled the forward interval out. The generator
+        // now obtains the order before building the function, so the unordered spelling and
+        // the explicitly ordered one must agree.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL INDEX, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z','a',1),
+                    ('2024-01-01T01:00:00.000000Z','b',2),
+                    ('2024-01-02T00:00:00.000000Z','a',3),
+                    ('2024-01-02T01:00:00.000000Z','c',4),
+                    ('2024-01-03T00:00:00.000000Z','b',5),
+                    ('2024-01-03T01:00:00.000000Z','a',6)
+                    """);
+            final String unordered = "SELECT twap(x, ts) FROM ((SELECT ts, x FROM t UNION ALL SELECT ts, x FROM t) TIMESTAMP(ts))";
+            final String ordered = "SELECT twap(x, ts) FROM ((SELECT ts, x FROM t UNION ALL SELECT ts, x FROM t ORDER BY ts) TIMESTAMP(ts))";
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, ordered, unordered, LOG);
+        });
+    }
+
 }

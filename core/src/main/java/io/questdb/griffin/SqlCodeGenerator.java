@@ -10312,6 +10312,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             final int timestampIndex = getTimestampIndex(model, factory);
 
+            // twap() and sparkline() integrate across adjacent rows, so they need the base ascending by the
+            // designated timestamp and refuse otherwise (GroupByUtils, via isBaseTimestampAscending below).
+            // A base that makes no ordering claim at all can be repaired here by sorting; a base that claims
+            // BACKWARD cannot, for the same reason as at the SAMPLE BY gate - that would be reversing an
+            // ordered stream, and the order is written in the query text - so it keeps refusing.
+            //
+            // Scoped to queries that actually call such an aggregate. Sorting every group-by over an
+            // unordered base would insert a full-cardinality, non-spilling materialisation into a far wider
+            // surface than the two functions that need it. Where an ordered plan exists instead of a sort,
+            // SqlOptimiser.restateTimestampOrderForOrderSensitiveBase has already selected it and this base
+            // arrives claiming FORWARD.
+            if (timestampIndex != -1
+                    && factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_OTHER
+                    && SqlOptimiser.hasAscendingTimestampGroupByFunc(
+                    sqlNodeStack,
+                    functionParser.getFunctionFactoryCache(),
+                    model.getColumns()
+            )) {
+                final RecordCursorFactory unordered = factory;
+                factory = null;
+                factory = sortByDesignatedTimestamp(unordered, timestampIndex);
+                baseMetadata = factory.getMetadata();
+            }
+
             keyTypes.clear();
             valueTypes.clear();
             listColumnFilterA.clear();
