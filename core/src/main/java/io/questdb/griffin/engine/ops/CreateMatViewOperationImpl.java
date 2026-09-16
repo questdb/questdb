@@ -534,12 +534,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                         .put("materialized view query is required to have designated timestamp");
             }
         }
-        // A materialized view is always partitioned - updateMatViewTablePartitionBy() below derives a
-        // PARTITION BY from the sampling interval whenever the user did not spell one out - so the
-        // target is always on the O3 path and can take rows in any order. The partitionBy field is
-        // still PartitionBy.NONE at this point, though, so the CTAS rule would read the target as
-        // non-partitioned and reject valid views. Suppress it.
-        createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection, false);
+        createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection);
         updateMatViewTablePartitionBy(createTableOperation.getTimestampType());
         this.baseTableTimestampType = baseTableMetadata.getTimestampType();
     }

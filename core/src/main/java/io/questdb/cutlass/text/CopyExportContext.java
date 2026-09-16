@@ -380,12 +380,7 @@ public class CopyExportContext {
                 );
                 createOp.setTableKind(TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
                 createOp.setBatchSize(engine.getConfiguration().getParquetExportBatchSize());
-                // The temp table is export staging, not something the user keeps: it is dropped once
-                // the parquet files are written, and the files themselves carry no designated
-                // timestamp. Dropping it here loses nothing the user asked for, and COPY spells
-                // re-partitioning PARTITION_BY, so the CTAS error would name a remedy that does not
-                // exist in this statement. Suppress it.
-                createOp.validateAndUpdateMetadataFromSelect(rcf.getMetadata(), rcf.getScanDirection(), false);
+                createOp.validateAndUpdateMetadataFromSelect(rcf.getMetadata(), rcf.getScanDirection());
                 CopyExportRequestTask.validateBloomFilterColumns(bloomFilterColumns, rcf.getMetadata(), bloomFilterColumnsPosition - tableOrSelectTextPos);
             }
         } catch (SqlException ex) {

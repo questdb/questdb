@@ -657,27 +657,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
 
     @Override
     public void validateAndUpdateMetadataFromSelect(RecordMetadata metadata, int scanDirection) throws SqlException {
-        validateAndUpdateMetadataFromSelect(metadata, scanDirection, true);
-    }
-
-    /**
-     * Folds the compiled SELECT's metadata into this operation, validating it against the
-     * CREATE TABLE clauses on the way.
-     *
-     * @param metadata                     metadata of the compiled SELECT
-     * @param scanDirection                scan direction the SELECT's factory declares
-     * @param failOnUninheritableTimestamp when true, a SELECT that carries a designated timestamp
-     *                                     the target cannot take is reported as an error rather
-     *                                     than dropped. Only a real, user-visible table wants
-     *                                     that; a view, a materialized view and the parquet-export
-     *                                     temp table all pass false, each for its own reason,
-     *                                     documented at the call site.
-     */
-    public void validateAndUpdateMetadataFromSelect(
-            RecordMetadata metadata,
-            int scanDirection,
-            boolean failOnUninheritableTimestamp
-    ) throws SqlException {
         // This method must only be called in case of "create-as-select".
         // Here we remap data keyed on column names (from cast maps) to
         // data keyed on column index. We assume that "columnBits" are free to use
@@ -689,21 +668,28 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.parquetEncodingConfigs.clear();
         if (this.timestampColumnName == null) {
             int timestampIndex = metadata.getTimestampIndex();
-            // Inherit the SELECT's designated timestamp when the target table can absorb rows that do
-            // not arrive in ascending timestamp order. What matters is the target, not the SELECT:
+            // The target inherits the SELECT's designated timestamp whatever direction the SELECT
+            // scans in. Scan direction is a compile-time declaration about a cursor, not a statement
+            // about the data, and it cannot tell an ordered stream from an unordered one:
+            // "(a UNION ALL b) TIMESTAMP(ts)" declares SCAN_DIRECTION_OTHER both when a and b hold
+            // disjoint ascending ranges - the concatenation is then perfectly ordered - and when they
+            // interleave. Only the rows distinguish the two, so refusing here on the declaration
+            // alone would reject correct statements.
+            //
+            // The writer has the rows and adjudicates precisely:
             //  - partitioned target: TableWriter.newRow() sends a row below maxTimestamp down the O3
             //    path (ROW_ACTION_SWITCH_PARTITION -> newRowO3), which sorts and merges on commit, so
-            //    the scan direction of the SELECT is irrelevant - the data lands in timestamp order
-            //    whatever order it was produced in. Requiring SCAN_DIRECTION_FORWARD here protected
-            //    nothing and dropped the designated timestamp, which then failed the PARTITION BY
-            //    check below for shapes that work perfectly, e.g.
-            //    "CREATE TABLE t AS ((a UNION ALL b) TIMESTAMP(ts)) PARTITION BY DAY" and the
-            //    temp-table leg of "COPY (...) TO '...' WITH FORMAT PARQUET PARTITION_BY DAY".
-            //  - non-partitioned target: the writer runs ROW_ACTION_NO_PARTITION, which rejects any
-            //    row below maxTimestamp with "cannot insert rows out of order to non-partitioned
-            //    table". Only a SELECT that is known to scan forward may hand its timestamp over.
-            if (timestampIndex > -1
-                    && (scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD || PartitionBy.isPartitioned(this.partitionBy))) {
+            //    any order is accepted and the data lands in timestamp order.
+            //  - non-partitioned target: the writer runs ROW_ACTION_NO_PARTITION and rejects the
+            //    first row that arrives below maxTimestamp with "cannot insert rows out of order to
+            //    non-partitioned table", leaving no table behind.
+            // Requiring SCAN_DIRECTION_FORWARD here dropped the designated timestamp instead. Without
+            // a PARTITION BY that silently handed back a table that is not a time-series table at all
+            // - no designated timestamp, so no SAMPLE BY, no LATEST ON, no ASOF JOIN - and with one it
+            // surfaced as the unrelated "partitioning is possible only on tables with designated
+            // timestamps" error below, e.g. for
+            // "CREATE TABLE t AS (SELECT * FROM a ORDER BY ts DESC) PARTITION BY DAY".
+            if (timestampIndex > -1) {
                 this.timestampIndex = timestampIndex;
                 timestampType = metadata.getTimestampType();
                 if (scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
@@ -713,24 +699,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     // back, so a non-forward SELECT has no order left to preserve.
                     this.selectSqlScanDirection = scanDirection;
                 }
-            } else if (timestampIndex > -1
-                    && failOnUninheritableTimestamp
-                    && scanDirection == RecordCursorFactory.SCAN_DIRECTION_OTHER) {
-                // The SELECT carries a designated timestamp, the target is not partitioned, and the
-                // SELECT emits rows in no declared timestamp order at all. There is nowhere for that
-                // timestamp to go: ROW_ACTION_NO_PARTITION would reject the first row that arrives
-                // below maxTimestamp. Dropping it silently hands the user a table that is not a
-                // time-series table, with no designated timestamp and no SAMPLE BY / LATEST ON /
-                // ASOF JOIN, and says nothing. Say it instead, and name both ways out - both work:
-                // PARTITION BY moves the target onto the O3 path, which sorts on commit, and an
-                // explicit ORDER BY makes the SELECT itself scan forward.
-                final CharSequence timestampName = metadata.getColumnName(timestampIndex);
-                throw SqlException.position(this.selectTextPosition)
-                        .put("cannot inherit the designated timestamp of an unordered SELECT into a non-partitioned table [timestamp=")
-                        .put(timestampName)
-                        .put("]; add PARTITION BY so the writer sorts the rows, or ORDER BY ")
-                        .put(timestampName)
-                        .put(" to order the SELECT");
             }
         } else {
             this.timestampIndex = metadata.getColumnIndexQuiet(this.timestampColumnName);

@@ -270,9 +270,6 @@ public class CreateViewOperationImpl implements CreateViewOperation {
 
     @Override
     public void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, int scanDirection) throws SqlException {
-        // A view stores a query, not rows: there is no TableWriter, so no ROW_ACTION_NO_PARTITION and
-        // no out-of-order row to reject, and PARTITION BY is not even valid syntax here - the CTAS
-        // error would name a remedy the user cannot apply. Keep the timestamp handling as it is.
-        createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection, false);
+        createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection);
     }
 }

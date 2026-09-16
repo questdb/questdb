@@ -42,9 +42,8 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
     // TableWriter's ROW_ACTION_NO_PARTITION refusal, up to the table path it carries in the middle
     // of the message.
     private static final String OUT_OF_ORDER_ERROR = "cannot insert rows out of order to non-partitioned table [";
-    private static final String UNINHERITABLE_TIMESTAMP_ERROR =
-            "cannot inherit the designated timestamp of an unordered SELECT into a non-partitioned table " +
-                    "[timestamp=ts]; add PARTITION BY so the writer sorts the rows, or ORDER BY ts to order the SELECT";
+    private static final String OUT_OF_ORDER_REMEDY =
+            "]; add PARTITION BY so the writer sorts the rows on commit, or order the rows by the designated timestamp";
 
     @Test
     public void testCreateAsSelectAndLikeIsInvalid() throws Exception {
@@ -140,19 +139,88 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateNonPartitionedTableAsSelectOverAscendingUnionAllSucceeds() throws Exception {
+        assertMemoryLeak(() -> {
+            createAscendingSrcTables();
+
+            // asca and ascb hold disjoint ascending ranges, so concatenating them is itself ascending
+            // and a non-partitioned target takes every row. The union declares SCAN_DIRECTION_OTHER
+            // all the same - byte for byte the same declaration as the interleaved union in
+            // testCreateNonPartitionedTableAsSelectOverUnionAllFails() below, which is not ascending.
+            // Only the rows tell the two apart, so the compiler must not refuse on the declaration.
+            execute("create table dest as ((asca union all ascb) timestamp(ts));");
+
+            // The rows either side of the branch boundary, read back in storage order: asca's last
+            // row is followed by ascb's first, an hour later, not by a step backwards. Read through a
+            // designated timestamp, so this fails if the timestamp was dropped as well as if the
+            // order is wrong.
+            assertQuery("select ts, v from dest limit 118,122")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv
+                            2024-02-05T22:00:00.000000Z\t119
+                            2024-02-05T23:00:00.000000Z\t120
+                            2024-02-06T00:00:00.000000Z\t1001
+                            2024-02-06T01:00:00.000000Z\t1002
+                            """);
+
+            // SAMPLE BY only compiles against a designated timestamp - it is precisely the capability
+            // the silent drop used to take away - and it accounts for all 240 rows, ten whole days.
+            assertQuery("select ts, count() from dest sample by 1d")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tcount
+                            2024-02-01T00:00:00.000000Z\t24
+                            2024-02-02T00:00:00.000000Z\t24
+                            2024-02-03T00:00:00.000000Z\t24
+                            2024-02-04T00:00:00.000000Z\t24
+                            2024-02-05T00:00:00.000000Z\t24
+                            2024-02-06T00:00:00.000000Z\t24
+                            2024-02-07T00:00:00.000000Z\t24
+                            2024-02-08T00:00:00.000000Z\t24
+                            2024-02-09T00:00:00.000000Z\t24
+                            2024-02-10T00:00:00.000000Z\t24
+                            """);
+
+            // and row for row, in storage order, it is the select sorted - the order is in the data,
+            // not merely claimed by the metadata
+            assertSqlCursors("select ts, v from ((asca union all ascb) timestamp(ts)) order by ts", "select ts, v from dest");
+        });
+    }
+
+    @Test
+    public void testCreateNonPartitionedTableAsSelectOverDescendingUnionAllFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createAscendingSrcTables();
+
+            // The same two tables with the branches swapped, which is the whole difference: ascb's
+            // days come first, so asca's first row lands below maxTimestamp. The writer is the only
+            // thing that can tell this apart from the ascending order above, and it does so on the
+            // first offending row. Its message is now the only diagnostic the user sees, so assert
+            // that it still names a way out.
+            assertQuery("create table dest as ((ascb union all asca) timestamp(ts));")
+                    .fails(13, OUT_OF_ORDER_REMEDY);
+
+            Assert.assertNull("dest must not exist after the writer refuses", engine.getTableTokenIfExists("dest"));
+        });
+    }
+
+    @Test
     public void testCreateNonPartitionedTableAsSelectOverKeyedGroupByFails() throws Exception {
         assertMemoryLeak(() -> {
             createInterleavedSrcTables();
 
-            // The same defect through a second, unrelated shape: a keyed GROUP BY returns its rows
-            // in hash-table order, so it declares SCAN_DIRECTION_OTHER just as the union does. The
-            // GROUP BY itself drops the designated timestamp, so timestamp(ts) puts one back - that
-            // is the select that carries a timestamp it cannot hand over. No union and no index is
-            // involved, which is what makes this the branch's behaviour rather than a feature's.
+            // A second, unrelated shape that declares SCAN_DIRECTION_OTHER: a keyed GROUP BY returns
+            // its rows in hash-table order, and drops the designated timestamp on the way, so
+            // timestamp(ts) re-attaches one. No union and no index is involved. The non-partitioned
+            // target inherits that timestamp - the compiler does not second-guess the direction any
+            // more - and the writer rejects the first row that goes backwards.
             assertQuery("create table dest as (select * from (select ts, count() c from pa group by ts) timestamp(ts));")
-                    .fails(22, UNINHERITABLE_TIMESTAMP_ERROR);
+                    .fails(13, OUT_OF_ORDER_ERROR);
 
-            Assert.assertNull("dest must not exist after the error", engine.getTableTokenIfExists("dest"));
+            Assert.assertNull("dest must not exist after the writer refuses", engine.getTableTokenIfExists("dest"));
         });
     }
 
@@ -161,14 +229,15 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createInterleavedSrcTables();
 
-            // No PARTITION BY, over a select that declares SCAN_DIRECTION_OTHER while carrying a
-            // designated timestamp. The target runs ROW_ACTION_NO_PARTITION and cannot take that
-            // timestamp. It used to be dropped without a word, handing back a table that was not a
-            // time-series table at all; now the statement says so, and names both ways out.
+            // pa and pb interleave days, so "pa UNION ALL pb" genuinely steps backwards at the branch
+            // boundary. The target is not partitioned, so it inherits the timestamp and the writer
+            // then refuses the first row below maxTimestamp and leaves nothing behind - where before
+            // the timestamp was dropped and the user was handed a 144-row table that was not a
+            // time-series table at all, with no word said.
             assertQuery("create table dest as ((pa union all pb) timestamp(ts));")
-                    .fails(22, UNINHERITABLE_TIMESTAMP_ERROR);
+                    .fails(13, OUT_OF_ORDER_ERROR);
 
-            Assert.assertNull("dest must not exist after the error", engine.getTableTokenIfExists("dest"));
+            Assert.assertNull("dest must not exist after the writer refuses", engine.getTableTokenIfExists("dest"));
         });
     }
 
@@ -233,6 +302,24 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
 
             assertQuery("create table dest as (select * from src where v % 2 = 0 order by ts desc) timestamp(ts);")
                     .fails(13, OUT_OF_ORDER_ERROR);
+        });
+    }
+
+    @Test
+    public void testCreateNonPartitionedTableAsSelectTimestampDescOrderWithoutTimestampClauseFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createInterleavedSrcTables();
+
+            // The regression that motivated all of this. There is no TIMESTAMP(ts) clause anywhere -
+            // the designated timestamp comes from the select alone - and ORDER BY ts DESC declares
+            // SCAN_DIRECTION_BACKWARD, not SCAN_DIRECTION_OTHER, so the compile-time refusal that
+            // used to live in CreateTableOperationImpl never fired here. The timestamp was dropped
+            // in silence and the statement succeeded, producing a 72-row table with 71 descending
+            // steps and no designated timestamp. It is inherited now, and the writer says no.
+            assertQuery("create table dest as (select * from pa order by ts desc);")
+                    .fails(13, OUT_OF_ORDER_ERROR);
+
+            Assert.assertNull("dest must not exist after the writer refuses", engine.getTableTokenIfExists("dest"));
         });
     }
 
@@ -408,6 +495,20 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
                         """);
         // and row for row it is the union, sorted
         assertSqlCursors("select ts, v from ((pa union all pb) timestamp(ts)) order by ts", "select ts, v from dest");
+    }
+
+    /**
+     * Two partitioned tables holding adjacent, disjoint day ranges: asca has 2024-02-01 to -05 and
+     * ascb has -06 to -10, 120 hourly rows each. {@code asca UNION ALL ascb} is therefore ascending
+     * end to end, while {@code ascb UNION ALL asca} steps back five days at the branch boundary.
+     * Both declare SCAN_DIRECTION_OTHER, exactly as {@link #createInterleavedSrcTables()} does:
+     * the declaration is the same, only the data differs.
+     */
+    private void createAscendingSrcTables() throws SqlException {
+        execute("create table asca (ts timestamp, v long) timestamp(ts) partition by day;");
+        execute("create table ascb (ts timestamp, v long) timestamp(ts) partition by day;");
+        execute("insert into asca select timestamp_sequence('2024-02-01T00:00:00.000000Z', 3600000000L) ts, x v from long_sequence(120);");
+        execute("insert into ascb select timestamp_sequence('2024-02-06T00:00:00.000000Z', 3600000000L) ts, 1000 + x v from long_sequence(120);");
     }
 
     /**
