@@ -155,6 +155,37 @@ then a crash point, reconstructed by replaying the log up to it. Replaying to fl
 exactly the device state a volatile write cache would have left at N — everything before it
 durable, everything after it gone.
 
+**That last clause is only true because the device is reset between replays**, and for a long
+while it was not. `dm-log-writes` is a PASS-THROUGH target: during the recording every write
+reaches `/dev/vdb` as well as the log, so after the reboot the data device still holds the FINAL
+crashed state. Replaying to boundary N re-applies the writes up to N but cannot revert the ones
+issued after it, and mounting then runs ext4 recovery, which writes — so boundary N+1 inherited
+boundary N's recovered state.
+
+| knob | default | meaning |
+|---|---|---|
+| `QDB_REPLAY_RESET` | `blkdiscard` | reset the data device before every replay; `none` reproduces the old behaviour |
+| `QDB_VM_DATA_DISCARD` | `ignore` | `unmap` on the REPLAY boot only — the recording boot must not have it, or a discard issued by the workload becomes a DISCARD entry in the log and changes what was recorded |
+
+It costs **8 ms** for the whole 40 GiB device, against ~40 s for a `dd` zero, which is what makes
+the honest version — reset before *every* replay — affordable at 1.9 s/point.
+
+**What it changed, measured rather than assumed.** One recording replayed twice, with and
+without the reset, same boundaries, same oracle: 65 boundaries across four regimes (`W=0`,
+`W=50000`, `data=writeback`, and the backward densify order) produced **zero verdict changes**.
+The residue is physically real — replaying 4501 then 451 with no reset leaves 741 more non-zero
+bytes in a 16 MiB sample — but it lives in blocks the boundary-N filesystem does not reference,
+so the oracle never reads them. Earlier sweep results therefore stand. The reset is kept because
+it makes the paragraph above true rather than nearly true, and because `t06` asks a question
+that *is* sensitive to it (below).
+
+**The trap, if you touch this.** QEMU's default is `discard=ignore`, and under it the guest
+still advertises discard support and `blkdiscard` still returns success in 8 ms **having
+reverted nothing**. A reset built on that looks like it worked at every boundary. So the drive
+option and the reset command live in the same file (`lib/qemu.sh`), and `replay_reset_assert()`
+verifies once per sweep that the device really zeroes, sampling five offsets derived from the
+device size — one sample cannot tell a full discard from a partial one.
+
 It is also cheap per point: one workload run plus one reboot serves *every* boundary, versus
 one full VM boot per sample in `run-fuzz.sh`.
 
@@ -172,6 +203,20 @@ bash run-flush-sweep.sh adaptive 2000000  # RPO bar at W=2s, widest at-risk wind
 The reconstruction is validated by `test/t06`, which sweeps every boundary and asserts they
 discriminate (a later file never appears at a boundary where an earlier one is absent). Do
 not trust a sweep result if `t06` is red.
+
+`t06` runs **both reset regimes** and cross-checks them: pass A uses whatever the instrument
+uses, because a guard must certify the configuration actually in use; pass B re-derives the same
+two answers after a full `dd` zero, at the four boundaries that pin them. Pass B exists because
+pass A structurally cannot see a common-mode fault — if the reset silently did nothing, the
+sweep and `t06` would be wrong in the SAME direction and `t06` would still be green.
+
+`t06` is also the test that shows the reset is not cosmetic. With `QDB_REPLAY_RESET=none` it
+fails outright: **both files appear at the first boundary**, so the boundaries stop
+discriminating entirely. Same residue as the sweep, opposite sensitivity — `t06` asks "which
+files exist", and directory entries created after the boundary survive in the leftover state.
+
+`bash test/t06-log-writes-replay.sh --self-test` exercises the cross-check logic with no VM, in
+under a second, which is how that logic is mutation-checked at all.
 
 ## ⚠ KNOWN LIMITATION (dm-flakey path only): no volatile device write cache
 
@@ -370,6 +415,17 @@ whose oracle silently stops checking.
 | **Boundary discrimination** | `test/t06` | Replaying to boundary N leaks writes issued after it |
 | **Oracle control** | `test/t07` | Corrupt data still verifies clean, proving the oracle cannot fire |
 | **Barrier control** | `test/t10` | A WAL table committing with NO durability barrier still verifies clean |
+| **Device reset** | every sweep, `replay_reset_assert()` | `blkdiscard` reports success and the device is not zeroed — including a PARTIAL zero, which looks exactly like success |
+
+Four more guards need **no VM and no root**, and run in seconds. They exist because the parts
+they cover are the parts that fail silently on an unattended agent:
+
+| Guard | Test | Fails when |
+|---|---|---|
+| **State reaper** | `test/t08` | The reaper deletes a live run, misses a heavy directory prefix, or reports success having reclaimed nothing |
+| **CI report** | `test/t09` | `junit.xml` is malformed, mis-counts, omits a schema-REQUIRED attribute, or loses the run identity |
+| **Preflight cleanup** | `test/t11` | A preflight bail leaves its VM alive or its 8 GiB run dir behind |
+| **Verdict vocabulary** | `test/t12` | A verdict line classifies to the wrong token, a token is added without a test row, or a pass/instrument-fault predicate changes meaning |
 
 A failing preflight **aborts the run**; a failed liveness check **fails that iteration**.
 Neither is ever downgraded to a warning.
@@ -391,8 +447,20 @@ That is `t10`'s job.
 
 | arm | configuration | required outcome |
 |---|---|---|
-| A | WAL table, `commitMode=SYNC` — barriered | every boundary green, and `count >= watermark` |
+| A | WAL table, `commitMode=SYNC` — barriered | every boundary green |
 | B | WAL table, `commitMode=NOSYNC` — no barrier | every boundary **red** |
+
+`t10` used to also assert `count >= watermark` on arm A. That check is **deleted**, and the
+reason is worth keeping. The watermark is the ACKNOWLEDGED row frontier; acknowledgement comes
+from the durable-ack tier; and `arm_qwp_tier` returns `off` for every arm except `qwp-sf` and
+`product`. `t10` runs `arm=reference`, so `watermark rows=` is `-1` at every boundary of both
+arms, by design — measured `count=14000 wm=-1`, `count=58000 wm=-1`, `count=101000 wm=-1`. The
+comparison could never fire, and it had been silently skipping for three sessions; it was found
+only by making the skip loud, which is the general lesson. Nothing is weakened by the deletion:
+for the reference arm the oracle already grades against the writer's own committed history.
+Restoring it on an ack-bearing arm needs `rowsWatermark` in the result file, and must restore
+its "this check ran at least once" assertion in the same change — the check without the
+assertion is how it stopped running unnoticed.
 
 It needs no production change and no test-only mutation: `WalWriter.syncIfRequired0` gates
 the barrier on `commitMode != NOSYNC`, so `NOSYNC` **is** the mutation, and it is a
@@ -403,7 +471,16 @@ inexpressible.
 
 The non-WAL half of the same experiment was measured first and discriminates completely:
 `SYNC` 9/9 `DURABLE` with `count == watermark` exactly, `NOSYNC` 9/9 `SILENT_CORRUPTION`
-with `count=0`.
+with `count=0`. (That half ran on an arm with an ack tier, which is why it could compare
+against a watermark at all.)
+
+`t10` builds its workload environment and its verifier invocation through `harness_workload_env`
+and `harness_verify_cmd` — the same builders the sweep uses. It did not always, and switching it
+over is not cosmetic: `harness_wal_table` returns `true` for `adaptive` only when
+`QDB_WAL_TABLE` is unset, and `t10` runs SYNC and NOSYNC, so a naive switch derives a
+bypass-WAL table for **both** arms. The NOSYNC arm would still go red, `t10` would still print
+PASS, and it would be re-testing the path `t07` already covers. An explicit export prevents it,
+and a startup assertion checks all four combinations **before** booting anything.
 
 `t10` checks every verification reports `wal.table=true` before counting its verdict. A
 `NOSYNC` run that quietly fell back to the bypass-WAL path would go red for the reason
@@ -440,6 +517,21 @@ The host is never touched by a test. Everything privileged happens in the guest.
 - No host sudo is required: `/dev/kvm` is used directly via an ACL grant.
 - One VM at a time, 8 vCPU / 16 GB.
 - Disks are deleted only on a clean pass. **Any failure keeps them** for inspection.
+- **Every script that boots a VM kills it on every exit path**, via `vm_kill_on_exit` or its own
+  trap. This is not tidiness. A leaked QEMU holds its `qemu.pid`, and `reap-state.sh`
+  deliberately refuses any directory whose pid is alive — so the leak makes its own run dir
+  **permanently unreapable**, and the 100 GB reappears weeks later at `check-host.sh`'s
+  free-space gate looking like an infrastructure outage. Two live QEMUs were found behind
+  `t06` exactly this way.
+- A trap cannot help against `SIGKILL`, and a graceful `SIGTERM` is deferred until the
+  in-flight foreground command returns — measured at up to the 240 s ssh wait. An unattended
+  runner therefore needs its own orphan sweep (`pkill -f 'qemu.*qdb-vmcrash'`) after a
+  cancelled run; the harness narrows the window, the runner closes it.
+- `reap-state.sh` is the disk-space half of the same problem, and it targets
+  `$QDB_VMCRASH_STATE` **by name**. It resolves a symlinked state dir before acting (it used to
+  descend nothing and report success), covers all seven run-directory prefixes, archives the
+  cheap evidence BEFORE deleting the disks, refuses a directory whose QEMU is alive, and exits
+  non-zero when a delete fails.
 
 ## Running it
 
@@ -447,6 +539,14 @@ The host is never touched by a test. Everything privileged happens in the guest.
 bash check-host.sh          # prerequisites; names the first thing missing
 bash build-image.sh         # once — builds the golden qcow2
 
+# no VM, no root, seconds — run these first, they cost nothing
+bash test/t08-state-reaper.sh        # the reaper must not eat the wrong thing
+bash test/t09-junit-xml.sh           # the CI report must be valid and honest
+bash test/t11-preflight-cleanup.sh   # a preflight bail must not leak its VM
+bash test/t12-verdict-vocabulary.sh  # a verdict line must mean what it says
+bash test/t06-log-writes-replay.sh --self-test   # the cross-check logic, VM-free
+
+# these boot a VM
 bash test/t01-golden-image.sh
 bash test/t02-lifecycle.sh
 bash test/t03-drop-writes.sh
@@ -454,10 +554,19 @@ bash test/t04-preflight.sh    # both directions; the CUT must be able to fail
 bash test/t05-reference-arm.sh
 bash test/t06-log-writes-replay.sh   # boundaries must discriminate, or sweeps are fiction
 bash test/t07-oracle-negative-control.sh  # the ORACLE must be able to fail
+bash test/t10-wal-barrier-control.sh      # a missing BARRIER must be noticed
 
+bash run-flush-sweep.sh adaptive 0 40     # THE CI INSTRUMENT: 40 enumerated boundaries
 bash run-matrix.sh          # the full matrix, one cut per cell
 bash run-fuzz.sh 50         # THE E2E INSTRUMENT: 50 randomly-timed cuts
+
+bash reap-state.sh --keep=3 --keep-days=14          # dry run; shows what it WOULD reclaim
+bash reap-state.sh --keep=3 --keep-days=14 --apply  # note the = form; a space is rejected
 ```
+
+**Run the VM-free guards first.** They take seconds and they cover the parts that fail
+quietly: a sweep whose controls did not run is not evidence, and on an unattended agent the
+report and the reaper are what stand between a red night and a disk that silently fills.
 
 `run-fuzz.sh [iterations] [mode] [window_us]` is how this harness earns its keep. Every
 iteration draws a fresh seed, prints it, and logs it, so a failure at iteration 37 of 200
@@ -475,6 +584,48 @@ bash power-cut-vm.sh --arm=reference --mode=adaptive --window-us=50000
 
 Run state lives under `/data/qdb-vmcrash` (override with `QDB_VMCRASH_STATE`).
 
+## Machine-readable output
+
+Every sweep writes `junit.xml` next to its per-boundary evidence in `$OUTDIR`, alongside the
+text log rather than instead of it. The text log is the evidence trail; this is for the
+dashboard, which otherwise sees a pass/fail exit code and a log blob and cannot answer "did
+boundary 13776 regress between build N and N+1".
+
+One `<testcase>` per verified boundary, and three outcomes that are deliberately distinct:
+
+| outcome | rendered as | meaning |
+|---|---|---|
+| `DURABLE`, `RPO_OK` | pass | the boundary was measured and the bar held |
+| `NO_COMMIT` | `<skipped>` | the cut landed before anything was committed — a legitimate but UNINFORMATIVE sample |
+| `DURABILITY_FAILURE`, `SILENT_CORRUPTION`, `MOUNT_FAILED`, `LOUD_FAILURE` | `<failure>` | **the product failed** |
+| `NOT_EVALUATED`, `UNPARSEABLE`, `PREFLIGHT_FAILED`, `RPO_UNVERIFIED` | `<error>` | **the rig broke and nothing was measured** |
+
+The `<error>` / `<failure>` split is the one that decides who gets paged, so the token list
+lives in `verdict_is_instrument_fault` (`lib/verdict.sh`) next to `verdict_is_pass`, never in
+`lib/junit.sh`. `NO_COMMIT` is **not** a pass: counting it as one lets a run where most
+boundaries measured nothing report as a wall of green.
+
+`MOUNT_FAILED` is a PRODUCT finding, not a rig fault — an ext4 that will not mount after a
+power cut is the damage this instrument hunts. `LOUD_FAILURE` is the awkward one: it spans both
+meanings (`verify.sh:85` is the product, `verify.sh:334` is the rig) and cannot be split by
+token, so it takes the louder alarm until `verify.sh` emits a distinct not-evaluated token
+everywhere it means the latter.
+
+**The report must satisfy the JUnit XSD that `PublishTestResults@2` names**, because a report
+the publisher rejects does not fail the job — the run goes green and the dashboard shows
+nothing, which is indistinguishable from success until somebody checks. Four violations shipped
+undetected once: `timestamp=` and `hostname=` are REQUIRED and were absent, and the
+`<testsuites>` wrapper — which *looks* more standard — requires `package=` and `id=` on every
+child suite. The root is a single `<testsuite>` now, and `timestamp=`'s pattern FORBIDS a
+timezone, so the trailing `Z` used everywhere else in this harness is stripped there
+specifically. `t09` pins all of it.
+
+The run identity (arm, mode, window, profile, epoch, `nflush`, points, reset mode, harness
+commit, product dist, degrade state) is emitted **twice**: as `<properties>`, and again in
+`<system-out>`. That is not redundancy for its own sake — Azure DevOps has limited support for
+`<properties>` and may never surface it, and an identity the dashboard cannot display does not
+answer "which build produced this?" when someone is looking at a red boundary.
+
 ## Scheduling
 
 `systemd/qdb-vmcrash.timer` is shipped **disabled**. A crash harness nobody trusts yet
@@ -485,6 +636,27 @@ cp systemd/qdb-vmcrash.* ~/.config/systemd/user/
 systemctl --user enable --now qdb-vmcrash.timer
 loginctl enable-linger "$USER"   # required, or user timers stop at logout
 ```
+
+### On a CI agent
+
+The intended home is a **nightly job sharing the existing single-agent fuzz pool**, not a new
+pool: `check-host.sh` first as a hard gate, then the VM-free guards, then the VM guards, then
+the sweeps, then publish, and only then `reap-state.sh --apply`. Order matters in both
+directions — **a sweep whose controls did not run that night is not evidence**, and a reaper
+that runs before the artifacts are uploaded has destroyed the thing the upload was for.
+
+Three constraints that are easy to get wrong, and expensive:
+
+- **One VM at a time.** The pool must run one agent, or two builds boot two QEMUs against the
+  same `$QDB_VMCRASH_STATE`.
+- **Keep the state directory OUTSIDE the workspace.** A workspace clean wipes it, and the
+  golden image is ~2.7 GB to rebuild. Keep `qdb-vmcrash` in its path if the runner's orphan
+  sweep matches on that name.
+- **No `/dev/kvm`, no run.** `lib/qemu.sh` passes `-enable-kvm` unconditionally, so QEMU
+  refuses to start rather than falling back to slow emulation. That is deliberate: TCG changes
+  the timing of every crash point, and a harness that silently re-times its own crash points is
+  measuring something else. A missing `/dev/kvm` is an infrastructure answer, and should be
+  reported as an `<error>` against the agent, not as a durability `<failure>`.
 
 ### A VM-free backend is possible, and is deliberately not built
 
