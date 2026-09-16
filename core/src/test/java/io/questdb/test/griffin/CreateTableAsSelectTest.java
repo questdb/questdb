@@ -39,6 +39,9 @@ import java.io.File;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class CreateTableAsSelectTest extends AbstractCairoTest {
+    // TableWriter's ROW_ACTION_NO_PARTITION refusal, up to the table path it carries in the middle
+    // of the message.
+    private static final String OUT_OF_ORDER_ERROR = "cannot insert rows out of order to non-partitioned table [";
     private static final String UNINHERITABLE_TIMESTAMP_ERROR =
             "cannot inherit the designated timestamp of an unordered SELECT into a non-partitioned table " +
                     "[timestamp=ts]; add PARTITION BY so the writer sorts the rows, or ORDER BY ts to order the SELECT";
@@ -219,7 +222,7 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
             // target regardless of the select's scan direction, and the writer is the one that says
             // no. This protection must survive the partitioned-target widening.
             assertQuery("create table dest as ((pa union all pb) timestamp(ts)) timestamp(ts);")
-                    .fails(13, "cannot insert rows out of order to non-partitioned table.");
+                    .fails(13, OUT_OF_ORDER_ERROR);
         });
     }
 
@@ -229,7 +232,7 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
             createSrcTable();
 
             assertQuery("create table dest as (select * from src where v % 2 = 0 order by ts desc) timestamp(ts);")
-                    .fails(13, "cannot insert rows out of order to non-partitioned table.");
+                    .fails(13, OUT_OF_ORDER_ERROR);
         });
     }
 
