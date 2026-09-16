@@ -123,6 +123,79 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestKeyPushdownAbsentNullSingletonSkipsOlderPartitionsAndReusesFactory() throws Exception {
+        assertMemoryLeak(() -> assertAbsentNullSingletonSkipsOlderPartitionsAndReusesFactory(false));
+    }
+
+    @Test
+    public void testLatestByAbsentNullSingletonFilteredSkipsOlderPartitionsAndReusesFactory() throws Exception {
+        assertMemoryLeak(() -> assertAbsentNullSingletonSkipsOlderPartitionsAndReusesFactory(true));
+    }
+
+    @Test
+    public void testLatestByAbsentNullSingletonBindSkipsOlderPartitionsAndReusesFactory() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = failOpenForPartition("2024-01-01");
+            for (int filter = 0; filter < 2; filter++) {
+                boolean isFiltered = filter == 1;
+                String table = "null_bind_" + filter;
+                execute("CREATE TABLE " + table + " (s SYMBOL, v DOUBLE, ts " + timestampType.getTypeName()
+                        + ") TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO " + table + " VALUES " + """
+                        ('a', 1, '2024-01-01'),
+                        ('a', 10, '2024-01-02'),
+                        ('b', 20, '2024-01-02')
+                        """);
+                bindVariableService.setStr("key", "a");
+                String query = latestKeyQuery(table, "s = :key" + (isFiltered ? " AND v > 0" : ""), isFiltered);
+                assertQuery(query).assertsPlanContaining("LatestByValueDeferredFiltered");
+                try (RecordCursorFactory factory = select(query)) {
+                    assertFactory(factory).withContext(sqlExecutionContext).returns("v\n10.0\n");
+                    bindVariableService.setStr("key", null);
+                    engine.releaseAllReaders();
+                    assertFactory(factory).withContext(sqlExecutionContext).returns("v\n");
+                    bindVariableService.setStr("key", "b");
+                    assertFactory(factory).withContext(sqlExecutionContext).returns("v\n20.0\n");
+                    bindVariableService.setStr("key", null);
+                    assertFactory(factory).withContext(sqlExecutionContext).returns("v\n");
+                    execute("INSERT INTO " + table + " VALUES (NULL, 30, '2024-01-03'), (NULL, -31, '2024-01-03')");
+                    assertFactory(factory).withContext(sqlExecutionContext).returns(isFiltered ? "v\n30.0\n" : "v\n-31.0\n");
+                    bindVariableService.setStr("key", "a");
+                    assertFactory(factory).withContext(sqlExecutionContext).returns("v\n10.0\n");
+                    bindVariableService.setStr("key", null);
+                    assertFactory(factory).withContext(sqlExecutionContext).returns(isFiltered ? "v\n30.0\n" : "v\n-31.0\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLatestByNullSingletonFindsHistoricalNullsAndColumnTops() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int top = 0; top < 2; top++) {
+                boolean hasColumnTop = top == 1;
+                String table = "null_history_" + top;
+                execute("CREATE TABLE " + table + " (v DOUBLE, ts " + timestampType.getTypeName()
+                        + (hasColumnTop ? "" : ", s SYMBOL") + ") TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO " + table + " (v, ts) VALUES (1, '2024-01-01'), (-2, '2024-01-01')");
+                if (hasColumnTop) {
+                    execute("ALTER TABLE " + table + " ADD COLUMN s SYMBOL");
+                }
+                execute("INSERT INTO " + table + " (v, ts, s) VALUES (10, '2024-01-02', 'a'), (20, '2024-01-02', 'b')");
+                for (int form = 0; form < 2; form++) {
+                    String predicate = form == 0 ? "s IS NULL" : "s IN (NULL)";
+                    assertQuery(latestKeyQuery(table, predicate, false))
+                            .withPlanContaining("LatestByValueFiltered", "symbolFilter: s=null")
+                            .returns("v\n-2.0\n");
+                    assertQuery(latestKeyQuery(table, predicate + " AND v > 0", true))
+                            .withPlanContaining("LatestByValueFiltered", "symbolFilter: s=null")
+                            .returns("v\n1.0\n");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLatestKeyPushdownAllSymbolsReuse() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE all_keys (s SYMBOL, v DOUBLE, ts " + timestampType.getTypeName()
@@ -2732,6 +2805,35 @@ public class LatestByTest extends AbstractCairoTest {
                             a\t2.0
                             """);
         });
+    }
+
+    private void assertAbsentNullSingletonSkipsOlderPartitionsAndReusesFactory(boolean isFiltered) throws Exception {
+        ff = failOpenForPartition("2024-01-01");
+        for (int form = 0; form < 2; form++) {
+            String table = "null_singleton_" + form;
+            execute("CREATE TABLE " + table + " (s SYMBOL, v DOUBLE, ts " + timestampType.getTypeName()
+                    + ") TIMESTAMP(ts) PARTITION BY DAY");
+            String predicate = form == 0 ? "s IS NULL" : "s IN (NULL)";
+            // Put the residual before LATEST to exercise the filtered singleton cursor, not an outer filter.
+            String query = latestKeyQuery(table, predicate + (isFiltered ? " AND v > 0" : ""), isFiltered);
+            assertQuery(query).assertsPlanContaining("LatestByValueFiltered", "symbolFilter: s=null");
+            try (RecordCursorFactory factory = select(query)) {
+                assertFactory(factory).withContext(sqlExecutionContext).returns("v\n");
+                execute("INSERT INTO " + table + " VALUES " + """
+                        ('a', 1, '2024-01-01'),
+                        ('a', 10, '2024-01-02'),
+                        ('b', 20, '2024-01-02')
+                        """);
+                engine.releaseAllReaders();
+                assertFactory(factory).withContext(sqlExecutionContext).returns("v\n");
+                execute("INSERT INTO " + table + " VALUES (NULL, 30, '2024-01-03'), (NULL, -31, '2024-01-03')");
+                assertFactory(factory).withContext(sqlExecutionContext).returns(isFiltered ? "v\n30.0\n" : "v\n-31.0\n");
+                execute("TRUNCATE TABLE " + table);
+                assertFactory(factory).withContext(sqlExecutionContext).returns("v\n");
+                execute("INSERT INTO " + table + " VALUES (NULL, 40, '2024-01-04')");
+                assertFactory(factory).withContext(sqlExecutionContext).returns("v\n40.0\n");
+            }
+        }
     }
 
     private void assertLatestKeyFeasibility(String table, String indexClause) throws Exception {
