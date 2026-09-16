@@ -1,22 +1,13 @@
 # lib/qemu.sh — VM lifecycle primitives for the crash harness.
 # Source this file; do not execute it.
 #
-# DURABILITY-CRITICAL: every disk is attached cache=none.
+# Every disk is attached cache=none, and that is durability-critical:
 #
-#   cache=writeback  — the HOST page cache holds the guest's un-flushed writes
-#                      and SURVIVES the VMM being killed, because the host did
-#                      not lose power. Data that should be lost stays durable.
+#   cache=writeback  — the host page cache holds the guest's un-flushed writes and survives the
+#                      VMM being killed, because the host did not lose power. False green.
+#   cache=directsync — every guest write becomes durable immediately, so even NOSYNC survives.
 #                      False green.
-#   cache=directsync — every guest write becomes durable immediately, so even
-#                      NOSYNC survives. False green.
-#   cache=none       — O_DIRECT, no host page cache. The GUEST page cache dies
-#                      with the VMM, which is what we want.
-#
-# cache=none is necessary but NOT sufficient: anything the guest kernel already
-# wrote back on its own schedule has reached host storage and survives, whereas
-# on real hardware it would sit in the disk's volatile write cache and die.
-# That residual leniency is closed by dm-flakey drop_writes inside the guest
-# (guest/arm-cut.sh), not here. See the spec, §2.
+#   cache=none       — O_DIRECT, no host page cache, so the guest page cache dies with the VMM.
 
 # Pick an unused loopback port for the SSH forward. Bound to 127.0.0.1 only:
 # the harness never exposes a service on this host.
@@ -30,29 +21,26 @@ s.close()
 PY
 }
 
-# vm_boot RUNDIR BOOTDISK DATADISK PORT [SEEDISO] [LOGDISK]
-#   LOGDISK, when given, is attached as /dev/vdc and used as the dm-log-writes
-#   log device. It is deliberately a SEPARATE disk: the log must record the data
-#   device's traffic without becoming part of it.
-# Boots daemonized; writes $RUNDIR/qemu.pid, $RUNDIR/console.log and
-# $RUNDIR/cmdline. DATADISK may be "" (no data disk).
 # vm_boot RUNDIR BOOT DATA SSHPORT [SEED] [LOGDISK] [QWPPORT]
 #
-# QWPPORT (optional) additionally forwards the guest's 9000 to that HOST port, so a client
-# running OUTSIDE the VM can reach the server. That is the deployment the QWP arm models: the
-# client is on a DIFFERENT MACHINE, so a power cut kills the server and the client survives to
-# reconnect. Re-boot with the SAME QWPPORT and the client's reconnect policy finds the server
-# again at the address it already has.
+# Boots daemonized; writes $RUNDIR/qemu.pid, $RUNDIR/console.log and $RUNDIR/cmdline. DATA may
+# be "" for no data disk.
+#
+# LOGDISK is attached as /dev/vdc and holds the dm-log-writes log. It must be a separate disk:
+# the log records the data device's traffic and cannot be part of it.
+#
+# QWPPORT forwards the guest's 9000 to that host port, so a client running outside the VM can
+# reach the server. That is the deployment the QWP arm models -- the client is on a different
+# machine, survives the cut, and after a reboot with the same QWPPORT its own reconnect policy
+# finds the server at the address it already has.
 vm_boot() {
     local rundir="$1" boot="$2" data="$3" port="$4" seed="${5:-}" logdisk="${6:-}" qwpport="${7:-}"
     mkdir -p "$rundir"
     : > "$rundir/console.log"
 
-    # Clear a STALE pidfile. Retained run dirs (kept on failure, by design) still
-    # hold the pidfile of the VM that was killed there, and QEMU refuses to start
-    # with "cannot create PID file: Cannot lock pid file" -- which surfaces as an
-    # opaque SSH timeout 240s later rather than as the trivial cause it is.
-    # Only remove it if no live process holds it.
+    # Clear a stale pidfile. A run dir kept on failure still holds the pidfile of the VM killed
+    # there, and QEMU then refuses to start with a pid-file lock error that surfaces as an
+    # opaque SSH timeout minutes later. Only remove it when no live process holds it.
     if [ -f "$rundir/qemu.pid" ]; then
         local stale
         stale="$(cat "$rundir/qemu.pid" 2>/dev/null)"
@@ -64,21 +52,9 @@ vm_boot() {
         fi
     fi
 
-    # Overridable ONLY so a deliberately-broken configuration can be demonstrated.
-    #
-    # REFUSE ANY OTHER VALUE. t04 no longer mutates this (it mutates drop_writes, which is
-    # what actually discriminates), so nothing in the harness sets it any more -- yet the
-    # variable stayed reachable, and the two values it accepts both produce a FALSE GREEN:
-    #
-    #   cache=writeback   un-flushed guest writes land in the HOST page cache, which
-    #                     survives `kill -9` on the VMM because the host kept its power.
-    #   cache=directsync  every guest write becomes durable at once, so even NOSYNC
-    #                     survives.
-    #
-    # And the preflight CANNOT catch either: pf_ranged is discarded by dm-flakey inside the
-    # guest and never reaches QEMU's cache layer, so it returns PREFLIGHT_OK under all three
-    # modes. An operator setting this to speed CI up would get a green run with no guard
-    # firing anywhere. So the guard has to live here, at the point of use.
+    # Overridable only so a deliberately broken configuration can be demonstrated. Both other
+    # values produce a false green that nothing downstream can detect, so the refusal lives here
+    # at the point of use.
     local dcache="${QDB_VM_DATA_CACHE:-none}"
     if [ "$dcache" != "none" ] && [ "${QDB_VM_ALLOW_UNSAFE_CACHE:-0}" != "1" ]; then
         echo "REFUSING: QDB_VM_DATA_CACHE=$dcache produces a FALSE GREEN and no guard detects it." >&2
@@ -88,9 +64,8 @@ vm_boot() {
         return 64
     fi
 
-    # aio=threads, not aio=native: native requires O_DIRECT and fails outright
-    # under cache=writeback, which would make t04's second direction fail for
-    # the wrong reason.
+    # aio=threads, not aio=native: native requires O_DIRECT and fails outright under
+    # cache=writeback, which the unsafe-cache escape hatch above must still be able to boot.
     local args=(
         -enable-kvm -cpu host -smp 8 -m 16G
         -drive "file=$boot,if=virtio,format=qcow2,cache=none,aio=threads"
@@ -101,20 +76,17 @@ vm_boot() {
         -pidfile "$rundir/qemu.pid"
         -daemonize
     )
-    # DISCARD, on the DATA disk only, and OFF by default.
+    # Discard, on the data disk only, and off by default. The replay path resets the data device
+    # between boundaries (replay_reset_cmd below) and needs an unmapping discard to do that at a
+    # price a per-boundary loop can afford.
     #
-    # The replay path needs to RESET the data device between boundaries (see replay_reset_cmd
-    # below). A 40 GiB dd costs ~40 s per boundary and is unaffordable at 1.9 s/point; an
-    # unmapping discard costs 8 ms for the whole device, measured.
+    # The recording boot must not enable it: with unmap, a discard issued by mkfs or by the
+    # workload punches a real hole and dm-log-writes records a DISCARD entry, which changes what
+    # the recording contains. Only the replay boot sets this.
     #
-    # Default "ignore" because the RECORDING boot must not be perturbed: with unmap, a discard
-    # issued by mkfs or by the workload becomes a real hole AND is logged by dm-log-writes as a
-    # DISCARD entry, which changes what the recording contains. Only the replay boot sets this.
-    #
-    # QEMU's own default is also "ignore", and that is a TRAP, not a safe default: the guest
-    # still advertises discard support (discard_granularity=512, discard_max_bytes=2 GiB) and
-    # blkdiscard still returns success in 8 ms -- having reverted nothing. A reset built on it
-    # is a silent no-op, so replay_reset_cmd's caller MUST assert the reset really zeroes.
+    # QEMU's default "ignore" is a trap rather than a safe default: the guest still advertises
+    # discard support and blkdiscard still returns success having reverted nothing, so a reset
+    # built on it is a silent no-op. That is what replay_reset_assert exists to catch.
     local ddiscard="${QDB_VM_DATA_DISCARD:-ignore}"
     case "$ddiscard" in
         ignore|unmap) ;;
@@ -130,66 +102,52 @@ vm_boot() {
     qemu-system-x86_64 "${args[@]}"
 }
 
-# THE DEVICE RESET, and the assertion that it is real. ONE definition, shared by every replay
-# call site: run-flush-sweep.sh's main loop and densify pass, t06, t07, t10, run-sf-replay.sh
-# and run-st8-probe.sh. It began life as the sweep's alone, and a reset present at some call
-# sites and absent at others is worse than none -- it makes the guard and the instrument
-# disagree about what a boundary means, which is how t06 came to certify a regime the
-# instrument never used.
+# The device reset between replayed boundaries. One definition, shared by every replay call
+# site: a reset present at some of them and absent at others makes the guard and the instrument
+# disagree about what a boundary means.
 #
-# WHY A RESET IS NEEDED AT ALL. dm-log-writes is a PASS-THROUGH target: during the recording
-# every write reaches /dev/vdb as well as the log. After the reboot the data device therefore
-# still holds the FINAL crashed state, and replaying to boundary N re-applies the writes up to
-# N but cannot revert the ones issued after it. Mounting then runs ext4 journal recovery, which
-# writes -- so boundary N+1 also inherits boundary N's recovered state. Without a reset,
-# "everything after the boundary is gone" -- the README's central claim -- is simply not true,
-# and because every payload byte is a deterministic function of the row id, the leftover future
-# bytes are VALID bytes: the corruption oracle cannot tell "this block was durable" from "this
-# block still holds the end-of-run value". The error is in the direction of FALSE GREEN.
+# dm-log-writes is a pass-through target, so during the recording every write reaches /dev/vdb
+# as well as the log. After the reboot the data device still holds the final crashed state, and
+# replaying to boundary N re-applies the writes up to N without reverting the ones issued after
+# it; mounting then runs ext4 journal recovery, which writes, so boundary N+1 inherits boundary
+# N's recovered state too. Without a reset, "everything after the boundary is gone" is not true.
+# Every payload byte is a deterministic function of the row id, so the leftover future bytes are
+# valid bytes: the oracle cannot tell a block that was durable from one still holding the
+# end-of-run value, and the error runs towards false green.
 #
-# run-st8-probe.sh:398-406 states this and zeroes with dd. t06 zeroes 64 MiB. The instrument
-# itself zeroed nothing. This is that fix, at a price the instrument can afford.
-#
-# QDB_REPLAY_RESET: blkdiscard (default) | none.
-#   none reproduces the pre-fix behaviour and exists for ONE reason -- the A/B that measures
-#   what the reset changes. It is not a performance knob; a sweep run with none is not evidence
-#   about the product, only about the instrument.
+# QDB_REPLAY_RESET: blkdiscard (default) | none. `none` exists for the A/B that measures what
+# the reset changes, and is not a performance knob -- a sweep run with none is evidence about
+# the instrument, not about the product.
 replay_reset_cmd() {
     case "${QDB_REPLAY_RESET:-blkdiscard}" in
         none)       echo "true" ;;
-        # -f is NOT cosmetic. Every replay puts an ext4 signature back on the device, so from
-        # the second boundary on, blkdiscard sees a filesystem it is about to destroy. util-linux
-        # 2.39.3 (noble) warns and proceeds with rc=0 -- MEASURED, including that the device then
-        # reads as zeros -- but that behaviour is a deprecation away from a hard refusal, and a
-        # refusal would silently return the sweep to replaying onto the previous boundary's
-        # state. -f states the intent the sweep actually has.
+        # -f is not cosmetic. Every replay puts an ext4 signature back on the device, so from the
+        # second boundary on blkdiscard sees a filesystem it is about to destroy. It warns and
+        # proceeds today, but a refusal would silently return the sweep to replaying onto the
+        # previous boundary's state.
         blkdiscard) echo "sudo blkdiscard -f /dev/vdb" ;;
         *) echo "false  # REFUSING: QDB_REPLAY_RESET=${QDB_REPLAY_RESET} is not one of blkdiscard|none" ;;
     esac
 }
 
-# ASSERT THE RESET IS REAL, once, before the first replay. Not optional paranoia: with QEMU's
-# default discard=ignore the guest still advertises discard and blkdiscard still returns 0 in
-# 8 ms having reverted NOTHING (measured). That produces exactly the blended-state sweep this
-# reset exists to prevent, while looking like it worked. Writes a pattern, discards, requires
-# zeros back. Destroys the passed-through final state -- which is the point, and every later
-# boundary resets anyway.
+# Assert the reset is real, once, before the first replay. With QEMU's default discard=ignore
+# the guest still advertises discard and blkdiscard still returns success having reverted
+# nothing, which produces the blended-state sweep the reset exists to prevent while looking like
+# it worked. Writes a pattern, discards, and requires zeros back. This destroys the
+# passed-through final state, which is the point.
 replay_reset_assert() {  # PORT KEY
     local port="$1" key="$2" out
     [ "${QDB_REPLAY_RESET:-blkdiscard}" = none ] && return 0
     out=$(vm_ssh "$port" "$key" "
         zero=\$(head -c 1048576 /dev/zero | md5sum | cut -d' ' -f1)
-        # SEVERAL OFFSETS, SPREAD ACROSS THE DEVICE. One sample cannot tell a full discard from
-        # a PARTIAL one: a backend that honoured only the first extent -- discard_max_bytes is
-        # 2 GiB here -- would zero the probed MiB and pass a one-point check while the rest of
-        # the device still carried the final recorded state. That is the worst of the three
-        # outcomes, because it looks exactly like success.
+        # Several offsets, spread across the device. One sample cannot tell a full discard from a
+        # partial one: a backend that honoured only the first extent would zero the probed MiB
+        # and pass a one-point check while the rest still carried the final recorded state, which
+        # is the worst outcome because it looks exactly like success.
         #
-        # DERIVED FROM THE DEVICE, not hardcoded. The callers do not agree on size: the sweep
-        # and t07/t10 use 40 GiB, t06 uses 4 GiB, run-st8-probe.sh uses 2 GiB. Hardcoded 32 GiB
-        # offsets seek past the end of the small ones, dd fails, and the check reports
-        # RESET_PARTIAL on a device that was in fact fully reset -- a false alarm that stops a
-        # green run. Measured on t06 before this was derived.
+        # The offsets are derived from the device rather than hardcoded, because call sites use
+        # different device sizes: an offset past the end makes dd fail and reports RESET_PARTIAL
+        # on a device that was in fact fully reset.
         mib=\$(( \$(sudo blockdev --getsize64 /dev/vdb) / 1048576 ))
         [ \"\$mib\" -ge 8 ] || { echo \"RESET_UNTESTABLE device is only \${mib} MiB\"; exit 1; }
         offs=\"1 \$((mib/4)) \$((mib/2)) \$((mib*3/4)) \$((mib-2))\"
@@ -263,48 +221,22 @@ vm_wait_ssh() {  # PORT KEY TIMEOUT
     return 1
 }
 
-# Block until TOKEN appears on the guest's serial console. This is the join
-# between the two halves of the cut: the guest arms drop_writes and writes
-# CUT-ARMED, the host sees it and kills the VMM.
-vm_wait_console() {  # RUNDIR TOKEN TIMEOUT
-    local rundir="$1" token="$2" timeout="${3:-120}" i=0
-    local ticks=$((timeout * 10))
-    while [ "$i" -lt "$ticks" ]; do
-        if grep -q "$token" "$rundir/console.log" 2>/dev/null; then
-            return 0
-        fi
-        sleep 0.1
-        i=$((i + 1))
-    done
-    echo "ERROR: token '$token' never appeared on the console within ${timeout}s" >&2
-    return 1
-}
-
-# THE POWER CUT, host half. kill -9 on the VMM: the guest kernel and its page
-# cache die instantly, with no shutdown and no writeback.
+# Kill the VM on every exit path, not just the ones someone remembered. A leaked VM is not
+# merely a stray process: it holds its qemu.pid, reap-state.sh refuses any directory whose pid
+# is alive, so the run dir becomes permanently unreapable and surfaces later at check-host.sh's
+# free-space gate looking like an infrastructure outage.
 #
-# ORDERING IS LOAD-BEARING: this must only ever run AFTER the guest has armed
-# drop_writes. Reverse the order and a write can reach durability during the
-# join window, which is the exact failure this design exists to exclude.
-# KILL THE VM ON EVERY EXIT PATH, not just the ones someone remembered.
-#
-# Observed, not theorised: two t06 runs that FAILED left their qemu alive, because t06 kills
-# the VM at the end of phase one and on the success path, and has seven exit paths in between.
-# A leaked VM is not merely a stray process -- it holds its qemu.pid, and reap-state.sh refuses
-# any directory whose pid is alive, so the run dir becomes permanently unreapable and surfaces
-# later at check-host.sh's free-space gate looking like an infrastructure outage. The same
-# defect was fixed in lib/preflight.sh; counting exits against vm_kill calls says t01, t05,
-# t07, run-flush-sweep.sh, run-sf-replay.sh and run-st8-probe.sh are candidates too.
-#
-# This kills only. It does NOT remove the run dir: keeping the disks on failure is deliberate
-# elsewhere in this harness, and a live qemu is exactly what stops that evidence being reaped
-# later. vm_kill is idempotent, so an explicit vm_kill on the success path stays correct.
+# This kills only. It does not remove the run dir, because keeping the disks on failure is
+# deliberate elsewhere in this harness. vm_kill is idempotent, so an explicit vm_kill on the
+# success path stays correct.
 VM_KILL_ON_EXIT_DIR=""
 vm_kill_on_exit() {  # RUNDIR
     VM_KILL_ON_EXIT_DIR="$1"
     trap '[ -n "$VM_KILL_ON_EXIT_DIR" ] && vm_kill "$VM_KILL_ON_EXIT_DIR"' EXIT INT TERM
 }
 
+# kill -9 on the VMM: the guest kernel and its page cache die instantly, with no shutdown and no
+# writeback. This is the power cut, host half.
 vm_kill() {  # RUNDIR
     local pid
     pid="$(cat "$1/qemu.pid" 2>/dev/null)" || return 0
@@ -314,8 +246,8 @@ vm_kill() {  # RUNDIR
     rm -f "$1/qemu.pid"
 }
 
-# Wait for a CLEAN exit (used after `poweroff` during image build), escalating
-# to kill -9 if the guest will not go. Never used as the cut.
+# Wait for a clean exit (used after `poweroff` during image build), escalating to kill -9 if the
+# guest will not go. Never used as the cut.
 vm_wait_gone() {  # RUNDIR TIMEOUT
     local pid i=0
     pid="$(cat "$1/qemu.pid" 2>/dev/null)" || return 0

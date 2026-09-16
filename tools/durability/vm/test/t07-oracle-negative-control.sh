@@ -1,40 +1,23 @@
 #!/usr/bin/env bash
 # t07 — can the ORACLE fail?
 #
-# t04 proves the CUT can fail (arm it without drop_writes and the preflight must go red).
-# Nothing proved the OTHER half: that CrashVerifier, shown corrupt data, reports it. Until
-# that is shown, every DURABLE and RPO_OK this harness has ever printed is unproven — an
-# oracle that always passes is indistinguishable from one that works.
+# An oracle that always passes is indistinguishable from one that works, so every DURABLE and
+# RPO_OK verdict is unproven until CrashVerifier is shown corrupt data and reports it.
 #
-# METHOD: one device state, TWO verdicts.
+# One device state, two verdicts: record a workload under dm-log-writes, reboot, replay to the
+# last flush and mount, then verify (expect DURABLE or RPO_OK); overwrite 8 bytes of a
+# committed column file in place and verify the same mount again (expect SILENT_CORRUPTION).
+# Same boundary, same mount, same oracle, so the only variable is the bytes on disk -- and if
+# the second verdict equals the first, the oracle is blind.
 #
-#   1. record a workload under dm-log-writes, reboot, replay to the last flush, mount
-#   2. verify                       -> expect DURABLE / RPO_OK
-#   3. overwrite 8 bytes of a COMMITTED column file, in place
-#   4. verify the SAME mount again  -> expect SILENT_CORRUPTION
+# Corrupting the device rather than the oracle's own formula is what makes the control
+# meaningful: it needs no source change, so it cannot drift out of sync with the oracle it
+# checks. Each value is a deterministic function of the row id, so one wrong long inside v.d is
+# silent corruption by the oracle's own definition.
 #
-# Same boundary, same mount, same oracle, same JVM invocation. The only variable is the
-# bytes on disk. If verdict 2 equals verdict 1, the oracle is blind.
-#
-# WHY CORRUPT THE DATA RATHER THAN THE ORACLE. Editing the expected-value formula tests
-# that the comparison runs, which is trivially true. Corrupting the DEVICE tests the thing
-# that matters: that a wrong byte written where QuestDB's data lives is noticed after a
-# real recovery on a real filesystem. It also needs no source change, so it cannot drift
-# out of sync with the oracle it is checking.
-#
-# WHY v.d. Every value is a deterministic function of the row id (v = id * 2654435761), so
-# a single wrong long IS silent corruption by the oracle's own definition, and the verdict
-# should name the exact row.
-#
-# SCOPE — read this before citing a green t07. This proves the oracle catches corrupt
-# DATA. It does NOT prove it catches a missing DURABILITY BARRIER: a product that stops
-# calling fdatasync fails in a completely different way — every byte that arrives is
-# correct, there are simply fewer of them than were acknowledged.
-#
-# THAT CONTROL NOW EXISTS: t10-wal-barrier-control.sh, which takes the barrier away on the
-# WAL path (WAL table + NOSYNC) and requires the sweep to go red. The set is now three:
-# t04 the cut can fail, t07 the oracle can fail, t10 the barrier control. Cite all three or
-# name which one you mean.
+# Scope: this proves the oracle catches corrupt data. It does not prove it catches a missing
+# durability barrier, where every byte that arrives is correct and there are simply fewer of
+# them than were acknowledged. t10-wal-barrier-control.sh is that control.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -82,11 +65,17 @@ vm_ssh "$P" "$KEY" "setsid env QDB_SCHEMA_PROFILE=$PROFILE bash /opt/vmcrash/gue
     --arm=reference --mode=$MODE --window-us=$WINDOW --epoch-ms=1000 </dev/null \
     >/mnt/qdb/workload.out 2>&1 &" || true
 
+# Anchor on the first commit. Exhausting this loop is a failure, not a timeout to shrug at:
+# the control would then corrupt and verify a table with nothing committed in it, and pass
+# for the wrong reason.
+anchored=false
 for _ in $(seq 1 120); do
     n=$(vm_ssh "$P" "$KEY" "head -1 /mnt/qdb/db/_progress 2>/dev/null | tr -dc '0-9'" 2>/dev/null || echo "")
-    [ -n "$n" ] && [ "$n" -ge 1 ] 2>/dev/null && break
+    [ -n "$n" ] && [ "$n" -ge 1 ] 2>/dev/null && { anchored=true; break; }
     sleep 0.2
 done
+[ "$anchored" = true ] \
+    || { keep; echo "FAIL t07: no commit reached in 24s; the control would be vacuous"; exit 1; }
 sleep 8
 # Same vacuity guard as everywhere else: a control run against a dead workload would
 # verify an empty table and could not discriminate anything.
@@ -99,24 +88,18 @@ vm_kill "$RUN"
 rm -f "$RUN/overlay.qcow2"
 qemu-img create -f qcow2 -b "$BASE/golden.qcow2" -F qcow2 "$RUN/overlay.qcow2" >/dev/null
 P2=$(vm_free_port)
-# The replay boot, and the only one that gets discard=unmap -- the recording boot above keeps
-# the default, or an unmapping discard would land in the log as a DISCARD entry and change
-# what is being reconstructed here.
+# The replay boot, and the only one that gets discard=unmap: on the recording boot an unmapping
+# discard would land in the log as a DISCARD entry and change what is reconstructed here.
 QDB_VM_DATA_DISCARD=unmap vm_boot "$RUN" "$RUN/overlay.qcow2" "$RUN/data.raw" "$P2" "" "$RUN/log.raw"
 vm_wait_ssh "$P2" "$KEY" 240 || { keep; echo "FAIL t07: guest never rebooted"; exit 1; }
 vm_scp "$P2" "$KEY" "$HERE/../../../benchmarks/target/benchmarks.jar" /opt/vmcrash/benchmarks.jar
 vm_scp_dir "$P2" "$KEY" "$HERE/guest" /opt/vmcrash/
 
-# RESET THE DEVICE, even though this is a single replay to the LAST boundary.
-#
-# "Last boundary" is not "every byte". dm-log-writes passes writes through, so /dev/vdb still
-# carries whatever the workload wrote AFTER the final flush entry -- and those bytes are
-# precisely the ones the last boundary is supposed to exclude. Without the reset the clean
-# state V1 is measured on a device that is part boundary and part crash tail.
-#
-# That matters more here than it looks. This control's whole claim rests on ONE variable
-# changing between V1 and V2 -- eight bytes written by hand. Any other difference in the
-# device under them weakens the claim, and a post-boundary tail is exactly such a difference.
+# Reset the device even for a single replay to the last boundary. dm-log-writes passes writes
+# through, so /dev/vdb still carries whatever the workload wrote after the final flush entry --
+# exactly the bytes that boundary is supposed to exclude. The claim here rests on eight
+# hand-written bytes being the only difference between V1 and V2, and a crash tail under both
+# is another one.
 replay_reset_assert "$P2" "$KEY" || { keep; echo "FAIL t07: the device reset is not real; the clean state cannot be trusted"; exit 1; }
 vm_ssh "$P2" "$KEY" "sudo umount /mnt/qdb 2>/dev/null; sudo dmsetup remove qdbdata 2>/dev/null; \
     $(replay_reset_cmd); \

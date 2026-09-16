@@ -1,27 +1,24 @@
 #!/usr/bin/env bash
 # run-sf-replay.sh [mode] [window_us]
 #
-# THE CLIENT IS ON A DIFFERENT MACHINE. That is the deployment QWP is used in, and it changes
-# what a power cut means: the cut kills the SERVER, the client survives, and the client's
-# store-and-forward buffer is what closes the server's RPO gap.
+# The client runs on a different machine from the server, which is the deployment QWP is used in
+# and changes what a power cut means: the cut kills the server, the client survives, and the
+# client's store-and-forward buffer is what closes the server's RPO gap.
 #
 #   server : inside the VM, killed by SIGKILL to QEMU (a real power cut)
-#   client : a HOST process, never killed, reconnecting on its own policy
+#   client : a host process, never killed, reconnecting on its own policy
 #
-# The guest's 9000 is forwarded to a host port, and the VM is rebooted on the REPLAYED disk with
-# the SAME forward, so the client finds the server again at the address it already holds. No
-# restart, no re-point: the client's own reconnect + cursor reposition does the work.
+# The guest's 9000 is forwarded to a host port and the VM is rebooted on the replayed disk with
+# the same forward, so the client finds the server at the address it already holds and its own
+# reconnect and cursor reposition do the work.
 #
-# WHAT THIS PROVES, and what it deliberately does not:
-#   Under adaptive W>0 the server may legitimately discard txns above Wm. The claim under test is
-#   that the CLIENT replays them, so nothing it accepted is lost end to end. That is proven
-#   COMPARATIVELY -- the same crash boundary is verified twice, once WITHOUT letting the client
-#   reconnect and once WITH -- because "all rows present" alone cannot distinguish "the client
-#   replayed" from "the server never lost anything".
+# Under adaptive W>0 the server may legitimately discard txns above Wm, and the claim under test
+# is that the client replays them. The same boundary is verified twice, once without letting the
+# client reconnect and once with, because "all rows present" alone cannot distinguish a client
+# replay from a server that never lost anything.
 #
-# sf_durability stays `memory` on purpose: the client did not crash, so its buffer never needed to
-# survive a crash. (`flush`/`append` parse but are not implemented; `periodic` exists. Client-side
-# disk durability matters only when the CLIENT crashes, which is a different scenario.)
+# sf_durability stays `memory` on purpose: the client does not crash here, so its buffer never
+# needs to survive a crash. Client-side disk durability is a different scenario.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -40,8 +37,8 @@ KEY="$BASE/id_ed25519"
 RUN="$STATE_DIR/sfreplay-$MODE-w$WINDOW-$$"
 JAR="$HERE/../../../benchmarks/target/benchmarks.jar"
 
-# ONE LINE. Sent through ssh, embedded newlines make the shell execute each continuation as its
-# own command ("--add-exports=...: No such file or directory") and the server never starts.
+# One line, no continuations: this is sent through ssh, where an embedded newline makes the shell
+# execute each continuation as its own command and the server never starts.
 JVM="--enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.time.zone=ALL-UNNAMED --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED"
 
 CLIENT_PID=""
@@ -56,9 +53,8 @@ qemu-img create -f qcow2 -b "$BASE/golden.qcow2" -F qcow2 "$RUN/overlay.qcow2" >
 truncate -s 40G "$RUN/data.raw"
 truncate -s 60G "$RUN/log.raw"
 
-# A HOST port, so it must be verified free. A server that loses its bind does not stop -- the next
-# client talks to whatever already owns the port, which is how 20000 rows once landed in a live
-# container's database.
+# A host port, so it must be verified free. A server that loses its bind does not stop; the next
+# client simply talks to whatever already owns the port, including a live database.
 QWP_PORT=$(vm_free_port)
 if ss -ltn 2>/dev/null | grep -q ":$QWP_PORT "; then
     echo "LOUD_FAILURE: host port $QWP_PORT is already bound; refusing to forward onto it"
@@ -78,8 +74,8 @@ vm_ssh "$P" "$KEY" "bash /opt/vmcrash/guest/prepare-device.sh --mode=log-writes"
     || { echo "LOUD_FAILURE: could not build the log-writes stack"; exit 1; }
 
 start_server() {
-    # prepare-device.sh leaves /mnt/qdb root-owned; the server runs as ubuntu and cannot create
-    # its db/ or conf/ there. Silent without this -- the server exits and only the guest log says why.
+    # prepare-device.sh leaves /mnt/qdb root-owned and the server runs as ubuntu, so without this
+    # it cannot create db/ or conf/ and exits with the reason only in the guest log.
     vm_ssh "$P" "$KEY" "sudo chown -R ubuntu /mnt/qdb" >/dev/null 2>&1 || true
     vm_ssh "$P" "$KEY" "setsid env QDB_CAIRO_COMMIT_MODE=$MODE \
         QDB_CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW=${WINDOW}us \
@@ -93,7 +89,7 @@ start_server() {
 }
 
 start_server || {
-    # CAPTURE THE REASON. A failure path that discards its own evidence costs a VM boot per guess.
+    # Capture the reason: a failure path that discards its evidence costs a VM boot per guess.
     echo "LOUD_FAILURE: server never came up in the guest"
     vm_ssh "$P" "$KEY" "tail -25 /mnt/qdb/server.log 2>/dev/null; echo '--- mount ---'; mount | grep qdb; ls -ld /mnt/qdb" 2>&1 | sed 's/^/    /' | tail -20
     exit 1
@@ -106,11 +102,10 @@ echo "  server reports cairo.commit.mode=$actual (requested $MODE)"
 [ "$actual" = "$MODE" ] || { echo "LOUD_FAILURE: server is in '$actual', run claims '$MODE'"; exit 1; }
 
 # ---- the client: a HOST process that outlives the cut --------------------------------------
-# reconnect_max_duration must exceed the whole outage (cut + replay + reboot + server start), or
-# the client gives up before the server returns and the test measures the client's patience
-# instead of its replay.
-# The client writes its own watermark file; it is a HOST process, so this lives on the host --
-# deliberately NOT on the crashed device, because the client's machine does not crash here.
+# reconnect_max_duration must exceed the whole outage (cut, replay, reboot, server start), or the
+# client gives up before the server returns and this measures the client's patience rather than
+# its replay. Its watermark file lives on the host, not on the crashed device, because the
+# client's machine is the one that does not crash.
 CLIENT_DIR="$RUN/client-state"
 mkdir -p "$CLIENT_DIR"
 java $JVM -cp "$JAR" \
@@ -141,9 +136,8 @@ echo "--- reboot on the REPLAYED disk, same forwarded port ---"
 rm -f "$RUN/overlay.qcow2"
 qemu-img create -f qcow2 -b "$BASE/golden.qcow2" -F qcow2 "$RUN/overlay.qcow2" >/dev/null
 P2=$(vm_free_port)
-# discard=unmap on the REPLAY boot only. The recording boot above must keep QEMU's default:
-# an unmapping discard issued while dm-log-writes is recording becomes a DISCARD entry in the
-# log and changes what this replay reconstructs.
+# discard=unmap on the replay boot only: while dm-log-writes is recording, an unmapping discard
+# becomes a DISCARD entry in the log and changes what this replay reconstructs.
 QDB_VM_DATA_DISCARD=unmap vm_boot "$RUN" "$RUN/overlay.qcow2" "$RUN/data.raw" "$P2" "" "$RUN/log.raw" "$QWP_PORT"
 vm_wait_ssh "$P2" "$KEY" 240 || { echo "LOUD_FAILURE: guest never rebooted"; exit 1; }
 vm_scp "$P2" "$KEY" "$JAR" /opt/vmcrash/benchmarks.jar
@@ -153,12 +147,10 @@ P="$P2"
 nflush=$(vm_ssh "$P" "$KEY" "sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --list | head -1" \
     | grep -oE '[0-9]+ flushes' | grep -oE '^[0-9]+')
 echo "  recorded $nflush flush boundaries; replaying to the last one"
-# RESET FIRST, and this driver is the one that most needs it. ARM A's number IS the claim --
-# "what the SERVER alone kept" -- and dm-log-writes passes writes through, so without the reset
-# /dev/vdb still holds every row the workload wrote AFTER the last flush boundary. Those rows
-# were never durable by this harness's own definition, and counting them into ARM A would
-# credit the server with data a real power cut would have destroyed, understating the store-
-# and-forward gap that ARM B is measuring against it.
+# Reset the device first. Arm A's number is the claim -- what the server alone kept -- and
+# dm-log-writes passes writes through, so /dev/vdb still holds every row written after the last
+# flush boundary. Counting those into arm A credits the server with data a real power cut would
+# have destroyed, understating the gap arm B measures against it.
 replay_reset_assert "$P" "$KEY" || { echo "LOUD_FAILURE: the device reset is not real; ARM A would count post-boundary rows"; exit 1; }
 vm_ssh "$P" "$KEY" "sudo umount /mnt/qdb 2>/dev/null; sudo dmsetup remove qdbdata 2>/dev/null; \
     $(replay_reset_cmd); \
@@ -171,10 +163,9 @@ start_server || {
     vm_ssh "$P" "$KEY" "tail -20 /mnt/qdb/server.log 2>/dev/null" 2>&1 | sed 's/^/    /' | tail -12
     exit 1
 }
-# COUNT ONLY THE PRE-CUT ID RANGE. The client is long-running and keeps ingesting through the
-# outage, so a raw count after reconnect mixes REPLAYED rows with NEWLY PRODUCED ones -- a first
-# run reported "40,867,000 rows recovered" when only a fraction were replays and the rest were
-# new data. Bounding both arms by id < SENT_BEFORE isolates what the replay actually restored.
+# Count only the pre-cut id range. The client keeps ingesting through the outage, so a raw count
+# after reconnect mixes replayed rows with newly produced ones; bounding both arms by
+# id < SENT_BEFORE isolates what the replay actually restored.
 count_precut() {
     curl -s -G "http://127.0.0.1:$QWP_PORT/exec" \
         --data-urlencode "query=select count() from t where id < $SENT_BEFORE" 2>/dev/null \
@@ -196,9 +187,9 @@ done
 rows_after_replay="$prev"
 echo "  ARM B (after reconnect+replay, pre-cut ids only): rows=${rows_after_replay:-?} of $SENT_BEFORE sent"
 
-# AT-LEAST-ONCE vs EXACTLY-ONCE. If the replay resends rows the server already committed and the
-# table has no dedup keys, the pre-cut range ends up with MORE rows than were ever sent. Measure
-# it rather than infer it: distinct ids vs total rows over the same range.
+# At-least-once against exactly-once: if the replay resends rows the server already committed and
+# the table has no dedup keys, the pre-cut range ends up with more rows than were ever sent.
+# Distinct ids against total rows over the same range measures that rather than inferring it.
 dup_total=$(curl -s -G "http://127.0.0.1:$QWP_PORT/exec" \
     --data-urlencode "query=select count() total, count_distinct(id) distinct_ids from t where id < $SENT_BEFORE" \
     2>/dev/null | grep -oE '\[\[[0-9]+,[0-9]+\]\]' | tr -d '[]')

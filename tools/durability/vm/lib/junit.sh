@@ -1,39 +1,22 @@
 #!/usr/bin/env bash
-# lib/junit.sh — JUnit XML for CI, ALONGSIDE the text log. Source this file; do not execute it.
+# lib/junit.sh — JUnit XML for CI, alongside the text log. Source this file; do not execute it.
 #
-# The text log stays exactly as it is. It is the evidence trail, and every time a result
-# needed explaining the explanation was in it. This is for the dashboard: without a
-# machine-readable file, a CI job shows a pass/fail exit code and a log blob -- no
-# per-boundary visibility, no trend, and no way to ask "boundary 13776 regressed between
-# build N and N+1", which is the question a durability sweep exists to answer.
-#
-# Shape, one <testcase> per verified boundary:
+# One <testcase> per verified boundary:
 #
 #     name      = "flush-13776"
 #     classname = "durability.adaptive.W50000.bitmap"
 #     failure   = the verdict line plus the DETAIL lines already captured in $OUTDIR
 #
-# NO_COMMIT MAPS TO <skipped>, NOT TO A PASS. A cut that landed before anything was committed
-# is a legitimate but UNINFORMATIVE sample. Counting it as a pass lets a run where most
-# boundaries measured nothing report as a wall of green -- the exact vacuity this harness
-# rejects everywhere else. run-fuzz.sh already tracks "N informative, M NO_COMMIT"; this
-# preserves that distinction where CI can see it.
+# NO_COMMIT maps to <skipped>, not to a pass: the cut landed before anything was committed, so
+# the boundary is a valid sample that measured nothing. Counting it as a pass would let a sweep
+# that measured nothing report as a wall of green.
 #
-# INSTRUMENT FAULTS ARE <error>, PRODUCT FAULTS ARE <failure>. "NOT_EVALUATED, the oracle never
-# reached a verdict" and "an acked transaction was lost" are different alarms and, for a
-# durability gate, the distinction decides whether to page someone. The token list is NOT here:
-# it is verdict_is_instrument_fault in lib/verdict.sh, next to verdict_is_pass, so this file
-# cannot drift from the rest of the harness about what a token means.
+# Instrument faults render as <error> and product faults as <failure>, because for a durability
+# gate that decides who gets paged. The token list lives in verdict_is_instrument_fault in
+# lib/verdict.sh, so this file cannot disagree with the rest of the harness about a token.
 #
-# The example above was MOUNT_FAILED until the NOT_EVALUATED split, which was exactly
-# backwards: MOUNT_FAILED is a PRODUCT finding (an ext4 that will not mount after a power cut
-# is the damage this
-# instrument hunts), and a reader following the old comment would have concluded it renders as
-# <error>. t12 asserts the opposite, which is how the contradiction surfaced.
-#
-# Written incrementally to a temp file and renamed at the end, for the reason a half-written report
-# established: a consumer must never see a half-written file, and a run killed mid-sweep
-# leaves no misleading partial result.
+# The report is written to a temp file and renamed into place, so a consumer never sees a
+# partial file and a run killed mid-sweep leaves no misleading result.
 
 # junit_begin FILE SUITE_NAME -> start a report.
 junit_begin() {
@@ -52,16 +35,9 @@ junit_begin() {
 
 # junit_property NAME VALUE -> record one fact about the run's identity.
 #
-# WHAT THIS IS FOR. The dashboard has to answer "a way to say 'boundary 13776 regressed between
-# build N and N+1'", and that is unanswerable from a report that does not name the build. The text
-# log names the artifact (run-flush-sweep.sh prints `product: dist=... recoveryPass=...`); the XML
-# named none of it, so the machine-readable half could not attribute a trend to anything. On a
-# GREEN product run the dist name appeared nowhere at all, because the only place it reached
-# was a failure body.
-#
-# THE SWEEP SUPPLIES THE VALUES; this file does not guess at them. Every fact here is already
-# held by the caller, and a second derivation is a second source of truth -- the drift pattern
-# this harness keeps paying for. So: a setter the sweep calls, not an environment scrape.
+# A trend cannot be attributed to a build the report does not name, so the identity has to reach
+# the XML rather than the text log alone. The caller supplies the values; deriving them a second
+# time here would be a second source of truth for facts the sweep already holds.
 junit_property() {  # NAME VALUE
     [ -n "${JUNIT_PROPS:-}" ] || return 0
     printf '      <property name="%s" value="%s"/>\n' \
@@ -70,10 +46,10 @@ junit_property() {  # NAME VALUE
 
 # junit_escape TEXT -> XML-safe text.
 #
-# & FIRST, or every entity emitted by the later rules gets its own ampersand escaped again
-# and the file is corrupt in a way that still parses. Control characters are stripped
-# because they are ILLEGAL IN XML 1.0 at any escaping -- and the engine's own log output,
-# which lands in these failure bodies, carries them.
+# The ampersand rule must run first, or the entities emitted by the later rules have their own
+# ampersands escaped again and the file corrupts in a way that still parses. Control characters
+# are stripped because XML 1.0 forbids them at any escaping, and the engine's log output carries
+# them into these failure bodies.
 junit_escape() {
     printf '%s' "$1" \
         | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g" \
@@ -82,18 +58,14 @@ junit_escape() {
 
 # junit_case CLASSNAME NAME VERDICT SECONDS [BODY]
 #
-# VERDICT is a token from lib/verdict.sh; the pass/fail decision is verdict_is_pass and the
-# alarm routing is verdict_is_instrument_fault, so this file cannot drift from the rest of the
-# harness about what counts as a pass or about who a red boundary blames.
+# VERDICT is a token from lib/verdict.sh, which also owns the pass decision (verdict_is_pass)
+# and the alarm routing (verdict_is_instrument_fault).
 junit_case() {
     local classname="$1" name="$2" verdict="$3" secs="${4:-0}" body="${5:-}"
     JUNIT_TESTS=$((JUNIT_TESTS + 1))
     {
-        # $secs IS ESCAPED LIKE EVERY OTHER ATTRIBUTE. It was the one interpolated raw, on the
-        # reasoning that a caller always passes arithmetic -- but an attribute that is exempt
-        # from escaping only because of what its callers currently do is one call site away
-        # from producing a file the dashboard rejects WHOLE. A malformed time= does not lose
-        # one boundary, it loses the report.
+        # $secs is escaped like every other attribute, even though today's callers pass
+        # arithmetic: a malformed attribute does not lose one boundary, it loses the report.
         printf '    <testcase classname="%s" name="%s" time="%s"' \
             "$(junit_escape "$classname")" "$(junit_escape "$name")" "$(junit_escape "$secs")"
         if [ "$verdict" = "NO_COMMIT" ]; then
@@ -103,17 +75,10 @@ junit_case() {
         elif verdict_is_pass "$verdict"; then
             printf '/>\n'
         else
-            # THE MESSAGE COMES FROM verdict_line, not from a local copy of it. This file used
-            # to re-implement it as `grep -vE '^DETAIL' | tail -1`, which is the THIRD copy and
-            # was missing the blank-line filter, so a body ending in a blank line lost its
-            # message.
-            #
-            # verdict_line ALONE IS NOT ENOUGH, and t09 is what established that: a body made
-            # ENTIRELY of DETAIL lines filters down to nothing under either implementation, so
-            # the message is empty and the dashboard shows a red boundary with no reason on it.
-            # That is reachable -- guest/verify.sh:116 documents the JVM dying with only DETAIL
-            # emitted. So fall back to the token and say WHY there is no line, rather than
-            # emitting an empty attribute.
+            # The message comes from verdict_line rather than a local reimplementation of it.
+            # A body made entirely of DETAIL lines filters down to nothing, which is reachable
+            # when the JVM dies after emitting only evidence, so fall back to the token and say
+            # why there is no line instead of emitting an empty attribute.
             local message
             message="$(verdict_line "$body")"
             [ -n "$message" ] || message="$verdict (no verdict line in the output; the body is evidence only)"
@@ -138,58 +103,42 @@ junit_case() {
 junit_finish() {
     [ -n "${JUNIT_TMP:-}" ] || return 0
     local elapsed=$(( $(date +%s) - JUNIT_STARTED ))
-    # ROOT IS <testsuite>, NOT <testsuites>. Checked against the JUnit XSD that
-    # PublishTestResults@2 names as its supported format (windyroad JUnit.xsd): inside a
-    # <testsuites> aggregate, every child testsuite carries package= and id= as REQUIRED
-    # attributes, and we emitted neither -- so the wrapper made the file invalid rather than
-    # more standard. The schema declares testsuite as a root element in its own right, one
-    # sweep writes exactly one suite, and ADO's parser has documented trouble with nesting
-    # (azure-pipelines-tasks#7659, #8305). A report the publisher rejects is worth less than
-    # no report, because the job still goes green and the dashboard shows nothing.
+    # The root is <testsuite>, not a <testsuites> aggregate. The JUnit XSD that
+    # PublishTestResults@2 accepts (windyroad JUnit.xsd) declares testsuite as a root element in
+    # its own right, and requires package= and id= on every child of an aggregate. One sweep
+    # writes one suite, so the wrapper would only add attributes to get wrong.
     local host stamp
     host=$(hostname 2>/dev/null || echo localhost)
-    # timestamp= is REQUIRED and its XSD pattern is ISO8601 WITHOUT a timezone, so the trailing
-    # Z that $STAMP carries elsewhere in the harness must be stripped here. Keeping the Z was
-    # the kind of detail that fails validation silently, long after the run that produced it.
+    # timestamp= is required, and its XSD pattern is ISO8601 without a timezone, so the trailing
+    # Z that $STAMP carries elsewhere in the harness must not appear here.
     stamp=$(date -u +%Y-%m-%dT%H:%M:%S)
     {
         printf '<?xml version="1.0" encoding="UTF-8"?>\n'
-        # errors= IS NOW REAL. It was hardcoded to 0, so an instrument fault and a lost
-        # transaction were the same number on the dashboard.
-        # timestamp= and hostname= are required by the schema and were both missing. hostname
-        # also answers "which agent produced this?", which on a one-agent pool is the question
-        # asked the moment a result looks odd.
+        # timestamp= and hostname= are required by the schema; hostname also names the agent
+        # that produced the run, which is the first question asked when a result looks odd.
         printf '<testsuite name="%s" timestamp="%s" hostname="%s" tests="%d" failures="%d" errors="%d" skipped="%d" time="%d">\n' \
             "$(junit_escape "$JUNIT_SUITE")" "$stamp" "$(junit_escape "$host")" \
             "$JUNIT_TESTS" "$JUNIT_FAILURES" "$JUNIT_ERRORS" \
             "$JUNIT_SKIPPED" "$elapsed"
-        # <properties> FIRST, before any <testcase>. The JUnit XSD models testsuite as a
-        # SEQUENCE (properties, testcase*, system-out, system-err) and NONE of the four is
-        # optional in the windyroad schema PublishTestResults@2 names -- they carry no
-        # minOccurs="0". So all four are emitted UNCONDITIONALLY, empty where there is nothing
-        # to say. Gating them on content was the bug: a sweep with no properties, and every
-        # sweep regardless for system-err, produced a file that fails validation while t09
-        # stayed green, because t09 checked attributes by hand and never ran a validator.
+        # The XSD models testsuite as the sequence (properties, testcase*, system-out,
+        # system-err), and none of the four carries minOccurs="0". All four are therefore
+        # emitted unconditionally, empty where there is nothing to say; gating one on content
+        # produces a report the publisher rejects, and it rejects silently.
         printf '    <properties>\n'
         [ -s "${JUNIT_PROPS:-/dev/null}" ] && cat "$JUNIT_PROPS"
         printf '    </properties>\n'
         cat "$JUNIT_TMP"
-        # THE IDENTITY, AGAIN, IN system-out. Not redundancy for its own sake: ADO's JUnit
-        # parser has limited support for <properties> and may never surface it, and an identity
-        # the dashboard cannot show does not answer "which build produced this?" when someone
-        # is staring at a red boundary. system-out is part of the same schema sequence, it is
-        # displayed per suite, and it costs a few lines. The properties block stays for
-        # consumers that do read it.
+        # The identity is repeated here because ADO's JUnit parser has limited support for
+        # <properties> and may never surface it, while system-out is displayed per suite. The
+        # properties block stays for consumers that do read it.
         printf '    <system-out>'
         if [ -s "${JUNIT_PROPS:-/dev/null}" ]; then
             sed -e 's/.*name="//' -e 's/" value="/=/' -e 's/"\/>[[:space:]]*$//' "$JUNIT_PROPS" \
                 | sed 's/^[[:space:]]*//'
         fi
         printf '</system-out>\n'
-        # system-err IS REQUIRED TOO, and was never emitted at all. The harness routes its
-        # diagnostics to the text log and to per-case failure bodies, so there is nothing to
-        # put here -- but an absent required element invalidates the whole report, and the
-        # publisher's rejection is silent.
+        # system-err is required and stays empty: the harness routes diagnostics to the text log
+        # and to per-case failure bodies.
         printf '    <system-err></system-err>\n'
         printf '</testsuite>\n'
     } > "${JUNIT_FILE}.part.$$"

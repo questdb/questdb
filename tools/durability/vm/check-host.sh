@@ -1,55 +1,50 @@
 #!/usr/bin/env bash
 # check-host.sh — verify this host can run the VM crash harness.
 #
-# Exits 0 if ready; non-zero naming the FIRST missing prerequisite. Every other
-# script in this directory calls it before doing anything, so a half-configured
-# host fails with a specific message rather than a confusing downstream error.
+# Exits 0 if ready, non-zero naming the first missing prerequisite. Every other script here
+# calls it first, so a half-configured host fails with a specific message rather than a
+# confusing downstream error.
 #
-# Nothing here needs root. The harness deliberately requires no host privilege:
-# everything that needs it happens inside the guest. See README.md.
+# Nothing here needs root: everything requiring privilege happens inside the guest.
 set -uo pipefail
 
 fail() { echo "NOT READY: $*" >&2; exit 1; }
 
-# 1. KVM, usable WITHOUT sudo. On this class of host /dev/kvm carries an ACL
-#    granting the operator rw directly; kvm group membership works too.
+# 1. KVM, usable without sudo, via an ACL granting the operator rw on /dev/kvm or kvm group
+#    membership.
 [ -c /dev/kvm ] || fail "/dev/kvm is absent — is this bare metal with virtualisation enabled in firmware?"
 { [ -r /dev/kvm ] && [ -w /dev/kvm ]; } || \
     fail "/dev/kvm is not readable+writable by $(id -un) — need an ACL grant (setfacl -m u:$(id -un):rw /dev/kvm) or kvm group membership"
 
-# 2. Hardware virtualisation. Without this QEMU falls back to emulation, which
-#    is slow enough to change the timing of every crash point.
+# 2. Hardware virtualisation. Without it QEMU falls back to emulation, which is slow enough to
+#    change the timing of every crash point.
 grep -qE '(vmx|svm)' /proc/cpuinfo || fail "CPU exposes neither vmx nor svm — hardware virtualisation unavailable"
 
-# 2b. The disk cache mode. lib/qemu.sh refuses a bad value at boot time; this is the
-#     same check at the GATE, so the run stops before it creates disks and boots a VM.
-#     Both non-default values produce a FALSE GREEN that no other guard can detect --
-#     see the long comment in lib/qemu.sh. Checked here because check-host.sh is the
-#     documented "names the first thing wrong" entry point.
+# 2b. The disk cache mode. Any value but none produces a false green that no other guard can
+#     detect (see lib/qemu.sh). Refused again at boot time; repeated here so a run stops before
+#     it creates disks and boots a VM.
 if [ -n "${QDB_VM_DATA_CACHE:-}" ] && [ "${QDB_VM_DATA_CACHE}" != "none" ] \
    && [ "${QDB_VM_ALLOW_UNSAFE_CACHE:-0}" != "1" ]; then
     fail "QDB_VM_DATA_CACHE=${QDB_VM_DATA_CACHE} produces a false green (see lib/qemu.sh); unset it, or set QDB_VM_ALLOW_UNSAFE_CACHE=1 to demonstrate the broken configuration"
 fi
 
-# 3. Tooling. genisoimage builds the cloud-init seed, so cloud-image-utils is
-#    not required.
+# 3. Tooling. genisoimage builds the cloud-init seed, so cloud-image-utils is not required.
 for c in qemu-system-x86_64 qemu-img ssh scp ssh-keygen genisoimage curl; do
     command -v "$c" >/dev/null 2>&1 || \
         fail "missing command: $c  (install: sudo apt install qemu-system-x86 qemu-utils genisoimage)"
 done
 
-# 4. Run state with real headroom: 40G data + 20G overlay per run, and failed
-#    runs KEEP their disks for inspection, so budget for several.
+# 4. Run state with real headroom: 40G data + 20G overlay per run, and a failed run keeps its
+#    disks for inspection, so budget for several.
 STATE_DIR="${QDB_VMCRASH_STATE:-/data/qdb-vmcrash}"
 mkdir -p "$STATE_DIR" || fail "cannot create state dir $STATE_DIR"
 avail_gb=$(df -BG --output=avail "$STATE_DIR" 2>/dev/null | tail -1 | tr -dc '0-9')
 [ "${avail_gb:-0}" -ge 200 ] || fail "only ${avail_gb:-0}G free at $STATE_DIR; need >= 200G"
 
-# 5. Host-safety tripwire. The harness must never touch a host loop device, and
-#    on a shared box one may well be a live database's filesystem. We do not
-#    need loop devices at all (the guest's data disk is raw /dev/vdb), so this
-#    is purely informational — but it is worth printing, because a future edit
-#    that reaches for losetup would be destroying real data.
+# 5. Host-safety tripwire, informational only: the harness needs no loop device at all (the
+#    guest's data disk is raw /dev/vdb), and on a shared box a host loop device may be a live
+#    database's filesystem. Printed because a future edit reaching for losetup would destroy
+#    real data.
 if command -v losetup >/dev/null 2>&1; then
     in_use=$(losetup -a 2>/dev/null | wc -l)
     [ "${in_use:-0}" -gt 0 ] && \
@@ -59,17 +54,13 @@ fi
 qemu_ver=$(qemu-system-x86_64 --version 2>/dev/null | head -1 | awk '{print $4}')
 echo "READY: kvm ok (no sudo), qemu ${qemu_ver}, ${avail_gb}G free at $STATE_DIR"
 
-# ---- WHY THERE IS NO PORT GUARD HERE -------------------------------------------
-# A host_port_free() helper used to sit at this point in the file, and it was DEAD: every
-# caller runs this script with `bash check-host.sh`, never sources it, so a function defined
-# here is unreachable by construction. It is deleted rather than left as decoration, because
-# a guard that cannot fire reads as protection that does not exist.
+# There is deliberately no host port guard here: this script is executed, never sourced, so a
+# helper defined at this point would be unreachable by construction.
 #
-# The rule it was written for still holds: the harness must never bind a HOST service port. A
-# server that fails to bind does not stop -- the next client talks to whatever already owns
-# the port. That happened: a probe server on 19000 silently lost the bind to a published
-# container port and the client ingested 20000 rows into a LIVE user database. Today's arms
-# are structurally safe (the guest binds its own 9000 INSIDE the VM, and qemu takes an
-# ephemeral forward from vm_free_port). Anything that starts binding on the host needs a real
-# check, in the script that does the binding, against `ss -ltn` rather than `ps` -- containers
-# publish on 127.0.0.1 and never appear as "our" processes.
+# The rule it would enforce still holds. The harness must never bind a host service port,
+# because a server that fails to bind does not stop -- the next client talks to whatever already
+# owns the port, which has meant a test client ingesting into a live user database. Today's arms
+# are structurally safe: the guest binds its own 9000 inside the VM and qemu takes an ephemeral
+# forward from vm_free_port. Anything that starts binding on the host needs the check in the
+# script doing the binding, against `ss -ltn` rather than `ps`, since containers publish on
+# 127.0.0.1 and never appear as "our" processes.

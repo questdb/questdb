@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 # t08 — the state reaper keeps what it must and deletes what it should.
 #
-# NO VM, NO ROOT, NO REAL DISKS: this builds a fake state directory in $TMPDIR and drives
-# reap-state.sh against it. Seconds, not minutes.
+# No VM, no root, no real disks: this builds a fake state directory in $TMPDIR and drives
+# reap-state.sh against it.
 #
-# This test exists because the script it tests runs `rm -rf` on directories derived from an
-# environment variable. Every guard below is one that, if it silently stopped working, would
-# destroy something. The harness's rule for the cut and the oracle applies to the reaper too:
-# a guard that has never been observed to fire is not a guard.
+# The script under test runs `rm -rf` on directories derived from an environment variable, so
+# every guard below is one that would destroy something if it silently stopped working.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,8 +37,8 @@ mkrun() {  # STATE NAME AGE_MINUTES
 echo "t08 — state reaper"
 
 # ---- 1. refuses a directory that is not a state directory -------------------------------
-# The first guard, and the one that matters most: this script deletes paths under whatever
-# it is pointed at. A typo'd or empty QDB_VMCRASH_STATE must not be survivable.
+# The reaper deletes paths under whatever it is pointed at, so a typo'd or empty
+# QDB_VMCRASH_STATE must not be survivable.
 NOTSTATE="$TMP/not-a-state-dir"
 mkdir -p "$NOTSTATE/run-precious"
 echo "important" > "$NOTSTATE/run-precious/data"
@@ -76,16 +74,15 @@ check "apply leaves exactly --keep directories" "$(ls -d "$S"/run-* "$S"/sweep-*
 [ -d "$S/run-a" ]   && bad "oldest survived"        || ok "oldest reaped (run-a)"
 
 # ---- 4. the cheap evidence is archived BEFORE the disks go ------------------------------
-# A reaper that deletes first and uploads afterwards has already destroyed the thing the
-# CI artifact was for.
+# Deleting first and archiving afterwards would destroy what the archive is for.
 [ -f "$S/evidence/run-a/console.log" ] && ok "console.log archived for a reaped run" \
     || bad "console.log lost when the run was reaped"
 [ -f "$S/evidence/run-a/cmdline" ] && ok "cmdline archived for a reaped run" \
     || bad "cmdline lost when the run was reaped"
 
 # ---- 5. a LIVE run is never reaped, however old -----------------------------------------
-# The harness promises one VM at a time, but a human or a pipeline can start a run while
-# this is sweeping. Deleting the disks under a live qemu corrupts the run it is measuring.
+# A human or a pipeline can start a run while this is sweeping, and deleting the disks under a
+# live qemu corrupts the run it is measuring.
 mkrun "$S" run-live 999
 sleep 300 &
 SLEEP_PID=$!
@@ -98,9 +95,8 @@ case "$out" in *"LIVE"*) ok "live skip is reported, not silent" ;;
 kill "$SLEEP_PID" 2>/dev/null; SLEEP_PID=""
 
 # ---- 6. a STALE pid file does not protect a dead run ------------------------------------
-# The mirror of 5: qemu.pid outlives the process it names, and a reaper that treats any
-# pid file as "live" would never reclaim anything after an abnormal exit -- which is
-# precisely the case this script exists for.
+# The mirror of 5: qemu.pid outlives the process it names, so treating any pid file as live
+# would leave an abnormal exit unreclaimed forever.
 mkrun "$S" run-stale 998
 echo "999999" > "$S/run-stale/qemu.pid"     # a pid that is not running
 bash "$REAPER" --state="$S" --keep=0 --apply >/dev/null 2>&1
@@ -123,10 +119,8 @@ case "$out" in *"nothing to reap"*) ok "empty state dir says so" ;;
                *) bad "unclear output for an empty state dir: $out" ;; esac
 
 # ---- 9. a SYMLINKED state directory is reaped, not silently skipped ---------------------
-# `find DIR` does not descend a DIR that is a symlink, so the reaper used to print
-# "nothing to reap" and exit 0 while the disk stayed full -- the exact outage it exists to
-# prevent, wearing a green tick. Not hypothetical: this layout is symlink-heavy by design
-# (docs/, scratch/, memory/) and the CI plan puts the state dir on a mounted volume.
+# `find DIR` does not descend a DIR that is itself a symlink, so a reaper that does not resolve
+# the path reports "nothing to reap" and exits 0 while the disk stays full.
 S3="$TMP/linked-real"; mkstate "$S3"
 mkrun "$S3" run-linked-a 50
 mkrun "$S3" run-linked-b 40
@@ -141,10 +135,8 @@ case "$out" in *"$S3"*) ok "symlinked state dir logs the resolved path" ;;
                *) bad "banner still shows the link, not the target: $out" ;; esac
 
 # ---- 10. every prefix this harness creates is a candidate -------------------------------
-# Covering run-*/sweep-* alone left t07-*, t10-*, sfreplay-*, st8-* and preflight-* to
-# accumulate untouched. t07 and t10 keep 40 G + 60 G EACH on failure and the CI plan runs
-# both every night, so a week of red nights fills the agent through the one door the reaper
-# never opened. One case per prefix, named after its creator.
+# Each run-directory prefix needs its own case: a prefix missing from the reaper's candidate
+# list accumulates 40 G + 60 G of kept disks per failed run and nothing ever reclaims it.
 S4="$TMP/prefixes"; mkstate "$S4"
 for p in run-x sweep-x sfreplay-1 t07-2 t10-3 st8-4 preflight-real-5; do mkrun "$S4" "$p" 60; done
 bash "$REAPER" --state="$S4" --keep=0 --apply >/dev/null 2>&1
@@ -157,10 +149,10 @@ done
     || bad "THE GOLDEN IMAGE WAS DELETED"
 
 # ---- 11. an rm that fails is a FAILED reap, not a green one -----------------------------
-# The reaper used to exit 0 after a failed rm, which made it incapable of failing: the disk
-# keeps filling, the nightly stays green, and the truth arrives days later as a check-host.sh
-# free-space gate that reads as an infrastructure outage. 70 (EX_SOFTWARE) is deliberately
-# distinct from the 64 refusal: "I could not" and "I refused" need different reactions.
+# Exiting 0 after a failed rm leaves the disk filling while the job stays green, and the truth
+# arrives days later as a free-space gate that reads as an infrastructure outage. 70
+# (EX_SOFTWARE) stays distinct from the 64 refusal: "I could not" and "I refused" need
+# different reactions.
 S5="$TMP/rmfail"; mkstate "$S5"
 mkrun "$S5" run-undeletable 60
 echo "payload" > "$S5/run-undeletable/data"
@@ -172,10 +164,9 @@ case "$out" in *"could not be removed"*) ok "the failure is named on stderr" ;;
                *) bad "a failed rm was silent: $out" ;; esac
 
 # ---- 12. sweep-out/ and evidence/ are reclaimed BY AGE ----------------------------------
-# Neither is run state, so neither is reaped by count -- and nothing reclaimed them at all,
-# so both grew forever. sweep-out/<cell>/ gains one flush-N.out per boundary per sweep, and
-# evidence/<run>/ is written by this script and excluded from its own candidate list, so the
-# CI plan's "publish, then reap" would never reclaim what it had just published.
+# Neither is run state, so neither is reaped by count. sweep-out/<cell>/ gains one flush-N.out
+# per boundary per sweep and evidence/<run>/ is excluded from the candidate list, so without an
+# age rule both grow forever.
 S6="$TMP/ageing"; mkstate "$S6"
 mkdir -p "$S6/sweep-out/cell-ancient" "$S6/sweep-out/cell-stale" "$S6/sweep-out/cell-fresh"
 mkdir -p "$S6/evidence/run-ancient" "$S6/evidence/run-fresh"
@@ -199,18 +190,17 @@ check "age reclaim exits 0" "$rc" "0"
     || ok "age reclaim is not limited to one entry per parent"
 [ -d "$S6/evidence/run-ancient" ] && bad "90-day-old evidence archive survived" \
     || ok "evidence/ archive older than --keep-days is reaped"
-# NEVER THE NEWEST, whatever its age: a quiet agent must keep one last-known-good sample.
+# Never the newest, whatever its age: a quiet agent must keep one last-known-good sample.
 [ -f "$S6/sweep-out/cell-fresh/flush-1.out" ] && ok "the newest sweep-out archive is kept" \
     || bad "the newest sweep-out archive was deleted"
 [ -f "$S6/evidence/run-fresh/console.log" ] && ok "the newest evidence archive is kept" \
     || bad "the newest evidence archive was deleted"
-# A sweep IN FLIGHT writes a flush-N.out per boundary, so its mtime is seconds old. There is
-# no qemu.pid to consult here, and the threshold is what protects it -- prove that it does.
+# A sweep in flight writes a flush-N.out per boundary, so its mtime is seconds old and the age
+# threshold is the only thing protecting it -- there is no qemu.pid here to consult.
 #
-# THE IN-FLIGHT DIRECTORY MUST NOT BE THE NEWEST ONE. Two guards cover this directory, the age
-# threshold and never-the-newest, and while the in-flight sweep was also the newest entry each
-# one masked the other's mutation: deleting EITHER guard left t08 green. Adding a newer entry
-# after it strips away the newest-guard and leaves the threshold alone under test.
+# The in-flight directory must not be the newest one. Two guards cover it, the age threshold and
+# never-the-newest, and while it is also the newest each guard masks mutations of the other. A
+# newer entry after it strips the newest-guard away and leaves the threshold alone under test.
 mkdir -p "$S6/sweep-out/cell-inflight"; echo v > "$S6/sweep-out/cell-inflight/flush-1.out"
 mkdir -p "$S6/sweep-out/cell-older"; touch -d '-40 days' "$S6/sweep-out/cell-older"
 mkdir -p "$S6/sweep-out/cell-newest"; touch "$S6/sweep-out/cell-newest"
@@ -218,10 +208,9 @@ bash "$REAPER" --state="$S6" --keep=0 --keep-days=14 --apply >/dev/null 2>&1
 [ -f "$S6/sweep-out/cell-inflight/flush-1.out" ] && ok "a sweep in flight is protected by its mtime" \
     || bad "AN IN-FLIGHT SWEEP'S OUTPUT WAS DELETED"
 
-# ...and the mirror: when EVERY archive is older than the threshold, the newest is still kept.
-# This is the only shape in which never-the-newest is the guard doing the work -- above, the age
-# threshold would have spared a fresh entry anyway. A quiet agent, or one returning from a long
-# gap, must not be left with nothing to compare against.
+# ...and the mirror: when every archive is older than the threshold, the newest is still kept.
+# This is the only shape in which never-the-newest is the guard doing the work, since above the
+# age threshold would have spared a fresh entry anyway.
 S7="$TMP/all-old"; mkstate "$S7"
 mkdir -p "$S7/sweep-out/cell-90" "$S7/sweep-out/cell-80" "$S7/sweep-out/cell-70"
 for a in 90 80 70; do echo v > "$S7/sweep-out/cell-$a/flush-1.out"; touch -d "-$a days" "$S7/sweep-out/cell-$a"; done
@@ -231,10 +220,9 @@ bash "$REAPER" --state="$S7" --keep=0 --keep-days=14 --apply >/dev/null 2>&1
 check "all-stale parent keeps exactly one archive" \
     "$(find "$S7/sweep-out" -mindepth 1 -maxdepth 1 -type d | wc -l)" "1"
 # --keep-days=0 means "everything but the newest", and must still spare the newest. The explicit
-# mtimes are not decoration: with a 0-day cutoff of "now" and second-granularity mtimes, a
-# directory this test created moments ago ties with the cutoff and makes the assertion a coin
-# flip. Distinct ages also fix WHICH one is the newest, so the survivor is named, not whichever
-# the filesystem happened to stamp last.
+# mtimes are load-bearing: with a 0-day cutoff of "now" and second-granularity mtimes a
+# directory created moments ago ties with the cutoff, and distinct ages also fix which entry is
+# the newest so the survivor can be named.
 touch -d '-3 minutes' "$S6/sweep-out/cell-fresh"
 touch -d '-2 minutes' "$S6/sweep-out/cell-inflight"
 touch -d '-1 minute'  "$S6/sweep-out/cell-newest"

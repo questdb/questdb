@@ -1,74 +1,46 @@
 #!/usr/bin/env bash
-# t06 — dm-log-writes replay: validate the parser AND the boundary semantics.
+# t06 — dm-log-writes replay: validate the parser and the boundary semantics.
 #
-# WHAT THIS PROVES
-#   Replaying to flush N reconstructs the device as it stood at flush N, and
-#   EXCLUDES everything written after it.
+# Proves that replaying to flush N reconstructs the device as it stood at flush N and excludes
+# everything written after it. run-flush-sweep.sh depends on that property: if an earlier
+# boundary leaked later writes, every enumerated crash point would be a blend of states that
+# never existed on any real machine.
 #
-# That is exactly the property run-flush-sweep.sh depends on. If an earlier
-# boundary leaked later writes, every enumerated crash point would be a blend of
-# states that never existed on any real machine, and its verdicts would be
-# fiction.
+# Method: write two files, each fsync'd, and use the replay itself as the instrument. Find the
+# first boundary at which each appears. `first` must appear strictly before `second`, and
+# `second` must never appear at a boundary where `first` is absent. Asserting instead that an
+# unflushed write is discarded does not work, because ext4 flushes it anyway: the O_DIRECT path
+# forces a journal commit carrying a FLUSH, a periodic journal commit covers a pause, and
+# crashing immediately means dm-log-writes' kthread never records the write at all.
 #
-# HOW -- and why not the obvious way
-#   Earlier versions tried to manufacture an "at the device but unflushed" write
-#   and assert it was discarded. That kept testing the harness's ability to
-#   create that state rather than the replay's correctness, and all three routes
-#   failed for different reasons (each measured, not assumed):
+# TWO RESET REGIMES. The device must be cleared before each replay, because dm-log-writes passes
+# writes through: /dev/vdb still holds the final crashed state and a replay can add writes but
+# never revert them.
 #
-#     * O_DIRECT -- ext4 forces a journal commit for the O_DIRECT path, and the
-#       commit carries a FLUSH covering the write. Seen directly in the log with
-#       marks bracketing it. commit=3600 does not help: not time-driven.
-#     * crash immediately -- dm-log-writes queues entries to a kthread, so the
-#       write is never recorded at all and its absence proves nothing.
-#     * pause first -- a periodic journal commit flushes it.
+#   pass A  replay_reset_cmd(), whatever the sweep uses, so this guard certifies the property
+#           under the instrument's own regime rather than a friendlier one.
+#   pass B  the same answers after a full dd zero: a different mechanism, in a different layer,
+#           with no discard involved.
 #
-#   So instead: write TWO files, each fsync'd, and use the replay itself as the
-#   instrument. Find the first boundary at which each appears. If boundaries work,
-#   `first` must appear strictly before `second`, and `second` must never appear
-#   at a boundary where `first` is absent. No exotic state required, and it tests
-#   the property the sweep relies on instead of a proxy for it.
+# Pass B covers a common-mode fault pass A cannot see. If the reset silently does nothing, the
+# sweep and t06 are wrong in the same direction and t06 still goes green. replay_reset_assert()
+# below is the first defence, but it samples one MiB at one offset, so a partial reset passes it
+# and still leaves residue where the filesystem reads it. The assert proves the reset fires;
+# pass B proves the answer does not depend on which reset fired.
 #
-# TWO RESET REGIMES, AND WHY THIS GUARD NEEDS BOTH
-#   The device must be cleared before each replay -- dm-log-writes passes writes
-#   THROUGH, so /dev/vdb still holds the final crashed state and a replay can add
-#   writes but never revert them (lib/qemu.sh, replay_reset_cmd).
-#
-#   PASS A uses replay_reset_cmd() -- whatever run-flush-sweep.sh uses. That is not
-#   a preference, it is the whole point of a guard: t06 certifies the property the
-#   INSTRUMENT relies on, so it must certify it under the INSTRUMENT'S regime. When
-#   this test wiped 64 MiB of a 4 GiB device and the sweep wiped nothing, a green
-#   t06 said nothing whatever about a sweep result.
-#
-#   PASS B re-derives the same two answers after a FULL dd zero -- a different
-#   mechanism, in a different layer, with no discard involved.
-#
-#   Pass B exists because of a COMMON-MODE FAULT that pass A structurally cannot
-#   see. If the reset silently does nothing, the sweep is wrong and t06 is wrong in
-#   the SAME direction, and t06 still goes green. replay_reset_assert() is the first
-#   line of defence and runs below, but it samples ONE MiB at ONE offset: a PARTIAL
-#   reset -- a discard honoured for some of the device and dropped for the rest --
-#   passes that assert and still leaves residue where the filesystem will read it.
-#   Two independent mechanisms agreeing on the boundary answer is the check that
-#   actually covers it. The assert proves the reset fires; pass B proves the answer
-#   does not depend on which reset fired.
-#
-#   Pass B is bounded to the four boundaries that PIN the two answers -- first_at,
-#   first_at-1, second_at, second_at-1 -- not a second full scan. Those four are
-#   sufficient: "first appears at N" is exactly "present at N, absent at N-1". A
-#   full second scan would multiply a 4 GiB dd by every boundary in the log for no
-#   extra information.
+# Pass B is bounded to the four boundaries that pin the two answers, since "first appears at N"
+# is exactly "present at N, absent at N-1". A second full scan would multiply a 4 GiB dd by
+# every boundary in the log for no extra information.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../lib/qemu.sh
 source "$HERE/lib/qemu.sh"
 
-# THE CROSS-CHECK VERDICT, as a pure function so it can be exercised without a VM.
-# Reads "LABEL EXPECTED ACTUAL" triples on stdin; echoes OK, or one line per
-# disagreement. Kept separate from the ssh plumbing for one reason: every other
-# assertion in this file needs a booted guest to run at all, so a mistake in the
-# comparison itself could only be found by burning a VM cycle. `--self-test`
-# below drives it with fixtures in about a second.
+# The cross-check verdict, as a pure function so it can be exercised without a VM. Reads
+# "LABEL EXPECTED ACTUAL" triples on stdin; echoes OK, or one line per disagreement. Kept out of
+# the ssh plumbing because every other assertion here needs a booted guest, so a mistake in the
+# comparison itself would otherwise cost a VM cycle to find. `--self-test` drives it with
+# fixtures in about a second.
 t06_crosscheck() {
     local label expected actual bad=0
     while read -r label expected actual; do
@@ -83,9 +55,8 @@ t06_crosscheck() {
 }
 
 if [ "${1:-}" = "--self-test" ]; then
-    # Fixtures, not a booted guest. `if ! out=$(...)` rather than `out=$(...) && ...`: the
-    # second form's behaviour under `set -e` when the assignment fails is exactly the kind of
-    # subtlety that makes a test quietly stop running half its assertions.
+    # Fixtures, not a booted guest. `if out=$(...)` rather than `out=$(...) && ...`, because the
+    # second form under `set -e` can abandon the remaining assertions when the assignment fails.
     rc=0
     ok=0;   if out=$(printf 'first@7 1 1\nfirst@6 0 0\n' | t06_crosscheck); then ok=1; fi
     [ "$ok" -eq 1 ] || { echo "FAIL self-test: agreeing regimes returned failure"; rc=1; }
@@ -95,8 +66,8 @@ if [ "${1:-}" = "--self-test" ]; then
     [ "$ok" -eq 0 ] || { echo "FAIL self-test: a disagreement returned success"; rc=1; }
     case "$out" in *"MISMATCH first@7"*) ;; *) echo "FAIL self-test: disagreement not named (got '$out')"; rc=1 ;; esac
 
-    # A good triple AFTER a bad one must not clear the verdict, and the named line must be
-    # the offending one -- a reporter that names the last triple it saw is worse than none.
+    # A good triple after a bad one must not clear the verdict, and the line named must be the
+    # offending one rather than the last one seen.
     ok=0;   if out=$(printf 'a 1 1\nb 0 1\nc 1 1\n' | t06_crosscheck); then ok=1; fi
     [ "$ok" -eq 0 ] || { echo "FAIL self-test: one bad triple among good ones returned success"; rc=1; }
     case "$out" in *"MISMATCH b"*) ;; *) echo "FAIL self-test: the bad triple was not the one named (got '$out')"; rc=1 ;; esac
@@ -109,25 +80,23 @@ fi
 STATE_DIR="${QDB_VMCRASH_STATE:-/data/qdb-vmcrash}"
 BASE="$STATE_DIR/base"; KEY="$BASE/id_ed25519"
 RUN="$STATE_DIR/t06"; rm -rf "$RUN"; mkdir -p "$RUN"
-# Seven of this file's exit paths sit between the replay boot and the verdict, and none of them
-# killed the VM: only the phase-one kill and the success path did. Two failing runs during the
-# reset work left a live qemu each, which also makes the run dir unreapable for good. Armed here
-# rather than after the boot, so an early bail cannot outrun it.
+# Many exit paths sit between the replay boot and the verdict. A bail that leaves a live qemu
+# also makes the run dir unreapable for good, so this is armed before the boot rather than after
+# it, where an early bail could outrun it.
 vm_kill_on_exit "$RUN"
 
 qemu-img create -f qcow2 -b "$BASE/golden.qcow2" -F qcow2 "$RUN/overlay.qcow2" >/dev/null
-# ONE definition of the data device's size: it is the truncate argument AND pass B's dd
-# count. Two copies would drift, and a dd count short of the device is exactly the weak
-# wipe this revision removes (the old one cleared 64 MiB of 4 GiB, so group-1+ ext4
-# metadata survived and the guard was weaker than it read).
+# One definition of the data device's size: the truncate argument and pass B's dd count. A dd
+# count short of the device leaves later ext4 group metadata intact, which makes pass B a weaker
+# wipe than it reads as.
 DATA_MB=4096
 truncate -s "${DATA_MB}M" "$RUN/data.raw"
 truncate -s 4G "$RUN/log.raw"
 
 P=$(vm_free_port)
-# The RECORDING boot takes the default discard=ignore. An unmapping discard issued here --
-# by mkfs, say -- would be recorded by dm-log-writes as a DISCARD entry and change what the
-# replay later reconstructs. Only the replay boot below opts in.
+# The recording boot takes the default discard=ignore. An unmapping discard issued here, by mkfs
+# say, would be recorded by dm-log-writes as a DISCARD entry and change what the replay later
+# reconstructs. Only the replay boot below opts in.
 vm_boot "$RUN" "$RUN/overlay.qcow2" "$RUN/data.raw" "$P" "" "$RUN/log.raw"
 vm_wait_ssh "$P" "$KEY" 240
 vm_scp_dir "$P" "$KEY" "$HERE/guest" /opt/vmcrash/
@@ -158,10 +127,9 @@ QDB_VM_DATA_DISCARD=unmap vm_boot "$RUN" "$RUN/overlay.qcow2" "$RUN/data.raw" "$
 vm_wait_ssh "$P2" "$KEY" 240
 vm_scp_dir "$P2" "$KEY" "$HERE/guest" /opt/vmcrash/
 
-# The reset must be REAL before either pass means anything. QEMU's default discard=ignore
-# still advertises discard and still returns success in 8 ms having reverted nothing, which
-# would make both passes agree on a blended state -- the precise common-mode failure pass B
-# exists to catch, arriving one layer lower than pass B can see.
+# The reset must be real before either pass means anything. QEMU's default discard=ignore still
+# advertises discard and still returns success having reverted nothing, which would make both
+# passes agree on a blended state one layer below where pass B can see it.
 RESET_CMD="$(replay_reset_cmd)"
 echo "--- pass A reset regime: ${QDB_REPLAY_RESET:-blkdiscard} (the instrument's)"
 replay_reset_assert "$P2" "$KEY" || { echo "FAIL t06: the device reset is not real; no boundary claim below can be trusted"; exit 1; }
@@ -171,10 +139,8 @@ nflush=$(vm_ssh "$P2" "$KEY" "sudo python3 /opt/vmcrash/guest/replay-log.py --lo
 echo "--- log holds $nflush flush boundaries; replaying each"
 [ "${nflush:-0}" -ge 3 ] || { echo "FAIL t06: only ${nflush:-0} flushes recorded; cannot test a boundary"; exit 1; }
 
-# ONE replay+mount+list, parameterised by the reset it runs first. Both passes go through
-# here so they cannot drift in any way EXCEPT the reset -- which is the single variable this
-# test is comparing. A second hand-written copy for pass B would reintroduce exactly the
-# drift this session spent four commits removing.
+# One replay+mount+list, parameterised by the reset it runs first, so the two passes cannot
+# differ in anything except the reset — the single variable under comparison.
 replay_and_list() {  # BOUNDARY RESET_SHELL_CMD
     vm_ssh "$P2" "$KEY" "sudo umount /mnt/raw 2>/dev/null; \
         $2; \
@@ -191,8 +157,8 @@ for n in $(seq 1 "$nflush"); do
     case "$ls_out" in *second*) has_second=1 ;; esac
     printf '  flush %2d/%-2d -> %s\n' "$n" "$nflush" "$ls_out"
 
-    # THE BOUNDARY VIOLATION: `second` cannot exist at a boundary where `first`
-    # does not. That ordering is fixed by the order they were written and fsync'd.
+    # The boundary violation: `second` cannot exist at a boundary where `first` does not. The
+    # order they were written and fsync'd fixes that.
     if [ "$has_second" -eq 1 ] && [ "$has_first" -eq 0 ]; then leaked=1; fi
     if [ "$first_at" -eq 0 ] && [ "$has_first" -eq 1 ]; then first_at=$n; fi
     if [ "$second_at" -eq 0 ] && [ "$has_second" -eq 1 ]; then second_at=$n; fi
@@ -210,9 +176,9 @@ echo "first appears at flush $first_at; second appears at flush $second_at"
 }
 
 # ---- PASS B: the same two answers, via a different reset mechanism -------------
-# Only the four boundaries that PIN the answers. "first appears at N" IS "present at N and
-# absent at N-1", so these four re-derive both answers in full. N-1 = 0 is skipped: there is
-# no flush 0 to replay, and absence before the first boundary is not a claim this test makes.
+# Only the four boundaries that pin the answers, since "first appears at N" is "present at N and
+# absent at N-1". N-1 = 0 is skipped: there is no flush 0 to replay, and absence before the
+# first boundary is not a claim this test makes.
 echo "--- pass B: full ${DATA_MB} MiB dd zero, at the boundaries that pin the answers"
 B_DD="sudo dd if=/dev/zero of=/dev/vdb bs=4M count=$((DATA_MB / 4)) status=none"
 pins=""
@@ -224,8 +190,8 @@ add_pin() {  # BOUNDARY FILE EXPECTED
     printf '  flush %2d (%s) -> %s\n' "$1" "$2" "$ls_out"
     pins="$pins$2@$1 $3 $got"$'\n'
 }
-# 'second' matches 'first' nowhere, but 'first' IS a substring of nothing else in this
-# filesystem either; the two names were chosen distinct for exactly this reason.
+# The two names are chosen so that neither is a substring of the other or of anything else in
+# this filesystem, because the match below is a substring test.
 add_pin "$first_at"             first  1
 add_pin "$(( first_at - 1 ))"   first  0
 add_pin "$second_at"            second 1

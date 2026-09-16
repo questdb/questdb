@@ -1,43 +1,25 @@
 #!/usr/bin/env bash
-# t10 — would the harness notice if the WAL durability barrier VANISHED?
+# t10 — would the harness notice if the WAL durability barrier vanished?
 #
-# The third member of the set, and the one that was missing:
+# t07 shows the oracle catches a wrong byte. A missing fsync fails differently: every byte that
+# arrives is correct, there are simply fewer of them than were acknowledged. Without this
+# control, a green verdict on the WAL path is green for an unknown reason.
 #
-#   t04  the CUT can fail        (arm it without drop_writes; the preflight must go red)
-#   t07  the ORACLE can fail     (corrupt a committed value; it must report SILENT_CORRUPTION)
-#   t10  the BARRIER control     (take the barrier away; the sweep must go red)   <- this file
+# Method: the same workload twice, one variable changed.
 #
-# t07 proves a wrong BYTE is caught. A missing fsync fails in a completely different way:
-# every byte that arrives is correct, there are simply fewer of them than were acknowledged.
-# Until that is shown, every DURABLE and RPO_OK this harness prints on the WAL path is green
-# for an unknown reason — and the WAL path is the one adaptive commit ships on.
+#   arm A   WAL table + commitMode=SYNC     -> barriered   -> every boundary must be green
+#   arm B   WAL table + commitMode=NOSYNC   -> no barrier  -> every boundary must be red
 #
-# METHOD: the same workload twice, one variable changed.
+# Same table kind, schema, oracle, replay machinery and boundary selection; only the barrier
+# differs. A green arm B means the sweep cannot detect a missing WAL fdatasync.
 #
-#   arm A   WAL table + commitMode=SYNC     -> barriered   -> every boundary must be GREEN
-#   arm B   WAL table + commitMode=NOSYNC   -> no barrier  -> every boundary must be RED
+# NOSYNC stands in for a mutated product: WalWriter.syncIfRequired0 gates the barrier on
+# commitMode != NOSYNC, so NOSYNC is the same mutation expressed as a supported configuration.
+# No production code exists only to be broken, and nothing can drift out of sync with it.
 #
-# Same table kind, same schema, same oracle, same replay machinery, same boundary selection.
-# The ONLY difference is whether the commit path issues a durability barrier. If arm B comes
-# back green, the sweep cannot detect a missing WAL fdatasync and nothing it says about the
-# WAL path is evidence.
-#
-# WHY NOSYNC RATHER THAN A MUTATED PRODUCT. The ticket originally asked for a system property
-# gating a real fdatasync (questdb.durability.omitWalFdatasync). That is production code whose
-# only purpose is to be broken, and it has to be kept out of release builds forever.
-# CommitMode.NOSYNC is the SAME mutation — WalWriter.syncIfRequired0 gates the barrier on
-# commitMode != NOSYNC — and it is a supported product configuration, so this control is also
-# coverage. No source change, so it cannot drift out of sync with the product it checks.
-#
-# WHY THIS NEEDED A HARNESS CHANGE AT ALL. The table kind used to be implied by the commit
-# mode (SYNC/NOSYNC -> bypass wal, adaptive -> WAL), so "WAL table, no barrier" was not
-# expressible. -Dwal.table (QDB_WAL_TABLE) decouples them. The non-WAL half of this control
-# was already measured and discriminates completely: SYNC 9/9 DURABLE with count == watermark
-# exactly, NOSYNC 9/9 SILENT_CORRUPTION with count=0. See phase-09-barrier-control.md.
-#
-# ANTI-VACUITY. A NOSYNC run that silently took the BYPASS-WAL path would go red for the
-# already-covered reason and look like a passing control. Every verification below is required
-# to report wal.table=true, from the verifier's own stdout, before its verdict is counted.
+# A NOSYNC run that silently took the bypass-WAL path would go red for an already-covered
+# reason and look like a passing control. Every verification below must report wal.table=true,
+# from the verifier's own stdout, before its verdict counts.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -55,29 +37,19 @@ BASE="$STATE_DIR/base"
 KEY="$BASE/id_ed25519"
 RUN="$STATE_DIR/t10-$$"
 PROFILE=bitmap
-# Boundaries per arm. Three is enough to tell "structural" from "one unlucky point" while
-# keeping the test to two VM cycles; the real sweep is what runs hundreds.
+# Boundaries per arm. Three tells "structural" from "one unlucky point" while keeping the test
+# to two VM cycles; the sweep is what runs hundreds.
 POINTS="${QDB_T10_POINTS:-3}"
 
-# THE CONTROL STATES ITS OWN CONFIGURATION, then lets lib/arms.sh build the commands.
+# The control states its configuration and lets lib/arms.sh build both commands, so it grades
+# under the same flags as the sweep it certifies.
 #
-# This file used to hand-build both the workload environment and the verify invocation, naming
-# 2 of the 11 variables harness_workload_env defines and omitting ~10 of the flags
-# harness_verify_cmd passes. That is the fourth copy of "how to invoke the oracle", written in
-# the same session whose lesson was that copies drift -- and a barrier control graded under
-# different flags than the sweep it certifies is not a control for that sweep.
-#
-# EXPORTED, NOT PASSED, because both builders read these from the environment. Pinning them
-# here rather than inheriting the caller's is deliberate: a control must not silently change
-# what it grades because someone exported QDB_MAT_VIEW in their shell. Every value below is the
-# builders' own default, so this pins the meaning without changing it -- except QDB_WAL_TABLE,
-# which is the one variable this control exists to set.
-#
-# QDB_WAL_TABLE=true IS THE WHOLE POINT. harness_wal_table() derives the table kind from the
-# commit mode when the variable is unset (adaptive -> true, everything else -> false), so at
-# SYNC and NOSYNC the default is a BYPASS-WAL table and this control would silently grade the
-# already-covered non-WAL path. The explicit `true` wins in harness_wal_table's first case
-# branch, for both arms, and reaches the writer and the verifier through the same function.
+# Exported rather than passed, because both builders read the environment. Pinned rather than
+# inherited, so an ambient QDB_MAT_VIEW in someone's shell cannot change what is graded. Every
+# value below is the builders' own default except QDB_WAL_TABLE, the one variable this control
+# exists to set: harness_wal_table() otherwise derives the table kind from the commit mode
+# (adaptive -> true, everything else -> false), which at SYNC and NOSYNC would silently grade
+# the bypass-WAL path instead.
 export QDB_WAL_TABLE=true
 export QDB_SCHEMA_PROFILE="$PROFILE"
 export QDB_SIBLING_TABLE=false
@@ -85,9 +57,8 @@ export QDB_DDL_EVERY_ROWS=-1
 export QDB_MAT_VIEW=false
 export QDB_REBASE_AT_ROWS=-1
 export QDB_RECOVER_AS=
-# The harness's own _progress fsync manufactures ~10.5% of the flush boundaries, and
-# the NOSYNC failure message below points at it as the first thing to check. Pinned so that the
-# number of boundaries a foreign flusher contributes is the same in both arms.
+# The harness's own _progress fsync contributes flush boundaries of its own. Pinned so that a
+# foreign flusher contributes the same share in both arms.
 export QDB_WITNESS_FSYNC=true
 # The reference arm has no ack channel; pinned so an ambient value cannot reach arm_qwp_tier and
 # put a durable-ack bar on a run that has no client to satisfy it.
@@ -95,12 +66,10 @@ export QDB_QWP_DURABLE_ACK=off
 export QDB_QWP_DEFANG_ACK=0
 export QDB_EDITION=oss
 
-# ASSERT THE PREMISE BEFORE BOOTING ANYTHING, because the failure it guards against is silent.
-# If harness_wal_table ever stops honouring an explicit QDB_WAL_TABLE -- or if this file loses
-# the export above -- every verification would run the non-WAL oracle, the NOSYNC arm would go
-# red for the reason t07 and phase-09 already cover, and t10 would report PASS while measuring
-# nothing about the WAL path. Two VM cycles to discover that; one string comparison to prevent
-# it. Both arms are checked: the whole point is that the two modes must NOT diverge here.
+# Assert the premise before booting anything, because the failure it guards against is silent:
+# if harness_wal_table stops honouring an explicit QDB_WAL_TABLE, every verification runs the
+# non-WAL oracle and t10 passes while measuring nothing about the WAL path. Both modes are
+# checked, since the point is that they must not diverge here.
 for _mode in SYNC NOSYNC; do
     case " $(harness_workload_env reference "$_mode") " in
         *" QDB_WAL_TABLE=true "*) ;;
@@ -152,9 +121,8 @@ run_arm() {
     vm_ssh "$P" "$KEY" "bash /opt/vmcrash/guest/prepare-device.sh --mode=log-writes" >/dev/null \
         || { echo "ARM_FAIL could not build the log-writes stack"; return 1; }
 
-    # ONE VOCABULARY. harness_workload_env names all eleven variables run-workload.sh reads;
-    # ssh carries none of the caller's environment, so anything not named here does not arrive.
-    # QDB_WAL_TABLE=true is in there, exported at the top and asserted before any boot.
+    # ssh carries none of the caller's environment, so a variable run-workload.sh reads must be
+    # named by harness_workload_env to arrive at all.
     vm_ssh "$P" "$KEY" "setsid env $(harness_workload_env reference "$mode") \
         bash /opt/vmcrash/guest/run-workload.sh --arm=reference --mode=$mode \
         --window-us=0 --epoch-ms=1000 </dev/null >/mnt/qdb/workload.out 2>&1 &" || true
@@ -166,14 +134,13 @@ run_arm() {
         sleep 0.2
     done
     sleep 8
-    # The same vacuity guard every flow here carries: a control verified against a workload
-    # that had already died would grade an idle database and could discriminate nothing.
+    # A control verified against a workload that has already died grades an idle database and
+    # discriminates nothing.
     vm_ssh "$P" "$KEY" "pgrep -f '[C]rashIngestWriter' >/dev/null" \
         || { vm_ssh "$P" "$KEY" "tail -20 /mnt/qdb/writer.log 2>/dev/null" >&2
              echo "ARM_FAIL workload was not running; this arm would be vacuous"; return 1; }
-    # PROVE THE WORKLOAD ITSELF TOOK THE WAL PATH, from its own log, before the cut. If
-    # -Dwal.table never reached CrashIngestWriter the run is a bypass-WAL run wearing a WAL
-    # label, and at NOSYNC it would go red for the reason t07 and phase-09 already covered.
+    # Prove the workload itself took the WAL path, from its own log, before the cut. If
+    # -Dwal.table never reached CrashIngestWriter this is a bypass-WAL run wearing a WAL label.
     vm_ssh "$P" "$KEY" "grep -q '^wal.table=true' /mnt/qdb/writer.log" \
         || { echo "ARM_FAIL writer.log does not report wal.table=true; the workload was NOT on the WAL path"; return 1; }
     vm_ssh "$P" "$KEY" "sleep 2" || true     # let the log kthread drain its queue
@@ -184,16 +151,15 @@ run_arm() {
     qemu-img create -f qcow2 -b "$BASE/golden.qcow2" -F qcow2 "$RUN/overlay.qcow2" >/dev/null
     local P2
     P2=$(vm_free_port)
-    # discard=unmap on the REPLAY boot only, exactly as run-flush-sweep.sh does it: the recording
-    # boot must not have it, or a discard issued by the workload becomes a DISCARD entry in the
-    # dm-log-writes log and changes what was recorded.
+    # discard=unmap on the replay boot only. The recording boot must not have it, or a discard
+    # issued by the workload becomes a DISCARD entry in the dm-log-writes log and changes what
+    # was recorded.
     QDB_VM_DATA_DISCARD=unmap vm_boot "$RUN" "$RUN/overlay.qcow2" "$RUN/data.raw" "$P2" "" "$RUN/log.raw"
     vm_wait_ssh "$P2" "$KEY" 240 || { echo "ARM_FAIL guest never rebooted"; return 1; }
-    # RESET THE DATA DEVICE BETWEEN REPLAYS. dm-log-writes passes writes through, so /dev/vdb
+    # Reset the data device between replays. dm-log-writes passes writes through, so /dev/vdb
     # still holds the final crashed state and a replay cannot revert writes issued after the
-    # boundary; mounting then runs ext4 recovery, which writes. Without this each boundary
-    # inherits the previous one's state. One shared definition (lib/qemu.sh, d2c1bb9ade) so this
-    # call site cannot drift from the sweep's.
+    # boundary; mounting then runs ext4 recovery, which writes again. Without the reset each
+    # boundary inherits the previous one's state.
     local RESET_CMD
     RESET_CMD="$(replay_reset_cmd)"
     replay_reset_assert "$P2" "$KEY" || { echo "ARM_FAIL the device reset is a no-op; every boundary would inherit the last"; return 1; }
@@ -223,34 +189,27 @@ run_arm() {
             if sudo mount /dev/vdb /mnt/qdb 2>/dev/null; then \
                 $verify_cmd; \
             else echo 'MOUNT_FAILED'; fi" 2>&1)
-        # The verifier ECHOES the table kind it graded under. Checked per boundary, not once:
-        # a run whose verifier fell back to the non-WAL oracle would read a bare row count and
-        # never run the recovery triple, and its verdict says nothing about the WAL path.
+        # The verifier echoes the table kind it graded under. Checked per boundary: a verifier
+        # that fell back to the non-WAL oracle reads a bare row count, never runs the recovery
+        # triple, and says nothing about the WAL path.
         if ! printf '%s\n' "$out" | grep -q 'wal.table=true'; then
             echo "ARM_FAIL boundary $b was not verified as a WAL table (verifier did not report wal.table=true)"
             return 1
         fi
         line=$(verdict_line "$out")
 
-        # THE RECOVERED COUNT COMES FROM THE RESULT FILE, NOT FROM THE VERDICT LINE.
-        # CrashVerifier writes count/F/C/Wm as anchored key=value pairs from a shutdown hook
-        # (RESULT_FILE), precisely because the engine logs to the same stdout and a spliced line
-        # once produced distinctIds=2026 -- a YEAR -- and a false DURABILITY_FAILURE
-        # (c26edf95ee). Scraping `count=` off the verdict line put this control back on the stream
-        # that fault was closed on. A SEPARATE ssh invocation, so no engine output shares it.
+        # The recovered count comes from the result file, not the verdict line. CrashVerifier
+        # writes count/F/C/Wm as anchored key=value pairs from a shutdown hook because the engine
+        # logs to the same stdout, where a spliced line can parse as a plausible wrong number.
+        # A separate ssh invocation, so no engine output shares the stream.
         local wm cnt
         res=$(vm_ssh "$P2" "$KEY" "cat /mnt/qdb/verify-armB.properties 2>/dev/null" 2>/dev/null)
         cnt=$(printf '%s\n' "$res" | grep -oE '^count=[0-9]+$' | head -1 | cut -d= -f2)
 
-        # THE ACKNOWLEDGED WATERMARK IS STILL READ FROM STDOUT, and that is a known gap rather
-        # than an oversight. The result file's `Wm` is localDurableSeqTxn -- a SEQUENCER TXN --
-        # while the bar below is in ROWS, and CrashVerifier does not putResult() rowsWatermark at
-        # all (it only prints it). Substituting Wm for it would compare rows against txns and the
-        # bar would be nonsense; worse, Wm is only advanced on the ADAPTIVE path, so at SYNC it is
-        # -1 and the check would silently never fire again. Anchored to ^ so a spliced prefix is
-        # rejected as absent rather than parsed: absence is handled loudly below. This is the
-        # last residue of that fault; closing it properly is one putResult("rowsWatermark", ...)
-        # line in CrashVerifier, which is product-side and not this file's to add.
+        # The acknowledged watermark is still read from stdout, a known gap. The result file's
+        # Wm is localDurableSeqTxn, a sequencer txn, while this value is in rows, and
+        # CrashVerifier only prints rowsWatermark rather than recording it. Anchored to ^ so a
+        # spliced prefix is rejected as absent rather than parsed as a number.
         wm=$(printf '%s\n' "$out" | grep -oE '^watermark rows=[0-9]+' | head -1 | cut -d= -f2)
         printf '%s\t%s\t%s\t%s\t%s\n' "$b" "$(verdict_classify "$line")" "${wm:--1}" "${cnt:--1}" "$line" >> "$ARM_OUT"
         logged=$((logged + 1))
@@ -273,42 +232,13 @@ sync_pass=0; sync_fail=0
 while IFS=$'\t' read -r b v wm cnt line; do
     printf '    flush %-6s -> %s\n' "$b" "$v"
     if verdict_is_pass "$v"; then sync_pass=$((sync_pass + 1)); else sync_fail=$((sync_fail + 1)); fi
-    # EXACTNESS, not merely green: a recovered count short of the ACKNOWLEDGED watermark cannot
-    # be luck. That comparison used to live here, and it is gone -- read on before restoring it.
-    #
-    # AND IT MUST BE SEEN TO RUN. Both inputs used to be scraped from the verifier's shared
-    # stdout, and if either parse missed, the comparison silently did nothing while t10 still
-    # printed PASS -- a sub-check that cannot fail is not a control, which is this harness's own
-    # rule applied one level down.
-    #
-    # MAKING IT LOUD PROVED THE CHECK CANNOT APPLY HERE AT ALL, which is a stronger result than
-    # the review's "it silently no-ops when a parse misses". The watermark is the ACKNOWLEDGED
-    # row frontier, and acknowledgement comes from the durable-ack tier. t10 runs arm=reference,
-    # and arm_qwp_tier (lib/arms.sh) returns "off" for every arm but qwp-sf and product -- so
-    # there is no ack channel, nothing acknowledges anything, and "watermark rows=" is -1 at
-    # EVERY boundary of BOTH arms, by design and not by fault. Measured: count=14000 wm=-1,
-    # count=58000 wm=-1, count=101000 wm=-1.
-    #
-    # So the comparison is deleted rather than left dormant behind a tier check. A latent branch
-    # that cannot fire reads as a live safety net to the next person -- the same reasoning that
-    # removed power-cut-vm.sh's RPO downgrade in this series.
-    #
-    # WHAT CARRIES THE EXACTNESS CLAIM INSTEAD. Nothing is weakened by the deletion, because for
-    # the reference arm the ORACLE already grades against the writer's own committed history
-    # rather than against an ack frontier: DURABLE at W=0 means zero loss, and the verdict line
-    # carries the numbers it used ("DURABLE count=14000 F=14 C=14 ... zero loss"). The
-    # count-vs-watermark comparison is meaningful only where an ack channel exists, i.e. the
-    # qwp-sf and product arms, and those are graded by run-sf-replay.sh and the sweep.
-    #
-    # If t10 ever gains an ack-bearing arm, restore the comparison AND its global assertion
-    # together; rowsWatermark via putResult is the other half of making it possible.
+    # No count-vs-watermark comparison here. The watermark is the acknowledged row frontier and
+    # acknowledgement comes from the durable-ack tier, which arm_qwp_tier reports as off for
+    # every arm but qwp-sf and product; on arm=reference it is -1 at every boundary. The oracle
+    # carries the exactness claim instead, grading against the writer's own committed history.
+    # Restore the comparison only alongside an ack-bearing arm.
     :
 done < "$ARM_OUT"
-
-# The global "the sub-check must have run at least once" assertion lived here. It is gone with
-# the sub-check it guarded: an assertion that a deleted comparison ran would fail every run.
-# It was worth writing even so -- making the skip LOUD is what proved the comparison could
-# never apply to arm=reference, which three sessions of silent skipping had hidden.
 
 # ---- arm B: the barrier is gone ----------------------------------------------
 ARM_OUT="$RUN/nosync.tsv"; : > "$ARM_OUT"
