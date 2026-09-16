@@ -243,8 +243,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             frameCursor.toTop();
             while ((frame = frameCursor.next()) != null && foundRowCount < keyCount) {
                 final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
-                final long partitionLo = frame.getPartitionLo();
-                final long partitionHi = frame.getPartitionHi() - 1;
+                final long indexRowLo = frame.getIndexRowLo();
+                final long indexRowHi = frame.getIndexRowHi() - 1;
 
                 final long keyBaseAddress = indexReader.getKeyBaseAddress();
                 final long keysMemorySize = indexReader.getKeyMemorySize();
@@ -283,8 +283,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                                     valuesMemorySize,
                                     argsAddress,
                                     unIndexedNullCount,
-                                    partitionHi,
-                                    partitionLo,
+                                    indexRowHi,
+                                    indexRowLo,
                                     frameIndex,
                                     valueBlockCapacity,
                                     geoHashColumnIndex,
@@ -301,8 +301,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                                     valuesMemorySize,
                                     argsAddress,
                                     unIndexedNullCount,
-                                    partitionHi,
-                                    partitionLo,
+                                    indexRowHi,
+                                    indexRowLo,
                                     frameIndex,
                                     valueBlockCapacity,
                                     geoHashColumnIndex,

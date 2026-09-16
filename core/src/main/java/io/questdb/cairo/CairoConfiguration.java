@@ -254,6 +254,15 @@ public interface CairoConfiguration {
 
     boolean getDebugWalApplyBlockFailureNoRetry();
 
+    /**
+     * Upper bound on how many WAL transactions {@code WalTxnDetails.calculateInsertTransactionBlock}
+     * may fold into a single commit. Unlimited by default; a small value makes each transaction land
+     * on its own, which is what a test needs when it wants a later transaction to merge INTO data an
+     * earlier one already put on disk rather than be sorted alongside it into a partition the same
+     * commit creates.
+     */
+    int getDebugWalApplyMaxTxnBlockSize();
+
     @NotNull
     DateLocale getDefaultDateLocale();
 
@@ -607,6 +616,8 @@ public interface CairoConfiguration {
 
     long getO3MinLag();
 
+    int getO3PartitionPreSplitMaxCuts();
+
     int getO3OpenColumnQueueCapacity();
 
     int getO3PartitionQueueCapacity();
@@ -646,6 +657,38 @@ public interface CairoConfiguration {
     CharSequence getParquetExportTableNamePrefix();
 
     int getParquetExportVersion();
+
+    long getPartitionCompactionAvgRowsPieceLim();
+
+    long getPartitionCompactionCheckInterval();
+
+    long getPartitionCompactionDeadMinSize();
+
+    double getPartitionCompactionDeadRowsRatio();
+
+    long getPartitionCompactionDeclineBackoffMax();
+
+    int getPartitionCompactionHotCommits();
+
+    long getPartitionCompactionHotTime();
+
+    long getPartitionCompactionIdleTimeout();
+
+    int getPartitionCompactionMoveTailMinGain();
+
+    int getPartitionCompactionPieceThreshold();
+
+    int getPartitionCompactionPrefixMinPercent();
+
+    int getPartitionCompactionTableDeadStopPercent();
+
+    long getPartitionCompactionTableDeadThreshold();
+
+    int getPartitionCompactionTableDeadThresholdPercent();
+
+    long getPartitionCompactionTableDeadTrigger();
+
+    long getPartitionCompactionTimeBudgetMs();
 
     double getPartitionEncoderParquetBloomFilterFpp();
 
@@ -826,6 +869,8 @@ public interface CairoConfiguration {
     int getSampleByIndexSearchPageSize();
 
     long getSequencerCheckInterval();
+
+    long getSequencerCheckMinInterval();
 
     /**
      * Returns database instance id. The instance id is used by the snapshot recovery mechanism:
@@ -1258,6 +1303,8 @@ public interface CairoConfiguration {
     boolean isMatViewRefreshMissingWalFilesFatal();
 
     boolean isMultiKeyDedupEnabled();
+
+    boolean isO3PartitionMergeAppendEnabled();
 
     boolean isO3QuickSortEnabled();
 

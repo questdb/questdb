@@ -73,7 +73,7 @@ import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populate
  */
 public final class TimeFrameCursorImpl implements TimeFrameCursor {
     private final IntList columnIndexes = new IntList();
-    private final LongList columnTops = new LongList();
+    private final NativeFrameBoundaries frameBoundaries = new NativeFrameBoundaries();
     private final PageFrameAddressCache frameAddressCache;
     private final PageFrameMemoryPool frameMemoryPool;
     // Off-heap because it's per-frame and can be large unlike per-partition lists
@@ -156,6 +156,13 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         }
         assert partitionOpened.get(partitionIndex) : "partition " + partitionIndex + " not opened before getIndexReaderForCurrentFrame";
         return tableReader.getIndexReader(partitionIndex, physicalColumnIndex, direction);
+    }
+
+    @Override
+    public long getIndexRowLoForCurrentFrame() {
+        // Valid once open() has run for this frame: ensurePartitionOpened patches an uninitialized
+        // frame's entry with the piece shift the real page frame carries.
+        return frameAddressCache.getIndexRowLo(timeFrame.getFrameIndex());
     }
 
     @Override
@@ -407,7 +414,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
 
     /**
      * Pre-computes and adds uninitialized frame entries for a native partition.
-     * Replicates the column-top-aware splitting logic from
+     * Replicates the piece- and column-top-aware splitting logic from
      * FwdTableReaderPageFrameCursor#computeNativeFrame().
      */
     private void addNativePartitionFrames(
@@ -418,18 +425,13 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
             long partitionTimestamp,
             long partitionRowCount
     ) {
-        FwdTableReaderPageFrameCursor.populateColumnTops(
-                columnTops,
+        frameBoundaries.of(
                 tableReader,
                 columnVersionReader,
                 columnIndexes,
                 columnCount,
+                partitionIndex,
                 partitionTimestamp,
-                partitionRowCount
-        );
-
-        final long pageFrameRowLimit = FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(
-                0,
                 partitionRowCount,
                 pageFrameMinRows,
                 pageFrameMaxRows,
@@ -437,17 +439,10 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         );
 
         long lo = 0;
-        while (lo < partitionRowCount) {
-            long adjustedHi = Math.min(partitionRowCount, lo + pageFrameRowLimit);
-            // Shrink frame boundary at column top splits
-            for (int i = 0; i < columnCount; i++) {
-                long top = columnTops.getQuick(i);
-                if (top > lo && top < adjustedHi) {
-                    adjustedHi = top;
-                }
-            }
-            addUninitializedFrame(partitionIndex, lo, adjustedHi);
-            lo = adjustedHi;
+        for (int i = 0, n = frameBoundaries.size(); i < n; i++) {
+            final long hi = frameBoundaries.getQuick(i);
+            addUninitializedFrame(partitionIndex, lo, hi);
+            lo = hi;
         }
     }
 

@@ -33,6 +33,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
@@ -5590,9 +5591,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // has actually caught up to its committed seqTxn; otherwise leave the view SEEDING with
             // the flag unset so the fallback scan re-enqueues it and the next turn re-attempts the
             // apply (a genuinely suspended LV table then blocks the seed until RESUME - correct, and
-            // strictly better than duplicating).
-            final SeqTxnTracker lvTracker = engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken());
-            if (lvTracker.isInitialised() && lvTracker.getSeqTxn() > lvTracker.getWriterTxn()) {
+            // strictly better than duplicating). Ask isLiveViewWalFullyApplied rather than reading
+            // the tracker's writerTxn directly: any dropped or unapplied WAL notification resets
+            // that field back to uninitialised (CairoEngine.notifyWalTxnRepublisher), and an
+            // uninitialised tracker reads as "caught up" - which is exactly the under-read floor
+            // this guard exists to prevent.
+            if (!isLiveViewWalFullyApplied(instance)) {
                 return;
             }
             instance.setSeedResumeAttempted();
@@ -7813,21 +7817,30 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             final int columnBase = lvReader.getColumnBase(p);
             final MemoryCR tsCol = lvReader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, tsIdx));
-            // Skip whole partitions whose newest row is still below the window.
-            if (tsCol.getLong((size - 1) << 3) < retainThreshold) {
-                continue;
+            final PartitionGeometry geometry = compositeGeometryOrNull(lvReader, p);
+            final int runCount = geometry != null ? geometry.getPieceCount(p) : 1;
+            for (int run = 0; run < runCount; run++) {
+                final long runLo = geometry != null ? geometry.getPieceRowOffset(p, run) : 0;
+                final long runHi = geometry != null ? runLo + geometry.getPieceRowCount(p, run) : size;
+                if (runHi <= runLo) {
+                    continue;
+                }
+                // Skip whole runs whose newest row is still below the window.
+                if (tsCol.getLong((runHi - 1) << 3) < retainThreshold) {
+                    continue;
+                }
+                // Rows within a run are ts-ascending: find the first one at or
+                // above the threshold, then copy the suffix.
+                final long rowLo = firstRowAtOrAbove(tsCol, runLo, runHi, retainThreshold);
+                if (rowLo >= runHi) {
+                    continue;
+                }
+                if (seamTs == Numbers.LONG_NULL) {
+                    seamTs = tsCol.getLong(rowLo << 3);
+                }
+                copyReaderRowsToStaging(lvReader, columnBase, rowLo, runHi, dstRow);
+                dstRow += runHi - rowLo;
             }
-            // Rows within a partition are ts-ascending: find the first one at or
-            // above the threshold, then copy the suffix.
-            final long rowLo = firstRowAtOrAbove(tsCol, size, retainThreshold);
-            if (rowLo >= size) {
-                continue;
-            }
-            if (seamTs == Numbers.LONG_NULL) {
-                seamTs = tsCol.getLong(rowLo << 3);
-            }
-            copyReaderRowsToStaging(lvReader, columnBase, rowLo, size, dstRow);
-            dstRow += size - rowLo;
         }
         stagingBuffer.setRowCount(dstRow);
         stagingBuffer.setSeamTs(seamTs);
@@ -7911,9 +7924,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@code [0, size)} whose value is at or above {@code threshold}, returning
      * {@code size} when every row is below it.
      */
-    private static long firstRowAtOrAbove(MemoryCR tsCol, long size, long threshold) {
-        long lo = 0;
-        long hi = size;
+    /**
+     * The geometry to walk {@code partitionIndex}'s live rows through, or {@code null} when the
+     * partition is an ordinary one whose single run is simply {@code [0, size)}.
+     * <p>
+     * A COMPOSITE partition holds several PIECES over one set of column files, and its file rows
+     * are NOT in timestamp order: a rewritten piece parks at the tail, above pieces that sort
+     * before it, and the rows it superseded stay behind as dead space. So a scan that reads the
+     * reader's mapped columns directly must walk the pieces the geometry lists - which ARE
+     * timestamp-ordered, and whose rows are ts-ascending within a piece - instead of reading
+     * {@code [0, liveRows)} from file row 0. Reading the file head returns dead rows and drops
+     * live ones.
+     */
+    private static PartitionGeometry compositeGeometryOrNull(TableReader reader, int partitionIndex) {
+        return reader.getTxFile().isPartitionComposite(partitionIndex) ? reader.getGeometry() : null;
+    }
+
+    private static long firstRowAtOrAbove(MemoryCR tsCol, long lo, long hi, long threshold) {
         while (lo < hi) {
             final long mid = (lo + hi) >>> 1;
             if (tsCol.getLong(mid << 3) < threshold) {
@@ -7962,9 +7989,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final MemoryCR tsCol = reader.getColumn(
                     TableReader.getPrimaryColumnIndex(reader.getColumnBase(p), timestampIndex)
             );
-            final long below = firstRowAtOrAbove(tsCol, size, ts);
-            count += below;
-            if (below < size) {
+            final PartitionGeometry geometry = compositeGeometryOrNull(reader, p);
+            final int runCount = geometry != null ? geometry.getPieceCount(p) : 1;
+            boolean crossed = false;
+            for (int run = 0; run < runCount; run++) {
+                final long runLo = geometry != null ? geometry.getPieceRowOffset(p, run) : 0;
+                final long runHi = geometry != null ? runLo + geometry.getPieceRowCount(p, run) : size;
+                if (runHi <= runLo) {
+                    continue;
+                }
+                final long at = firstRowAtOrAbove(tsCol, runLo, runHi, ts);
+                count += at - runLo;
+                if (at < runHi) {
+                    // Runs are ts-ordered, so every later run of this partition is
+                    // entirely at or above the boundary too.
+                    crossed = true;
+                    break;
+                }
+            }
+            if (crossed) {
                 // The first row at or above the boundary is in this partition, so
                 // every later partition is above it too.
                 break;
@@ -8352,10 +8395,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
         final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken());
-        return tracker.isInitialised()
-                && !tracker.isSuspended()
+        // Suspension and memory pressure are read off the tracker - both survive an
+        // uninitialised writerTxn - but the lag itself goes through
+        // isLiveViewWalFullyApplied, which falls back to the LV table's own _txn when the
+        // tracker is cold. Reading tracker.getWriterTxn() here instead would report "nothing
+        // pending" for a view whose tracker CairoEngine.notifyWalTxnRepublisher has reset,
+        // and this scan is the only thing that re-drives a block flushLead could not apply
+        // inline, so the view would sit behind its own WAL until an unrelated base commit.
+        return !tracker.isSuspended()
                 && tracker.getMemPressureControl().isReadyToProcess()
-                && tracker.getSeqTxn() > tracker.getWriterTxn();
+                && !isLiveViewWalFullyApplied(instance);
     }
 
     /**

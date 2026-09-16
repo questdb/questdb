@@ -25,12 +25,14 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
@@ -163,6 +165,7 @@ public class BitmapIndexConcurrentFuzzTest extends AbstractCairoTest {
                     e.printStackTrace();
                 } finally {
                     Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                     completionLatch.countDown();
                 }
             });
@@ -209,6 +212,7 @@ public class BitmapIndexConcurrentFuzzTest extends AbstractCairoTest {
                     e.printStackTrace();
                 } finally {
                     Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                     completionLatch.countDown();
                 }
             });
@@ -274,6 +278,8 @@ public class BitmapIndexConcurrentFuzzTest extends AbstractCairoTest {
                     firstError.compareAndSet(null, e);
                     e.printStackTrace();
                 } finally {
+                    // Readers never call drainWalQueue(), so they never touch the composite-context
+                    // thread-local the other two thread kinds must clean up above.
                     Path.clearThreadLocals();
                     completionLatch.countDown();
                 }

@@ -168,7 +168,7 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         } finally {
             if (createOp != null) {
                 task.getStreamPartitionParquetExporter().freeOwnedPageFrameCursor();
-                dropTempTable(entry, tableToken);
+                dropTempTable(entry, task.getTableName(), tableToken);
             }
         }
         clearExportResources();

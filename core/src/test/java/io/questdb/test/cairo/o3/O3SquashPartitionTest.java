@@ -160,6 +160,11 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testPartitionSquashCounterOverflow() throws Exception {
+        // This asserts the SQUASH bookkeeping - a .squash_ts file left behind once the counter overflows -
+        // which merge-append does not maintain: a composite partition is folded by its own path and never
+        // reaches the counter this test drives. Squash over composite partitions is a known gap; until it
+        // closes, pin the production default so the test keeps covering what it was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             final String tableName = "backup_squash_test";
             long start = MicrosTimestampDriver.floor("2020-02-03");
@@ -977,6 +982,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             }
         };
 
+        // Drives squashSplitPartitions over SPLIT sub-partitions. Merge-append folds a backdated
+        // write into the partition's own composite geometry instead of opening a split directory, so
+        // the split this test's setup asserts never appears. Squash over composite partitions is a
+        // known gap; until it closes, pin the production default so the test keeps covering what it
+        // was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(ff, () -> {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -1083,6 +1094,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             }
         };
 
+        // Drives squashSplitPartitions over SPLIT sub-partitions. Merge-append folds a backdated
+        // write into the partition's own composite geometry instead of opening a split directory, so
+        // the split this test's setup asserts never appears. Squash over composite partitions is a
+        // known gap; until it closes, pin the production default so the test keeps covering what it
+        // was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(ff, () -> {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -1244,6 +1261,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             }
         };
 
+        // Drives squashSplitPartitions over SPLIT sub-partitions. Merge-append folds a backdated
+        // write into the partition's own composite geometry instead of opening a split directory, so
+        // the split this test's setup asserts never appears. Squash over composite partitions is a
+        // known gap; until it closes, pin the production default so the test keeps covering what it
+        // was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(ff, () -> {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -1339,6 +1362,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testSquashPartitionClearsRemoteAndStampsTarget() throws Exception {
+        // Drives squashSplitPartitions over SPLIT sub-partitions. Merge-append folds a backdated
+        // write into the partition's own composite geometry instead of opening a split directory, so
+        // the split this test's setup asserts never appears. Squash over composite partitions is a
+        // known gap; until it closes, pin the production default so the test keeps covering what it
+        // was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -1836,6 +1865,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
     private void testSquashPartitionsOnNonEmptyTable(String wal) throws Exception {
         assertMemoryLeak(() -> {
+            // This test drives the pre-merge-append split-then-squash mechanism directly (prefix
+            // split on size, then an explicit ALTER TABLE SQUASH PARTITIONS): with merge-append on,
+            // the very same O3 write lands as a composite piece inside the existing partition
+            // directory instead of a separate split directory, so the split/squash shape this test
+            // asserts never forms. Same reasoning as testPartitionSquashCounterOverflow above.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
             // 4kb prefix split threshold
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);

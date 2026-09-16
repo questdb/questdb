@@ -38,6 +38,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -80,6 +81,32 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         // 50..10000 rows: small enough that fuzz partitions routinely span
         // multiple row groups, exercising the per-row-group write/read paths.
         return 50 + rnd.nextInt(9951);
+    }
+
+    public static long getRndPartitionCompactionCheckInterval(Rnd rnd) {
+        // 70% of runs: near-zero, so PartitionCompactionScanJob's cool-off is bypassed and it
+        // sweeps on effectively every drain() call - the interesting, bug-finding regime that
+        // maximizes interaction between the job and concurrent O3/WAL writes.
+        // 30% of runs: a more realistic interval (1s..2min, up to the production default), so
+        // the job mostly stays quiet, covering the "normal" regime too.
+        return rnd.nextInt(10) < 7 ? rnd.nextInt(5) : 1_000 + rnd.nextInt(119_000);
+    }
+
+    public static long getRndPartitionCompactionIdleTimeout(Rnd rnd) {
+        // 70% of runs: near-zero (sub-millisecond), so a composite/Parquet partition becomes a
+        // compaction candidate almost immediately after its last write.
+        // 30% of runs: a realistic timeout (1..180s), so the job mostly leaves partitions alone.
+        return rnd.nextInt(10) < 7 ? rnd.nextLong(1_000) : Micros.SECOND_MICROS * (1 + rnd.nextInt(180));
+    }
+
+    public static int getRndPartitionCompactionHotCommits(Rnd rnd) {
+        // 0 to 3, well under the shipped default of 10. A fuzz run applies its whole workload in a few
+        // dozen commits, so at the default EVERY partition it writes stays hot for the rest of the run,
+        // and the table-pressure rule - the one rule whose pick the hot window filters - would never fire
+        // again, taking the REWRITE, MOVE-TAIL and MAKE-PLAIN coverage that rule drives with it. 0 turns
+        // the window off outright; 1 to 3 leave it narrow enough that a partition the workload has moved
+        // on from cools within a few commits, which is the regime this filter has to get right.
+        return rnd.nextInt(4);
     }
 
     @BeforeClass
@@ -411,6 +438,9 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, getMaxWalFdCache(rnd));
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 1 + rnd.nextInt(200));
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndParquetRowGroupSize(rnd));
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, getRndPartitionCompactionCheckInterval(rnd));
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, getRndPartitionCompactionIdleTimeout(rnd));
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, getRndPartitionCompactionHotCommits(rnd));
 
         int txnCount = Math.max(10, fuzzer.getTransactionCount());
         long walChunk = Math.max(0, rnd.nextInt((int) (3.5 * txnCount)) - txnCount);

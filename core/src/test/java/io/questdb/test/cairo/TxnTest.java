@@ -410,7 +410,7 @@ public class TxnTest extends AbstractCairoTest {
                                 {txn: 1, attachedPartitions: [
                                 {ts: '1970-01-01T00:00:00.000000Z', rowCount: 1, nameTxn: -1},
                                 {ts: '1970-01-02T00:00:00.000000Z', rowCount: 2, nameTxn: -1}
-                                ], transientRowCount: 2, fixedRowCount: 1, minTimestamp: '294247-01-10T04:00:54.775807Z', maxTimestamp: '1970-01-03T00:00:00.000001Z', dataVersion: 0, structureVersion: 0, partitionTableVersion: 0, columnVersion: 0, truncateVersion: 0, seqTxn: 0, symbolColumnCount: 0, lagRowCount: 0, lagMinTimestamp: '294247-01-10T04:00:54.775807Z', lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}""";
+                                ], transientRowCount: 2, fixedRowCount: 1, minTimestamp: '294247-01-10T04:00:54.775807Z', maxTimestamp: '1970-01-03T00:00:00.000001Z', dataVersion: 0, structureVersion: 0, partitionTableVersion: 0, geometryVersion: 0, columnVersion: 0, truncateVersion: 0, seqTxn: 0, symbolColumnCount: 0, lagRowCount: 0, lagMinTimestamp: '294247-01-10T04:00:54.775807Z', lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}""";
                         Assert.assertEquals(expected, txReader.toString());
 
                         txCopyReader.loadAllFrom(txReader);

@@ -325,8 +325,19 @@ public class WalTxnDetails implements QuietCloseable {
             }
         }
 
-        // to force switch to 1 by 1 txn commit, uncomment the following line
-        // return 1;
+        // A test that wants a later transaction to MERGE into what an earlier one already put on disk
+        // has to stop the two being folded into one commit, which would sort them together into a
+        // partition that commit creates. Unlimited unless debug.wal.apply.max.txn.block.size says
+        // otherwise; the row count has to shrink with the block or pressure control mis-sizes the next.
+        final int maxBlockSize = config.getDebugWalApplyMaxTxnBlockSize();
+        if (blockSize > maxBlockSize) {
+            long trimmedRowCount = 0;
+            for (long txn = seqTxn, n = seqTxn + maxBlockSize; txn < n; txn++) {
+                trimmedRowCount += getSegmentRowHi(txn) - getSegmentRowLo(txn);
+            }
+            blockSize = maxBlockSize;
+            totalRowCount = trimmedRowCount;
+        }
         pressureControl.updateInflightTxnBlockLength(blockSize, totalRowCount);
         return blockSize;
     }
