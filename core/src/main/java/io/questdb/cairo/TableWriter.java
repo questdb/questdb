@@ -369,6 +369,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private LifecycleManager lifecycleManager;
     private long lockFd = -2;
     private long masterRef = 0L;
+    private long maxTimestampSinceLastCommit = Long.MIN_VALUE;
     // A flag that during WAL processing o3MemColumns1 or o3MemColumns2 were
     // set to a "shifted" state and the state has to be cleaned.
     private boolean memColumnShifted;
@@ -400,6 +401,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private byte parquetRewriteIndexerType = IndexType.NONE;
     private RowGroupBuffers parquetRewriteRowGroupBuffers;
     private long partitionTimestampHi;
+    private long pendingRowTimestamp = Long.MIN_VALUE;
     private boolean performRecovery;
     private boolean processingQueue;
     private PurgingOperator purgingOperator;
@@ -522,6 +524,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
             this.partitionBy = metadata.getPartitionBy();
             this.txWriter.initPartitionBy(timestampType, metadata.getPartitionBy());
+            if (txWriter.getLagRowCount() > 0) {
+                maxTimestampSinceLastCommit = txWriter.getLagMaxTimestamp();
+            }
 
             this.txnScoreboard = txnScoreboardPool.getTxnScoreboard(tableToken);
             path.trimTo(pathSize);
@@ -1630,6 +1635,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         dedupRowsRemovedSinceLastCommit.reset();
         hasTtlEvictedPartitionsSinceLastCommit = false;
         txWriter.beginPartitionSizeUpdate();
+        final long firstSeqTxn = seqTxn;
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
         int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
         // Capture wall clock once to reduce syscalls. Used for:
@@ -1689,11 +1695,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (committed) {
             assert txWriter.getLagRowCount() == 0;
 
+            for (long committedSeqTxn = firstSeqTxn; committedSeqTxn <= seqTxn; committedSeqTxn++) {
+                maxTimestampSinceLastCommit = Math.max(
+                        maxTimestampSinceLastCommit,
+                        walTxnDetails.getMaxTimestamp(committedSeqTxn)
+                );
+            }
             txWriter.setSeqTxn(seqTxn);
             txWriter.setLagTxnCount(0);
             txWriter.setLagOrdered(true);
 
             commit00();
+            notifyDataCommit(wallClockMicros);
             lastWalCommitTimestampMicros = wallClockMicros;
             housekeep(wallClockMicros);
             shrinkO3Mem();
@@ -1702,6 +1715,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.debug().$("table ranges after the commit [table=").$(tableToken)
                     .$(", minTs=").$ts(timestampDriver, txWriter.getMinTimestamp())
                     .$(", maxTs=").$ts(timestampDriver, txWriter.getMaxTimestamp()).I$();
+        }
+
+        if (txWriter.getLagRowCount() > 0) {
+            maxTimestampSinceLastCommit = Math.max(maxTimestampSinceLastCommit, txWriter.getLagMaxTimestamp());
         }
 
         // Sometimes nothing is committed to the table, only copied to LAG.
@@ -2881,6 +2898,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.bumpPartitionTableVersion();
     }
 
+    public void markPartitionDataActivity(int partitionIndex) {
+        if (partitionIndex < 0 || partitionIndex >= txWriter.getPartitionCount()) {
+            throw CairoException.nonCritical().put("bad partition index ").put(partitionIndex);
+        }
+        maxTimestampSinceLastCommit = Math.max(
+                maxTimestampSinceLastCommit,
+                txWriter.getPartitionTimestampByIndex(partitionIndex)
+        );
+    }
+
     public void markPartitionDataChanged(int partitionIndex) {
         if (partitionIndex < 0 || partitionIndex >= txWriter.getPartitionCount()) {
             throw CairoException.nonCritical().put("bad partition index ").put(partitionIndex);
@@ -2964,6 +2991,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public Row newRow(long timestamp) {
         if (rowAction != ROW_ACTION_NO_TIMESTAMP) {
             timestampDriver.validateBounds(timestamp);
+            pendingRowTimestamp = timestamp;
         }
         switch (rowAction) {
             case ROW_ACTION_NO_PARTITION:
@@ -3478,6 +3506,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public void rollback() {
         checkDistressed();
+        maxTimestampSinceLastCommit = Long.MIN_VALUE;
+        pendingRowTimestamp = Long.MIN_VALUE;
         if (o3InError || inTransaction()) {
             try {
                 LOG.info().$("tx rollback [name=").$(tableToken).I$();
@@ -3512,6 +3542,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // If it's a manual rollback call, throw exception to indicate that the rollback was not successful
             // and the writer must be closed.
             checkDistressed();
+        }
+        if (txWriter.getLagRowCount() > 0) {
+            maxTimestampSinceLastCommit = txWriter.getLagMaxTimestamp();
         }
     }
 
@@ -5567,6 +5600,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long wallClockMicros = configuration.getMicrosecondClock().getTicks();
 
             commit00();
+            notifyDataCommit(wallClockMicros);
             housekeep(wallClockMicros);
             metrics.tableWriterMetrics().addCommittedRows(rowsAdded);
             if (!o3) {
@@ -8558,6 +8592,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         rowAction = ROW_ACTION_O3;
         o3TimestampSetter(timestamp);
         return row;
+    }
+
+    private void notifyDataCommit(long commitMicros) {
+        final long activeTimestamp = txWriter.getMaxTimestamp();
+        final long activePartitionFloor = activeTimestamp != Long.MIN_VALUE
+                ? txWriter.getLogicalPartitionTimestamp(activeTimestamp)
+                : Long.MIN_VALUE;
+        final boolean activePartitionAffected = maxTimestampSinceLastCommit != Long.MIN_VALUE
+                && txWriter.getLogicalPartitionTimestamp(maxTimestampSinceLastCommit) == activePartitionFloor;
+        final long tableTxn = txWriter.getTxn();
+        maxTimestampSinceLastCommit = txWriter.getLagRowCount() > 0
+                ? txWriter.getLagMaxTimestamp()
+                : Long.MIN_VALUE;
+        pendingRowTimestamp = Long.MIN_VALUE;
+        try {
+            engine.notifyTableDataCommit(
+                    tableToken,
+                    activePartitionFloor,
+                    tableTxn,
+                    commitMicros,
+                    activePartitionAffected
+            );
+        } catch (Throwable th) {
+            // The table commit is already durable. An extension hook must not turn it into an
+            // apparent failure that a caller could retry.
+            LOG.error().$("post-commit activity notification failed [table=").$(tableToken)
+                    .$(", error=").$(th).I$();
+        }
     }
 
     private long nextPostingSealPurgePubSeq(Sequence pubSeq, int retryCount) {
@@ -13863,6 +13925,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     activeNullSetters.getQuick(i).run();
                 }
             }
+            maxTimestampSinceLastCommit = Math.max(maxTimestampSinceLastCommit, pendingRowTimestamp);
             masterRef++;
         }
     }
@@ -15552,6 +15615,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
+        pendingRowTimestamp = Long.MIN_VALUE;
         if (hasO3()) {
             final long o3RowCount = getO3RowCount0();
             if (o3RowCount > 0) {
