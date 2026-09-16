@@ -28,7 +28,9 @@ import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.std.Rows;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 /**
@@ -68,6 +70,12 @@ import org.junit.Test;
  *     gate must still admit per-key, and the answers must be right THERE too. Without this arm
  *     a gate that simply never admitted per-key would pass the first arm.</li>
  * </ul>
+ * The performance crossover is switched off for both arms (see {@link #setUp()}). Note what
+ * that concedes: a correctly tuned crossover would have rejected BOTH of these shapes on
+ * density alone, because clearing ~30 rows per pair while also reaching 524,288 frames needs
+ * 15.7M selected rows. That is a reason to keep the two gates independent, not a reason to drop
+ * the ceiling -- the ceiling is a correctness invariant and must not rest on a tuned number
+ * that a later benchmark could move.
  */
 public class CoveringIndexPerKeyFrameCeilingTest extends AbstractCoveringIndexQueryTest {
 
@@ -77,6 +85,23 @@ public class CoveringIndexPerKeyFrameCeilingTest extends AbstractCoveringIndexQu
     private static final int KEYS_UNDER_CEILING = 1000;
     private static final int PARTITIONS = 520;
     private static final long ROWS = (long) KEYS * PARTITIONS;
+
+    @After
+    public void clearCrossoverOverride() {
+        // Static override: MUST be cleared or it leaks into every later test class in the same
+        // JVM fork.
+        CoveringIndexRecordCursorFactory.setMinRowsPerKeyPartitionForTesting(-1);
+    }
+
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
+        // Isolate the ceiling. This fixture holds exactly one row per (key, partition), so the
+        // performance crossover (~30 rows per pair) would reject BOTH arms and neither would say
+        // anything about the frame-count bound. 0 admits any density.
+        CoveringIndexRecordCursorFactory.setMinRowsPerKeyPartitionForTesting(0);
+    }
 
     @Test(timeout = 900_000)
     public void testFrameCountCeilingFallsBackToMerge() throws Exception {

@@ -129,6 +129,20 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // (key, partition) pairs. This is a correctness invariant derived from the row-id encoding, NOT
     // a tuned constant, so it carries no test override.
     static final int MAX_PER_KEY_PAGE_FRAMES = Rows.MAX_SAFE_PARTITION_INDEX;
+    // The density below which per-key mode is a pessimisation, in rows per
+    // (key, partition-frame) pair.
+    //
+    // Per-key costs a FIXED 1.2-1.8 us per frame, independent of how many rows the frame
+    // carries, so its win is entirely a function of how many rows each pair holds. Measured on
+    // identical data with only the partition count varying: P=1 per-key is 2.9x FASTER, P=4 is
+    // parity, P=32 is 3.0x SLOWER. The crossover sits at ~30 rows per pair (analytic fit 31.6).
+    // Above it per-key wins hugely -- 42x at K=512 on a table holding 400,000 rows per key.
+    //
+    // Unlike MAX_PER_KEY_PAGE_FRAMES this IS a tuned constant: getting it wrong costs speed,
+    // never correctness. That is exactly why it carries a test override and the ceiling does
+    // not, and why the two are separate gates rather than one predicate -- a correctness
+    // invariant must not be able to move when someone retunes a benchmark number.
+    static final int PER_KEY_MIN_ROWS_PER_PAIR = 32;
     // Test-only crossover override; -1 means "use HEAP_MERGE_MIN_KEYS".
     @TestOnly
     static int heapMergeMinKeysOverride = -1;
@@ -142,6 +156,19 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     static volatile long mergedModeOpensForTesting;
     @TestOnly
     static volatile long perKeyModeOpensForTesting;
+    // Test-only crossover override; -1 means "use PER_KEY_MIN_ROWS_PER_PAIR", 0 means "admit any
+    // density", which is how a test that is about the CEILING switches the heuristic out of the
+    // way. There is deliberately no equivalent for the ceiling.
+    @TestOnly
+    static int perKeyMinRowsPerPairOverride = -1;
+    // Number of partition frames the density estimate samples, and the total number of
+    // (frame, key) metadata probes it may spend. Both are fixed, so admission costs O(1) per
+    // open no matter how large the scan is -- which matters because the estimate runs on the
+    // caller's thread before the first row, and because a shape with many (key, partition)
+    // pairs is precisely the shape whose full probe walk would cost what the gate exists to
+    // avoid. See estimateRowsPerPair() for what sampling instead of walking gives up.
+    private static final int PER_KEY_ESTIMATE_MAX_FRAMES = 4;
+    private static final int PER_KEY_ESTIMATE_MAX_PROBES = 8192;
     private static final ThreadLocal<MergeObserver> TEST_MERGE_OBSERVER = new ThreadLocal<>();
     // The plan this query would have got with /*+ no_covering *//*, held so a NULL key over a
     // partition that carries a column top can be served by it instead. Non-null only when the
@@ -306,6 +333,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     /**
+     * The effective per-key density crossover: the test override when set, otherwise
+     * {@link #PER_KEY_MIN_ROWS_PER_PAIR}. Zero admits any density, which switches the
+     * performance heuristic off without touching the correctness ceiling.
+     */
+    static int effectivePerKeyMinRowsPerPair() {
+        return perKeyMinRowsPerPairOverride >= 0 ? perKeyMinRowsPerPairOverride : PER_KEY_MIN_ROWS_PER_PAIR;
+    }
+
+    /**
      * Test-only count of covered rows EAGERLY materialized at frame production
      * (via the cursor's {@code writeCoveredRow}). The single-key path is
      * metadata-only (decode runs on the workers), so this stays 0 for a
@@ -393,6 +429,18 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     @TestOnly
     public static void setHeapMergeMinKeysForTesting(int n) {
         heapMergeMinKeysOverride = n;
+    }
+
+    /**
+     * Test-only hook that moves the per-key density crossover (see
+     * {@link #PER_KEY_MIN_ROWS_PER_PAIR}). Pass {@code 0} to admit any density -- what a test
+     * about the frame-count CEILING wants, since a sparse ceiling-probing fixture would
+     * otherwise be rejected by the heuristic and prove nothing about the bound. Pass
+     * {@code -1} to clear the override.
+     */
+    @TestOnly
+    public static void setMinRowsPerKeyPartitionForTesting(int n) {
+        perKeyMinRowsPerPairOverride = n;
     }
 
     @TestOnly
@@ -1065,7 +1113,98 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         final long frameUpperBound = pairUpperBound > Long.MAX_VALUE - splitTerm
                 ? Long.MAX_VALUE
                 : pairUpperBound + splitTerm;
-        return frameUpperBound < MAX_PER_KEY_PAGE_FRAMES;
+        if (frameUpperBound >= MAX_PER_KEY_PAGE_FRAMES) {
+            // The correctness ceiling. Checked FIRST, and entirely from O(1) metadata, so the
+            // shapes with the most (key, partition) pairs -- the ones whose density probe would
+            // cost the most -- never pay for one.
+            return false;
+        }
+        final int minRowsPerPair = effectivePerKeyMinRowsPerPair();
+        if (minRowsPerPair <= 0) {
+            return true;
+        }
+        // -1 ("no bounded answer") compares false, i.e. falls back to the merge, which is the
+        // right default for every ambiguous case: it is the mode that exists today and the one
+        // whose ordering matches what the factory advertises.
+        return estimateRowsPerPair(frameCursor, reader, keys) >= minRowsPerPair;
+    }
+
+    /**
+     * Estimated rows per (key, partition-frame) pair, or {@code -1} when no bounded answer is
+     * available. This is the denominator of the performance crossover and the only input to
+     * either gate that is not free.
+     * <p>
+     * It samples: at most {@link #PER_KEY_ESTIMATE_MAX_FRAMES} partition frames from the front
+     * of the cursor, and at most {@code PER_KEY_ESTIMATE_MAX_PROBES / frames} keys from the
+     * front of the key list, so the whole estimate costs a fixed number of metadata probes per
+     * open regardless of the scan's size. Sampling rather than walking every pair is the one
+     * real compromise here: a full walk is exact, but for a high-K/high-P shape it costs the K
+     * x P index-reader probes that per-key mode is being judged on, on every execution of a
+     * cached plan. Rows-per-pair is a mean, so sampling a prefix of each axis estimates it
+     * directly; what it gives up is accuracy when density varies systematically along either
+     * axis -- a table whose oldest partitions are much sparser than its newest, or an IN-list
+     * whose first keys are much rarer than its last, will be mis-scored. Both directions of
+     * that error cost speed only.
+     * <p>
+     * {@code estimateMatchesClamped} answers from generation metadata with no O(rows) walk and
+     * returns an exact count for a sealed generation, a conservative upper bound otherwise.
+     * Its two non-numeric answers -- {@code ESTIMATE_REJECT} for a clipped legacy unranked
+     * Elias-Fano blob with no bounded rank metadata, and {@code LONG_NULL} for a key the reader
+     * cannot count -- both mean "no bounded answer", and so does a sample that found no usable
+     * frame at all.
+     * <p>
+     * The cursor is single-pass but rewindable, and it is rewound in a {@code finally} before
+     * the caller hands it to {@code MultiKeyCoveringPageFrameCursor.of()}. The same
+     * walk-then-{@code toTop()} shape is used by {@code SingleKeyCoveringCursor.size()} in this
+     * file and by {@code AdaptiveSymbolPatternRecordCursorFactory.estimate()}.
+     */
+    private long estimateRowsPerPair(PartitionFrameCursor frameCursor, TableReader reader, IntList keys) {
+        final int keysToSample = Math.min(keys.size(), PER_KEY_ESTIMATE_MAX_PROBES / PER_KEY_ESTIMATE_MAX_FRAMES);
+        if (keysToSample <= 0) {
+            return -1;
+        }
+        long matchedRows = 0;
+        int sampledFrames = 0;
+        try {
+            for (int visited = 0; visited < PER_KEY_ESTIMATE_MAX_FRAMES; visited++) {
+                final PartitionFrame frame = frameCursor.next();
+                if (frame == null) {
+                    break;
+                }
+                final IndexReader indexReader = reader.getIndexReader(
+                        frame.getPartitionIndex(), indexColumnIndex, IndexReader.DIR_FORWARD);
+                if (!(indexReader instanceof AbstractPostingIndexReader posting)) {
+                    // A partition predating the index yields a non-posting null reader, which has
+                    // no metadata count. Drop it from BOTH numerator and denominator rather than
+                    // scoring it zero: scoring it zero would drag the mean down and reject on the
+                    // strength of a partition the estimate never actually looked at.
+                    continue;
+                }
+                // Bounds mirror the cheap-chunk fill and SingleKeyCoveringCursor.size(): the gen
+                // walk clamps the inclusive upper bound to min(rowHi - 1, entryMaxValue), while
+                // the implicit-null prefix (key 0) is clamped by columnTop only and so takes the
+                // UNCLAMPED rowHi - 1.
+                final long rowLo = frame.getRowLo();
+                final long callerHiInclusive = frame.getRowHi() - 1;
+                final long entryMax = posting.getEntryMaxValue();
+                final long clampedMax = entryMax >= 0 ? Math.min(callerHiInclusive, entryMax) : callerHiInclusive;
+                for (int i = 0; i < keysToSample; i++) {
+                    final long count = posting.estimateMatchesClamped(
+                            TableUtils.toIndexKey(keys.getQuick(i)), rowLo, callerHiInclusive, clampedMax);
+                    if (count == AbstractPostingIndexReader.ESTIMATE_REJECT || count == Numbers.LONG_NULL) {
+                        return -1;
+                    }
+                    matchedRows += count;
+                }
+                sampledFrames++;
+            }
+        } finally {
+            frameCursor.toTop();
+        }
+        if (sampledFrames == 0) {
+            return -1;
+        }
+        return matchedRows / ((long) keysToSample * sampledFrames);
     }
 
     private static abstract class CoveringCursor implements RecordCursor {
