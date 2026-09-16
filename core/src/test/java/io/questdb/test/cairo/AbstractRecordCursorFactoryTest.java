@@ -90,6 +90,7 @@ public class AbstractRecordCursorFactoryTest {
         public int getScanDirection() {
             return SCAN_DIRECTION_FORWARD;
         }
+
         @Override
         protected void _close() {
             super._close();
