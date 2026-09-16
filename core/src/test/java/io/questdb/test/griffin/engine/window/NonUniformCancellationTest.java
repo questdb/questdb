@@ -55,6 +55,13 @@ public class NonUniformCancellationTest extends AbstractCairoTest {
     };
 
     @Test
+    public void testBucketSparseSelection() throws Exception {
+        for (String selection : List.of("lttb(v, $1)", "lttb(v, $1, '1s')", "m4(v, $1)", "minmax(v, $1)")) {
+            assertBothCancellations(selection, Phase.COPY_SELECTED, Input.LINEAR);
+        }
+    }
+
+    @Test
     public void testCadence() throws Exception {
         assertCadence("cadence($1)");
     }
@@ -117,7 +124,12 @@ public class NonUniformCancellationTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(isLight));
             execute("CREATE TABLE t AS (SELECT x::TIMESTAMP ts, x::DOUBLE v FROM long_sequence(" + ROWS + ")) TIMESTAMP(ts)");
             final boolean isCadence = selection.startsWith("cadence");
-            bindVariableService.setLong(0, isCadence ? (phase == Phase.COPY_ALL ? 1 : 2) : ROWS);
+            if (isCadence) {
+                bindVariableService.setLong(0, phase == Phase.COPY_ALL ? 1 : 2);
+            } else {
+                // A smaller bucket target on NULL-free input reaches the direct ordinal copy.
+                bindVariableService.setLong(0, phase == Phase.COPY_SELECTED && input == Input.LINEAR ? ROWS / 2 : ROWS);
+            }
             final SqlExecutionCircuitBreaker originalBreaker = sqlExecutionContext.getCircuitBreaker();
             try (
                     CancellingBreaker breaker = new CancellingBreaker();

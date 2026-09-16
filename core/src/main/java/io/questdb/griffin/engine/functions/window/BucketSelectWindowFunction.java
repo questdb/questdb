@@ -255,6 +255,16 @@ class BucketSelectWindowFunction extends BaseWindowFunction implements Reopenabl
             }
             return;
         }
+        if (count == rowCount) {
+            // pass1 kept every row, so buffer and traversal ordinals coincide.
+            for (long i = 0, n = selected.size(); i < n; i++) {
+                if ((i & CIRCUIT_BREAKER_CHECK_MASK) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                }
+                dest.add(selected.get(i));
+            }
+            return;
+        }
         // Map `selected` (ascending non-null BUFFER ordinals chosen by preparePass2) back to
         // ascending pass1 traversal ordinals using pass1's null bitset. The o-th non-null row
         // in pass1 traversal order corresponds to buffer ordinal o; a single forward walk

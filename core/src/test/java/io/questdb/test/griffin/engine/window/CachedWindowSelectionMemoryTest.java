@@ -85,6 +85,76 @@ public class CachedWindowSelectionMemoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBucketSparseEnumerationDoesNotScanInput() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, "true");
+            execute("""
+                    CREATE TABLE tab AS (
+                      SELECT (x + CASE WHEN x > 8192 THEN 2_000_000 ELSE 0 END)::TIMESTAMP ts, x v
+                      FROM long_sequence(16_384)
+                    ) TIMESTAMP(ts)
+                    """);
+            final String first = "1970-01-01T00:00:00.000001Z\t1\n";
+            final String second = "1970-01-01T00:00:00.008192Z\t8192\n";
+            final String third = "1970-01-01T00:00:02.008193Z\t8193\n";
+            final String last = "1970-01-01T00:00:02.016384Z\t16384\n";
+            final SqlExecutionCircuitBreaker originalBreaker = sqlExecutionContext.getCircuitBreaker();
+            final CountingBreaker breaker = new CountingBreaker();
+            ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+            try {
+                for (int method = 0; method < 4; method++) {
+                    final String selection = switch (method) {
+                        case 0 -> "lttb(v, 2)";
+                        case 1 -> "m4(v, 2)";
+                        case 2 -> "minmax(v, 2)";
+                        default -> "lttb(v, 2, '1s')";
+                    };
+                    // Every method pins the endpoints on this ramp. Gap LTTB pins each segment's
+                    // endpoints, so its soft target emits four rows even though the target is two.
+                    final boolean hasGap = method == 3;
+                    final long[] expectedOrdinals = hasGap ? new long[]{0, 8191, 8192, 16_383} : new long[]{0, 16_383};
+                    for (int ordered = 0; ordered < 2; ordered++) {
+                        final boolean isOrdered = ordered == 1;
+                        final String source = isOrdered ? "(SELECT ts, v FROM tab ORDER BY ts DESC)" : "tab";
+                        try (RecordCursorFactory factory = select("SELECT ts, v FROM " + source + " SUBSAMPLE " + selection);
+                             DirectLongList selectedRows = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT)) {
+                            assertFusedPlan(factory, isOrdered);
+                            RecordCursorFactory base = factory;
+                            while (base != null && !(base instanceof CachedWindowLightRecordCursorFactory)) {
+                                base = base.getBaseFactory();
+                            }
+                            Assert.assertNotNull(base);
+                            WindowFunction function = ((CachedWindowLightRecordCursorFactory) base).getSingleRowSelectingFunction();
+                            Assert.assertNotNull(function);
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                Assert.assertTrue(cursor.hasNext());
+                                Assert.assertFalse(function.isSelectionAllRows());
+                                for (int run = 0; run < 2; run++) {
+                                    selectedRows.add(-1);
+                                    breaker.checks = 0;
+                                    function.getSelectedRows(selectedRows);
+                                    Assert.assertEquals(expectedOrdinals.length, selectedRows.size());
+                                    for (int i = 0; i < expectedOrdinals.length; i++) {
+                                        Assert.assertEquals(expectedOrdinals[i], selectedRows.get(i));
+                                    }
+                                    // Count only enumeration, not pass1/selection or the executor's
+                                    // ordered mapping. A full input walk needs 16 checkpoints here;
+                                    // copying two or four selected ordinals needs just the entry check.
+                                    Assert.assertEquals("enumeration must not scan input rows: " + selection, 1, breaker.checks);
+                                }
+                            }
+                            final String middle = hasGap ? (isOrdered ? third + second : second + third) : "";
+                            assertSelection(factory, isOrdered, "ts\tv\n" + (isOrdered ? last + middle + first : first + middle + last));
+                        }
+                    }
+                }
+            } finally {
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(originalBreaker);
+            }
+        });
+    }
+
+    @Test
     public void testLttbSelectAllUnderQueryMemoryLimit() throws Exception {
         assertBucketIdentityMemory("lttb");
     }
@@ -757,5 +827,19 @@ public class CachedWindowSelectionMemoryTest extends AbstractCairoTest {
                 assertDenseSelection(factory, stride, isFused);
             }
         });
+    }
+
+    private static class CountingBreaker extends AtomicBooleanCircuitBreaker {
+        private int checks;
+
+        CountingBreaker() {
+            super(engine);
+        }
+
+        @Override
+        public void statefulThrowExceptionIfTrippedTimeThrottled() {
+            checks++;
+            super.statefulThrowExceptionIfTrippedTimeThrottled();
+        }
     }
 }
