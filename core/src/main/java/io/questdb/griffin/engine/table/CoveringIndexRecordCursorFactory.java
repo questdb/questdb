@@ -3378,8 +3378,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         final PageFrame result = isKeyMidDrain()
                                 ? resumeKeyDrain()
                                 : fillFrameForKey(
-                                        multiKeys.getQuick(perKeyIdx), perKeyPartitionIndex,
-                                        perKeyRowLo, perKeyRowHi, maxRowsPerFrame, true);
+                                multiKeys.getQuick(perKeyIdx), perKeyPartitionIndex,
+                                perKeyRowLo, perKeyRowHi, maxRowsPerFrame, true);
                         // A null frame must mean the key finished, because only
                         // !isKeyMidDrain() advances perKeyIdx. A fill that returned null
                         // while still claiming to be mid-drain would spin this inner loop
