@@ -130,10 +130,12 @@ vm_boot() {
     qemu-system-x86_64 "${args[@]}"
 }
 
-# THE DEVICE RESET, and the assertion that it is real. ONE definition, because there are five
-# replay call sites (run-flush-sweep.sh main loop and densify, t06, t07, t10, run-sf-replay.sh)
-# and a reset that is present at some of them and absent at others is worse than none: it makes
-# the guard and the instrument disagree about what a boundary means.
+# THE DEVICE RESET, and the assertion that it is real. ONE definition, shared by every replay
+# call site: run-flush-sweep.sh's main loop and densify pass, t06, t07, t10, run-sf-replay.sh
+# and run-st8-probe.sh. It began life as the sweep's alone, and a reset present at some call
+# sites and absent at others is worse than none -- it makes the guard and the instrument
+# disagree about what a boundary means, which is how t06 came to certify a regime the
+# instrument never used.
 #
 # WHY A RESET IS NEEDED AT ALL. dm-log-writes is a PASS-THROUGH target: during the recording
 # every write reaches /dev/vdb as well as the log. After the reboot the data device therefore
@@ -176,14 +178,33 @@ replay_reset_assert() {  # PORT KEY
     local port="$1" key="$2" out
     [ "${QDB_REPLAY_RESET:-blkdiscard}" = none ] && return 0
     out=$(vm_ssh "$port" "$key" "
-        sudo dd if=/dev/urandom of=/dev/vdb bs=1M count=1 seek=1024 conv=fsync status=none
-        before=\$(sudo dd if=/dev/vdb bs=1M count=1 skip=1024 status=none | md5sum | cut -d' ' -f1)
-        $(replay_reset_cmd) || { echo 'RESET_REFUSED'; exit 1; }
-        after=\$(sudo dd if=/dev/vdb bs=1M count=1 skip=1024 status=none | md5sum | cut -d' ' -f1)
         zero=\$(head -c 1048576 /dev/zero | md5sum | cut -d' ' -f1)
-        if [ \"\$after\" = \"\$zero\" ]; then echo RESET_REAL
-        elif [ \"\$after\" = \"\$before\" ]; then echo RESET_IGNORED
-        else echo RESET_PARTIAL; fi" 2>&1)
+        # SEVERAL OFFSETS, SPREAD ACROSS THE DEVICE. One sample cannot tell a full discard from
+        # a PARTIAL one: a backend that honoured only the first extent -- discard_max_bytes is
+        # 2 GiB here -- would zero the probed MiB and pass a one-point check while the rest of
+        # the device still carried the final recorded state. That is the worst of the three
+        # outcomes, because it looks exactly like success.
+        #
+        # DERIVED FROM THE DEVICE, not hardcoded. The callers do not agree on size: the sweep
+        # and t07/t10 use 40 GiB, t06 uses 4 GiB, run-st8-probe.sh uses 2 GiB. Hardcoded 32 GiB
+        # offsets seek past the end of the small ones, dd fails, and the check reports
+        # RESET_PARTIAL on a device that was in fact fully reset -- a false alarm that stops a
+        # green run. Measured on t06 before this was derived.
+        mib=\$(( \$(sudo blockdev --getsize64 /dev/vdb) / 1048576 ))
+        [ \"\$mib\" -ge 8 ] || { echo \"RESET_UNTESTABLE device is only \${mib} MiB\"; exit 1; }
+        offs=\"1 \$((mib/4)) \$((mib/2)) \$((mib*3/4)) \$((mib-2))\"
+        dirty=0; clean=0
+        for off in \$offs; do
+            sudo dd if=/dev/urandom of=/dev/vdb bs=1M count=1 seek=\$off conv=fsync status=none
+        done
+        $(replay_reset_cmd) || { echo 'RESET_REFUSED'; exit 1; }
+        for off in \$offs; do
+            a=\$(sudo dd if=/dev/vdb bs=1M count=1 skip=\$off status=none | md5sum | cut -d' ' -f1)
+            if [ \"\$a\" = \"\$zero\" ]; then clean=\$((clean+1)); else dirty=\$((dirty+1)); fi
+        done
+        if [ \$dirty -eq 0 ]; then echo RESET_REAL
+        elif [ \$clean -eq 0 ]; then echo RESET_IGNORED
+        else echo \"RESET_PARTIAL clean=\$clean dirty=\$dirty\"; fi" 2>&1)
     case "$out" in
         *RESET_REAL*) return 0 ;;
         *RESET_IGNORED*)
@@ -191,6 +212,15 @@ replay_reset_assert() {  # PORT KEY
             echo "  The data drive was booted without discard=unmap, so the reset is a no-op and" >&2
             echo "  every boundary would be replayed onto the previous boundary's state." >&2
             echo "  Boot the replay VM with QDB_VM_DATA_DISCARD=unmap." >&2
+            return 1 ;;
+        *RESET_UNTESTABLE*)
+            echo "LOUD_FAILURE: the data device is too small to sample: $out" >&2
+            return 1 ;;
+        *RESET_PARTIAL*)
+            echo "LOUD_FAILURE: the device reset zeroed part of the device and left the rest." >&2
+            echo "  $out" >&2
+            echo "  A partial reset is the worst of the three outcomes: boundaries would replay" >&2
+            echo "  onto a device that is clean where a check looked and stale everywhere else." >&2
             return 1 ;;
         *) echo "LOUD_FAILURE: device reset self-check did not report RESET_REAL: $out" >&2
            return 1 ;;
