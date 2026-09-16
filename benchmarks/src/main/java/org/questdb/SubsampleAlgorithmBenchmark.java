@@ -107,7 +107,7 @@ public class SubsampleAlgorithmBenchmark {
         target = scenario.endsWith("sparse") ? 500 : rows / 2;
         algorithm = scenario.startsWith("m4") ? M4Algorithm.INSTANCE
                 : scenario.startsWith("minmax") ? MinMaxAlgorithm.INSTANCE
-                : new LttbAlgorithm(hasTinyGaps ? 1 : 0);
+                  : new LttbAlgorithm(hasTinyGaps ? 1 : 0);
         selected = new DirectLongList(rows, MemoryTag.NATIVE_DEFAULT);
         buffer = Unsafe.malloc((long) rows * SubsampleAlgorithm.ENTRY_SIZE, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < rows; i++) {

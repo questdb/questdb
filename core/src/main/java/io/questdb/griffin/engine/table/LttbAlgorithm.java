@@ -413,7 +413,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
      * list (MinMaxLTTB stage 2) and [start, end) indexes that list.
      */
     private static int lttbCore(long buffer, @Nullable DirectLongList candidates, int start, int end, int m, boolean hasIntegralValues,
-                               DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker, int work) {
+                                DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker, int work) {
         int n = end - start;
         if (n < 2) {
             // Single data point or empty range - emit what's there
