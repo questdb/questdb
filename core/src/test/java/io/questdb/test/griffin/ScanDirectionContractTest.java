@@ -24,7 +24,12 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.table.FilterOnSubQueryRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -108,6 +113,29 @@ public class ScanDirectionContractTest extends AbstractCairoTest {
                     " ('2024-01-01T00:00:02.000000Z',3)," +
                     " ('2024-01-01T00:00:03.000000Z',4)," +
                     " ('2024-01-01T00:00:04.000000Z',5)";
+    /**
+     * Fixture for the two FilterOnSubQuery tests. The SYMBOL column must be indexed - that is what
+     * routes {@code sym in (<sub-query>)} to FilterOnSubQueryRecordCursorFactory at all - and the
+     * rows must straddle more than one partition, because the emission the tests are about only
+     * shows up ACROSS partition frames: within a single frame the heap cursor is ascending whatever
+     * the frame order is. The x values double as row identity in the assertions below; 'c' at
+     * 2024-01-02T01 is the one row the sub-query filter excludes, so a fixture that silently stopped
+     * filtering would be caught too.
+     */
+    private static final String SUBQUERY_FILTERED_DDL =
+            "create table w (ts timestamp, sym symbol index, x long) timestamp(ts) partition by day";
+    private static final String SUBQUERY_FILTERED_ROWS =
+            "insert into w values" +
+                    " ('2024-01-01T00:00:00.000000Z','a',1)," +
+                    " ('2024-01-01T01:00:00.000000Z','b',2)," +
+                    " ('2024-01-02T00:00:00.000000Z','a',3)," +
+                    " ('2024-01-02T01:00:00.000000Z','c',4)," +
+                    " ('2024-01-03T00:00:00.000000Z','b',5)," +
+                    " ('2024-01-03T01:00:00.000000Z','a',6)";
+    private static final String SUBQUERY_KEYS_DDL =
+            "create table s (sym symbol)";
+    private static final String SUBQUERY_KEYS_ROWS =
+            "insert into s values ('a'), ('b')";
 
     /**
      * Positive control for the two not-keyed group-by tests: a not-keyed aggregate is the one
@@ -1008,5 +1036,137 @@ public class ScanDirectionContractTest extends AbstractCairoTest {
                         2024-01-01T00:00:03.000000Z\t2024-01-01T00:00:03.000000Z
                         2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:04.000000Z
                         """);
+    }
+
+    /**
+     * Positive control for {@link #testFilterOnSubQueryOverBackwardFrameDeclaresOther}, and the
+     * fixture proof for it. {@code sym in (<sub-query>)} over an indexed SYMBOL column selects
+     * FilterOnSubQueryRecordCursorFactory, and "order by ts desc" makes the optimiser set
+     * model.isForceBackwardScan(), which hands that factory an ORDER_DESC partition frame cursor -
+     * "Frame backward scan on: w" in the plan below. The query must keep compiling and returning
+     * every matching row, in descending order: nothing about the result changes here, only what the
+     * factory claims about the order it emits in.
+     * <p>
+     * Note the Encode sort above the factory. It is there in BOTH the corrected and the pre-fix
+     * build, because sort elision needs a BACKWARD claim and the factory answered FORWARD before the
+     * fix and answers OTHER after it - neither matches "ts desc". That is precisely why the
+     * companion test has to read the declaration off the factory rather than assert a refusal: the
+     * only consumer this factory reaches with a DESC frame today is
+     * UnionAllRecordCursorFactory, which declares SCAN_DIRECTION_OTHER unconditionally and so
+     * swallows whatever its branches claim.
+     */
+    @Test
+    public void testFilterOnSubQueryOverBackwardFrameAloneStillReturnsAllRows() throws Exception {
+        assertQuery("select ts, sym, x from w where sym in (select sym from s) order by ts desc")
+                .ddl(SUBQUERY_FILTERED_DDL, SUBQUERY_FILTERED_ROWS, SUBQUERY_KEYS_DDL, SUBQUERY_KEYS_ROWS)
+                .noLeakCheck()
+                .timestampDesc("ts")
+                .withPlanContaining("Encode sort light", "FilterOnSubQuery", "Frame backward scan on: w")
+                .returns("""
+                        ts\tsym\tx
+                        2024-01-03T01:00:00.000000Z\ta\t6
+                        2024-01-03T00:00:00.000000Z\tb\t5
+                        2024-01-02T00:00:00.000000Z\ta\t3
+                        2024-01-01T01:00:00.000000Z\tb\t2
+                        2024-01-01T00:00:00.000000Z\ta\t1
+                        """);
+    }
+
+    /**
+     * FilterOnSubQueryRecordCursorFactory merges one index row cursor per matching symbol key
+     * through a HeapRowCursorFactory, so rows are ascending by row id WITHIN a partition frame but
+     * come out in whatever order the partition frame cursor hands the frames over. The planner does
+     * hand it an ORDER_DESC frame cursor (see the positive control above), and the emission is then
+     * a sawtooth - partitions descending, rows ascending inside each - which is neither FORWARD nor
+     * BACKWARD. Driven over 4 daily partitions with 46 matching rows it measured 42 ascending steps,
+     * 3 descending and 0 equal; on the six-row fixture here it is x = 5, 6, 3, 1, 2, asserted below.
+     * <p>
+     * Its two structural siblings, FilterOnValuesRecordCursorFactory and
+     * FilterOnExcludedValuesRecordCursorFactory, already consult
+     * {@code partitionFrameCursorFactory.getOrder()} and answer SCAN_DIRECTION_OTHER when it is not
+     * ORDER_ASC; they additionally test their {@code heapCursorUsed} flag because they can pick a
+     * sequential per-symbol cursor instead. This class always builds a HeapRowCursorFactory, so the
+     * frame order is the whole condition.
+     * <p>
+     * This is the one factory in this class with no query-level refusal to assert. Every other
+     * corrected factory keeps a designated timestamp that {@code timestamp(col)} can re-attach and
+     * so reaches an order-requiring consumer; here the DESC-framed factory is only ever reached
+     * through a Sort (which declares its own direction) or as a direct branch of
+     * UnionAllRecordCursorFactory (which declares OTHER unconditionally), so the false FORWARD is a
+     * latent hazard rather than a live wrong answer - 17 candidate consumer shapes were executed
+     * against both builds and none differed. Read the declaration off the factory instead. Revert
+     * the guard in getScanDirection() and the first assertion below fails: the factory answers
+     * SCAN_DIRECTION_FORWARD (1) while emitting 5, 6, 3, 1, 2.
+     */
+    @Test
+    public void testFilterOnSubQueryOverBackwardFrameDeclaresOther() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SUBQUERY_FILTERED_DDL);
+            execute(SUBQUERY_FILTERED_ROWS);
+            execute(SUBQUERY_KEYS_DDL);
+            execute(SUBQUERY_KEYS_ROWS);
+
+            try (RecordCursorFactory top = select("select ts, sym, x from w where sym in (select sym from s) order by ts desc")) {
+                final FilterOnSubQueryRecordCursorFactory factory = findFilterOnSubQuery(top);
+                Assert.assertEquals(
+                        "DESC frame order must not be claimed as an ascending scan",
+                        RecordCursorFactory.SCAN_DIRECTION_OTHER,
+                        factory.getScanDirection()
+                );
+                Assert.assertEquals("5,6,3,1,2", drainXColumn(factory));
+            }
+
+            // The mirror image, and the reason the guard tests the frame order instead of answering
+            // OTHER outright: with no "order by ts desc" the frame cursor is ORDER_ASC, the
+            // partitions come out in ascending order too, and FORWARD is honest. Had the fix
+            // declared OTHER unconditionally, every ordinary "sym in (<sub-query>)" query would have
+            // stopped being usable as an ASOF/LT/SPLICE master or a SAMPLE BY base for no reason.
+            try (RecordCursorFactory top = select("select ts, sym, x from w where sym in (select sym from s)")) {
+                final FilterOnSubQueryRecordCursorFactory factory = findFilterOnSubQuery(top);
+                Assert.assertEquals(
+                        "ASC frame order still emits an ascending designated timestamp",
+                        RecordCursorFactory.SCAN_DIRECTION_FORWARD,
+                        factory.getScanDirection()
+                );
+                Assert.assertEquals("1,2,3,5,6", drainXColumn(factory));
+            }
+        });
+    }
+
+    /**
+     * Drains {@code factory} and returns its x column, in emission order, as a comma-separated
+     * string. The x values are unique per row in the fixture, so the string is a faithful record of
+     * the order the cursor produced - which is the evidence the scan-direction claim is about.
+     */
+    private static String drainXColumn(RecordCursorFactory factory) throws Exception {
+        final StringBuilder sb = new StringBuilder();
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                if (sb.length() > 0) {
+                    sb.append(',');
+                }
+                sb.append(record.getLong(2));
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Walks the base-factory chain from the top of a compiled query down to the
+     * FilterOnSubQueryRecordCursorFactory under it. Failing rather than returning null keeps the
+     * assertions above from going vacuous if the planner ever stops selecting this factory for the
+     * fixture query.
+     */
+    private static FilterOnSubQueryRecordCursorFactory findFilterOnSubQuery(RecordCursorFactory factory) {
+        RecordCursorFactory f = factory;
+        while (f != null) {
+            if (f instanceof FilterOnSubQueryRecordCursorFactory fosq) {
+                return fosq;
+            }
+            f = f.getBaseFactory();
+        }
+        Assert.fail("FilterOnSubQueryRecordCursorFactory not found in the compiled query tree");
+        return null;
     }
 }

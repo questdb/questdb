@@ -99,7 +99,23 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
 
     @Override
     public int getScanDirection() {
-        return SCAN_DIRECTION_FORWARD;
+        // Rows come out of a HeapRowCursorFactory merging one index row cursor per matching
+        // symbol key, so within a single partition frame they are ascending by row id - but
+        // across frames the order is whatever the partition frame cursor hands out. The planner
+        // does hand this factory an ORDER_DESC frame cursor (model.isForceBackwardScan(), e.g.
+        // "... where sym in (<sub-query>) order by ts desc"), and the emission is then a
+        // sawtooth: partitions descending, rows ascending within each. Measured over 4 daily
+        // partitions with 46 matching rows: 42 ascending steps, 3 descending, 0 equal. That is
+        // neither FORWARD nor BACKWARD, so the frame order has to be consulted.
+        //
+        // FilterOnValuesRecordCursorFactory and FilterOnExcludedValuesRecordCursorFactory guard
+        // the same way but also test heapCursorUsed, because they can pick a sequential cursor
+        // that walks symbol keys in turn instead. This class has no such choice - it always
+        // builds a HeapRowCursorFactory - so there is nothing to test here beyond the order.
+        if (partitionFrameCursorFactory.getOrder() == PartitionFrameCursorFactory.ORDER_ASC) {
+            return SCAN_DIRECTION_FORWARD;
+        }
+        return SCAN_DIRECTION_OTHER;
     }
 
     @Override
