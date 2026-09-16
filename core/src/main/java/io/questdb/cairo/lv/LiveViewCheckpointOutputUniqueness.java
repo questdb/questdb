@@ -27,7 +27,8 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.std.IntHashSet;
+import io.questdb.std.CompactIntHashSet;
+import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
@@ -66,8 +67,10 @@ import org.jetbrains.annotations.NotNull;
  * A replay emits rows in ascending designated-timestamp order, so all the rows of one
  * timestamp are contiguous - but their keys arrive in whatever order the base holds them,
  * so two rows sharing a key need not be adjacent. The scratch is therefore a set scoped to
- * one timestamp group, cleared as the group closes, and never larger than the widest group
- * the output holds ({@link #getMaxGroupRows()} reports it).
+ * one timestamp group, cleared as the group closes, and never holding more keys than the
+ * widest group the output holds ({@link #getMaxGroupRows()} reports it). Its table is sized
+ * by the widest group the worker has ever walked, though, so clearing it costs in proportion
+ * to the keys the closing group put in rather than to that table - see {@link GroupKeySet}.
  * <p>
  * A group of one - which is every group of a view whose keys report distinct timestamps -
  * never touches the set at all: the first row of a group is held in a scalar and only
@@ -98,7 +101,7 @@ public final class LiveViewCheckpointOutputUniqueness implements Mutable {
     public static final int NO_KEY_COLUMN = -1;
     // The keys of the timestamp group being walked, empty until that group holds a second
     // row. Never holds the set's own -1 marker, for the reason the class comment gives.
-    private final IntHashSet groupKeys = new IntHashSet();
+    private final GroupKeySet groupKeys = new GroupKeySet();
     private long checkedRows;
     private long duplicateRows;
     private int firstDuplicateKey = SymbolTable.VALUE_NOT_FOUND;
@@ -111,7 +114,7 @@ public final class LiveViewCheckpointOutputUniqueness implements Mutable {
 
     @Override
     public void clear() {
-        groupKeys.clear();
+        groupKeys.clearKeys();
         checkedRows = 0;
         duplicateRows = 0;
         firstDuplicateKey = SymbolTable.VALUE_NOT_FOUND;
@@ -234,7 +237,7 @@ public final class LiveViewCheckpointOutputUniqueness implements Mutable {
             // The group before this one is closed, so its scratch goes with it - and only
             // when it actually took any, which a group of one never does.
             if (groupKeys.size() > 0) {
-                groupKeys.clear();
+                groupKeys.clearKeys();
             }
             groupTs = ts;
             groupFirstKey = key;
@@ -309,5 +312,91 @@ public final class LiveViewCheckpointOutputUniqueness implements Mutable {
             }
         }
         return NO_KEY_COLUMN;
+    }
+
+    /**
+     * The group scratch: a set that empties in work proportional to the keys it holds,
+     * not to the table it has grown.
+     * <p>
+     * The table only ever grows. One wide group - a whole-second snapshot of every account -
+     * leaves it sized for that group for as long as the worker lives, and the worker's one
+     * detector serves every repair of every view on it. A clear that swept the whole table
+     * would charge each later group of two for the widest group the worker ever walked, on
+     * every group close, every re-arm and every resumed park. So {@link #clearKeys()}
+     * sweeps the whole table only while the keys fill enough of it that the sweep is the
+     * cheaper way, and otherwise erases just the clusters those keys sit in.
+     * <p>
+     * Public and open to extension only so that a test can stand a failing set in for the
+     * copy a park makes, whose allocation failure has no reproducible natural producer.
+     */
+    public static class GroupKeySet extends CompactIntHashSet {
+        // Past this many table slots per key, erasing the keys' clusters beats sweeping the
+        // table. A sweep writes a slot for a small fraction of what finding and erasing a key
+        // costs, so either path stays within a constant factor of the keys themselves.
+        private static final int SLOTS_PER_KEY_TO_SWEEP = 32;
+        // The keys in insertion order: what a clear erases and what a park copies.
+        private final IntList keyList = new IntList();
+
+        public GroupKeySet() {
+            super(MIN_INITIAL_CAPACITY, 0.4);
+        }
+
+        @Override
+        public boolean add(int key) {
+            final int index = keyIndex(key);
+            if (index < 0) {
+                return false;
+            }
+            // Listed ahead of the table write. A list that fails to grow changes nothing,
+            // while the table takes the key before its own growth can fail, so either way
+            // the list holds every key the table does - which is what a clear and a park
+            // both walk.
+            keyList.add(key);
+            addAt(index, key);
+            return true;
+        }
+
+        public int get(int index) {
+            return keyList.getQuick(index);
+        }
+
+        /**
+         * Empties the set.
+         * <p>
+         * Linear probing leaves every key inside the unbroken run of occupied slots that
+         * starts at its home slot, {@code key & mask}. Erasing forward from a home slot to
+         * the next empty one therefore takes that key along with the rest of its cluster,
+         * all of which is leaving anyway. A key whose home slot an earlier erasure already
+         * emptied left with that erasure: the emptied part of a cluster is always a tail of
+         * it, and a key never sits before its home slot. So each occupied slot is written
+         * once, and nothing is read past the empty slot that ends each of those clusters.
+         * <p>
+         * That stands on the probe {@link #keyIndex} runs, so the erasure counts the slots
+         * it empties rather than trusting it. A count that falls short of the set's size
+         * means a key sat somewhere its cluster did not reach, and the whole table gets
+         * swept: a key left behind would make the same key in a later group a false
+         * duplicate.
+         */
+        private void clearKeys() {
+            final int size = size();
+            if (keys.length <= SLOTS_PER_KEY_TO_SWEEP * (long) size) {
+                keyList.clear();
+                clear();
+                return;
+            }
+            int erased = 0;
+            for (int i = 0, n = keyList.size(); i < n; i++) {
+                for (int slot = keyList.getQuick(i) & mask; keys[slot] != noEntryKeyValue; slot = (slot + 1) & mask) {
+                    keys[slot] = noEntryKeyValue;
+                    erased++;
+                }
+            }
+            keyList.clear();
+            if (erased == size) {
+                free = capacity;
+            } else {
+                clear();
+            }
+        }
     }
 }

@@ -31,6 +31,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointOutputUniqueness;
+import io.questdb.cairo.lv.LiveViewCheckpointOutputUniqueness.GroupKeySet;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -38,7 +39,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.Chars;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
@@ -364,7 +364,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                 execute("insert into tx values " + row(2, 5, "acct-1"));
                 drainWalQueue();
 
-                final ReadThrowingIntHashSet injectedCopyFailure = failTheFirstUniquenessCopy(job);
+                final ReadThrowingGroupKeySet injectedCopyFailure = failTheFirstUniquenessCopy(job);
                 job.setSimulateRepairUnwindCleanupFaultForTest();
                 runOneRefreshPass(job);
 
@@ -592,7 +592,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
         // descriptor, the overlay and the seal carryover.
         //
         // The one statement in suspend() that can throw is the uniqueness copy, whose
-        // IntHashSet.add() allocates when the parked timestamp group is wider than the set it
+        // GroupKeySet.add() allocates when the parked timestamp group is wider than the set it
         // grew from. A real allocation failure is not reproducible, so the set injected below
         // stands in for one: what the case pins is the ordering, which holds for any throwable
         // the copy raises.
@@ -719,7 +719,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                         stagedCapture(parked)
                 );
 
-                final ThrowingIntHashSet injected = failTheNextUniquenessCopy(parked);
+                final ThrowingGroupKeySet injected = failTheNextUniquenessCopy(parked);
                 driveRefreshToQuiescence(job);
 
                 Assert.assertTrue(
@@ -821,7 +821,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                         stagedTmpSegmentCount(viewInstance())
                 );
 
-                final ThrowingIntHashSet injected = failTheNextUniquenessCopy(parked);
+                final ThrowingGroupKeySet injected = failTheNextUniquenessCopy(parked);
                 runOneRefreshPass(job);
 
                 Assert.assertTrue(
@@ -1118,12 +1118,12 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
      *
      * @return the injected set, which records whether it actually fired
      */
-    private static ReadThrowingIntHashSet failTheFirstUniquenessCopy(LiveViewRefreshJob job) throws Exception {
+    private static ReadThrowingGroupKeySet failTheFirstUniquenessCopy(LiveViewRefreshJob job) throws Exception {
         final Field jobUniquenessField = LiveViewRefreshJob.class.getDeclaredField("outputUniqueness");
         jobUniquenessField.setAccessible(true);
         final LiveViewCheckpointOutputUniqueness uniqueness =
                 (LiveViewCheckpointOutputUniqueness) jobUniquenessField.get(job);
-        final ReadThrowingIntHashSet injected = new ReadThrowingIntHashSet();
+        final ReadThrowingGroupKeySet injected = new ReadThrowingGroupKeySet();
         final Field groupKeysField =
                 LiveViewCheckpointOutputUniqueness.class.getDeclaredField("groupKeys");
         groupKeysField.setAccessible(true);
@@ -1135,7 +1135,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
      * Makes the next park of an already-parked {@code session} fail inside suspend()'s uniqueness
      * copy, once, while leaving the resume that precedes it able to run.
      * <p>
-     * The copy's only fallible statement is {@link IntHashSet#add(int)} on the session's own key
+     * The copy's only fallible statement is {@link GroupKeySet#add(int)} on the session's own key
      * set, and it runs once per key the resuming turn's detector holds - so the injection needs
      * that detector to hold at least one key by the time the turn parks. Two edits arrange it
      * without depending on the data: the session's detector is disarmed, which the resume copies
@@ -1145,14 +1145,14 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
      *
      * @return the injected set, which records whether it actually fired
      */
-    private static ThrowingIntHashSet failTheNextUniquenessCopy(LiveViewCheckpointRepairSession session)
+    private static ThrowingGroupKeySet failTheNextUniquenessCopy(LiveViewCheckpointRepairSession session)
             throws Exception {
         final LiveViewCheckpointOutputUniqueness uniqueness = session.getOutputUniqueness();
         final Field keyColumnIndexField =
                 LiveViewCheckpointOutputUniqueness.class.getDeclaredField("keyColumnIndex");
         keyColumnIndexField.setAccessible(true);
         keyColumnIndexField.setInt(uniqueness, LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN);
-        final ThrowingIntHashSet injected = new ThrowingIntHashSet(SEEDED_GROUP_KEY);
+        final ThrowingGroupKeySet injected = new ThrowingGroupKeySet(SEEDED_GROUP_KEY);
         final Field groupKeysField =
                 LiveViewCheckpointOutputUniqueness.class.getDeclaredField("groupKeys");
         groupKeysField.setAccessible(true);
@@ -1163,14 +1163,14 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
     /**
      * Replaces the scratch key set inside {@code session}'s own uniqueness detector with one that
      * fails on the first key {@code copyFrom} adds - which is what an allocation failure inside
-     * {@link IntHashSet#add(int)} looks like from suspend()'s side.
+     * {@link GroupKeySet#add(int)} looks like from suspend()'s side.
      */
     private static void failTheUniquenessCopy(LiveViewCheckpointRepairSession session) throws Exception {
         final LiveViewCheckpointOutputUniqueness uniqueness = session.getOutputUniqueness();
         final Field groupKeysField =
                 LiveViewCheckpointOutputUniqueness.class.getDeclaredField("groupKeys");
         groupKeysField.setAccessible(true);
-        groupKeysField.set(uniqueness, new ThrowingIntHashSet());
+        groupKeysField.set(uniqueness, new ThrowingGroupKeySet());
     }
 
     /**
@@ -1398,19 +1398,18 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
     }
 
     /**
-     * The read side of {@link ThrowingIntHashSet}: it fails the walk {@code copyFrom} makes over
+     * The read side of {@link ThrowingGroupKeySet}: it fails the walk {@code copyFrom} makes over
      * the SOURCE set rather than the add it makes into the destination. Same fault - an
      * allocation failure inside the copy - reached from the one side a test can poison before the
      * first park exists.
      * <p>
-     * {@code size()} reports one key while armed rather than the set's own count, because
-     * {@code IntHashSet.clear()} is final: the detector empties the set once per repair and again
-     * at every timestamp group it closes, so no real seed survives to the park and
-     * {@code copyFrom} would walk nothing. Reporting one entry is what carries the walk into
-     * {@code get()}. Both behaviours are one-shot, so the recovery that follows the fault runs
-     * against an ordinary set.
+     * {@code size()} reports one key while armed rather than the set's own count, because the
+     * detector empties the set once per repair and again at every timestamp group it closes, so
+     * no real seed survives to the park and {@code copyFrom} would walk nothing. Reporting one
+     * entry is what carries the walk into {@code get()}. Both behaviours are one-shot, so the
+     * recovery that follows the fault runs against an ordinary set.
      */
-    private static final class ReadThrowingIntHashSet extends IntHashSet {
+    private static final class ReadThrowingGroupKeySet extends GroupKeySet {
         private boolean hasFired;
         private boolean isArmed = true;
 
@@ -1434,11 +1433,11 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
         }
     }
 
-    private static final class ThrowingIntHashSet extends IntHashSet {
+    private static final class ThrowingGroupKeySet extends GroupKeySet {
         private boolean hasFired;
         private boolean isArmed = true;
 
-        private ThrowingIntHashSet() {
+        private ThrowingGroupKeySet() {
         }
 
         /**
@@ -1446,7 +1445,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
          * that writes it. The seed goes in through {@code super.add} with the injection off, so
          * the set is a real one-key set to every reader.
          */
-        private ThrowingIntHashSet(int seedKey) {
+        private ThrowingGroupKeySet(int seedKey) {
             isArmed = false;
             super.add(seedKey);
             isArmed = true;

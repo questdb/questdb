@@ -1530,6 +1530,102 @@ public class LiveViewTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCreateTableLikeLiveViewKeepsRowsSharingUpsertKey() throws Exception {
+        // A live view's upsert keys name the pair a sparse repair publication upserts on,
+        // not a uniqueness guarantee: the view emits two rows with the same (ts, sym)
+        // whenever its base does, and its own forward commits do not deduplicate them.
+        // A plain table copied from the view must not inherit the keys, or copying the
+        // view's rows into it collapses those rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS
+                    SELECT ts, sym, x, row_number() OVER w AS rn FROM base
+                    WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')
+                    """);
+            execute("""
+                    INSERT INTO base VALUES
+                    ('2026-01-01T00:00:00.000000Z', 'a', 1),
+                    ('2026-01-01T00:00:00.000000Z', 'a', 2),
+                    ('2026-01-01T00:00:00.000000Z', 'b', 3),
+                    ('2026-01-01T00:01:00.000000Z', 'a', 4)
+                    """);
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            drainWalQueue();
+
+            // The view itself still carries (ts, sym) as its upsert keys.
+            assertQuery("SELECT \"column\", upsertKey FROM (SHOW COLUMNS FROM lv)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\tupsertKey
+                            ts\ttrue
+                            sym\ttrue
+                            x\tfalse
+                            rn\tfalse
+                            """);
+            final String expectedRows = """
+                    ts\tsym\tx\trn
+                    2026-01-01T00:00:00.000000Z\ta\t1\t1
+                    2026-01-01T00:00:00.000000Z\ta\t2\t2
+                    2026-01-01T00:00:00.000000Z\tb\t3\t1
+                    2026-01-01T00:01:00.000000Z\ta\t4\t3
+                    """;
+            assertQuery("lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expectedRows);
+
+            execute("CREATE TABLE t (LIKE lv)");
+            assertQuery("SHOW CREATE TABLE t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ddl
+                            CREATE TABLE 't' (\s
+                            \tts TIMESTAMP,
+                            \tsym SYMBOL,
+                            \tx LONG,
+                            \trn LONG
+                            ) timestamp(ts) PARTITION BY DAY;
+                            """);
+            execute("INSERT INTO t SELECT * FROM lv");
+            drainWalQueue();
+            assertQuery("t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expectedRows);
+
+            // CREATE TABLE AS SELECT takes its dedup keys from its own DEDUP clause only.
+            execute("CREATE TABLE t2 AS (SELECT * FROM lv) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            assertQuery("SHOW CREATE TABLE t2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ddl
+                            CREATE TABLE 't2' (\s
+                            \tts TIMESTAMP,
+                            \tsym SYMBOL,
+                            \tx LONG,
+                            \trn LONG
+                            ) timestamp(ts) PARTITION BY DAY;
+                            """);
+            assertQuery("t2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expectedRows);
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRejectMissingWindowFunction() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
