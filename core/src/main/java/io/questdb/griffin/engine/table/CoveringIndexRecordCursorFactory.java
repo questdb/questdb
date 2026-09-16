@@ -78,6 +78,7 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -109,9 +110,38 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // linear scan wins for the small IN-lists it usually serves. See
     // MultiKeyCoveringCursor and effectiveHeapMergeMinKeys().
     static final int HEAP_MERGE_MIN_KEYS = 16;
+    // Strict upper bound on the page frames a per-key execution may emit.
+    //
+    // PageFrameMemoryRecord.getRowId() packs the frame's index within the
+    // PageFrameSequence into Rows.toRowID(frameIndex, rowIndex) = (frameIndex << 44) + rowIndex,
+    // and PageFrameSequence.buildAddressCache() increments that index once per emitted frame with
+    // no cap of its own. Past frame index 2^19 the shifted value overflows into the sign bit, and
+    // AT exactly 2^19 it equals Long.MIN_VALUE == Numbers.LONG_NULL -- which first()/last() and
+    // their siblings use as the "accumulator is empty" sentinel. Both mechanisms turn a signed
+    // row-id comparison into a silently wrong aggregate, so the count must stay strictly below
+    // Rows.MAX_SAFE_PARTITION_INDEX. Strictly below, not at it: live views already reserve the
+    // top index as a slot sentinel (LiveViewPageFrameCursor.SLOT_PARTITION_INDEX,
+    // LiveViewRecordCursor.SLOT_FRAME_INDEX), leaving 0 .. MAX_SAFE_PARTITION_INDEX - 1 usable.
+    //
+    // Merged mode reaches the same ceiling in principle, but only through the partition count (one
+    // frame per partition-chunk), whereas per-key multiplies it by the key count -- which is what
+    // brings ordinary shapes into range: 30 symbols over two years of hourly partitions is 525,600
+    // (key, partition) pairs. This is a correctness invariant derived from the row-id encoding, NOT
+    // a tuned constant, so it carries no test override.
+    static final int MAX_PER_KEY_PAGE_FRAMES = Rows.MAX_SAFE_PARTITION_INDEX;
     // Test-only crossover override; -1 means "use HEAP_MERGE_MIN_KEYS".
     @TestOnly
     static int heapMergeMinKeysOverride = -1;
+    // Test-only count of opens that granted per-key mode / fell back to the merge. Nothing
+    // user-visible distinguishes the two: the plan prints the plan-stable PERMISSION (see toPlan),
+    // the advertised scan direction is the union over both modes, and a merged answer is also the
+    // correct answer -- so a gate that wrongly fell back would leave every result assertion
+    // passing. These counters are the only observable of the mode an execution actually chose.
+    // Reset with resetModeSelectionsForTesting().
+    @TestOnly
+    static volatile long mergedModeOpensForTesting;
+    @TestOnly
+    static volatile long perKeyModeOpensForTesting;
     private static final ThreadLocal<MergeObserver> TEST_MERGE_OBSERVER = new ThreadLocal<>();
     // The plan this query would have got with /*+ no_covering *//*, held so a NULL key over a
     // partition that carries a column top can be served by it instead. Non-null only when the
@@ -146,12 +176,20 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private final SingleKeyCoveringPageFrameCursor singleKeyPageFrameCursor;
     private final Function symbolFunction;
     private final boolean symbolFunctionRuntimeConstant;
-    // False when the consumer does not require designated-timestamp order, which
-    // lets the multi-key path emit one frame per key instead of merging. Always
-    // true for single-key and latestBy, which never merge in the first place.
-    // Not final: a consumer that provably needs no timestamp order drops the
-    // guarantee via tryDisableTimestampOrdering().
-    private boolean tsOrderedFrames;
+    // PERMISSION, not mode. True once a consumer has proved it needs no
+    // designated-timestamp order and has therefore released this factory from the
+    // guarantee, via tryDisableTimestampOrdering(). It is written once, during code
+    // generation, and is stable for the life of the (cached) plan, so every plan-time
+    // answer -- getScanDirection(), toPlan(), producesMaterializedPageFrames() -- reads
+    // THIS field.
+    // <p>
+    // Whether a given execution actually exercises the permission is a separate,
+    // per-execution decision taken in getPageFrameCursor() and recorded on
+    // MultiKeyCoveringPageFrameCursor.tsOrderedFrames. The permission is the union over
+    // both modes: merged is strictly MORE ordered than "no guarantee", so advertising the
+    // weaker answer and delivering the stronger one is pessimistic, never wrong.
+    // Always false for single-key and latestBy, which never merge in the first place.
+    private boolean unorderedFramesPermitted;
 
     public CoveringIndexRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -187,7 +225,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.latestBy = latestBy;
         this.latestByFilter = latestByFilter;
         this.patternKeys = patternKeys;
-        this.tsOrderedFrames = tsOrderedFrames;
+        this.unorderedFramesPermitted = !tsOrderedFrames;
         this.queryColToIncludeIdx = queryColToIncludeIdx;
         // Defensive copy. The caller passes intrinsicModel.keyValueFuncs, which is a
         // POOLED ObjList owned by the compiler's WhereClauseParser (ObjectPool<IntrinsicModel>).
@@ -232,7 +270,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.multiKeyCursor = new MultiKeyCoveringCursor(indexColumnIndex, multiKeyCapacity, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata, mergeObserver);
             this.singleKeyCursor = null;
             this.multiKeyPageFrameCursor = !latestBy
-                    ? new MultiKeyCoveringPageFrameCursor(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes, mergeObserver, tsOrderedFrames)
+                    ? new MultiKeyCoveringPageFrameCursor(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes, mergeObserver)
                     : null;
             this.singleKeyPageFrameCursor = null;
         } else {
@@ -316,6 +354,34 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     @TestOnly
     public static void clearMergeObserverForTesting() {
         TEST_MERGE_OBSERVER.remove();
+    }
+
+    /**
+     * Test-only count of page-frame opens that were PERMITTED to run unordered and fell back
+     * to the timestamp-ordered merge anyway. See {@link #mergedModeOpensForTesting} for why
+     * nothing else can observe the decision. Reset with
+     * {@link #resetModeSelectionsForTesting()}.
+     */
+    @TestOnly
+    public static long getMergedModeOpensForTesting() {
+        return mergedModeOpensForTesting;
+    }
+
+    /**
+     * Test-only count of page-frame opens that actually ran the per-key (unordered) scan.
+     * A test asserting that a shape still WINS per-key mode must assert on this and not on
+     * the plan: the plan prints the plan-stable permission and says nothing about the mode
+     * an execution chose.
+     */
+    @TestOnly
+    public static long getPerKeyModeOpensForTesting() {
+        return perKeyModeOpensForTesting;
+    }
+
+    @TestOnly
+    public static void resetModeSelectionsForTesting() {
+        perKeyModeOpensForTesting = 0;
+        mergedModeOpensForTesting = 0;
     }
 
     /**
@@ -558,6 +624,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             if (multiKeyPageFrameCursor != null) {
                 if (patternKeys != null) {
                     multiKeyPageFrameCursor.multiKeys = patternKeys;
+                    selectFrameMode(frameCursor, reader, patternKeys, configMaxRows);
                     multiKeyPageFrameCursor.of(frameCursor, configMaxRows, false, executionContext.getMemoryTracker());
                     return multiKeyPageFrameCursor;
                 }
@@ -579,8 +646,21 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     }
                 }
                 // A suppressed backup is exactly what leaves this page-frame cursor reachable
-                // for a null-capable key, so the promise is checked here too.
+                // for a null-capable key, so the promise is checked here too. It runs BEFORE
+                // mode selection: it throws, and the density estimate below walks the whole
+                // partition-frame cursor, so there is no point paying for a decision about a
+                // scan that is not going to run.
                 checkHintPromise(frameCursor, multiKeyPageFrameCursor.multiKeys.contains(SymbolTable.VALUE_IS_NULL));
+                // Per-key vs merged is decided HERE, per execution, and not where the
+                // permission was granted. This is the only point that holds the exact key
+                // set (resolved, deduped, VALUE_NOT_FOUND dropped -- the loop above just
+                // built it), the OPEN partition-frame cursor, and the intervals a runtime
+                // model resolved against this execution context. Code generation has none
+                // of the three: bind variables are still VALUE_NOT_FOUND there, dedup has
+                // not happened, and -- decisively -- factories are cached and re-executed,
+                // so any partition count read at compile time is a snapshot that goes stale
+                // as the table grows. A correctness bound cannot rest on that.
+                selectFrameMode(frameCursor, reader, multiKeyPageFrameCursor.multiKeys, configMaxRows);
                 // Always wire the frame cursor; callers may probe getSymbolTable()
                 // before iteration. Empty multiKeys list yields no frames.
                 multiKeyPageFrameCursor.of(frameCursor, configMaxRows, false, executionContext.getMemoryTracker());
@@ -622,7 +702,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // Unordered multi-key emits one key's posting list per frame, so the
         // stream is NOT ts-ascending and must not be advertised as such -- the
         // same reason multi-key latestBy advertises no ordering.
-        final int own = (!tsOrderedFrames && multiKeyPageFrameCursor != null) || (latestBy && multiKeyCursor != null)
+        // The per-key term reads the PERMISSION, not the per-execution mode: compile-time
+        // callers consult it before any open picks a mode, so the answer has to hold for every
+        // mode this factory could run. That union is SCAN_DIRECTION_OTHER, and an
+        // execution that falls back to the merge only delivers MORE order than advertised.
+        // No production reader of SCAN_DIRECTION_OTHER treats it as a positive enabler --
+        // every one reads it as "no guarantee, so refuse or fall back" -- and
+        // SCAN_DIRECTION_OTHER == 0, so even a careless == SCAN_DIRECTION_FORWARD test
+        // fails safe.
+        final int own = (unorderedFramesPermitted && multiKeyPageFrameCursor != null) || (latestBy && multiKeyCursor != null)
                 ? SCAN_DIRECTION_OTHER
                 : SCAN_DIRECTION_FORWARD;
         if (backup == null || backup.getScanDirection() == own) {
@@ -674,24 +762,32 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * false routes the single-key parquet export through the row-wise cursor path, which
      * decodes the covered columns the same way the query path does.
      * <p>
-     * {@code tsOrderedFrames} is part of the answer for the same reason. Per-key mode is
+     * {@code unorderedFramesPermitted} is part of the answer for the same reason. Per-key mode is
      * metadata-only BY CONSTRUCTION: {@code nextImplPerKey()} reuses the single-key fill
      * precisely so every frame carries a real resolved symbol key and stays decodable on the
      * worker arm. Reporting true there would hand a DIRECT_PAGE_FRAME reader the very
-     * placeholder addresses the single-key branch exists to keep away from it. Reading the
-     * flag here is sound: it is written once, by {@link #tryDisableTimestampOrdering}, during
-     * code generation, and this method is consulted by
-     * {@code ParquetExportMode.determineExportMode} at execution time -- the same ordering
-     * {@link #getScanDirection()} and {@link #toPlan} already rely on.
+     * placeholder addresses the single-key branch exists to keep away from it.
      * <p>
-     * No consumer can reach the contradiction today: the flag only flips under a GROUP BY,
-     * and the export path does not look through one. That is a reason to state the contract
-     * correctly, not a reason to leave it stated wrongly -- the failure mode is a silent
-     * all-null column, not an error.
+     * This MUST read the plan-stable permission and NOT the per-execution mode on
+     * {@code MultiKeyCoveringPageFrameCursor}. The earlier justification -- "the flag is
+     * written once, during code generation, and this method is consulted at execution time"
+     * -- lapsed when mode selection moved into {@link #getPageFrameCursor}:
+     * {@code ParquetExportMode.determineExportMode} calls this BEFORE the open, so the mode
+     * field is still carrying the previous execution's answer (or its initial value) at that
+     * moment. Reading the permission is the conservative direction: once unordered frames are
+     * permitted this answers false, and an execution that then chose the merge merely exports
+     * through the row-wise path it could have exported directly. The reverse mistake -- reading
+     * a stale "merged" mode and reporting true while the open goes per-key -- would publish
+     * placeholder addresses as data.
+     * <p>
+     * No consumer can reach the contradiction today: the permission is only granted under a
+     * GROUP BY, and the export path does not look through one. That is a reason to state the
+     * contract correctly, not a reason to leave it stated wrongly -- the failure mode is a
+     * silent all-null column, not an error.
      */
     @Override
     public boolean producesMaterializedPageFrames() {
-        return backup == null && multiKeyPageFrameCursor != null && tsOrderedFrames;
+        return backup == null && multiKeyPageFrameCursor != null && !unorderedFramesPermitted;
     }
 
     @Override
@@ -718,7 +814,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 sink.putColumnName(q);
             }
         }
-        if (!tsOrderedFrames && multiKeyPageFrameCursor != null) {
+        // The PERMISSION, not the mode: a plan is printed without opening a cursor, so this is
+        // the only answer available, and it is the honest one -- it states the frame-ordering
+        // contract the parent operator must be prepared for, which is exactly the union over
+        // the modes an execution may pick. See getScanDirection().
+        if (unorderedFramesPermitted && multiKeyPageFrameCursor != null) {
             sink.attr("frames").val("per-key (unordered)");
         }
         // The decode strategy is intentionally derivable from the filter shape below rather than
@@ -757,10 +857,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         if (hasOrderSensitiveAggregates && !groupsByIndexKeyOnly(groupByKeyColumns)) {
             return false;
         }
-        if (tsOrderedFrames) {
-            tsOrderedFrames = false;
-            multiKeyPageFrameCursor.setTsOrderedFrames(false);
-        }
+        // Grant the permission only. Whether an execution exercises it is decided per open,
+        // in getPageFrameCursor(): the sizes that make per-key mode legal (a frame count that
+        // stays inside the row-id encoding) and worthwhile are not knowable here, and a value
+        // read here would in any case be a compile-time snapshot baked into a cached plan.
+        unorderedFramesPermitted = true;
         return true;
     }
 
@@ -883,6 +984,88 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         return groupByKeyColumns != null
                 && groupByKeyColumns.getColumnCount() == 1
                 && groupByKeyColumns.getColumnIndexFactored(0) == keyQueryPosition;
+    }
+
+    /**
+     * Pick this execution's frame mode and record it on the cursor. Merged is the answer
+     * whenever the permission was never granted, and the answer in every ambiguous case:
+     * it is the mode that exists today, the one whose ordering matches what the factory
+     * advertises, and the one that is correct at any size.
+     * <p>
+     * The ceiling below is a CORRECTNESS invariant, not a tuning knob. Per-key mode emits one
+     * frame per non-empty (key, partition-frame) pair, so its frame count is the key count
+     * MULTIPLIED by the partition count -- and the frame index is packed into the top 20 bits
+     * of every row id the async GROUP BY compares. See {@link #MAX_PER_KEY_PAGE_FRAMES}.
+     * <p>
+     * The bound is
+     * <pre>frames &lt;= K * P_upper + rowsUpper / maxRowsPerFrame</pre>
+     * because {@code frames = SUM over non-empty pairs of ceil(rows(k,p) / maxRowsPerFrame)}
+     * and {@code ceil(a/m) <= 1 + a/m}. Every term is available here in O(1) or in two
+     * partition binary searches, and none of them may under-count:
+     * <ul>
+     *     <li>{@code K} is exact -- the caller has just resolved, deduped and dropped
+     *     VALUE_NOT_FOUND.</li>
+     *     <li>{@code P_upper} is {@code getFrameCountUpperBound()} when the cursor offers one
+     *     (the interval cursors, which bound their frames from their culled ranges and are
+     *     contractually forbidden from under-counting), else the reader's partition count -- a
+     *     full cursor emits at most one frame per NON-EMPTY partition, so the partition count
+     *     bounds it. Same case split, and the same justification, as
+     *     {@code AdaptiveSymbolPatternRecordCursorFactory.estimate()}.</li>
+     *     <li>{@code rowsUpper} is {@code frameCursor.size()} when known; an interval cursor
+     *     answers -1 rather than counting rows it has not walked, so it falls back to the
+     *     reader's total row count, which bounds any interval subset of it. This closes the
+     *     one gap a "K * P dominates in practice" argument leaves open, namely a deployment
+     *     that shrinks cairo.sql.page.frame.max.rows far enough for the split term to matter.</li>
+     * </ul>
+     * Over-counting is the safe direction: it sends a borderline shape to the merge, which is
+     * correct, and never the reverse.
+     */
+    private void selectFrameMode(
+            PartitionFrameCursor frameCursor,
+            TableReader reader,
+            IntList keys,
+            int configMaxRows
+    ) {
+        if (!unorderedFramesPermitted) {
+            multiKeyPageFrameCursor.setTsOrderedFrames(true);
+            return;
+        }
+        final boolean perKey = admitsPerKeyMode(frameCursor, reader, keys, configMaxRows);
+        multiKeyPageFrameCursor.setTsOrderedFrames(!perKey);
+        if (perKey) {
+            perKeyModeOpensForTesting++;
+        } else {
+            mergedModeOpensForTesting++;
+        }
+    }
+
+    private boolean admitsPerKeyMode(
+            PartitionFrameCursor frameCursor,
+            TableReader reader,
+            IntList keys,
+            int configMaxRows
+    ) {
+        final long keyCount = keys.size();
+        if (keyCount == 0) {
+            // No key resolved: the cursor emits nothing either way. Merged keeps the
+            // no-rows path on the mode the factory advertises without a special case.
+            return false;
+        }
+        final long boundFromMetadata = frameCursor.getFrameCountUpperBound();
+        final long partitionUpperBound = boundFromMetadata >= 0 ? boundFromMetadata : reader.getPartitionCount();
+        final long scanRows = frameCursor.size();
+        final long rowsUpperBound = scanRows >= 0 ? scanRows : reader.size();
+        final int maxRowsPerFrame = CoveringPageFrameCursor.effectiveMaxRowsPerFrame(configMaxRows);
+        // Saturating: a pathological K * P overflows long only past 2^63, but the sum is
+        // written so that no intermediate can wrap back under the ceiling.
+        final long pairUpperBound = keyCount > 0 && partitionUpperBound > Long.MAX_VALUE / keyCount
+                ? Long.MAX_VALUE
+                : keyCount * partitionUpperBound;
+        final long splitTerm = maxRowsPerFrame > 0 ? rowsUpperBound / maxRowsPerFrame : Long.MAX_VALUE;
+        final long frameUpperBound = pairUpperBound > Long.MAX_VALUE - splitTerm
+                ? Long.MAX_VALUE
+                : pairUpperBound + splitTerm;
+        return frameUpperBound < MAX_PER_KEY_PAGE_FRAMES;
     }
 
     private static abstract class CoveringCursor implements RecordCursor {
@@ -2197,6 +2380,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             pendingPartitionIndex = -1;
         }
 
+        /**
+         * The row cap a frame actually gets: the test override when set, otherwise the engine
+         * configuration value the execution context carried in. The per-key frame-count ceiling
+         * has to divide by this exact number, not by {@code configMaxRows}, or a test that
+         * shrinks the cap would compute a bound the execution then exceeds.
+         */
+        static int effectiveMaxRowsPerFrame(int configMaxRows) {
+            return maxRowsPerFrameOverride >= 0 ? maxRowsPerFrameOverride : configMaxRows;
+        }
+
         void of(
                 PartitionFrameCursor frameCursor,
                 int configMaxRows,
@@ -2212,7 +2405,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.memoryTracker = memoryTracker;
             this.frameCursor = frameCursor;
             this.tableReader = frameCursor.getTableReader();
-            this.maxRowsPerFrame = maxRowsPerFrameOverride >= 0 ? maxRowsPerFrameOverride : configMaxRows;
+            this.maxRowsPerFrame = effectiveMaxRowsPerFrame(configMaxRows);
             this.descending = descending;
             this.isExhausted = false;
             columnMapping.clear();
@@ -2956,7 +3149,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         private int perKeyPartitionIndex = -1;
         private long perKeyRowHi;
         private long perKeyRowLo;
-        private boolean tsOrderedFrames;
+        // The MODE this execution runs in, as distinct from the factory's plan-stable
+        // PERMISSION (CoveringIndexRecordCursorFactory.unorderedFramesPermitted). Set on
+        // every open by getPageFrameCursor(); merged (true) is the default and the answer
+        // in every ambiguous case, because it is the mode whose ordering matches what the
+        // factory advertises.
+        private boolean tsOrderedFrames = true;
 
         MultiKeyCoveringPageFrameCursor(
                 int indexColumnIndex,
@@ -2964,12 +3162,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 int[] requiredIncludeIndices,
                 RecordMetadata metadata,
                 IntList columnIndexes,
-                MergeObserver mergeObserver,
-                boolean tsOrderedFrames
+                MergeObserver mergeObserver
         ) {
             super(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes);
             this.mergeObserver = mergeObserver;
-            this.tsOrderedFrames = tsOrderedFrames;
         }
 
         void setTsOrderedFrames(boolean value) {
