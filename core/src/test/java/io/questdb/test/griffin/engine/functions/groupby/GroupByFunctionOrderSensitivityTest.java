@@ -599,7 +599,7 @@ public class GroupByFunctionOrderSensitivityTest {
             if (valueCheckExempt.contains(c.getName())) {
                 continue;
             }
-            final boolean value = readOrderSensitive(c);
+            final boolean value = readOrderSensitive(iface, c);
             if (sensitive.contains(c.getName()) && !value) {
                 saysFalse.add(c.getName());
             } else if (insensitive.contains(c.getName()) && value) {
@@ -642,10 +642,15 @@ public class GroupByFunctionOrderSensitivityTest {
      * {@code InterpolationGroupByFunction}, is passed in as exempt for exactly this reason. If a
      * second delegating implementation ever appears, exempt it too and say why.
      */
-    private static boolean readOrderSensitive(Class<?> c) {
+    private static boolean readOrderSensitive(Class<?> iface, Class<?> c) {
         try {
             final Object instance = Unsafe.getUnsafe().allocateInstance(c);
-            return (Boolean) c.getMethod("isOrderSensitive").invoke(instance);
+            // Dispatch through the INTERFACE's Method, not the class's. Several of these
+            // aggregates are private static nested classes of their factory, and reflection
+            // checks access against the Method's declaring class -- so the class's own Method
+            // throws IllegalAccessException from this package while the public interface's
+            // does not. The call is still virtual, so it reaches the class's override.
+            return (Boolean) iface.getMethod("isOrderSensitive").invoke(instance);
         } catch (ReflectiveOperationException e) {
             throw new AssertionError("could not read isOrderSensitive() from " + c.getName(), e);
         }

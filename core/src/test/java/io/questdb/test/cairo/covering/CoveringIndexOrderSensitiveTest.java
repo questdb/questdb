@@ -99,6 +99,56 @@ public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryT
         });
     }
 
+    /**
+     * mode() is classified order-sensitive because the winner among values tied on count falls
+     * out of the count map's slot order, which linear probing makes a function of insertion
+     * order. This pins the consequence: over a time bucket, which draws from many keys, the scan
+     * must keep the merge. sum() is the control -- same query shape, order-invariant aggregate,
+     * and it DOES get per-key -- so a regression that stopped consulting the flag at this site
+     * would show as this test going per-key while the control stayed unchanged.
+     */
+    @Test
+    public void testModeGroupedByTimeBucketKeepsTheMerge() throws Exception {
+        assertMemoryLeak(() -> {
+            createTelemetryWithNulls();
+            assertQuery("SELECT ts, mode(value) FROM telemetry WHERE param_id IN ('SFID','HOTMIC') SAMPLE BY 10s")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Encode sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('10s',ts)]
+                                  values: [mode(value)]
+                                  filter: null
+                                    CoveringIndex on: param_id with: ts, value
+                                      filter: param_id IN ['SFID','HOTMIC']
+                                        Frame forward scan on: telemetry
+                            """);
+            assertQuery("SELECT ts, sum(value) FROM telemetry WHERE param_id IN ('SFID','HOTMIC') SAMPLE BY 10s")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Encode sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('10s',ts)]
+                                  values: [sum(value)]
+                                  filter: null
+                                    CoveringIndex on: param_id with: ts, value
+                                      frames: per-key (unordered)
+                                      filter: param_id IN ['SFID','HOTMIC']
+                                        Frame forward scan on: telemetry
+                            """);
+            assertSameResult(
+                    "SELECT ts, mode(value) FROM telemetry" +
+                            " WHERE param_id IN ('SFID','HOTMIC') SAMPLE BY 10s",
+                    "SELECT /*+ no_index */ ts, mode(value) FROM telemetry" +
+                            " WHERE param_id IN ('SFID','HOTMIC') SAMPLE BY 10s"
+            );
+        });
+    }
+
     @Test
     public void testFirstLastFamilyGroupedByIndexKeyMatchesFullScan() throws Exception {
         assertMemoryLeak(() -> {
