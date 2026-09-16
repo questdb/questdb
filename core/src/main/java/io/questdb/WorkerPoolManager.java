@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.MetricSnapshotVisitor;
 import io.questdb.metrics.Target;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -207,15 +208,12 @@ public abstract class WorkerPoolManager implements Target {
 
     @Override
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
-        sharedPoolNetwork.updateWorkerMetrics();
-        if (sharedPoolQuery != null) {
-            sharedPoolQuery.updateWorkerMetrics();
-        }
-        sharedPoolWrite.updateWorkerMetrics();
-        ReadOnlyObjList<CharSequence> poolNames = dedicatedPools.keys();
-        for (int i = 0, limit = poolNames.size(); i < limit; i++) {
-            dedicatedPools.get(poolNames.getQuick(i)).updateWorkerMetrics();
-        }
+        updateWorkerMetrics();
+    }
+
+    @Override
+    public void snapshot(MetricSnapshotVisitor visitor) {
+        updateWorkerMetrics();
     }
 
     public void start(Log sharedPoolLog) {
@@ -364,6 +362,18 @@ public abstract class WorkerPoolManager implements Target {
         Misc.free(networkPool, primary);
         Misc.free(queryPool, primary);
         Misc.free(writePool, primary);
+    }
+
+    private void updateWorkerMetrics() {
+        sharedPoolNetwork.updateWorkerMetrics();
+        if (sharedPoolQuery != null) {
+            sharedPoolQuery.updateWorkerMetrics();
+        }
+        sharedPoolWrite.updateWorkerMetrics();
+        ReadOnlyObjList<CharSequence> poolNames = dedicatedPools.keys();
+        for (int i = 0, limit = poolNames.size(); i < limit; i++) {
+            dedicatedPools.get(poolNames.getQuick(i)).updateWorkerMetrics();
+        }
     }
 
     /**

@@ -24,34 +24,31 @@
 
 package io.questdb.metrics;
 
-public interface MetricsConfiguration {
-    String DEFAULT_PERSIST_EXCLUDE = "worker_pool_fiber_" +
-            "(max_live|mounted|retained|finalizing|outstanding|created|retired|mount|wake|launch|" +
-            "scheduler_publication|scheduler_selection|orphan_recovery|mount_budget_exhaustion)(__.*)?";
+/**
+ * Receives a point-in-time, typed view of metrics. Label values are supplied separately so
+ * consumers can flatten them without parsing Prometheus text.
+ */
+public interface MetricSnapshotVisitor {
 
-    default CharSequence getPersistExclude() {
-        return DEFAULT_PERSIST_EXCLUDE;
-    }
-
-    default long getPersistIntervalMicros() {
-        return 1_000_000;
-    }
-
-    default CharSequence getPersistTtl() {
-        return "1 WEEK";
-    }
-
-    default long getPersistVirtualIntervalMicros() {
-        return 60_000_000;
-    }
-
-    boolean isEnabled();
-
-    default boolean isPersistEnabled() {
-        return false;
-    }
-
-    default boolean isPersistParquetEnabled() {
+    default boolean isVirtualMetricsEnabled() {
         return true;
+    }
+
+    default void visitDouble(CharSequence name, double value) {
+    }
+
+    default void visitLong(CharSequence name, MetricType type, long value) {
+    }
+
+    default void visitLong(CharSequence name, MetricType type, CharSequence labelValue0, long value) {
+    }
+
+    default void visitLong(
+            CharSequence name,
+            MetricType type,
+            CharSequence labelValue0,
+            CharSequence labelValue1,
+            long value
+    ) {
     }
 }

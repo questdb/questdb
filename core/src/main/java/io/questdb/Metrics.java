@@ -34,6 +34,7 @@ import io.questdb.cutlass.qwp.server.egress.QwpEgressMetrics;
 import io.questdb.metrics.FiberMetrics;
 import io.questdb.metrics.GCMetrics;
 import io.questdb.metrics.HealthMetricsImpl;
+import io.questdb.metrics.MetricSnapshotVisitor;
 import io.questdb.metrics.MetricsRegistry;
 import io.questdb.metrics.MetricsRegistryImpl;
 import io.questdb.metrics.NullMetricsRegistry;
@@ -147,6 +148,14 @@ public class Metrics implements Target, Mutable {
         metricsRegistry.scrapeIntoPrometheus(sink);
         if (enabled) {
             gcMetrics.scrapeIntoPrometheus(sink);
+        }
+    }
+
+    @Override
+    public void snapshot(MetricSnapshotVisitor visitor) {
+        metricsRegistry.snapshot(visitor);
+        if (enabled) {
+            gcMetrics.snapshot(visitor);
         }
     }
 
