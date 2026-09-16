@@ -10,7 +10,7 @@
 #   DURABILITY_FAILURE  an acked txn was lost, or a suspend never cleared
 #   SILENT_CORRUPTION   wrong value, gap, or torn commit boundary — the worst
 #   LOUD_FAILURE        the engine refused to open or query, loudly. A PRODUCT finding:
-#                       since issues/21 the not-evaluated cases carry NOT_EVALUATED, so this
+#                       since the split the not-evaluated cases carry NOT_EVALUATED, so this
 #                       token means only "the product refused" -- for a reason, rather than
 #                       for want of a distinction.
 #   NOT_EVALUATED       the oracle never reached a verdict, so this boundary says NOTHING
@@ -45,7 +45,7 @@ verdict_classify() {  # LINE -> one token on stdout
         DURABILITY_FAILURE*)  echo DURABILITY_FAILURE ;;
         SILENT_CORRUPTION*)   echo SILENT_CORRUPTION ;;
         LOUD_FAILURE*)        echo LOUD_FAILURE ;;
-        # issues/21. Prefix-anchored like every case above; guest/verify.sh emits both
+        # Prefix-anchored like every case above; guest/verify.sh emits both
         # "NOT_EVALUATED: ..." and "NOT_EVALUATED qwp-sf: ...", so the anchor must not
         # assume the colon.
         NOT_EVALUATED*)       echo NOT_EVALUATED ;;
@@ -110,7 +110,7 @@ verdict_is_pass() {  # TOKEN -> exit 0 if pass
 # WHY LOUD_FAILURE IS **NOT** HERE, because someone will re-litigate this:
 # it USED to span both meanings, and the stopgap was to give it the LOUDER alarm -- an
 # instrument fault shown as a product failure gets investigated, whereas a product failure
-# shown as a rig glitch gets ignored. issues/21 removed the ambiguity at the source instead:
+# shown as a rig glitch gets ignored. The split removed the ambiguity at the source instead:
 # guest/verify.sh now emits NOT_EVALUATED at the exits where nothing was measured, so
 # LOUD_FAILURE is left meaning only "the product refused, loudly".
 #
@@ -139,7 +139,7 @@ verdict_is_instrument_fault() {  # TOKEN -> exit 0 if the RIG broke rather than 
         # enforced, so the product was neither convicted nor cleared. It stays a non-pass --
         # do not "simplify" this into a pass; t09 pins that.
         RPO_UNVERIFIED) return 0 ;;
-        # THE POINT OF issues/21. The oracle never reached a verdict -- a JVM the agent killed,
+        # THE POINT OF THE SPLIT. The oracle never reached a verdict -- a JVM the agent killed,
         # a distribution that was never staged, numbers that did not parse. Nothing was
         # measured, so paging the product owner is a false alarm; do that weekly and the real
         # data-loss alarm stops being believed too.

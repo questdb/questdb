@@ -13,7 +13,7 @@
 #     that is the difference between "the rig broke" and "an acked transaction was lost", and
 #     it decides who gets paged. errors= was hardcoded to 0, so the two were one number.
 #   * the run's IDENTITY must be in the report. A trend that cannot name the build it belongs
-#     to cannot answer issues/06's question, and a DEGRADED product run must not look like a
+#     to cannot answer the trend question, and a DEGRADED product run must not look like a
 #     full-claim one.
 set -uo pipefail
 
@@ -49,8 +49,8 @@ junit_case "durability.product.adaptive.W50000.bitmap" "flush-2236" NO_COMMIT 1 
 junit_case "durability.product.adaptive.W50000.bitmap" "flush-3151" SILENT_CORRUPTION 3 "DETAIL i.q.c.TableWriter o3 <commit> \"quoted\" & 'single'
 DETAIL control-char:$(printf '\001')here
 SILENT_CORRUPTION row=43264 expected_v=1 actual_v=2 a<b && c>d"
-# The wording here USED to be "verifier produced no verdict", which since issues/21 is a
-# NOT_EVALUATED line, not a LOUD_FAILURE one. A fixture that cites a producer must move when
+# The wording here USED to be "verifier produced no verdict", which since the NOT_EVALUATED split
+# is a NOT_EVALUATED line, not a LOUD_FAILURE one. A fixture that cites a producer must move when
 # the producer moves, or the test drifts into asserting against wording nothing emits.
 junit_case "durability.product.adaptive.W50000.bitmap" "flush-4066" LOUD_FAILURE 1 "LOUD_FAILURE: the shipped server did not start on the crashed database"
 junit_finish
@@ -67,7 +67,7 @@ fi
 read -r tests failures skipped < <(python3 - "$XML" <<'PY'
 import sys, xml.etree.ElementTree as E
 r = E.parse(sys.argv[1]).getroot()
-# ROOT IS <testsuite> since the XSD check (issues/21 follow-up): the <testsuites>
+# ROOT IS <testsuite> since the XSD check: the <testsuites>
 # aggregate requires package= and id= on every child, which we never emitted. Accept
 # either shape here so this helper does not have to change again if that is revisited.
 s = r if r.tag == 'testsuite' else r.find('testsuite')
@@ -153,18 +153,18 @@ PY
 check "failure type is the verdict token" "$t" "LOUD_FAILURE"
 
 # ---- 7. no temp files left, and the report is renamed into place ------------------------
-# issues/19's rule: a consumer must never see a half-written file.
+# The rule: a consumer must never see a half-written file.
 leftovers=$(find "$TMP" -name 'junit.xml.tmp.*' -o -name 'junit.xml.part.*' -o -name 'junit.xml.props.*' | wc -l)
 check "no temp files left behind" "$leftovers" "0"
 
 # ---- 8. the run's identity is IN the report ---------------------------------------------
 # Without this a dashboard can trend a number but cannot say WHICH BUILD produced it, which is
-# the question issues/06 exists to answer. On a green product run the artifact name reached the
+# the question the report exists to answer. On a green product run the artifact name reached the
 # XML nowhere at all, because the only place it ever appeared was inside a failure body.
 props=$(python3 - "$XML" <<'PY'
 import sys, xml.etree.ElementTree as E
 r = E.parse(sys.argv[1]).getroot()
-# ROOT IS <testsuite> since the XSD check (issues/21 follow-up): the <testsuites>
+# ROOT IS <testsuite> since the XSD check: the <testsuites>
 # aggregate requires package= and id= on every child, which we never emitted. Accept
 # either shape here so this helper does not have to change again if that is revisited.
 s = r if r.tag == 'testsuite' else r.find('testsuite')
@@ -187,21 +187,64 @@ case "$props" in
     *) bad "properties do not name the harness commit (got '$props')" ;;
 esac
 
-# <properties> MUST BE THE FIRST CHILD of <testsuite>. The JUnit XSD models testsuite as a
-# SEQUENCE (properties, testcase*, system-out?, system-err?), so a properties block written
-# after the testcases is schema-invalid. A report the dashboard rejects is worse than no
-# report, because the job still goes green.
-first=$(python3 - "$XML" <<'PY'
+# ---- 8b. the CHILD SEQUENCE the XSD declares, not just "properties came first" -----------
+# The schema PublishTestResults@2 names (windyroad JUnit.xsd) models testsuite as a SEQUENCE
+# of properties, testcase*, system-out, system-err -- and none of the four carries
+# minOccurs="0", so all four are REQUIRED. Three were conditional or absent: <system-err> was
+# never emitted at all, <properties> and <system-out> were skipped when no property was set.
+# The old assertion here read only the FIRST child, so it could not see any of it -- a guard
+# that cannot fire, which is the class this harness exists to reject.
+shape_of() {  # XML -> collapsed child-tag sequence, repeats marked with *
+    python3 - "$1" <<'PY'
 import sys, xml.etree.ElementTree as E
 r = E.parse(sys.argv[1]).getroot()
-# ROOT IS <testsuite> since the XSD check (issues/21 follow-up): the <testsuites>
+# ROOT IS <testsuite> since the XSD check: the <testsuites>
 # aggregate requires package= and id= on every child, which we never emitted. Accept
 # either shape here so this helper does not have to change again if that is revisited.
 s = r if r.tag == 'testsuite' else r.find('testsuite')
-print(list(s)[0].tag if len(s) else 'EMPTY')
+out = []
+for c in s:
+    if out and out[-1].rstrip('*') == c.tag:
+        out[-1] = c.tag + '*'
+    else:
+        out.append(c.tag)
+print(','.join(out))
 PY
-)
-check "properties come FIRST inside testsuite (XSD sequence order)" "$first" "properties"
+}
+check "child sequence is the XSD's (properties, testcase*, system-out, system-err)" \
+    "$(shape_of "$XML")" "properties,testcase*,system-out,system-err"
+
+# A suite with NO properties must STILL emit all four. This is the exact case the old
+# conditional dropped, and it is not hypothetical: any caller that sets no property at all
+# produced a report the publisher rejects, silently, while the job went green.
+XML_NP="$TMP/junit-noprops.xml"
+junit_begin "$XML_NP" "durability.noprops"
+junit_case c "flush-1" DURABLE 1 "DURABLE count=1"
+junit_finish
+check "no properties set: all four elements are still emitted" \
+    "$(shape_of "$XML_NP")" "properties,testcase,system-out,system-err"
+
+# ---- 8c. a REAL validator, when the host has one -----------------------------------------
+# Hand-checked attributes are how the violations above shipped. This runs the ACTUAL schema
+# when xmllint is on PATH and a schema is available -- $QDB_JUNIT_XSD, or junit.xsd beside
+# this test. The schema is deliberately NOT vendored: it is third-party licensed and this is a
+# public repo. When the check cannot run it SAYS SO instead of passing quietly, because a
+# skipped check that reads as green is the same failure mode as the bug it guards.
+XSD="${QDB_JUNIT_XSD:-$HERE/junit.xsd}"
+if ! command -v xmllint >/dev/null 2>&1; then
+    echo "  SKIP schema validation: xmllint not on PATH (the structural check above still ran)"
+elif [ ! -f "$XSD" ]; then
+    echo "  SKIP schema validation: no schema at $XSD (set QDB_JUNIT_XSD=/path/to/JUnit.xsd)"
+else
+    for f in "$XML" "$XML_NP"; do
+        if xmllint --noout --schema "$XSD" "$f" >/dev/null 2>"$TMP/xmllint.err"; then
+            ok "xmllint --schema validates $(basename "$f")"
+        else
+            bad "xmllint --schema REJECTS $(basename "$f") — the publisher would too"
+            head -5 "$TMP/xmllint.err" | sed 's/^/       /'
+        fi
+    done
+fi
 
 # ---- 9. instrument faults are <error>, product faults are <failure> ----------------------
 # The split that decides whether the product owner or the rig owner gets paged. The token list
@@ -217,7 +260,7 @@ junit_case c "flush-11" SILENT_CORRUPTION  1 "SILENT_CORRUPTION row=9 expected_v
 # the damage this instrument exists to catch. run-flush-sweep.sh has said so in a comment since
 # the sweep was written; the token now says it where a machine can read it.
 junit_case c "flush-12" MOUNT_FAILED       1 "MOUNT_FAILED"
-# LOUD_FAILURE is now a PRODUCT finding outright: issues/21 moved the not-evaluated cases to
+# LOUD_FAILURE is now a PRODUCT finding outright: the NOT_EVALUATED split moved those cases to
 # their own token, so this one means only "the product refused, loudly".
 junit_case c "flush-13" LOUD_FAILURE       1 "LOUD_FAILURE: shipped artifacts were not durable"
 junit_case c "flush-14" UNPARSEABLE        1 "DETAIL something
@@ -225,7 +268,7 @@ what even is this"
 junit_case c "flush-15" RPO_UNVERIFIED     1 "RPO_UNVERIFIED gap=12 rows; client Wm unavailable"
 junit_case c "flush-16" PREFLIGHT_FAILED   1 "PREFLIGHT_FAILED the cut is not cutting"
 junit_case c "flush-17" DURABLE            1 "DURABLE count=7"
-# THE POINT OF issues/21: the oracle never reached a verdict, so nothing was measured and the
+# THE POINT OF THE SPLIT: the oracle never reached a verdict, so nothing was measured and the
 # RIG owner is the one to page. Before the split this line was a LOUD_FAILURE and rendered as
 # <failure> -- a data-loss alarm for a JVM the agent killed.
 junit_case c "flush-18" NOT_EVALUATED     1 "NOT_EVALUATED: verifier produced no verdict (exit=134 killed-by-signal-6)"
@@ -234,7 +277,7 @@ junit_finish
 read -r t2 f2 e2 s2 < <(python3 - "$XML2" <<'PY'
 import sys, xml.etree.ElementTree as E
 r = E.parse(sys.argv[1]).getroot()
-# ROOT IS <testsuite> since the XSD check (issues/21 follow-up): the <testsuites>
+# ROOT IS <testsuite> since the XSD check: the <testsuites>
 # aggregate requires package= and id= on every child, which we never emitted. Accept
 # either shape here so this helper does not have to change again if that is revisited.
 s = r if r.tag == 'testsuite' else r.find('testsuite')
@@ -265,7 +308,7 @@ check "RPO_UNVERIFIED     -> <error> (instrument)" "$(element_of "$XML2" flush-1
 check "PREFLIGHT_FAILED   -> <error> (instrument)" "$(element_of "$XML2" flush-16)" "error"
 check "DURABLE            -> pass"                 "$(element_of "$XML2" flush-17)" "pass"
 check "NOT_EVALUATED      -> <error> (instrument)" "$(element_of "$XML2" flush-18)" "error"
-# The pair that is the whole point of issues/21: two boundaries, both red, DIFFERENT alarms.
+# The pair that is the whole point of the split: two boundaries, both red, DIFFERENT alarms.
 # If these ever collapse to the same element the split has been undone.
 check "NOT_EVALUATED and LOUD_FAILURE are different alarms" \
     "$(element_of "$XML2" flush-18)/$(element_of "$XML2" flush-13)" "error/failure"
@@ -301,7 +344,7 @@ check "error message is the verdict line, DETAIL filtered" "$emsg" "yes"
 degraded=$(python3 - "$XML2" <<'PY'
 import sys, xml.etree.ElementTree as E
 r = E.parse(sys.argv[1]).getroot()
-# ROOT IS <testsuite> since the XSD check (issues/21 follow-up): the <testsuites>
+# ROOT IS <testsuite> since the XSD check: the <testsuites>
 # aggregate requires package= and id= on every child, which we never emitted. Accept
 # either shape here so this helper does not have to change again if that is revisited.
 s = r if r.tag == 'testsuite' else r.find('testsuite')

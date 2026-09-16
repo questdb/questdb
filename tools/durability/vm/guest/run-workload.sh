@@ -12,7 +12,7 @@
 #               the client's LOCAL durable-ack tier supplies the durable
 #               frontier, so the RPO bar applies here exactly as it does to
 #               qwp-sf. (It was W=0-only while that tier was unbuilt; the tier
-#               landed with issues/17 and was measured against a module-launched
+#               landed with the durable-ack tier and was measured against a module-launched
 #               server before this arm was wired up.)
 set -euo pipefail
 

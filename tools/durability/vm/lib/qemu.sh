@@ -294,7 +294,7 @@ vm_wait_console() {  # RUNDIR TOKEN TIMEOUT
 # any directory whose pid is alive, so the run dir becomes permanently unreapable and surfaces
 # later at check-host.sh's free-space gate looking like an infrastructure outage. The same
 # defect was fixed in lib/preflight.sh; counting exits against vm_kill calls says t01, t05,
-# t07, run-flush-sweep.sh, run-sf-replay.sh and run-st8-probe.sh are candidates too (issues/23).
+# t07, run-flush-sweep.sh, run-sf-replay.sh and run-st8-probe.sh are candidates too.
 #
 # This kills only. It does NOT remove the run dir: keeping the disks on failure is deliberate
 # elsewhere in this harness, and a live qemu is exactly what stops that evidence being reaped

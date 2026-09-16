@@ -59,23 +59,17 @@ fi
 qemu_ver=$(qemu-system-x86_64 --version 2>/dev/null | head -1 | awk '{print $4}')
 echo "READY: kvm ok (no sudo), qemu ${qemu_ver}, ${avail_gb}G free at $STATE_DIR"
 
-# ---- PORT GUARD ---------------------------------------------------------------
-# The harness must never bind a HOST service port. A server that fails to bind does not
-# stop -- the next client simply talks to whatever already owns the port. That happened:
-# a probe server on 19000 silently lost the bind to a published container port and the
-# client ingested 20000 rows into a LIVE user database. Containers publish on 127.0.0.1
-# and do not appear as "our" processes, so `ps` is not enough -- check the socket table.
+# ---- WHY THERE IS NO PORT GUARD HERE -------------------------------------------
+# A host_port_free() helper used to sit at this point in the file, and it was DEAD: every
+# caller runs this script with `bash check-host.sh`, never sources it, so a function defined
+# here is unreachable by construction. It is deleted rather than left as decoration, because
+# a guard that cannot fire reads as protection that does not exist.
 #
-# The VM arms are unaffected (the guest binds its own 9000 inside the VM); this guards
-# anything that would bind on the host.
-host_port_free() {
-    local port="$1"
-    if ss -ltn 2>/dev/null | grep -q ":$port "; then
-        echo "REFUSING: host port $port is already bound -- a server started here would" >&2
-        echo "  silently lose the bind and any client would talk to the EXISTING owner." >&2
-        ss -ltn 2>/dev/null | grep ":$port " | sed 's/^/    /' >&2
-        docker ps --format '{{.Names}}: {{.Ports}}' 2>/dev/null | grep ":$port->" | sed 's/^/    container /' >&2
-        return 1
-    fi
-    return 0
-}
+# The rule it was written for still holds: the harness must never bind a HOST service port. A
+# server that fails to bind does not stop -- the next client talks to whatever already owns
+# the port. That happened: a probe server on 19000 silently lost the bind to a published
+# container port and the client ingested 20000 rows into a LIVE user database. Today's arms
+# are structurally safe (the guest binds its own 9000 INSIDE the VM, and qemu takes an
+# ephemeral forward from vm_free_port). Anything that starts binding on the host needs a real
+# check, in the script that does the binding, against `ss -ltn` rather than `ps` -- containers
+# publish on 127.0.0.1 and never appear as "our" processes.

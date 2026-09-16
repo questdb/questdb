@@ -43,7 +43,7 @@ if [ "$MODE" = "log-writes" ]; then
     # ext4-journalling A/B did nothing on the replay path -- which is the path where the
     # question actually matters. The README records the foreign-flush hypothesis as refuted,
     # but that was measured on dm-flakey, where the cut boundary is arming time and the effect
-    # structurally cannot show. Here the boundary IS the flush. See durability-ci issues/08.
+    # structurally cannot show. Here the boundary IS the flush.
     if ! mountpoint -q "$MNT"; then
         if [ -n "${QDB_FS_MOUNT_OPTS:-}" ]; then
             echo "prepare-device: mounting with non-default options: $QDB_FS_MOUNT_OPTS" >&2

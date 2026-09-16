@@ -10,7 +10,7 @@
 # SUBSEQUENT run fails at the check-host.sh free-space gate -- which reads as an
 # infrastructure outage rather than as the cleanup problem it is.
 #
-# WHY IT IS A SEPARATE SCRIPT AND NOT PART OF TEARDOWN. `issues/15` is explicit, and
+# WHY IT IS A SEPARATE SCRIPT AND NOT PART OF TEARDOWN. The rule is explicit, and
 # check-host.sh carries the same warning: teardown idioms that reap broadly (`losetup -D`,
 # `dmsetup remove_all`, rm of a whole state dir) destroy real data on a shared box. This is
 # a CI-side concern. It targets $QDB_VMCRASH_STATE BY NAME, it is never called by
@@ -86,8 +86,8 @@ echo "  free before: ${BEFORE_FREE:-?} G, keeping the $KEEP most recent run dire
 
 # Newest first, by mtime. EVERY prefix under which this harness creates a per-run directory,
 # each one verified against its creator -- covering only the two main flows meant a week of red
-# nights filled the agent through a door the reaper never looked at, which is issues/15 arriving
-# by another route:
+# nights filled the agent through a door the reaper never looked at, which is the same hazard
+# arriving by another route:
 #
 #   run-*        power-cut-vm.sh      the live cut          40 G + 60 G kept on failure
 #   sweep-*      run-flush-sweep.sh   the flush sweep       40 G + 60 G

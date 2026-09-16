@@ -6,7 +6,7 @@ source "$HERE/lib/qemu.sh"
 STATE_DIR="${QDB_VMCRASH_STATE:-/data/qdb-vmcrash}"; BASE="$STATE_DIR/base"; KEY="$BASE/id_ed25519"
 RUN="$STATE_DIR/t01"; rm -rf "$RUN"; mkdir -p "$RUN"
 # t01 runs in the nightly and boots a VM, and its five exit paths killed nothing. Same defect
-# that left two live qemus behind t06; see issues/23 for the audit that found this one.
+# that left two live qemus behind t06; found by the leaked-qemu audit.
 vm_kill_on_exit "$RUN"
 qemu-img create -f qcow2 -b "$BASE/golden.qcow2" -F qcow2 "$RUN/overlay.qcow2" >/dev/null
 P=$(vm_free_port)

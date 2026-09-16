@@ -63,8 +63,8 @@ fi
 #
 # It could not while the client-side LOCAL durable-ack frontier was unbuilt: Wm was unobservable
 # from outside the server, so this script downgraded the cell to RPO_UNVERIFIED and measured the
-# gap instead of grading it. That tier landed with issues/17, and it was verified against a
-# MODULE-LAUNCHED server -- not merely a classpath one -- before this arm was enabled:
+# gap instead of grading it. That tier landed with the durable-ack work, and it was verified
+# against a MODULE-LAUNCHED server -- not merely a classpath one -- before this arm was enabled:
 # localAcks and trimAdvances both advance, and Wm tracks, through the shipped launcher.
 #
 # The downgrade is gone rather than left dormant. A latent "cannot enforce" branch on a path
@@ -226,7 +226,7 @@ if ! vm_ssh "$P" "$KEY" "pgrep -f '$LIVE_PAT' >/dev/null"; then
     # CAPTURE THE GUEST LOGS BEFORE THE VM DIES. This assertion fires when the workload is
     # already gone, and the reason is always in writer.log / server.log -- which used to require
     # booting the VM again to read, or were lost entirely once the disks were reaped.
-    # run-flush-sweep.sh learned this the expensive way (issues/04): a failure path that
+    # run-flush-sweep.sh learned this the expensive way: a failure path that
     # discards its own evidence costs three VM boots to diagnose. The same fix belongs here,
     # and its absence is why the first product-arm SYNC failure said only "not running".
     vm_ssh "$P" "$KEY" "tail -40 /mnt/qdb/writer.log 2>/dev/null; echo '--- workload.out ---'; tail -20 /mnt/qdb/workload.out 2>/dev/null; echo '--- server.log ---'; tail -20 /mnt/qdb/server.log 2>/dev/null" \

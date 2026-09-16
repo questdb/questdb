@@ -60,15 +60,15 @@ row DURABILITY_FAILURE \
 row SILENT_CORRUPTION \
     "SILENT_CORRUPTION count=43264 is not a multiple of K=1000" \
     "SILENT_CORRUPTION     <- CrashVerifier"
-# THIS FIXTURE MOVED with issues/21. It used to be "LOUD_FAILURE: verifier produced no verdict"
-# citing verify.sh:318 -- a line that no longer exists, because that exit now emits
+# THIS FIXTURE MOVED with the NOT_EVALUATED split. It used to be "LOUD_FAILURE: verifier produced
+# no verdict" citing verify.sh:318 -- a line that no longer exists, because that exit now emits
 # NOT_EVALUATED. The rule this file states at the top (fixtures come from the producer, or the
 # test checks itself against itself) is what makes the stale citation a defect rather than a
 # cosmetic detail.
 row LOUD_FAILURE \
     "LOUD_FAILURE: the shipped server did not start on the crashed database" \
     "LOUD_FAILURE          <- guest/verify.sh:186 (product side)"
-# issues/21. The oracle never reached a verdict: nothing was measured, so this is the RIG's
+# THE SPLIT. The oracle never reached a verdict: nothing was measured, so this is the RIG's
 # finding and not a statement about the product. Both wordings verify.sh emits are pinned,
 # because the second has no colon after the token and a tightened anchor would drop it.
 row NOT_EVALUATED \
@@ -248,8 +248,8 @@ fault_is DURABILITY_FAILURE no
 fault_is SILENT_CORRUPTION no
 # LOUD_FAILURE spans both meanings and cannot be split by token, so it takes the LOUDER alarm:
 # a rig fault shown as a product failure gets investigated, the reverse gets ignored. See
-# verdict_is_instrument_fault's note and issues/21.
-# Since issues/21 this is true for a REASON rather than for want of a distinction: the
+# verdict_is_instrument_fault's note.
+# Since the split this is true for a REASON rather than for want of a distinction: the
 # not-evaluated cases carry their own token, so LOUD_FAILURE means only "the product refused".
 fault_is LOUD_FAILURE      no
 # The other half of that split, and the reason the ticket exists: a rig fault must not raise
@@ -264,7 +264,7 @@ fault_is MOUNT_FAILED      no
 # still match their producer -- and that is the drift this file exists to catch. verify.sh runs
 # INSIDE the guest, so no VM-free test could execute it; it can still be READ.
 #
-# This section is why it matters: issues/21 moved seven exits from LOUD_FAILURE to
+# This section is why it matters: the split moved seven exits from LOUD_FAILURE to
 # NOT_EVALUATED. Revert any one of them and every assertion above still passes, because they
 # all test the vocabulary against strings this file owns. The alarm would silently go back to
 # paging the product owner for a dead JVM.
@@ -285,7 +285,7 @@ while IFS= read -r l; do
 done <<< "$emitted_lines"
 check "every verdict line verify.sh emits is classifiable" "$unknown" "0"
 
-# THE THREE INSTRUMENT-SIDE EXITS NAMED IN issues/21, by their message text rather than by
+# THE THREE INSTRUMENT-SIDE EXITS THE SPLIT NAMED, by their message text rather than by
 # line number -- line numbers move, and a citation that rots is worse than none. Each phrase
 # must sit on a line whose token is an INSTRUMENT fault. This is the assertion that fails if
 # someone reverts one of the seven exits.
@@ -302,7 +302,7 @@ producer_is_instrument() {  # PHRASE
     if verdict_is_instrument_fault "$tok"; then
         ok "producer: '$phrase' -> $tok (instrument)"
     else
-        bad "producer: '$phrase' -> $tok, which pages the PRODUCT owner (issues/21 regression)"
+        bad "producer: '$phrase' -> $tok, which pages the PRODUCT owner (split regression)"
     fi
 }
 producer_is_instrument "verifier produced no verdict"

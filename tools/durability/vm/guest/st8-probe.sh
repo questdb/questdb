@@ -318,7 +318,7 @@ for name in ("a", "b"):
 
 # One machine-readable line for the driver. Anchored with a fixed prefix so it cannot be
 # confused with the human-readable lines above -- the same reason CrashVerifier was moved
-# off the shared stdout in issues/19.
+# off the shared stdout after a spliced line corrupted a verdict.
 print("ST8_READBACK a=%s b=%s" % (results["a"], results["b"]))
 PY
 }

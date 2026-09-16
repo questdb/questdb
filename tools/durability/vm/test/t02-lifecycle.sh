@@ -7,7 +7,7 @@ source "$HERE/lib/qemu.sh"
 STATE_DIR="${QDB_VMCRASH_STATE:-/data/qdb-vmcrash}"; BASE="$STATE_DIR/base"; KEY="$BASE/id_ed25519"
 RUN="$STATE_DIR/t02"; rm -rf "$RUN"; mkdir -p "$RUN"
 # No exit path here killed the VM; a bail left a daemonized qemu holding its pidfile, which
-# also makes the run dir unreapable for good (reap-state.sh refuses a live pid). issues/23.
+# also makes the run dir unreapable for good (reap-state.sh refuses a live pid).
 vm_kill_on_exit "$RUN"
 qemu-img create -f qcow2 -b "$BASE/golden.qcow2" -F qcow2 "$RUN/overlay.qcow2" >/dev/null
 truncate -s 8G "$RUN/data.raw"

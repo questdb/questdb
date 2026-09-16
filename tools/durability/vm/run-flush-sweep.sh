@@ -134,7 +134,7 @@ if [ "${QDB_ARM:-reference}" = product ] && [ -z "$DIST_TGZ" ]; then
            echo "  Build it with the real assembly:"
            echo "    JAVA_HOME=<a stock JDK> mvn -pl core -am package -P build-binaries -Dmaven.test.skip=true"
            echo "  A Nix/flox JDK fails the jlink step with 'libmanagement_ext.so has been modified';"
-           echo "  that is the JDK, not the product build. See issues/03."
+           echo "  that is the JDK, not the product build."
            exit 1 ;;
         1) DIST_TGZ="${_dists[0]}" ;;
         *) echo "LOUD_FAILURE: ${#_dists[@]} candidate no-jre tarballs in core/target; set QDB_PRODUCT_DIST_TGZ to choose:"
@@ -245,11 +245,26 @@ vm_ssh "$P" "$KEY" "setsid env $(harness_workload_env "$ARM" "$MODE") bash /opt/
 
 # Let it build a real history: many commits means many flushes means many
 # crash points. Anchor on the first commit so startup is not counted.
+# THE EXHAUSTION IS A FAILURE, NOT A TIMEOUT TO SHRUG AT. 120 x 0.2s = 24s; a cold agent
+# that needs longer to reach its first commit used to fall out of this loop silently, and
+# every boundary then verified as NO_COMMIT -- a green job whose report is a wall of
+# <skipped>. The anchor either happened or the run measured nothing.
+anchored=false
 for _ in $(seq 1 120); do
     n=$(vm_ssh "$P" "$KEY" "head -1 /mnt/qdb/db/$(arm_progress_file "$ARM") 2>/dev/null | tr -dc '0-9'" 2>/dev/null || echo "")
-    [ -n "$n" ] && [ "$n" -ge 1 ] 2>/dev/null && break
+    [ -n "$n" ] && [ "$n" -ge 1 ] 2>/dev/null && { anchored=true; break; }
     sleep 0.2
 done
+if [ "$anchored" != true ]; then
+    # Same evidence capture as the liveness assertion below: the reason is in writer.log,
+    # and a failure path that discards it costs a VM boot to diagnose.
+    mkdir -p "$OUTDIR"
+    vm_ssh "$P" "$KEY" "tail -40 /mnt/qdb/writer.log 2>/dev/null; echo '--- workload.out ---'; tail -20 /mnt/qdb/workload.out 2>/dev/null" \
+        > "$OUTDIR/anchor-failure.out" 2>&1 || true
+    echo "  guest logs: $OUTDIR/anchor-failure.out"
+    sed -n '1,12p' "$OUTDIR/anchor-failure.out" | sed 's/^/      /'
+    keep; echo "LOUD_FAILURE: no commit in 24s; every boundary would measure nothing"; exit 1
+fi
 sleep 8
 # The liveness assertion must name the arm's OWN process: the qwp arm runs
 # QwpCrashIngestClient, so the reference-arm pattern would never match and every qwp run
@@ -325,8 +340,12 @@ fi
 echo "  sweep mode=$SWEEP_MODE over $(echo "$points" | wc -w) boundaries: $(echo $points | cut -c1-100)..."
 
 fails=0; checked=0
+# INFORMATIVE = a boundary that actually measured something. NO_COMMIT is a legitimate but
+# empty sample, and it sits in the pass arm below -- so without this counter a sweep where
+# every boundary landed before the first commit exits 0. The gate is after the loop.
+informative=0
 failed_points=""
-# MACHINE-READABLE OUTPUT, alongside the text log rather than instead of it (issues/06). Lands
+# MACHINE-READABLE OUTPUT, alongside the text log rather than instead of it. Lands
 # next to the per-boundary evidence in $OUTDIR, which is outside $RUN and therefore survives the
 # success-path cleanup -- a report that a green run deletes is no use to a dashboard.
 JUNIT_XML="${QDB_JUNIT_XML:-$OUTDIR/junit.xml}"
@@ -336,7 +355,7 @@ JUNIT_CLASS="durability.$ARM.$MODE.W$WINDOW.$PROFILE"
 # THE RUN'S IDENTITY, IN THE MACHINE-READABLE REPORT. The classname smuggles four of these
 # into a dotted string; everything else lived only in the text log, so a dashboard could not
 # say WHICH BUILD a trend belonged to -- and on a green product run the artifact name appeared
-# nowhere in the XML at all. issues/06 asks for "boundary 13776 regressed between build N and
+# nowhere in the XML at all. The report has to answer "boundary 13776 regressed between build N and
 # N+1"; that question needs the build named.
 #
 # Set from the values this script already holds, never re-derived inside lib/junit.sh: a second
@@ -408,6 +427,7 @@ for n in $points; do
     line=$(verdict_line "$out")
     v=$(verdict_classify "$line")
     checked=$((checked + 1))
+    [ "$v" = NO_COMMIT ] || informative=$((informative + 1))
     junit_case "$JUNIT_CLASS" "flush-$n" "$v" "$(( $(date +%s) - point_started ))" "$out"
     echo "$STAMP sweep profile=$PROFILE epoch=$EPOCH mode=$MODE W=$WINDOW flush=$n/$nflush verdict=$v line=$line" >> "$LOG"
     printf '  flush %4d/%-4d -> %s\n' "$n" "$nflush" "$v"
@@ -469,13 +489,24 @@ fi
 vm_kill "$RUN"
 junit_finish
 echo "  junit xml: $JUNIT_XML"
+# A SWEEP THAT MEASURED NOTHING IS NOT A PASS. Every verdict being NO_COMMIT means no
+# boundary carried a committed transaction, so the run made no durability claim at all --
+# and the exit code below only counts failures, which there are none of. Fail loudly here or
+# the dashboard shows green for a run that tested nothing.
+if [ "$informative" -eq 0 ]; then
+    keep
+    echo "LOUD_FAILURE: $checked boundaries verified, ALL NO_COMMIT -- this sweep measured nothing"
+    echo "  full per-boundary output: $OUTDIR"
+    echo "  log at $LOG"
+    exit 1
+fi
 if [ "$fails" -eq 0 ] && [ "${QDB_KEEP_RUN:-0}" != "1" ]; then
     rm -rf "$RUN"
-    echo "sweep complete: $checked boundaries, 0 failures; log at $LOG"
+    echo "sweep complete: $checked boundaries ($informative informative), 0 failures; log at $LOG"
     echo "  full per-boundary output: $OUTDIR"
 elif [ "$fails" -eq 0 ]; then
     keep
-    echo "sweep complete: $checked boundaries, 0 failures; log at $LOG"
+    echo "sweep complete: $checked boundaries ($informative informative), 0 failures; log at $LOG"
 else
     keep
     echo "sweep complete: $checked boundaries, $fails FAILURES; log at $LOG"

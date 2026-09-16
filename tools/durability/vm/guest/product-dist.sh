@@ -19,14 +19,14 @@
 #
 # BOTH run-workload.sh AND verify.sh need this: the arm writes with the shipped server and must
 # also RECOVER with it. One definition, sourced by both, for the same reason lib/arms.sh exists
-# -- the two callers of the arm vocabulary drifted apart three times before it did (issues/04).
+# -- the two callers of the arm vocabulary drifted apart three times before it did.
 
 PRODUCT_DIST_TGZ="${QDB_PRODUCT_DIST_TGZ:-/opt/vmcrash/questdb-dist.tar.gz}"
 PRODUCT_DIST_DIR="${QDB_PRODUCT_DIST_DIR:-/opt/vmcrash/dist}"
 # /opt/vmcrash, NOT /mnt/qdb. The distribution is an INSTRUMENT, not data under test: unpacking
 # it onto the recorded device would add its writes to the log-writes stream and manufacture
-# crash boundaries that only exist because the harness is there (the fault issues/08 measured
-# for the witness file, at ~10.5% of boundaries).
+# crash boundaries that only exist because the harness is there (the fault the witness-file
+# probe measured, at ~10.5% of boundaries).
 PRODUCT_JAVA_HOME="${QDB_PRODUCT_JAVA_HOME:-/opt/jdk}"
 
 # product_dist_unpack -> unpack the tarball, idempotently, and record its version.
@@ -182,7 +182,7 @@ PY
 #
 # `questdb.sh stop` sends SIGTERM, polls, and escalates to SIGKILL. The POLLING MATTERS: the
 # next step opens the same database, and a still-running server holds the lock. That exact race
-# left 2 of 7 boundaries with no verdict at all in the first qwp-sf compare run (issues/19).
+# left 2 of 7 boundaries with no verdict at all in the first qwp-sf compare run.
 product_server_stop() {
     bash "$PRODUCT_DIST_DIR/questdb.sh" stop >/dev/null 2>&1 || true
     local i

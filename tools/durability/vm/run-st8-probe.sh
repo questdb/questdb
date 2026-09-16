@@ -21,7 +21,7 @@
 # can only discard writes issued after arming -- so data already at the device but unflushed
 # survives it, which is exactly the state this probe creates. Recording with dm-log-writes and
 # replaying to a chosen boundary reconstructs the device state a volatile write cache would
-# have left. Same instrument the flush sweep uses. See spec.md 3.
+# have left. Same instrument the flush sweep uses.
 #
 # ============================================================================================
 # A DEFINES THE BOUNDARY. Read this before changing the scan below.
@@ -61,7 +61,7 @@
 # The mark bracket is kept: it is still what says WHERE to look, and its reasoning (a later
 # jbd2 timer commit would journal B and fake a confirmation) is unchanged.
 #
-# SCOPE: ST8 ONLY. The ST1..ST10 battery is a separate decision (durability-ci issues/10).
+# SCOPE: ST8 ONLY. The ST1..ST10 battery is a separate decision.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -553,7 +553,7 @@ esac
 
 # BOTH DIRECTIONS OR NOTHING. A probe result with no control is an observation, not a
 # measurement: 0xBB coming back could equally mean the data was durable for reasons unrelated
-# to fdatasync(A). issues/08's first measurement fell into exactly that trap, and
+# to fdatasync(A). The first measurement fell into exactly that trap, and
 # syncfs-microtest.sh carries a no-flush control line for the same reason.
 echo
 if [ -f "$COUNTERPART" ]; then

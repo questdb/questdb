@@ -8,7 +8,7 @@
 # is the only oracle there is. Every other arm is expressed as that oracle plus
 # modifiers -- --qwp / --qwp-sf / --server -- which is the convention lib/arms.sh
 # encodes in arm_verify_flags(). Forwarding a WORKLOAD arm straight through to
-# --arm was one of the three bugs in issues/04, and it surfaced only after a full
+# --arm was one of the three bugs in the arm-vocabulary drift, and it surfaced only after a full
 # record, cut and reboot cycle.
 #
 # The reference arm delegates to CrashVerifier, which runs the PRODUCTION

@@ -85,7 +85,7 @@ export QDB_DDL_EVERY_ROWS=-1
 export QDB_MAT_VIEW=false
 export QDB_REBASE_AT_ROWS=-1
 export QDB_RECOVER_AS=
-# The harness's own _progress fsync manufactures ~10.5% of the flush boundaries (issues/08), and
+# The harness's own _progress fsync manufactures ~10.5% of the flush boundaries, and
 # the NOSYNC failure message below points at it as the first thing to check. Pinned so that the
 # number of boundaries a foreign flusher contributes is the same in both arms.
 export QDB_WITNESS_FSYNC=true
@@ -235,8 +235,8 @@ run_arm() {
         # THE RECOVERED COUNT COMES FROM THE RESULT FILE, NOT FROM THE VERDICT LINE.
         # CrashVerifier writes count/F/C/Wm as anchored key=value pairs from a shutdown hook
         # (RESULT_FILE), precisely because the engine logs to the same stdout and a spliced line
-        # once produced distinctIds=2026 -- a YEAR -- and a false DURABILITY_FAILURE (issues/19,
-        # c26edf95ee). Scraping `count=` off the verdict line put this control back on the stream
+        # once produced distinctIds=2026 -- a YEAR -- and a false DURABILITY_FAILURE
+        # (c26edf95ee). Scraping `count=` off the verdict line put this control back on the stream
         # that fault was closed on. A SEPARATE ssh invocation, so no engine output shares it.
         local wm cnt
         res=$(vm_ssh "$P2" "$KEY" "cat /mnt/qdb/verify-armB.properties 2>/dev/null" 2>/dev/null)
@@ -249,7 +249,7 @@ run_arm() {
         # bar would be nonsense; worse, Wm is only advanced on the ADAPTIVE path, so at SYNC it is
         # -1 and the check would silently never fire again. Anchored to ^ so a spliced prefix is
         # rejected as absent rather than parsed: absence is handled loudly below. This is the
-        # last residue of issues/19; closing it properly is one putResult("rowsWatermark", ...)
+        # last residue of that fault; closing it properly is one putResult("rowsWatermark", ...)
         # line in CrashVerifier, which is product-side and not this file's to add.
         wm=$(printf '%s\n' "$out" | grep -oE '^watermark rows=[0-9]+' | head -1 | cut -d= -f2)
         printf '%s\t%s\t%s\t%s\t%s\n' "$b" "$(verdict_classify "$line")" "${wm:--1}" "${cnt:--1}" "$line" >> "$ARM_OUT"
@@ -301,7 +301,7 @@ while IFS=$'\t' read -r b v wm cnt line; do
     # qwp-sf and product arms, and those are graded by run-sf-replay.sh and the sweep.
     #
     # If t10 ever gains an ack-bearing arm, restore the comparison AND its global assertion
-    # together; issues/22 (rowsWatermark via putResult) is the other half of making it possible.
+    # together; rowsWatermark via putResult is the other half of making it possible.
     :
 done < "$ARM_OUT"
 
@@ -349,7 +349,7 @@ elif [ "$nosync_green" -gt 0 ] && [ "$nosync_red" -eq 0 ]; then
     echo "  so this harness cannot tell a durable WAL commit path from one that never flushes."
     echo "  No DURABLE or RPO_OK verdict on the WAL path is evidence until this is explained."
     echo "  First thing to check: whether some OTHER flusher is carrying the data to the device"
-    echo "  (the harness's own _progress fsync manufactures ~10.5% of boundaries — see issues/08)."
+    echo "  (the harness's own _progress fsync manufactures ~10.5% of boundaries)."
 else
     echo "FAIL t10: the NOSYNC arm was only PARTIALLY red ($nosync_red red, $nosync_green green)."
     echo "  Do NOT relax the bar to accommodate this. A missing barrier should be uniformly"

@@ -27,7 +27,7 @@
 # vm_kill is idempotent (no pidfile -> return 0), so calling it on an already-cut VM is safe.
 #
 # THE DISKS ALWAYS GO; THE CONSOLE LOG SURVIVES A BAIL. The rest of the harness keeps disks on
-# failure on purpose (issues/15), and that is right where the disk IS the evidence -- a sweep's
+# failure on purpose, and that is right where the disk IS the evidence -- a sweep's
 # data+log devices can be replayed again. Preflight has no log device, so its 8 GiB overlay and
 # data.raw cannot be replayed and answer no question after the fact. What does answer the
 # question is console.log, which is where a guest that never reached SSH says why. Discarding it

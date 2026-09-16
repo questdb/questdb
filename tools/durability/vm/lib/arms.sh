@@ -91,7 +91,7 @@ arm_server_kind() {
 # `product` joined this list when it gained a real implementation. It was deliberately absent
 # while it was a stub, because reporting it as known would let a caller start a cell that
 # cannot produce a verdict -- which is exactly what run-matrix.sh did for three of its four
-# cells (issues/03).
+# cells.
 arm_is_known() {
     case "$1" in
         reference|qwp|qwp-sf|product) return 0 ;;
@@ -189,7 +189,7 @@ arm_qwp_tier() {
 #   * schema profile, sibling table, mat view, DDL churn, rebase and witness-fsync were all
 #     ignored, so the live cut only ever exercised the default dimension.
 #
-# FOURTH divergence between these two callers, after the three in issues/04. Same cause every
+# FOURTH divergence between these two callers, after the three before it. Same cause every
 # time -- two call sites, one vocabulary -- so it is built once here and referenced twice.
 harness_workload_env() {
     local arm="$1" mode="${2:-adaptive}"
@@ -211,7 +211,7 @@ harness_workload_env() {
 # The table kind and the commit mode used to be a single decision: SYNC/NOSYNC meant a
 # bypass-WAL table, adaptive meant a WAL table. That left "WAL table, no durability barrier"
 # unreachable, and that combination is the BARRIER CONTROL for the WAL path -- the last self-test
-# the set is missing, beside t04 (the cut can fail) and t07 (the oracle can fail). See issues/09.
+# the set is missing, beside t04 (the cut can fail) and t07 (the oracle can fail).
 #
 # The default reproduces the historical coupling exactly, so every existing invocation routes as
 # it always did; QDB_WAL_TABLE=true with mode=NOSYNC is what makes the control expressible.
@@ -222,7 +222,7 @@ harness_workload_env() {
 # NOT expressed via arm_sf_capable, even though both currently reduce to "is the mode adaptive".
 # They are different questions -- one is "can this mode supply a durable-ack tier", this one is
 # "which table kind does this mode default to" -- and they are about to diverge: if the pending
-# durable-ack decision (scratch/questdb/qwp-durable-ack-sync/issues/01) grants the tier under
+# durable-ack decision grants the tier under
 # SYNC, arm_sf_capable starts answering yes for SYNC and a shared predicate would silently flip
 # every SYNC run onto a WAL table. Spell the mode check out here.
 harness_wal_table() {

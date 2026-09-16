@@ -25,12 +25,13 @@
 # it is verdict_is_instrument_fault in lib/verdict.sh, next to verdict_is_pass, so this file
 # cannot drift from the rest of the harness about what a token means.
 #
-# The example above was MOUNT_FAILED until issues/21, which was exactly backwards: MOUNT_FAILED
-# is a PRODUCT finding (an ext4 that will not mount after a power cut is the damage this
+# The example above was MOUNT_FAILED until the NOT_EVALUATED split, which was exactly
+# backwards: MOUNT_FAILED is a PRODUCT finding (an ext4 that will not mount after a power cut
+# is the damage this
 # instrument hunts), and a reader following the old comment would have concluded it renders as
 # <error>. t12 asserts the opposite, which is how the contradiction surfaced.
 #
-# Written incrementally to a temp file and renamed at the end, for the reason issues/19
+# Written incrementally to a temp file and renamed at the end, for the reason a half-written report
 # established: a consumer must never see a half-written file, and a run killed mid-sweep
 # leaves no misleading partial result.
 
@@ -51,9 +52,9 @@ junit_begin() {
 
 # junit_property NAME VALUE -> record one fact about the run's identity.
 #
-# WHAT THIS IS FOR. issues/06 asks for "a way to say 'boundary 13776 regressed between build N
-# and N+1'", and that is unanswerable from a report that does not name the build. The text log
-# names the artifact (run-flush-sweep.sh prints `product: dist=... recoveryPass=...`); the XML
+# WHAT THIS IS FOR. The dashboard has to answer "a way to say 'boundary 13776 regressed between
+# build N and N+1'", and that is unanswerable from a report that does not name the build. The text
+# log names the artifact (run-flush-sweep.sh prints `product: dist=... recoveryPass=...`); the XML
 # named none of it, so the machine-readable half could not attribute a trend to anything. On a
 # GREEN product run the dist name appeared nowhere at all, because the only place it reached
 # was a failure body.
@@ -163,14 +164,15 @@ junit_finish() {
             "$JUNIT_TESTS" "$JUNIT_FAILURES" "$JUNIT_ERRORS" \
             "$JUNIT_SKIPPED" "$elapsed"
         # <properties> FIRST, before any <testcase>. The JUnit XSD models testsuite as a
-        # SEQUENCE (properties, testcase*, system-out?, system-err?), so a properties block
-        # after the cases is schema-invalid; PublishTestResults@2 validates against that shape,
-        # and a report it rejects is worth less than no report.
-        if [ -s "${JUNIT_PROPS:-/dev/null}" ]; then
-            printf '    <properties>\n'
-            cat "$JUNIT_PROPS"
-            printf '    </properties>\n'
-        fi
+        # SEQUENCE (properties, testcase*, system-out, system-err) and NONE of the four is
+        # optional in the windyroad schema PublishTestResults@2 names -- they carry no
+        # minOccurs="0". So all four are emitted UNCONDITIONALLY, empty where there is nothing
+        # to say. Gating them on content was the bug: a sweep with no properties, and every
+        # sweep regardless for system-err, produced a file that fails validation while t09
+        # stayed green, because t09 checked attributes by hand and never ran a validator.
+        printf '    <properties>\n'
+        [ -s "${JUNIT_PROPS:-/dev/null}" ] && cat "$JUNIT_PROPS"
+        printf '    </properties>\n'
         cat "$JUNIT_TMP"
         # THE IDENTITY, AGAIN, IN system-out. Not redundancy for its own sake: ADO's JUnit
         # parser has limited support for <properties> and may never surface it, and an identity
@@ -178,12 +180,17 @@ junit_finish() {
         # is staring at a red boundary. system-out is part of the same schema sequence, it is
         # displayed per suite, and it costs a few lines. The properties block stays for
         # consumers that do read it.
+        printf '    <system-out>'
         if [ -s "${JUNIT_PROPS:-/dev/null}" ]; then
-            printf '    <system-out>'
             sed -e 's/.*name="//' -e 's/" value="/=/' -e 's/"\/>[[:space:]]*$//' "$JUNIT_PROPS" \
                 | sed 's/^[[:space:]]*//'
-            printf '</system-out>\n'
         fi
+        printf '</system-out>\n'
+        # system-err IS REQUIRED TOO, and was never emitted at all. The harness routes its
+        # diagnostics to the text log and to per-case failure bodies, so there is nothing to
+        # put here -- but an absent required element invalidates the whole report, and the
+        # publisher's rejection is silent.
+        printf '    <system-err></system-err>\n'
         printf '</testsuite>\n'
     } > "${JUNIT_FILE}.part.$$"
     mv -f "${JUNIT_FILE}.part.$$" "$JUNIT_FILE"

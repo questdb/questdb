@@ -28,14 +28,14 @@ fails=0
 # THE PRODUCT CELLS RUN AGAIN. They were dead for as long as the arm was a stub: three of these
 # four cells named an arm that exited 64 inside the guest, and because the workload is launched
 # with `setsid ... &` the SSH call returned 0 and the failure resurfaced later as the misleading
-# "workload never reached its first commit" (issues/03).
+# "workload never reached its first commit".
 #
 # THE W=0 RESTRICTION HERE IS ABOUT THIS FLOW, NOT ABOUT THE ARM. The product arm enforces the
 # RPO bar at W>0 perfectly well -- the flush sweep runs it there. But run-matrix drives
 # power-cut-vm.sh, the LIVE-CUT flow, and that flow cannot observe the W>0 gap at all: QEMU
 # cache=none sends guest writes O_DIRECT to host storage, the host never loses power, and
 # dm-flakey only discards writes issued after arming -- which is precisely the set adaptive
-# leaves at risk. Measured by probe with QuestDB removed from the experiment; see spec.md §3.
+# leaves at risk. Measured by probe with QuestDB removed from the experiment.
 # So a W>0 cell here would grade a gap it cannot create. W>0 coverage lives in
 # run-flush-sweep.sh, which is the CI instrument regardless.
 CELLS=(
