@@ -57,7 +57,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 /**
- * Keyed and scalar shared-build execution selected by the experimental planner gate.
+ * Keyed and scalar shared-build execution the planner selects for eligible join aggregations.
  * Takes ownership of both child factories, functions and the interpreted probe
  * filter context on entry, including construction failure. Borrows metadata only
  * during construction. Callers must compile functions for the same worker count.

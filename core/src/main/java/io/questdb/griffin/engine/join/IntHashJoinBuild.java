@@ -599,11 +599,9 @@ public final class IntHashJoinBuild implements Closeable {
 
             private CharSequence value(int key, DirectString sink) {
                 assert frozen == Frozen.this && symbolGeneration == generation && !closed;
-                if (key == VALUE_IS_NULL) {
-                    return null;
-                }
+                // Like SymbolMapReaderImpl, resolve NULL and every key outside the dictionary to null.
                 if (key < 0 || key >= symbolsCount) {
-                    throw new IllegalArgumentException("invalid hash join symbol key");
+                    return null;
                 }
                 long entry = entriesAddress + (long) key * 16;
                 return sink.of(charsAddress + Unsafe.getLong(entry), Unsafe.getInt(entry + 8));

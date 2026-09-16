@@ -1175,6 +1175,12 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 b.valueOf(3);
                 probe.getSymbolTable(1).valueOf(4);
                 TestUtils.assertEquals("Aa", first);
+                // Ten distinct values: keys outside [0, 10) resolve to null, as in SymbolMapReaderImpl.
+                TestUtils.assertEquals("国家🌞", a.valueOf(9));
+                for (int key : new int[]{-1, SymbolTable.VALUE_NOT_FOUND, 10, Integer.MAX_VALUE}) {
+                    Assert.assertNull(a.valueOf(key));
+                    Assert.assertNull(b.valueBOf(key));
+                }
             }
         });
     }

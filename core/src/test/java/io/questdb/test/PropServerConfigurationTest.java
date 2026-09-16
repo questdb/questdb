@@ -314,7 +314,7 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelTopKEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowJoinEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelGroupByEnabled());
-        Assert.assertFalse(configuration.getCairoConfiguration().isSqlParallelHashJoinGroupByEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelHashJoinGroupByEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelReadParquetEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParquetRowGroupPruningEnabled());
         Assert.assertEquals(256L * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParquetCacheMemorySize());
@@ -2072,15 +2072,15 @@ public class PropServerConfigurationTest {
     @Test
     public void testParallelHashJoinGroupByPropertyAndEnvironment() throws Exception {
         Properties properties = new Properties();
-        properties.setProperty("cairo.sql.parallel.hash.join.groupby.enabled", "true");
-        Assert.assertTrue(newPropServerConfiguration(properties).getCairoConfiguration().isSqlParallelHashJoinGroupByEnabled());
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.enabled", "false");
+        Assert.assertFalse(newPropServerConfiguration(properties).getCairoConfiguration().isSqlParallelHashJoinGroupByEnabled());
         Map<String, String> env = new HashMap<>();
-        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED", "false");
-        Assert.assertFalse(newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
-                .getCairoConfiguration().isSqlParallelHashJoinGroupByEnabled());
-        properties.clear();
         env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED", "true");
         Assert.assertTrue(newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
+                .getCairoConfiguration().isSqlParallelHashJoinGroupByEnabled());
+        properties.clear();
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED", "false");
+        Assert.assertFalse(newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
                 .getCairoConfiguration().isSqlParallelHashJoinGroupByEnabled());
     }
 

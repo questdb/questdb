@@ -508,7 +508,8 @@ public final class HashJoinGroupByCandidate {
                 return true;
             }
             // Independently single-input conjuncts are legal; a cross-input OR is not.
-            if (postJoin && Chars.equalsIgnoreCase(node.token, "and")) {
+            // A sub-query predicate is a QUERY node without a token; resolve() rejects it below.
+            if (postJoin && node.type == ExpressionNode.OPERATION && Chars.equalsIgnoreCase(node.token, "and")) {
                 return checkFilter(node.lhs, model, source, true) && checkFilter(node.rhs, model, source, true);
             }
             int payloadSize = requiredBuildColumns.size();

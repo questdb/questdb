@@ -131,9 +131,10 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             assertSql("count\n0\n", "select count(*)" + outer + " where p.installed_kwp = 42", false);
             assertSql("count\n5\n", "select count(*) from r left join p on r.plant_id=p.plant_id and p.country in ('ES','IT')", false);
             assertSql("country\tfirst\tlast\n\t40.0\t40.0\nDE\t20.0\t20.0\nES\t10.0\t10.0\nIT\t10.0\t10.0\n", "select p.country, first(r.energy_kwh), last(r.energy_kwh)" + JOIN + " order by p.country", true);
-            assertPlanContains("select p.country, sum(r.energy_kwh)" + JOIN, "Hash Join Light");
-            assertPlanContains("select p.country, sum(r.energy_kwh)" + outer, "Hash Left Outer Join Light");
-            assertPlanContains("select p.country, first(r.energy_kwh)" + JOIN, "Hash Join Light");
+            // Eligible shapes select the fused operator by default; order-sensitive aggregates keep the ordinary join.
+            assertPlanContains("select p.country, sum(r.energy_kwh)" + JOIN, "physicalJoinType: inner", true);
+            assertPlanContains("select p.country, sum(r.energy_kwh)" + outer, "physicalJoinType: left outer", true);
+            assertPlanContains("select p.country, first(r.energy_kwh)" + JOIN, "Hash Join Light", false);
         });
     }
 
@@ -283,7 +284,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         }
     }
 
-    private void assertPlanContains(String sql, String expected) throws Exception {
+    private void assertPlanContains(String sql, String expected, boolean fused) throws Exception {
         try (RecordCursorFactory factory = select("explain " + sql);
              RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             StringSink plan = new StringSink();
@@ -291,7 +292,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                 plan.put(cursor.getRecord().getStrA(0)).put('\n');
             }
             Assert.assertTrue(plan.toString(), plan.toString().contains(expected));
-            Assert.assertFalse(plan.toString(), plan.toString().contains("Async Hash Join Group By"));
+            Assert.assertEquals(plan.toString(), fused, plan.toString().contains("Async Hash Join Group By"));
         }
     }
 

@@ -59,8 +59,8 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     public void testConfigurationMatrix() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            Assert.assertFalse(new DefaultCairoConfiguration(root).isSqlParallelHashJoinGroupByEnabled());
-            Assert.assertFalse(configuration.isSqlParallelHashJoinGroupByEnabled());
+            Assert.assertTrue(new DefaultCairoConfiguration(root).isSqlParallelHashJoinGroupByEnabled());
+            Assert.assertTrue(configuration.isSqlParallelHashJoinGroupByEnabled());
             for (boolean global : new boolean[]{false, true}) {
                 for (boolean experimental : new boolean[]{false, true}) {
                     setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, Boolean.toString(global));
@@ -156,6 +156,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                         SELECT + JOINS[1] + " and r.energy_kwh > 0 order by country,yr,mo",
                         SELECT + JOINS[1] + " where r.energy_kwh > 0 or p.installed_kwp > 0 order by country,yr,mo",
                         SELECT + " from (r limit 2) r join p on r.plant_id=p.plant_id order by country,yr,mo",
+                        // A sub-query predicate is a token-less QUERY node in the post-join filter.
+                        SELECT + JOINS[0] + " where (select true from long_sequence(1)) order by country,yr,mo",
+                        SCALAR_SELECT + JOINS[1] + " where (select false from long_sequence(1))",
                         SELECT + JOINS[0] + " join p p2 on r.plant_id=p2.plant_id order by country,yr,mo"
                 }) {
                     assertDifferential(sql, context, false);

@@ -1792,7 +1792,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelHashJoinGroupByEnabled() {
-        return false;
+        return true;
     }
 
     @Override
