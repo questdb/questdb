@@ -99,12 +99,27 @@ vm_kill "$RUN"
 rm -f "$RUN/overlay.qcow2"
 qemu-img create -f qcow2 -b "$BASE/golden.qcow2" -F qcow2 "$RUN/overlay.qcow2" >/dev/null
 P2=$(vm_free_port)
-vm_boot "$RUN" "$RUN/overlay.qcow2" "$RUN/data.raw" "$P2" "" "$RUN/log.raw"
+# The replay boot, and the only one that gets discard=unmap -- the recording boot above keeps
+# the default, or an unmapping discard would land in the log as a DISCARD entry and change
+# what is being reconstructed here.
+QDB_VM_DATA_DISCARD=unmap vm_boot "$RUN" "$RUN/overlay.qcow2" "$RUN/data.raw" "$P2" "" "$RUN/log.raw"
 vm_wait_ssh "$P2" "$KEY" 240 || { keep; echo "FAIL t07: guest never rebooted"; exit 1; }
 vm_scp "$P2" "$KEY" "$HERE/../../../benchmarks/target/benchmarks.jar" /opt/vmcrash/benchmarks.jar
 vm_scp_dir "$P2" "$KEY" "$HERE/guest" /opt/vmcrash/
 
+# RESET THE DEVICE, even though this is a single replay to the LAST boundary.
+#
+# "Last boundary" is not "every byte". dm-log-writes passes writes through, so /dev/vdb still
+# carries whatever the workload wrote AFTER the final flush entry -- and those bytes are
+# precisely the ones the last boundary is supposed to exclude. Without the reset the clean
+# state V1 is measured on a device that is part boundary and part crash tail.
+#
+# That matters more here than it looks. This control's whole claim rests on ONE variable
+# changing between V1 and V2 -- eight bytes written by hand. Any other difference in the
+# device under them weakens the claim, and a post-boundary tail is exactly such a difference.
+replay_reset_assert "$P2" "$KEY" || { keep; echo "FAIL t07: the device reset is not real; the clean state cannot be trusted"; exit 1; }
 vm_ssh "$P2" "$KEY" "sudo umount /mnt/qdb 2>/dev/null; sudo dmsetup remove qdbdata 2>/dev/null; \
+    $(replay_reset_cmd); \
     sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --replay /dev/vdb --to-flush last 2>&1 | tail -1; \
     sudo mkdir -p /mnt/qdb && sudo mount /dev/vdb /mnt/qdb" \
     || { keep; echo "FAIL t07: could not replay and mount"; exit 1; }

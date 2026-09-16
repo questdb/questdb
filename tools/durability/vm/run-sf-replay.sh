@@ -141,7 +141,10 @@ echo "--- reboot on the REPLAYED disk, same forwarded port ---"
 rm -f "$RUN/overlay.qcow2"
 qemu-img create -f qcow2 -b "$BASE/golden.qcow2" -F qcow2 "$RUN/overlay.qcow2" >/dev/null
 P2=$(vm_free_port)
-vm_boot "$RUN" "$RUN/overlay.qcow2" "$RUN/data.raw" "$P2" "" "$RUN/log.raw" "$QWP_PORT"
+# discard=unmap on the REPLAY boot only. The recording boot above must keep QEMU's default:
+# an unmapping discard issued while dm-log-writes is recording becomes a DISCARD entry in the
+# log and changes what this replay reconstructs.
+QDB_VM_DATA_DISCARD=unmap vm_boot "$RUN" "$RUN/overlay.qcow2" "$RUN/data.raw" "$P2" "" "$RUN/log.raw" "$QWP_PORT"
 vm_wait_ssh "$P2" "$KEY" 240 || { echo "LOUD_FAILURE: guest never rebooted"; exit 1; }
 vm_scp "$P2" "$KEY" "$JAR" /opt/vmcrash/benchmarks.jar
 vm_scp_dir "$P2" "$KEY" "$HERE/guest" /opt/vmcrash/
@@ -150,7 +153,15 @@ P="$P2"
 nflush=$(vm_ssh "$P" "$KEY" "sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --list | head -1" \
     | grep -oE '[0-9]+ flushes' | grep -oE '^[0-9]+')
 echo "  recorded $nflush flush boundaries; replaying to the last one"
+# RESET FIRST, and this driver is the one that most needs it. ARM A's number IS the claim --
+# "what the SERVER alone kept" -- and dm-log-writes passes writes through, so without the reset
+# /dev/vdb still holds every row the workload wrote AFTER the last flush boundary. Those rows
+# were never durable by this harness's own definition, and counting them into ARM A would
+# credit the server with data a real power cut would have destroyed, understating the store-
+# and-forward gap that ARM B is measuring against it.
+replay_reset_assert "$P" "$KEY" || { echo "LOUD_FAILURE: the device reset is not real; ARM A would count post-boundary rows"; exit 1; }
 vm_ssh "$P" "$KEY" "sudo umount /mnt/qdb 2>/dev/null; sudo dmsetup remove qdbdata 2>/dev/null; \
+    $(replay_reset_cmd); \
     sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --replay /dev/vdb --to-flush $nflush >/dev/null 2>&1; \
     sudo mkdir -p /mnt/qdb && sudo mount /dev/vdb /mnt/qdb && sudo chown -R ubuntu /mnt/qdb" >/dev/null
 

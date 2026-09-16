@@ -103,9 +103,12 @@ RUN="$STATE_DIR/st8-$MODE-$$"
 mkdir -p "$RUN"
 qemu-img create -f qcow2 -b "$BASE/golden.qcow2" -F qcow2 "$RUN/overlay.qcow2" >/dev/null
 
-# 2 GiB, not the sweep's 40 GiB. The probe writes two small files, and the SMALL SIZE IS
-# LOAD-BEARING: the data device is zeroed before EVERY replay in the scan (see below), so its
-# size is multiplied by the number of candidates.
+# 2 GiB, not the sweep's 40 GiB. The probe writes two small files, and the size USED to be
+# load-bearing: the data device is cleared before EVERY replay in the scan (see below), and a
+# dd zero costs time proportional to the device, multiplied by the number of candidates. The
+# reset is now an unmapping discard -- 8 ms for the whole device regardless of size -- so that
+# constraint is gone. The size is kept at 2 GiB anyway: nothing here needs more, and a small
+# device also keeps the kept-on-failure run directory small.
 DATA_MB=2048
 truncate -s "${DATA_MB}M" "$RUN/data.raw"
 truncate -s 2G "$RUN/log.raw"
@@ -175,10 +178,17 @@ vm_kill "$RUN"
 rm -f "$RUN/overlay.qcow2"
 qemu-img create -f qcow2 -b "$BASE/golden.qcow2" -F qcow2 "$RUN/overlay.qcow2" >/dev/null
 P2=$(vm_free_port)
-vm_boot "$RUN" "$RUN/overlay.qcow2" "$RUN/data.raw" "$P2" "" "$RUN/log.raw"
+# The replay boot takes discard=unmap so the scan's per-candidate reset is a real unmap. The
+# recording boot above deliberately does not: a discard issued while dm-log-writes is recording
+# would be logged as a DISCARD entry, and this probe reasons about the log ENTRY BY ENTRY.
+QDB_VM_DATA_DISCARD=unmap vm_boot "$RUN" "$RUN/overlay.qcow2" "$RUN/data.raw" "$P2" "" "$RUN/log.raw"
 vm_wait_ssh "$P2" "$KEY" 240 || { keep; echo "LOUD_FAILURE: guest never rebooted"; exit 1; }
 vm_scp_dir "$P2" "$KEY" "$HERE/guest" /opt/vmcrash/ \
     || { keep; echo "LOUD_FAILURE: could not re-ship the guest scripts after the cut"; exit 1; }
+# This probe's answer turns on ONE SECTOR of extent metadata, so a reset that silently did
+# nothing would not fail loudly -- it would return a confidently wrong durability boundary.
+replay_reset_assert "$P2" "$KEY" || { keep; echo "LOUD_FAILURE: the device reset is not real; every candidate below would inherit the previous one"; exit 1; }
+RESET_CMD="$(replay_reset_cmd)"
 
 # WHERE TO LOOK, AND WHAT TO OFFER THE SCAN.
 #
@@ -394,7 +404,7 @@ while read -r ENTRY LABEL; do
         *) continue ;;
     esac
 
-    # Zero the data device before EVERY replay.
+    # Clear the data device before EVERY replay.
     #
     # Two independent reasons, both fatal if skipped. (1) dm-log-writes passes writes THROUGH
     # to the data device, so /dev/vdb still holds the final crashed state; replaying to a
@@ -402,13 +412,22 @@ while read -r ENTRY LABEL; do
     # that decides this experiment is the extent metadata. (2) mounting at the previous
     # candidate ran ext4 journal RECOVERY, which writes to the device -- carrying that into
     # the next replay would let an earlier boundary inherit a later one's recovered state.
+    #
+    # This was a full-device dd zero, and is now the harness-wide replay_reset_cmd -- an
+    # unmapping discard. The SEMANTICS ARE THE ONES THIS SCRIPT ALREADY REQUIRED: both clear
+    # the WHOLE device to zeros, which is what the two reasons above demand. What changes is
+    # only the cost, ~8 ms against a multi-second dd per candidate. It also means this scan
+    # and run-flush-sweep.sh now clear the device the same way, so a boundary means the same
+    # thing in both -- the ST8 result and the sweep's verdicts are finally commensurable.
+    # replay_reset_assert above proves the discard really zeroes before any of this runs.
+    #
     # </dev/null IS LOAD-BEARING. vm_ssh runs ssh without -n, so ssh inherits this loop's
     # stdin and DRAINS THE CANDIDATE LIST: without it the scan silently tests exactly one
     # boundary and then exits the loop, which would read as "no boundary made A durable" --
     # an instrument failure invented by the harness. run-flush-sweep.sh never met this
     # because it iterates with `for n in $points`, not a while-read.
     OUT=$(vm_ssh "$P2" "$KEY" "sudo umount /mnt/qdb 2>/dev/null; \
-        sudo dd if=/dev/zero of=/dev/vdb bs=4M count=$((DATA_MB / 4)) status=none; \
+        $RESET_CMD; \
         sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --replay /dev/vdb $REPLAY_ARG 2>&1 | tail -1; \
         sudo mkdir -p /mnt/qdb; \
         if sudo mount /dev/vdb /mnt/qdb 2>/dev/null; then \
