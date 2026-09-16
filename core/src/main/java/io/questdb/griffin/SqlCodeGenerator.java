@@ -1643,6 +1643,45 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
+     * The scan direction the window functions of {@code windowExpr} will actually read rows in, which is
+     * what {@link io.questdb.griffin.engine.window.WindowContext#isOrderedByDesignatedTimestamp()} is asking
+     * about. Two different orders meet here and must not be conflated:
+     * <ul>
+     *     <li>when the window's own ORDER BY was dismissed, the base already delivers that order, so the
+     *     base's own claim is the answer;</li>
+     *     <li>otherwise the cached window path sorts the rows into the window's ORDER BY before any function
+     *     sees them (see the {@code osz > 0 && !dismissOrder} branch that groups functions by their order
+     *     indices), so the functions read that order no matter what the base claimed.</li>
+     * </ul>
+     * Reporting SCAN_DIRECTION_OTHER for the second case is what made a RANGE frame refuse over a base that
+     * stopped claiming FORWARD, while the ROWS frame of the same query over the same base kept working - the
+     * sort was there in both cases.
+     * <p>
+     * ASC only. There is deliberately no BACKWARD claim for a DESC window order: descending designated
+     * timestamp order is not expressible here, and
+     * {@code WindowFunctionTest.testFrameFunctionOverRangeIsOnlySupportedOverDesignatedTimestamp} pins that
+     * {@code over (order by ts desc range ...)} keeps refusing.
+     */
+    private static int effectiveWindowScanDirection(
+            RecordCursorFactory base,
+            RecordMetadata baseMetadata,
+            WindowExpression windowExpr,
+            boolean dismissOrder
+    ) {
+        if (dismissOrder) {
+            return base.getScanDirection();
+        }
+        final int timestampIndex = baseMetadata.getTimestampIndex();
+        if (timestampIndex != -1
+                && windowExpr.getOrderBy().size() == 1
+                && windowExpr.getOrderByDirection().getQuick(0) == ORDER_ASC
+                && SqlUtil.getColumnIndexQuiet(baseMetadata, windowExpr.getOrderBy().getQuick(0).token) == timestampIndex) {
+            return RecordCursorFactory.SCAN_DIRECTION_FORWARD;
+        }
+        return RecordCursorFactory.SCAN_DIRECTION_OTHER;
+    }
+
+    /**
      * Finds the HorizonJoinContext from the synthetic offset model that precedes the HORIZON JOIN model.
      * The synthetic offset model is identified by having no table name and a non-null HorizonJoinContext alias.
      *
@@ -10935,7 +10974,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             partitionBySink,
                             keyTypes,
                             osz > 0,
-                            dismissOrder ? base.getScanDirection() : RecordCursorFactory.SCAN_DIRECTION_OTHER,
+                            effectiveWindowScanDirection(base, baseMetadata, ac, dismissOrder),
                             orderByPos,
                             base.recordCursorSupportsRandomAccess(),
                             ac.getFramingMode(),
@@ -11322,7 +11361,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             partitionBySink,
                             keyTypes,
                             osz > 0,
-                            dismissOrder ? base.getScanDirection() : RecordCursorFactory.SCAN_DIRECTION_OTHER,
+                            effectiveWindowScanDirection(base, baseMetadata, ac, dismissOrder),
                             orderByPos,
                             base.recordCursorSupportsRandomAccess(),
                             ac.getFramingMode(),
