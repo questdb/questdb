@@ -380,13 +380,20 @@ public final class TableUtils {
             long maxTimestamp,
             int ttl
     ) {
-        assert ttl != 0 : "ttl cannot be 0, invalid value";
+        assert ttl != Numbers.INT_NULL : "ttl cannot be null, invalid value";
         // Storage policies measure age from the partition's own floor (its start), not its
         // ceiling like table TTL does. This shifts every threshold forward by one partition
         // width relative to table TTL. For an interval up to one partition width, that means a
         // partition becomes eligible as soon as the next (active) partition begins; for larger
         // intervals it simply becomes eligible one partition width sooner than table TTL would.
         final long partitionFloor = txReader.getPartitionFloor(partitionTimestamp);
+        // Zero represents the active-partition policy. The storage-policy walker excludes the active
+        // partition itself, so every partition it passes here is immediately eligible. Keep the
+        // timestamp comparison for callers outside the walker and for defensive handling of invalid
+        // future partition timestamps.
+        if (ttl == 0) {
+            return partitionFloor <= maxTimestamp;
+        }
         return isOlderThanTtl(timestampDriver, partitionFloor, maxTimestamp, ttl);
     }
 
