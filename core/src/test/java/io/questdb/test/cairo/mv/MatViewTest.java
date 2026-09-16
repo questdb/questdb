@@ -3367,6 +3367,71 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullRefreshDoesNotTruncateWhenViewSqlDoesNotCompile() throws Exception {
+        // Regression: REFRESH ... FULL used to truncate the view before it recompiled the stored SQL,
+        // so a definition that no longer compiles (here: it selects a base column that has been
+        // dropped; in the field, an upgrade that tightened a planner gate) destroyed rows that were
+        // readable a moment earlier and could not be rebuilt on that binary. The recompile must
+        // succeed before anything is destroyed.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+            drainQueues();
+
+            final String expected = """
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    """;
+            assertQuery("price_1h order by sym")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
+
+            execute("alter table base_price drop column sym;");
+            drainQueues();
+
+            // This is the state an operator sees before reaching for a full refresh: the view is
+            // invalid, but its rows are still there and still readable.
+            assertQuery("price_1h order by sym")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
+
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            // The rows must survive the failed refresh.
+            assertQuery("price_1h order by sym")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
+
+            // ... and the failure must be reported, naming the recompile error.
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            price_1h\tinvalid\t[7]: Invalid column: sym
+                            """);
+        });
+    }
+
+    @Test
     public void testFullRefreshDroppedBaseColumn() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -3423,18 +3488,20 @@ public class MatViewTest extends AbstractCairoTest {
             execute("refresh materialized view price_1h full;");
             drainQueues();
 
+            // The full refresh cannot recompile the stored SQL, so it must leave the view exactly as
+            // it found it: still invalid, still holding the rows it was refreshed with, and still
+            // claiming the base txn those rows came from (not -1, which would deny it ever refreshed).
             assertQuery(matViewsSql)
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t-1\t2
+                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2
                             """);
-            assertQuery("price_1h")
-                    .timestamp("ts")
+            assertQuery("price_1h order by sym")
                     .expectSize()
                     .noLeakCheck()
-                    .returns("sym\tprice\tts\n");
+                    .returns(replaceExpectedTimestamp(expected));
         });
     }
 
@@ -3517,14 +3584,22 @@ public class MatViewTest extends AbstractCairoTest {
             execute("refresh materialized view price_1h full");
             drainQueues();
 
-            // The view is expected to be still invalid.
+            // The view is expected to be still invalid, and to still hold the row it was refreshed
+            // with: the stored SQL no longer compiles, so nothing may be destroyed.
             assertQuery(matViewsSql)
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\timmediate\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t-1\t2
+                            price_1h\timmediate\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2
                             """);
+            assertQuery("price_1h order by sym")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.32\t2024-09-10T12:00:00.000000Z
+                            """));
         });
     }
 
@@ -3611,6 +3686,77 @@ public class MatViewTest extends AbstractCairoTest {
             capture.drain();
             capture.assertLoggedRE(" I .*MatViewStateStoreImpl materialized view state not found, request dropped "
                     + "\\[view=missing_view~1, op=full_refresh\\]");
+        });
+    }
+
+    @Test
+    public void testFullRefreshStillReplacesViewContents() throws Exception {
+        // The other side of the truncate ordering: the fix for the destroy-before-recompile bug must
+        // not become "never truncate". A healthy full refresh still replaces the whole view, so a
+        // bucket whose base partition is gone must disappear from it.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.321, '2024-09-11T12:01')"
+            );
+            drainQueues();
+
+            final String bothDays = """
+                    sym\tprice\tts
+                    gbpusd\t1.32\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-11T12:00:00.000000Z
+                    """;
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(bothDays));
+
+            // Dropping a base partition invalidates the view and leaves the now-stale bucket behind.
+            execute("alter table base_price drop partition list '2024-09-10';");
+            drainQueues();
+
+            assertQuery("select view_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status
+                            price_1h\tinvalid
+                            """);
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(bothDays));
+
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            // The stored SQL still compiles, so the full refresh truncates and rebuilds: the view
+            // is valid again and the stale bucket is gone.
+            assertQuery("select view_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status
+                            price_1h\tvalid
+                            """);
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.321\t2024-09-11T12:00:00.000000Z
+                            """));
         });
     }
 

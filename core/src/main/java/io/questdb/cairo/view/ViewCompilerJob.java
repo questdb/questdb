@@ -271,7 +271,13 @@ public class ViewCompilerJob implements Job, QuietCloseable {
                 return;
             }
 
-            LOG.info().$("updating view state [view=").$safe(viewToken.getTableName())
+            // A view flipping to invalid is an outage for everything that reads it, and this is the
+            // only line that records it -- compileView's catch blocks route the exception straight to
+            // invalidate() without logging it. Log it at ERROR so an operator watching for ERROR (e.g.
+            // across an upgrade) sees it instead of having to poll view_status. The valid transition
+            // stays at INFO.
+            final LogRecord log = invalid ? LOG.error() : LOG.info();
+            log.$("updating view state [view=").$safe(viewToken.getTableName())
                     .$(", invalid=").$(invalid)
                     .$(", reason=").$safe(invalidationReason)
                     .$(", updateTimestamp=").$(updateTimestamp)

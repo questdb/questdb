@@ -601,6 +601,50 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    /**
+     * Pre-flight compile of the stored view SQL, run by {@link #fullRefresh} before it truncates the
+     * view. A full refresh legitimately replaces every row, so the truncate is not the defect -- the
+     * ordering is. The recompile must be known to succeed before anything is destroyed: a definition
+     * can stop compiling on a binary that still holds the view's rows (a base column it references
+     * was dropped, an upgrade tightened a planner gate), and truncating first empties a view that was
+     * readable a moment earlier and cannot be repopulated on that binary. The failure is reported the
+     * same way {@link #insertAsSelect} reports its own recompile failure -- {@code refreshFailState},
+     * i.e. {@code view_status='invalid'} with the compile error as the invalidation reason -- except
+     * that the rows survive.
+     * <p>
+     * The compile is unconditional: a plan cached in the view state is not proof that the SQL still
+     * compiles, because the cached plan predates the base-table DDL that broke it. A full refresh
+     * rebuilds the view from every base partition, so one extra compile in front of it is negligible.
+     *
+     * @return true when the view SQL compiles, false when it does not, in which case the view has been
+     * invalidated and the caller must abandon the refresh without truncating
+     */
+    private boolean compileViewQueryForFullRefresh(
+            @NotNull MatViewDefinition viewDefinition,
+            @NotNull MatViewState viewState,
+            @NotNull WalWriter walWriter
+    ) {
+        final TableToken viewTableToken = viewDefinition.getMatViewToken();
+        final String viewSql = viewDefinition.getMatViewSql();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            LOG.info().$("compiling materialized view before full refresh [view=").$(viewTableToken).I$();
+            final CompiledQuery compiledQuery = compiler.compile(viewSql, refreshSqlExecutionContext);
+            assert compiledQuery.getType() == CompiledQuery.SELECT;
+            // The plan is discarded: insertAsSelect owns plan caching and its retry loop compiles the
+            // plan it actually runs. This call only answers "does it still compile".
+            Misc.free(compiledQuery.getRecordCursorFactory());
+            return true;
+        } catch (SqlException e) {
+            LOG.error().$("could not compile materialized view, skipping full refresh [view=").$(viewTableToken)
+                    .$(", sql=").$(viewSql)
+                    .$(", errorPos=").$(e.getPosition())
+                    .$(", error=").$safe(e.getFlyweightMessage())
+                    .I$();
+            refreshFailState(viewDefinition, viewState, walWriter, e);
+            return false;
+        }
+    }
+
     private void commitMatView(
             @NotNull MatViewState viewState,
             @NotNull WalWriter walWriter,
@@ -1137,6 +1181,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 refreshSqlExecutionContext.of(baseTableReader);
                 try {
                     runBaseReaderSnapshotSeamForTesting();
+                    // Nothing is destroyed until the stored SQL is known to compile. A definition that
+                    // no longer compiles used to be truncated first and only then fail, so the rows an
+                    // operator was still reading disappeared and could not be rebuilt on this binary.
+                    if (!compileViewQueryForFullRefresh(viewDefinition, viewState, walWriter)) {
+                        return false;
+                    }
                     fencedTruncateSoft(walWriter);
                     resetInvalidState(viewState, walWriter);
 
@@ -2963,7 +3013,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     if (viewState.getLastRefreshBaseTxn() != -1) {
                         final long prevRefreshStartTimestampUs = viewState.getLastRefreshStartTimestampUs();
                         final long invalidationTimestamp = microsecondClock.getTicks();
-                        LOG.info().$("marking materialized view as invalid [view=").$(viewToken)
+                        // ERROR, like the identical mint in invalidateView: this is a real invalidation,
+                        // so an operator watching for ERROR must not have to notice this one via
+                        // view_status alone.
+                        LOG.error().$("marking materialized view as invalid [view=").$(viewToken)
                                 .$(", reason=truncate operation, ts=").$ts(invalidationTimestamp)
                                 .I$();
                         try {
