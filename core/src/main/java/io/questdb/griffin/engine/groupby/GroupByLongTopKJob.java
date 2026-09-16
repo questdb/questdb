@@ -25,8 +25,11 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.async.AsyncQueryProgressState;
+import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.griffin.engine.table.AsyncGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.log.Log;
@@ -35,7 +38,9 @@ import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.Sequence;
 import io.questdb.std.DirectLongLongSortedList;
+import io.questdb.std.Misc;
 import io.questdb.tasks.GroupByLongTopKTask;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -46,9 +51,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopKTask> {
     private static final Log LOG = LogFactory.getLog(GroupByLongTopKJob.class);
+    private final MessageBus messageBus;
 
     public GroupByLongTopKJob(MessageBus messageBus) {
         super(messageBus.getGroupByLongTopKQueue(), messageBus.getGroupByLongTopKSubSeq());
+        this.messageBus = messageBus;
     }
 
     public static void run(
@@ -70,27 +77,129 @@ public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopK
         task.clear();
         subSeq.done(cursor);
 
-        startedCounter.incrementAndGet();
-
         final boolean owner = stealingAtom != null && stealingAtom == atom;
+        runDetached(
+                workerId,
+                circuitBreaker,
+                startedCounter,
+                doneLatch,
+                atom,
+                longFunc,
+                shardIndex,
+                order,
+                limit,
+                owner
+        );
+    }
+
+    public static void run(
+            int workerId,
+            GroupByLongTopKTask task,
+            Sequence subSeq,
+            long cursor,
+            AsyncGroupByAtom stealingAtom,
+            @NotNull QueryParallelFiberDispatcher dispatcher
+    ) {
+        final PostAggregationCircuitBreaker circuitBreaker = task.getCircuitBreaker();
+        final AtomicInteger startedCounter = task.getStartedCounter();
+        final CountDownLatchSPI doneLatch = task.getDoneLatch();
+        final AsyncGroupByAtom atom = task.getAtom();
+        final Function longFunc = task.getFunction();
+        final int shardIndex = task.getShardIndex();
+        final int order = task.getOrder();
+        final int limit = task.getLimit();
+        final AsyncQueryProgressState ownerProgress = atom.getShardingContext().getProgressState();
+        final boolean isOwner = stealingAtom != null && stealingAtom == atom;
+
+        task.clear();
+        Throwable failure = null;
+        try {
+            subSeq.done(cursor);
+        } catch (Throwable th) {
+            failure = th;
+        }
+        try {
+            dispatcher.signalQueueProgress();
+        } catch (Throwable th) {
+            failure = Misc.foldCleanupFailure(failure, th);
+        }
+        try {
+            runDetached(
+                    workerId,
+                    circuitBreaker,
+                    startedCounter,
+                    doneLatch,
+                    atom,
+                    longFunc,
+                    shardIndex,
+                    order,
+                    limit,
+                    isOwner
+            );
+        } catch (Throwable th) {
+            failure = Misc.foldCleanupFailure(failure, th);
+        }
+        try {
+            dispatcher.signalOwnerProgress(ownerProgress);
+        } catch (Throwable th) {
+            failure = Misc.foldCleanupFailure(failure, th);
+        }
+        CairoException.rethrowCleanupFailure(failure);
+    }
+
+    public static void runDetached(
+            int workerId,
+            PostAggregationCircuitBreaker circuitBreaker,
+            AtomicInteger startedCounter,
+            CountDownLatchSPI doneLatch,
+            AsyncGroupByAtom atom,
+            Function longFunc,
+            int shardIndex,
+            int order,
+            int limit,
+            boolean owner
+    ) {
+        startedCounter.incrementAndGet();
         try {
             final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
             try {
-                if (circuitBreaker.checkIfTripped()) {
-                    return;
+                if (!circuitBreaker.checkIfTripped()) {
+                    final Map shard = atom.getDestShards().getQuick(shardIndex);
+                    final DirectLongLongSortedList list = atom.getLongTopKList(slotId, order, limit);
+                    shard.getCursor().longTopK(list, longFunc);
                 }
-                final Map shard = atom.getDestShards().getQuick(shardIndex);
-                final DirectLongLongSortedList list = atom.getLongTopKList(slotId, order, limit);
-                shard.getCursor().longTopK(list, longFunc);
             } finally {
                 atom.release(slotId);
             }
         } catch (Throwable th) {
-            LOG.error().$("long top K on shard failed [error=").$(th).I$();
-            circuitBreaker.cancel(th);
-        } finally {
-            doneLatch.countDown();
+            Throwable failure = null;
+            try {
+                LOG.error().$("long top K on shard failed [error=").$(th).I$();
+            } catch (Throwable cleanupFailure) {
+                failure = Misc.foldCleanupFailure(failure, cleanupFailure);
+            }
+            try {
+                circuitBreaker.cancel(th);
+            } catch (Throwable cleanupFailure) {
+                failure = Misc.foldCleanupFailure(failure, cleanupFailure);
+            }
+            try {
+                doneLatch.countDown();
+            } catch (Throwable cleanupFailure) {
+                failure = Misc.foldCleanupFailure(failure, cleanupFailure);
+            }
+            CairoException.rethrowCleanupFailure(failure);
+            return;
         }
+        doneLatch.countDown();
+    }
+
+    @Override
+    public boolean run(@NotNull WorkerContext workerContext) {
+        final QueryParallelFiberDispatcher dispatcher = messageBus.getQueryParallelFiberDispatcher();
+        return dispatcher != null
+                ? !dispatcher.consumeLongTopK(workerContext.carrierId())
+                : super.run(workerContext);
     }
 
     @Override

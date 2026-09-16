@@ -218,7 +218,11 @@ namespace questdb::x86 {
         // Check if value is already cached
         Gp cached_gp;
         Vec cached_xmm;
-        if (type == data_type_t::f32 || type == data_type_t::f64) {
+        // i128 belongs with the floating-point types here, not in the else branch: read_mem
+        // stores it through addXmm below, and find() answers only for a general-purpose register,
+        // so an i128 column was cached and then never found. Every UUID and LONG128 read reloaded
+        // the column even where the predicate had already read it in the same row.
+        if (type == data_type_t::f32 || type == data_type_t::f64 || type == data_type_t::i128) {
             if (value_cache.findXmm(column_idx, type, cached_xmm)) {
                 return {cached_xmm, type, data_kind_t::kMemory};
             }
@@ -1043,14 +1047,16 @@ namespace questdb::x86 {
                     case data_type_t::i64:
                         c.cmp(lhs.gp(), rhs.gp());
                         break;
-                    case data_type_t::i128: {
-                        // For i128, use pcmpeqb + pmovmskb + cmp (same as int128_cmp)
-                        Gp mask = c.new_gp16();
-                        c.pcmpeqb(lhs.vec(), rhs.vec());
-                        c.pmovmskb(mask, lhs.vec());
-                        c.cmp(mask, 0xffff);
+                    case data_type_t::i128:
+                        // Call int128_cmp rather than repeating it. The copy of this block that
+                        // stood here folded pcmpeqb - the two-operand SSE form - into lhs, which is
+                        // the register read_mem hands back for every later read of the same column
+                        // in the same row: "u = 'A' OR u = 'B'" over a UUID column compared the
+                        // second constant against the first comparison's mask and dropped every row
+                        // only the second one matched. int128_cmp leaves the same flags this block
+                        // wants, and having one copy is what keeps the two from drifting again.
+                        int128_cmp(c, lhs.vec(), rhs.vec());
                         break;
-                    }
                     default:
                         break;
                 }

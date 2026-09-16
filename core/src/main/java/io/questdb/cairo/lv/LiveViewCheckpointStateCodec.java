@@ -91,10 +91,10 @@ public final class LiveViewCheckpointStateCodec {
      * smaller.
      */
     private static final int ENCODE_DESTINATION_BYTES =
-            align8(CoveringCompressor.maxCompressedSize(CHUNK_ROWS, ColumnType.DOUBLE));
+            align8((int) CoveringCompressor.maxCompressedSize(CHUNK_ROWS, ColumnType.DOUBLE));
     private static final int ENCODE_FLAGS_BYTES = CHUNK_ROWS;
     private static final int ENCODE_LINEAR_DESTINATION_BYTES =
-            align8(CoveringCompressor.maxCompressedSize(CHUNK_ROWS, ColumnType.TIMESTAMP));
+            align8((int) CoveringCompressor.maxCompressedSize(CHUNK_ROWS, ColumnType.TIMESTAMP));
     private static final int ENCODE_LONG_WORKSPACE_BYTES = CHUNK_ROWS * Long.BYTES;
     private static final int ENCODE_SCRATCH_WORDS = (ENCODE_DESTINATION_BYTES + ENCODE_FLAGS_BYTES
             + ENCODE_LINEAR_DESTINATION_BYTES + ENCODE_LONG_WORKSPACE_BYTES) / Long.BYTES;

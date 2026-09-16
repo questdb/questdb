@@ -916,6 +916,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 {"rnd_date(1,4,5)", "rnd_date"},
                 {"rnd_double()", "rnd_double"},
                 {"rnd_double(5)", "rnd_double"},
+                {"rnd_double_array(2)", "rnd_double_array"},
                 {"rnd_float()", "rnd_float"},
                 {"rnd_float(5)", "rnd_float"},
                 {"rnd_int()", "rnd_int"},

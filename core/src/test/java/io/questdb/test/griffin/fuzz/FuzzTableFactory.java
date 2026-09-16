@@ -76,6 +76,13 @@ public final class FuzzTableFactory {
     private static final String TS_COLUMN = "ts";
 
     private final FuzzConfig config;
+    // One shuffled deck for the whole run, dealt across every table the run
+    // builds rather than reshuffled per table. A run with a single narrow
+    // table still cannot hold every type, but two or three tables between them
+    // now cover most of the registry instead of drawing the same handful of
+    // popular types over and over.
+    private final ObjList<FuzzColumnType> typeDeck = new ObjList<>();
+    private int typeDeckCursor;
 
     public FuzzTableFactory(FuzzConfig config) {
         this.config = config;
@@ -158,8 +165,7 @@ public final class FuzzTableFactory {
         columns.add(new FuzzColumn(JOIN_KEY_COLUMN, SymbolType.INSTANCE));
 
         for (int i = 0; i < numExtra; i++) {
-            FuzzColumnType type = FuzzColumnTypes.pickRandom(rnd);
-            columns.add(new FuzzColumn("c" + i, type));
+            columns.add(new FuzzColumn("c" + i, dealType(rnd)));
         }
 
         // Designated timestamp last.
@@ -169,6 +175,22 @@ public final class FuzzTableFactory {
         // is known.
         assignIndexes(rnd, columns);
         return columns;
+    }
+
+    /**
+     * Next type off the run's deck, or a plain random draw once the deck runs
+     * out. Dealing without replacement is what keeps a rare type - CHAR, IPv4,
+     * UUID - from sitting out a whole run, taking every filter over it along
+     * with it.
+     */
+    private FuzzColumnType dealType(Rnd rnd) {
+        if (typeDeck.size() == 0) {
+            typeDeck.addAll(FuzzColumnTypes.shuffledDeck(rnd));
+        }
+        if (typeDeckCursor < typeDeck.size()) {
+            return typeDeck.getQuick(typeDeckCursor++);
+        }
+        return FuzzColumnTypes.pickRandom(rnd);
     }
 
     private String buildCreateDdl(String tableName, ObjList<FuzzColumn> columns) {
