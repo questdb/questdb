@@ -184,6 +184,7 @@ silently stops checking.
 | **Barrier control** | `t10` | A WAL table committing with NO durability barrier still verifies clean |
 | **State reaper** | `t08` | The reaper deletes a live run, misses a directory prefix, or reports success having reclaimed nothing |
 | **CI report** | `t09` | `junit.xml` is malformed, mis-counts, omits a schema-required element, or loses the run identity |
+| **Builder parity** | `t11` | A setting reaches the verifier but not the workload, an invalid `QDB_WAL_TABLE` falls back to a default, or a defanged negative control still holds a live ack tier |
 | **Verdict vocabulary** | `t12` | A verdict line classifies to the wrong token, a token is added without a test row, or a pass/instrument-fault predicate changes meaning |
 | **Device reset** | every sweep, `replay_reset_assert()` | `blkdiscard` reports success and the device is not zeroed, including a partial zero |
 | **Informative sample** | every sweep | The workload never reached its first commit, or every boundary verified as `NO_COMMIT` |
@@ -228,8 +229,10 @@ bash build-image.sh         # once — builds the golden qcow2
 # no VM, no root, seconds — run these first, they cost nothing
 bash test/t08-state-reaper.sh        # the reaper must not eat the wrong thing
 bash test/t09-junit-xml.sh           # the CI report must be valid and honest
+bash test/t11-builder-parity.sh      # both JVMs must get the same settings
 bash test/t12-verdict-vocabulary.sh  # a verdict line must mean what it says
-bash test/t06-log-writes-replay.sh --self-test   # the cross-check logic, VM-free
+bash test/t06-log-writes-replay.sh --self-test    # the cross-check logic, VM-free
+bash test/t10-wal-barrier-control.sh --self-test  # the barrier judge, VM-free
 
 # these boot a VM
 bash test/t01-golden-image.sh

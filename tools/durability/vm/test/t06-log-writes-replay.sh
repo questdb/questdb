@@ -130,6 +130,7 @@ vm_scp_dir "$P2" "$KEY" "$HERE/guest" /opt/vmcrash/
 # The reset must be real before either pass means anything. QEMU's default discard=ignore still
 # advertises discard and still returns success having reverted nothing, which would make both
 # passes agree on a blended state one layer below where pass B can see it.
+replay_reset_assert_config || exit 64
 RESET_CMD="$(replay_reset_cmd)"
 echo "--- pass A reset regime: ${QDB_REPLAY_RESET:-blkdiscard} (the instrument's)"
 replay_reset_assert "$P2" "$KEY" || { echo "FAIL t06: the device reset is not real; no boundary claim below can be trusted"; exit 1; }

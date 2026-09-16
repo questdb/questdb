@@ -45,7 +45,10 @@ truncate -s 60G "$RUN/log.raw"
 
 # Every exit path reaps the VM. Disks are kept only on failure, as everywhere else here.
 cleanup() { vm_kill "$RUN" 2>/dev/null || true; }
-trap cleanup EXIT INT TERM
+replay_reset_assert_config || exit 64
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 keep() { echo "run state kept at $RUN" >&2; }
 
 echo "t07 — oracle negative control (mode=$MODE W=$WINDOW)"

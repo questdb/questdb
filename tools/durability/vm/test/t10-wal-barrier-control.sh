@@ -30,6 +30,94 @@ source "$HERE/lib/verdict.sh"
 # shellcheck source=../lib/arms.sh
 source "$HERE/lib/arms.sh"
 
+# THE CONTROL IS JUDGED ON VERDICTS, NOT ON POLARITY. Counting "pass" and "not pass" lets the
+# wrong evidence satisfy both arms: NO_COMMIT is a pass, so an arm that never committed reads as
+# "SYNC survived", and every instrument fault is a non-pass, so a broken rig reads as "NOSYNC lost
+# data". Either one certifies a control that observed nothing. Arm A must produce real durable
+# boundaries and arm B must produce real product-side loss; a rig fault on either side is a t10
+# failure, not evidence.
+judge_sync() {   # TSV -> sets sync_durable sync_nocommit sync_fail sync_rig
+    sync_durable=0; sync_nocommit=0; sync_fail=0; sync_rig=0
+    local b v wm cnt line
+    while IFS=$'\t' read -r b v wm cnt line; do
+        printf '    flush %-6s -> %s\n' "$b" "$v"
+        case "$v" in
+            DURABLE|RPO_OK) sync_durable=$((sync_durable + 1)) ;;
+            NO_COMMIT)      sync_nocommit=$((sync_nocommit + 1)) ;;
+            *) if verdict_is_instrument_fault "$v"; then sync_rig=$((sync_rig + 1))
+               else sync_fail=$((sync_fail + 1)); fi ;;
+        esac
+    done < "$1"
+}
+
+judge_nosync() { # TSV -> sets nosync_loss nosync_green nosync_nocommit nosync_rig nosync_other
+    nosync_loss=0; nosync_green=0; nosync_nocommit=0; nosync_rig=0; nosync_other=0
+    local b v wm cnt line
+    while IFS=$'\t' read -r b v wm cnt line; do
+        printf '    flush %-6s -> %s\n' "$b" "$v"
+        case "$v" in
+            # The shape a missing barrier makes: acknowledged rows are simply not there. Corruption
+            # counts too -- a torn commit boundary is the same absent flush seen from the side.
+            DURABILITY_FAILURE|SILENT_CORRUPTION) nosync_loss=$((nosync_loss + 1)) ;;
+            DURABLE|RPO_OK)                       nosync_green=$((nosync_green + 1)) ;;
+            NO_COMMIT)                            nosync_nocommit=$((nosync_nocommit + 1)) ;;
+            *) if verdict_is_instrument_fault "$v"; then nosync_rig=$((nosync_rig + 1))
+               else nosync_other=$((nosync_other + 1)); fi ;;
+        esac
+    done < "$1"
+}
+
+# 0 when the control discriminated: arm A shows real durability, arm B shows real loss, and
+# neither arm was decided by a boundary that measured nothing or by a broken rig.
+judge_verdict() {
+    [ "$sync_durable" -ge 1 ] && [ "$sync_fail" -eq 0 ] && [ "$sync_rig" -eq 0 ] \
+        && [ "$nosync_loss" -ge 1 ] && [ "$nosync_green" -eq 0 ] \
+        && [ "$nosync_rig" -eq 0 ] && [ "$nosync_other" -eq 0 ]
+}
+
+# --self-test drives the judge with synthetic per-boundary verdicts and no VM, because the judge
+# is the part that decides what this control certifies and a VM cycle is too expensive to use for
+# checking it. Every case below is a run this test must refuse.
+if [ "${1:-}" = "--self-test" ]; then
+    rc=0
+    tsv() { local f="$1"; shift; : > "$f"; local i=0
+            for v in "$@"; do i=$((i + 1)); printf '%d\t%s\t-1\t0\t%s x\n' "$i" "$v" "$v" >> "$f"; done; }
+    A="$(mktemp)"; B="$(mktemp)"; trap 'rm -f "$A" "$B"' EXIT
+    case_is() {  # NAME EXPECTED(pass|fail)
+        local name="$1" want="$2" got=fail
+        judge_sync "$A" >/dev/null; judge_nosync "$B" >/dev/null
+        judge_verdict && got=pass
+        if [ "$got" = "$want" ]; then printf '  ok   %s -> %s\n' "$name" "$got"
+        else printf '  FAIL %s -> %s (expected %s)\n' "$name" "$got" "$want"; rc=1; fi
+    }
+
+    tsv "$A" DURABLE DURABLE DURABLE;   tsv "$B" DURABILITY_FAILURE DURABILITY_FAILURE DURABILITY_FAILURE
+    case_is "real discrimination"                         pass
+    # The run that used to pass on polarity alone: NO_COMMIT is a pass token and every instrument
+    # fault is a non-pass, so both arms were satisfied by boundaries that measured nothing.
+    tsv "$A" NO_COMMIT NO_COMMIT NO_COMMIT; tsv "$B" NOT_EVALUATED UNPARSEABLE LOUD_FAILURE
+    case_is "uninformative SYNC + rig-fault NOSYNC"       fail
+    tsv "$A" NO_COMMIT NO_COMMIT NO_COMMIT; tsv "$B" DURABILITY_FAILURE DURABILITY_FAILURE
+    case_is "SYNC never committed"                        fail
+    tsv "$A" DURABLE DURABLE;               tsv "$B" NOT_EVALUATED NOT_EVALUATED
+    case_is "NOSYNC decided by the rig"                   fail
+    tsv "$A" DURABLE DURABLE;               tsv "$B" NO_COMMIT NO_COMMIT
+    case_is "NOSYNC measured nothing"                     fail
+    tsv "$A" DURABLE DURABLE;               tsv "$B" DURABLE DURABILITY_FAILURE
+    case_is "NOSYNC partially durable"                    fail
+    tsv "$A" DURABLE DURABILITY_FAILURE;    tsv "$B" DURABILITY_FAILURE
+    case_is "SYNC lost data"                              fail
+    tsv "$A" DURABLE UNPARSEABLE;           tsv "$B" DURABILITY_FAILURE
+    case_is "SYNC hit a rig fault"                        fail
+    tsv "$A" DURABLE NO_COMMIT DURABLE;     tsv "$B" DURABILITY_FAILURE NO_COMMIT
+    case_is "a few uninformative boundaries are tolerated" pass
+    tsv "$A" DURABLE;                       tsv "$B" SILENT_CORRUPTION
+    case_is "torn commit counts as loss"                  pass
+
+    [ "$rc" -eq 0 ] && echo "PASS t10 --self-test (the judge)" || echo "FAIL t10 --self-test"
+    exit "$rc"
+fi
+
 bash "$HERE/check-host.sh" >/dev/null || { bash "$HERE/check-host.sh"; exit 1; }
 
 STATE_DIR="${QDB_VMCRASH_STATE:-/data/qdb-vmcrash}"
@@ -86,12 +174,20 @@ for _mode in SYNC NOSYNC; do
 done
 unset _mode
 
+for _mode in SYNC NOSYNC; do
+    harness_assert_config "$_mode" || exit 64
+done
+unset _mode
+replay_reset_assert_config || exit 64
+
 [ -f "$BASE/golden.qcow2" ] || { echo "FAIL t10: no golden image; run build-image.sh first"; exit 1; }
 
 mkdir -p "$RUN"
 
 cleanup() { vm_kill "$RUN" 2>/dev/null || true; }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 keep() { echo "run state kept at $RUN" >&2; }
 
 echo "t10 — WAL barrier control (SYNC must survive, NOSYNC must not)"
@@ -127,12 +223,16 @@ run_arm() {
         bash /opt/vmcrash/guest/run-workload.sh --arm=reference --mode=$mode \
         --window-us=0 --epoch-ms=1000 </dev/null >/mnt/qdb/workload.out 2>&1 &" || true
 
-    local n
+    # Exhausting this loop is a failure: an arm whose workload never committed verifies an empty
+    # table at every boundary, and NO_COMMIT on both sides would judge as "SYNC survived, NOSYNC
+    # lost nothing" from a run that observed neither.
+    local n anchored=false
     for _ in $(seq 1 120); do
         n=$(vm_ssh "$P" "$KEY" "head -1 /mnt/qdb/db/_progress 2>/dev/null | tr -dc '0-9'" 2>/dev/null || echo "")
-        [ -n "$n" ] && [ "$n" -ge 1 ] 2>/dev/null && break
+        [ -n "$n" ] && [ "$n" -ge 1 ] 2>/dev/null && { anchored=true; break; }
         sleep 0.2
     done
+    [ "$anchored" = true ] || { echo "ARM_FAIL no commit reached in 24s; this arm would be vacuous"; return 1; }
     sleep 8
     # A control verified against a workload that has already died grades an idle database and
     # discriminates nothing.
@@ -228,17 +328,7 @@ if ! run_arm SYNC; then
     echo "  The control cannot be judged without its positive side; fix this first."
     exit 1
 fi
-sync_pass=0; sync_fail=0
-while IFS=$'\t' read -r b v wm cnt line; do
-    printf '    flush %-6s -> %s\n' "$b" "$v"
-    if verdict_is_pass "$v"; then sync_pass=$((sync_pass + 1)); else sync_fail=$((sync_fail + 1)); fi
-    # No count-vs-watermark comparison here. The watermark is the acknowledged row frontier and
-    # acknowledgement comes from the durable-ack tier, which arm_qwp_tier reports as off for
-    # every arm but qwp-sf and product; on arm=reference it is -1 at every boundary. The oracle
-    # carries the exactness claim instead, grading against the writer's own committed history.
-    # Restore the comparison only alongside an ack-bearing arm.
-    :
-done < "$ARM_OUT"
+judge_sync "$ARM_OUT"
 
 # ---- arm B: the barrier is gone ----------------------------------------------
 ARM_OUT="$RUN/nosync.tsv"; : > "$ARM_OUT"
@@ -248,20 +338,17 @@ if ! run_arm NOSYNC; then
     echo "FAIL t10: the NOSYNC arm could not run (reason above)."
     exit 1
 fi
-nosync_red=0; nosync_green=0
-while IFS=$'\t' read -r b v _ _ line; do
-    printf '    flush %-6s -> %s\n' "$b" "$v"
-    if verdict_is_pass "$v"; then nosync_green=$((nosync_green + 1)); else nosync_red=$((nosync_red + 1)); fi
-done < "$ARM_OUT"
+judge_nosync "$ARM_OUT"
 
 # ---- judge --------------------------------------------------------------------
 echo
-echo "  SYNC   : $sync_pass green, $sync_fail red   (expected: all green)"
-echo "           graded by the oracle against the committed history; arm=reference has no ack"
-echo "           tier, so there is no acknowledged watermark to compare against (see above)"
-echo "  NOSYNC : $nosync_red red, $nosync_green green (expected: all red)"
+echo "  SYNC   : $sync_durable durable, $sync_fail lost, $sync_rig rig-fault, $sync_nocommit uninformative"
+echo "           (expected: at least one durable, nothing else; graded by the oracle against the"
+echo "           writer's committed history, since arm=reference has no acknowledged watermark)"
+echo "  NOSYNC : $nosync_loss lost, $nosync_green durable, $nosync_rig rig-fault, $nosync_other other,"
+echo "           $nosync_nocommit uninformative   (expected: at least one lost, nothing else)"
 
-if [ "$sync_fail" -eq 0 ] && [ "$sync_pass" -ge 1 ] && [ "$nosync_green" -eq 0 ] && [ "$nosync_red" -ge 1 ]; then
+if judge_verdict; then
     vm_kill "$RUN"
     rm -rf "$RUN"
     echo "PASS t10 (the harness detects a missing WAL durability barrier: SYNC all green, NOSYNC all red)"
@@ -269,11 +356,23 @@ if [ "$sync_fail" -eq 0 ] && [ "$sync_pass" -ge 1 ] && [ "$nosync_green" -eq 0 ]
 fi
 
 keep
-if [ "$sync_fail" -gt 0 ]; then
-    echo "FAIL t10: the BARRIERED arm lost data ($sync_fail of $((sync_pass + sync_fail)) boundaries red)."
+if [ "$sync_rig" -gt 0 ] || [ "$nosync_rig" -gt 0 ] || [ "$nosync_other" -gt 0 ]; then
+    echo "FAIL t10: a boundary was decided by the RIG, not by the product"
+    echo "  (SYNC rig-faults=$sync_rig, NOSYNC rig-faults=$nosync_rig, NOSYNC other=$nosync_other)."
+    echo "  An instrument fault is not evidence of a missing barrier. Fix the rig and re-run."
+elif [ "$sync_durable" -eq 0 ]; then
+    echo "FAIL t10: the BARRIERED arm produced no durable boundary at all"
+    echo "  ($sync_nocommit of its boundaries committed nothing)."
+    echo "  There is no positive side to the control, so the NOSYNC arm says nothing either."
+elif [ "$nosync_loss" -eq 0 ]; then
+    echo "FAIL t10: the NOSYNC arm lost nothing that the oracle could name"
+    echo "  ($nosync_nocommit uninformative, $nosync_green durable)."
+    echo "  A control that cannot produce the failure it exists to detect is not a control."
+elif [ "$sync_fail" -gt 0 ]; then
+    echo "FAIL t10: the BARRIERED arm lost data ($sync_fail of $((sync_durable + sync_fail)) boundaries red)."
     echo "  That is a durability finding about the WAL path itself, not a broken control."
     echo "  Investigate it before reading anything into the NOSYNC arm."
-elif [ "$nosync_green" -gt 0 ] && [ "$nosync_red" -eq 0 ]; then
+elif [ "$nosync_green" -gt 0 ] && [ "$nosync_loss" -eq 0 ]; then
     echo "FAIL t10: NOSYNC on a WAL table lost NOTHING — THE BARRIER CONTROL DOES NOT DISCRIMINATE."
     echo "  A workload that issues no durability barrier survived a flush-boundary replay intact,"
     echo "  so this harness cannot tell a durable WAL commit path from one that never flushes."
@@ -281,7 +380,7 @@ elif [ "$nosync_green" -gt 0 ] && [ "$nosync_red" -eq 0 ]; then
     echo "  First thing to check: whether some OTHER flusher is carrying the data to the device"
     echo "  (the harness's own _progress fsync manufactures ~10.5% of boundaries)."
 else
-    echo "FAIL t10: the NOSYNC arm was only PARTIALLY red ($nosync_red red, $nosync_green green)."
+    echo "FAIL t10: the NOSYNC arm was only PARTIALLY red ($nosync_loss lost, $nosync_green durable)."
     echo "  Do NOT relax the bar to accommodate this. A missing barrier should be uniformly"
     echo "  detectable, and a boundary-dependent result means something else is flushing the"
     echo "  data some of the time. Explain it with a measurement, then re-run."

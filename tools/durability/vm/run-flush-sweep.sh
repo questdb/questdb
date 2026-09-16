@@ -153,7 +153,18 @@ VERIFY_CMD="$(harness_verify_cmd "$ARM" "$MODE" "$WINDOW" "$EPOCH")"
 # The disks are kept on failure, the VM is not; without this, killed runs leave orphaned qemu
 # processes holding their pidfiles.
 cleanup_vm() { vm_kill "$RUN" 2>/dev/null || true; }
-trap cleanup_vm EXIT INT TERM
+# A SIGNAL MUST END THE RUN, not just kill the VM. A handler that returns hands control back to
+# the boundary loop with the guest gone: every remaining vm_ssh comes back empty, classifies as
+# UNPARSEABLE, and junit_case records it -- so a deadline-cut sweep reaches junit_finish and
+# publishes a complete report full of instrument failures that never happened. Exiting from the
+# handler leaves the temp file unrenamed and therefore nothing for a publisher to glob.
+trap cleanup_vm EXIT
+trap 'cleanup_vm; echo "INTERRUPTED: no report published"; exit 130' INT
+trap 'cleanup_vm; echo "TERMINATED: deadline or operator; no report published"; exit 143' TERM
+
+# Refuse an incoherent configuration before the first boot rather than after an hour of sweeping.
+harness_assert_config "$MODE" || exit 64
+replay_reset_assert_config || exit 64
 
 # ---- one workload run, fully recorded --------------------------------------
 P=$(vm_free_port)

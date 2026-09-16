@@ -142,7 +142,35 @@ harness_workload_env() {
          "QDB_QWP_DURABLE_ACK=$(arm_qwp_tier "$arm" "$mode")" \
          "QDB_QWP_DEFANG_ACK=${QDB_QWP_DEFANG_ACK:-0}" \
          "QDB_QWP_BATCH=${QDB_QWP_BATCH:-1000}" \
-         "QDB_EDITION=${QDB_EDITION:-oss}"
+         "QDB_EDITION=${QDB_EDITION:-oss}" \
+         "QDB_QWP_SF_DIR=${QDB_QWP_SF_DIR:-/mnt/qdb/sf}" \
+         "QDB_QWP_SF_DURABILITY=${QDB_QWP_SF_DURABILITY:-periodic}"
+}
+
+# Every key the two builders share must carry the SAME value, because the recording and the replay
+# are separate JVMs reading the same settings. An override that reaches only the verifier makes the
+# replay client look in a directory the workload never wrote to, and "the client replayed NOTHING"
+# is reported as a durability failure of the product. test/t11 pins the pairing.
+
+# harness_assert_config -> 0 if the environment this run was asked for is coherent, 64 if not.
+#
+# Called before anything boots. Both checks below are otherwise swallowed by a command
+# substitution: harness_wal_table's refusal becomes an empty QDB_WAL_TABLE= that silently reverts
+# to the mode-derived default, and a defanged label with an intact tier runs a fully armed sweep
+# under a "must fail" banner.
+harness_assert_config() {  # [MODE]
+    local mode="${1:-adaptive}" rc=0
+    harness_wal_table "$mode" >/dev/null || rc=64
+    if [ "${QDB_QWP_DEFANG_ACK:-0}" = "1" ]; then
+        case "$(arm_qwp_tier "${QDB_ARM:-reference}" "$mode")" in
+            *local*)
+                echo "harness: QDB_QWP_DEFANG_ACK=1 but the durable-ack tier is still local." >&2
+                echo "  The negative control would run fully armed while every report labels it" >&2
+                echo "  required-to-fail. Set QDB_QWP_DURABLE_ACK=off to actually defang it." >&2
+                rc=64 ;;
+        esac
+    fi
+    return "$rc"
 }
 
 # harness_wal_table MODE -> whether this run uses a WAL table, as `true`/`false`.

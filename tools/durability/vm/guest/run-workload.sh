@@ -238,7 +238,16 @@ case "$ARM" in
         if { [ "$ARM" = qwp-sf ] || [ "$ARM" = product ]; } && [ "${PRODUCT_DEGRADED:-0}" != 1 ]; then
             QWP_TIER="${QDB_QWP_DURABLE_ACK:-local}"
             case "$QWP_TIER" in
-                *local*) ;;
+                *local*)
+                    # The label must match the teeth. A run asked for as the negative control but
+                    # still holding a live durable-ack tier would pass while every report marks it
+                    # required-to-fail.
+                    if [ "${QDB_QWP_DEFANG_ACK:-0}" = "1" ]; then
+                        echo "run-workload: QDB_QWP_DEFANG_ACK=1 but tier='$QWP_TIER' is still live" >&2
+                        echo "run-workload: set QDB_QWP_DURABLE_ACK=off to defang; refusing a labelled control that is not one" >&2
+                        exit 64
+                    fi
+                    ;;
                 *)
                     # QDB_QWP_DEFANG_ACK=1 is the negative control and nothing else: it breaks the
                     # thing the arm is built on and requires the oracle to notice. Without it,

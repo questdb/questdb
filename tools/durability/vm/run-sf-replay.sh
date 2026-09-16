@@ -46,7 +46,10 @@ cleanup() {
     [ -n "$CLIENT_PID" ] && kill "$CLIENT_PID" 2>/dev/null
     vm_kill "$RUN" 2>/dev/null || true
 }
-trap cleanup EXIT INT TERM
+replay_reset_assert_config || exit 64
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 
 mkdir -p "$RUN"
 qemu-img create -f qcow2 -b "$BASE/golden.qcow2" -F qcow2 "$RUN/overlay.qcow2" >/dev/null

@@ -118,6 +118,17 @@ vm_boot() {
 # QDB_REPLAY_RESET: blkdiscard (default) | none. `none` exists for the A/B that measures what
 # the reset changes, and is not a performance knob -- a sweep run with none is evidence about
 # the instrument, not about the product.
+# replay_reset_assert_config -> 0 if QDB_REPLAY_RESET names a mode this harness implements.
+# Checked before the first boot: an unknown value otherwise surfaces as a device-level diagnostic
+# an hour into a run.
+replay_reset_assert_config() {
+    case "${QDB_REPLAY_RESET:-blkdiscard}" in
+        blkdiscard|none) return 0 ;;
+        *) echo "harness: QDB_REPLAY_RESET='${QDB_REPLAY_RESET}' is not one of blkdiscard|none" >&2
+           return 64 ;;
+    esac
+}
+
 replay_reset_cmd() {
     case "${QDB_REPLAY_RESET:-blkdiscard}" in
         none)       echo "true" ;;
@@ -126,7 +137,10 @@ replay_reset_cmd() {
         # proceeds today, but a refusal would silently return the sweep to replaying onto the
         # previous boundary's state.
         blkdiscard) echo "sudo blkdiscard -f /dev/vdb" ;;
-        *) echo "false  # REFUSING: QDB_REPLAY_RESET=${QDB_REPLAY_RESET} is not one of blkdiscard|none" ;;
+        # NO INLINE COMMENT HERE. This string is interpolated into a remote command line that ends
+        # in `|| { echo RESET_REFUSED; exit 1; }`, and a `#` comments that handler out -- the run
+        # still fails, but as RESET_IGNORED, advising a QEMU discard change for what is a typo.
+        *) echo "{ echo RESET_REFUSED_CONFIG >&2; false; }" ;;
     esac
 }
 
@@ -232,7 +246,11 @@ vm_wait_ssh() {  # PORT KEY TIMEOUT
 VM_KILL_ON_EXIT_DIR=""
 vm_kill_on_exit() {  # RUNDIR
     VM_KILL_ON_EXIT_DIR="$1"
-    trap '[ -n "$VM_KILL_ON_EXIT_DIR" ] && vm_kill "$VM_KILL_ON_EXIT_DIR"' EXIT INT TERM
+    trap '[ -n "$VM_KILL_ON_EXIT_DIR" ] && vm_kill "$VM_KILL_ON_EXIT_DIR"' EXIT
+    # INT/TERM exit rather than returning: a handler that returns resumes the interrupted script
+    # with its guest already dead, which produces verdicts for boundaries nobody measured.
+    trap '[ -n "$VM_KILL_ON_EXIT_DIR" ] && vm_kill "$VM_KILL_ON_EXIT_DIR"; exit 130' INT
+    trap '[ -n "$VM_KILL_ON_EXIT_DIR" ] && vm_kill "$VM_KILL_ON_EXIT_DIR"; exit 143' TERM
 }
 
 # kill -9 on the VMM: the guest kernel and its page cache die instantly, with no shutdown and no
