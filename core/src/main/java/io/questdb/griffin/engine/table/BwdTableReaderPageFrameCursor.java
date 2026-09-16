@@ -194,6 +194,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     frame.partitionLo = lo;
                     frame.partitionHi = hi;
                     frame.pieceShift = 0;
+                    frame.skipSkeleton = true;
                     frame.format = partitionFrame.getPartitionFormat();
                     frame.rowGroupIndex = -1;
                     frame.rowGroupLo = -1;
@@ -376,6 +377,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         frame.partitionLo = adjustedLo;
         frame.partitionHi = partitionHi;
         frame.pieceShift = pieceShift;
+        frame.skipSkeleton = false;
         frame.format = PartitionFormat.NATIVE;
         frame.rowGroupIndex = -1;
         frame.rowGroupLo = -1;
@@ -420,6 +422,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         // A skeleton may span several pieces, so no single shift describes it. Nothing reads a shift off a frame
         // the caller discards, and 0 is what the whole-partition skeleton in next(long) publishes.
         frame.pieceShift = 0;
+        frame.skipSkeleton = true;
         frame.format = PartitionFormat.NATIVE;
         frame.rowGroupIndex = -1;
         frame.rowGroupLo = -1;
@@ -524,6 +527,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             frame.partitionLo = adjustedLo;
             frame.partitionHi = partitionHi;
             frame.pieceShift = 0;
+            frame.skipSkeleton = false;
             frame.format = PartitionFormat.PARQUET;
             frame.rowGroupIndex = targetGroup;
             frame.rowGroupLo = (int) (adjustedLo - targetGroupStart);
@@ -579,6 +583,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         private int rowGroupHi;
         private int rowGroupIndex;
         private int rowGroupLo;
+        private boolean skipSkeleton;
 
         @Override
         public long getAuxPageAddress(int columnIndex) {
@@ -659,6 +664,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         @Override
         public long getPartitionLo() {
             return partitionLo;
+        }
+
+        @Override
+        public boolean isSkipSkeleton() {
+            return skipSkeleton;
         }
     }
 }

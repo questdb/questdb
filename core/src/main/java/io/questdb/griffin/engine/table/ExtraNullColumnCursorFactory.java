@@ -459,6 +459,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
             return baseFrame.getPartitionLo();
         }
 
+        @Override
+        public boolean isSkipSkeleton() {
+            return baseFrame.isSkipSkeleton();
+        }
+
         public ExtraNullColumnPageFrame of(PageFrame basePageFrame) {
             this.baseFrame = basePageFrame;
             return this;

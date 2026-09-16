@@ -191,6 +191,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     frame.partitionLo = lo;
                     frame.partitionHi = hi;
                     frame.pieceShift = 0;
+                    frame.skipSkeleton = true;
                     frame.format = partitionFrame.getPartitionFormat();
                     frame.rowGroupIndex = -1;
                     frame.rowGroupLo = -1;
@@ -380,6 +381,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         frame.partitionLo = partitionLo;
         frame.partitionHi = adjustedHi;
         frame.pieceShift = pieceShift;
+        frame.skipSkeleton = false;
         frame.format = PartitionFormat.NATIVE;
         frame.parquetMetaDecoder = null;
         frame.rowGroupIndex = -1;
@@ -425,6 +427,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         // A skeleton may span several pieces, so no single shift describes it. Nothing reads a shift off a frame
         // the caller discards, and 0 is what the whole-partition skeleton in next(long) publishes.
         frame.pieceShift = 0;
+        frame.skipSkeleton = true;
         frame.format = PartitionFormat.NATIVE;
         frame.parquetMetaDecoder = null;
         frame.rowGroupIndex = -1;
@@ -486,6 +489,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                 frame.partitionLo = partitionLo;
                 frame.partitionHi = adjustedHi;
                 frame.pieceShift = 0;
+                frame.skipSkeleton = false;
                 frame.format = PartitionFormat.PARQUET;
                 frame.rowGroupIndex = i;
                 frame.rowGroupLo = (int) (partitionLo - rowGroupStartRow);
@@ -601,6 +605,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         private int rowGroupHi;
         private int rowGroupIndex;
         private int rowGroupLo;
+        private boolean skipSkeleton;
 
         @Override
         public long getAuxPageAddress(int columnIndex) {
@@ -681,6 +686,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         @Override
         public long getPartitionLo() {
             return partitionLo;
+        }
+
+        @Override
+        public boolean isSkipSkeleton() {
+            return skipSkeleton;
         }
     }
 }

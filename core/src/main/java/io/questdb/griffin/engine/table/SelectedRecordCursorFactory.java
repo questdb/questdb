@@ -558,6 +558,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
             return baseFrame.getPartitionLo();
         }
 
+        @Override
+        public boolean isSkipSkeleton() {
+            return baseFrame.isSkipSkeleton();
+        }
+
         public SelectedPageFrame of(PageFrame basePageFrame) {
             this.baseFrame = basePageFrame;
             return this;
