@@ -153,15 +153,6 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         return requireControlledMountedFiber().dispatchContext;
     }
 
-    /**
-     * Whether the runtime that owns the current mounted Fiber has another Fiber queued for a
-     * carrier. False outside a mounted Fiber.
-     */
-    public static boolean hasQueuedRuntimeWork() {
-        final Fiber fiber = mountedOrNull();
-        return fiber != null && fiber.pool.getRuntime().hasQueuedWork();
-    }
-
     public static boolean isMounted() {
         return Continuation.getCurrentContinuation(SCOPE) != null;
     }
