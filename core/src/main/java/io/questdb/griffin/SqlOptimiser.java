@@ -6975,6 +6975,8 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
+        restateTimestampOrderForOrderSensitiveBase(model);
+
         final boolean isTsOrderPushEligible = orderByDirectionAdvice.size() == 1
                 && isDesignatedTimestampUnionAllBranch(model, orderByAdvice);
         final int tsOrderDirection = isTsOrderPushEligible ? orderByDirectionAdvice.getQuick(0) : -1;
@@ -8411,6 +8413,56 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return n;
+    }
+
+    /**
+     * Writes onto the model directly below a SAMPLE BY the {@code ORDER BY <designated timestamp>} the
+     * upgrade notes already tell users to write, when that SAMPLE BY sits over a UNION ALL.
+     * <p>
+     * A SAMPLE BY that walks buckets forward in a single pass - FILL other than NONE, ALIGN TO FIRST
+     * OBSERVATION, FROM ... TO - needs its base in ascending designated-timestamp order, and a UNION ALL
+     * concatenates rather than merges, so it does not provide one. The ordered plan for that base already
+     * exists: an ORDER BY on the union's timestamp routes to MergeUnionAllRecordCursorFactory, which k-way
+     * merges the branches and reports FORWARD honestly. The SAMPLE BY simply had no way to ask for it -
+     * order-by advice is deliberately not propagated through an aggregating model
+     * (see pushDownOrderByAdviceToJoinModels), because an outer ORDER BY on a SAMPLE BY result says nothing
+     * about the base's order. Restating the requirement as an actual ORDER BY on the base does ask for it,
+     * and every existing mechanism then fires, including the merge.
+     * <p>
+     * It is free when the base is already ascending: generateOrderBy elides an ORDER BY whose single column
+     * is the designated timestamp in the direction the base already scans.
+     * <p>
+     * The walk is load-bearing. An ORDER BY or a LIMIT that the user wrote between the SAMPLE BY and the
+     * UNION ALL makes the row order - or the row set - theirs, not ours to restate: an
+     * {@code ORDER BY <non-timestamp column>} there legitimately drops the designated timestamp, and
+     * restating a timestamp order across it resurrects a query that must keep refusing with "base query does
+     * not provide designated TIMESTAMP column" (SampleByTest#testTimestampIsRequiredBeforeSubqueryWithExplicitTs2).
+     * A model with shared references is skipped for the same reason: its rows are consumed by more than one
+     * parent, only one of which asked for this order.
+     */
+    private void restateTimestampOrderForOrderSensitiveBase(IQueryModel model) {
+        if (model.getSampleBy() == null
+                || model.getOrderBy().size() > 0
+                || model.getOrderByAdvice().size() > 0
+                || !hasNestedUnionAll(model)) {
+            return;
+        }
+        final IQueryModel base = model.getNestedModel();
+        if (base == null) {
+            return;
+        }
+        for (IQueryModel m = base; m != null; m = m.getNestedModel()) {
+            if (m.getOrderBy().size() > 0 || m.getLimitLo() != null || m.hasSharedRefs()) {
+                return;
+            }
+            if (m.getUnionModel() != null && m.getSetOperationType() == IQueryModel.SET_OPERATION_UNION_ALL) {
+                break;
+            }
+        }
+        final CharSequence timestamp = findTimestamp(model);
+        if (timestamp != null) {
+            base.addOrderBy(nextLiteral(timestamp), IQueryModel.ORDER_DIRECTION_ASCENDING);
+        }
     }
 
     private void resolveJoinColumns(IQueryModel model) throws SqlException {

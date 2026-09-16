@@ -8848,6 +8848,72 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    /**
+     * Sorts {@code base} by its designated timestamp, ascending, for a consumer that needs that order and
+     * has no ordered plan to select instead. The result reports SCAN_DIRECTION_FORWARD honestly: the sort
+     * factories derive their direction from the sign of the first sort key, and the metadata copy keeps the
+     * designated timestamp, so {@link #isBaseTimestampAscending} is satisfied rather than merely believed.
+     * <p>
+     * This is the fallback, not the repair of first resort. The sort is over the base's full cardinality and
+     * no sort factory in engine/orderby/ spills to disk - they are bounded by cairo.sql.sort.key.max.bytes
+     * and throw from MemoryPages on overflow - so wherever an ordered plan can be selected instead, it must
+     * be, by restating the ordering requirement before the base is generated
+     * (SqlOptimiser.restateTimestampOrderForOrderSensitiveBase). Reaching here means no such plan exists,
+     * which for an aggregating base is the normal case and costs a sort over the aggregate, not the input.
+     * <p>
+     * The caller must null its own reference to {@code base} before calling: the sort constructors free
+     * {@code base} from their own catch, so an enclosing {@code catch { Misc.free(factory); }} would
+     * double-free.
+     */
+    private RecordCursorFactory sortByDesignatedTimestamp(RecordCursorFactory base, int timestampIndex) throws SqlException {
+        // Ownership mirrors generateOrderBy: SortedLightRecordCursorFactory and SortedRecordCursorFactory
+        // free their base from their own catch, so `owned` is released before entering them; the encoded
+        // variants do not, so it is still held when they are entered and the catch below covers them.
+        RecordCursorFactory owned = base;
+        try {
+            final RecordMetadata metadata = base.getMetadata();
+            final GenericRecordMetadata orderedMetadata = GenericRecordMetadata.copyOf(metadata);
+            orderedMetadata.setTimestampIndex(timestampIndex);
+            listColumnFilterA.clear();
+            // the sign carries the direction and 0 cannot carry one, hence the +1
+            listColumnFilterA.add(timestampIndex + 1);
+            final boolean isEncodedSortSupported = configuration.isSqlOrderBySortEnabled()
+                    && SortKeyEncoder.isSupported(metadata, listColumnFilterA);
+            if (base.recordCursorSupportsRandomAccess()) {
+                if (isEncodedSortSupported) {
+                    return new EncodedSortLightRecordCursorFactory(
+                            configuration,
+                            orderedMetadata,
+                            base,
+                            listColumnFilterA.copy()
+                    );
+                }
+                final RecordComparator comparator = recordComparatorCompiler.newInstance(metadata, listColumnFilterA);
+                final ListColumnFilter filter = listColumnFilterA.copy();
+                owned = null;
+                return new SortedLightRecordCursorFactory(configuration, orderedMetadata, base, comparator, filter);
+            }
+            entityColumnFilter.of(orderedMetadata.getColumnCount());
+            if (isEncodedSortSupported) {
+                return new EncodedSortRecordCursorFactory(
+                        configuration,
+                        orderedMetadata,
+                        base,
+                        RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter),
+                        listColumnFilterA.copy()
+                );
+            }
+            final RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter);
+            final RecordComparator comparator = recordComparatorCompiler.newInstance(metadata, listColumnFilterA);
+            final ListColumnFilter filter = listColumnFilterA.copy();
+            owned = null;
+            return new SortedRecordCursorFactory(configuration, orderedMetadata, base, sink, comparator, filter);
+        } catch (Throwable th) {
+            Misc.free(owned);
+            throw th;
+        }
+    }
+
     private RecordCursorFactory generateQuery(IQueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
         final RecordCursorFactory factory = generateQuery0(model, executionContext, processJoins);
         if (model.getUnionModel() != null) {
@@ -8989,7 +9055,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     throw SqlException.$(model.getModelPosition(), "base query does not provide designated TIMESTAMP column");
                 }
                 if (factory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
-                    throw SqlException.$(model.getModelPosition(), "base query does not provide ASC order over designated TIMESTAMP column");
+                    // A base that claims BACKWARD keeps refusing. Its rows are ordered, just the other way
+                    // round, and putting them the right way round is a reversal rather than a sort - work
+                    // the base has just done, undone at full cardinality. It is also the only case where
+                    // the order is visible in the query text (an explicit ORDER BY ts DESC, or a LATEST ON
+                    // over one), so sorting it would quietly make a written DESC stop meaning anything.
+                    // SCAN_DIRECTION_OTHER is the opposite case: no claim at all, so there is nothing to
+                    // contradict and a sort is the only way to get the order this generator needs.
+                    if (factory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER) {
+                        throw SqlException.$(model.getModelPosition(), "base query does not provide ASC order over designated TIMESTAMP column");
+                    }
+                    final RecordCursorFactory unordered = factory;
+                    factory = null;
+                    factory = sortByDesignatedTimestamp(unordered, timestampIndex);
                 }
             } catch (Throwable e) {
                 Misc.free(factory);
