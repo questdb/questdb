@@ -25,7 +25,6 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -36,16 +35,22 @@ public class PGMessageProcessingException extends Exception implements Flyweight
     public static final PGMessageProcessingException INSTANCE = new PGMessageProcessingException();
 
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
-    private static final CarrierLocal<PGMessageProcessingException> tlException = new CarrierLocal<>(PGMessageProcessingException::new);
-    private StringSink message;
-    private PGPipelineEntry pe;
+    private final StringSink message;
+    private final PGPipelineEntry pe;
+
+    PGMessageProcessingException(@NotNull PGPipelineEntry pe, @NotNull StringSink message) {
+        this.message = message;
+        this.pe = pe;
+    }
+
+    private PGMessageProcessingException() {
+        this.message = null;
+        this.pe = null;
+    }
 
     public static PGMessageProcessingException instance(@NotNull PGPipelineEntry pe) {
-        PGMessageProcessingException ex = tlException.get();
-        // This is to have correct stack trace in local debugging with -ea option
-        assert (ex = new PGMessageProcessingException()) != null;
-        ex.message = pe.getErrorMessageSink();
-        ex.pe = pe;
+        final PGMessageProcessingException ex = pe.getMessageProcessingException();
+        assert ex.fillInStackTrace() != null;
         return ex;
     }
 

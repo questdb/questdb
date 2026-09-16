@@ -2538,7 +2538,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
         // QWP twin of ServerMainWaitWalTableTest.testWaitWalTableTimesOut: with WAL apply
         // disabled the wait can never be satisfied, so the parked wait_wal_table must abort
         // on the breaker's timeout probe with STATUS_LIMIT_EXCEEDED. The waiter registration
-        // count proves the query actually parked through the TxnWaiter path rather than
+        // count proves the query actually parked through the fiber wait path rather than
         // returning on the fast path.
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startServerWithRetry(

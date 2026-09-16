@@ -94,6 +94,11 @@ public class NoOpMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
+    public boolean isRefreshQueueEmpty() {
+        return true;
+    }
+
+    @Override
     public void notifyBaseInvalidated(TableToken baseTableToken) {
     }
 

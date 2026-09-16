@@ -82,8 +82,6 @@ public class QwpEgressBindLatencyBenchmark {
     private static final int HTTP_PORT = 9000;
     private static final String SQL = System.getProperty(
             "sql", "SELECT x FROM long_sequence(10) WHERE x = $1");
-
-    private QwpQueryClient client;
     private final QwpColumnBatchHandler handler = new QwpColumnBatchHandler() {
         @Override
         public void onBatch(QwpColumnBatch batch) {
@@ -101,6 +99,7 @@ public class QwpEgressBindLatencyBenchmark {
             throw new RuntimeException("query error [status=" + status + "]: " + message);
         }
     };
+    private QwpQueryClient client;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()

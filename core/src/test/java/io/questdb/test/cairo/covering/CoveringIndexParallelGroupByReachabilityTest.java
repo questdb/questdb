@@ -25,18 +25,19 @@
 package io.questdb.test.cairo.covering;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.O3PartitionJob;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
-import io.questdb.cairo.O3PartitionJob;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -82,9 +83,59 @@ public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoT
     }
 
     @Test
+    public void testCoveredAsyncGroupByTrackerBalancedAcrossManyQueries() throws Exception {
+        // Regression for the covered-buffer / per-query-tracker lifetime: run the covered async
+        // keyed GROUP BY many times under a real per-query MemoryTracker so the tracker is
+        // acquired, used, released, and recycled repeatedly. Covered decode buffers are
+        // query-lifetime and are freed only at the NEXT query's clear()/of() — AFTER the owning
+        // query's tracker has been recycled. They therefore must NOT be charged to that tracker
+        // (they use global NATIVE_INDEX_READER accounting); if they were, the deferred free would
+        // decrement a recycled block and PerQueryMemoryTracker.acquire()'s `assert getUsed() == 0`
+        // would trip on a later query. A clean run confirms covered buffers stay off the per-query
+        // tracker and the limit path is leak-free.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE t (" +
+                                        "  ts TIMESTAMP," +
+                                        "  sym SYMBOL INDEX TYPE POSTING INCLUDE (grp, payload)," +
+                                        "  grp VARCHAR," +
+                                        "  payload LONG" +
+                                        ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO t SELECT (x * 200_000_000L)::timestamp, 'A', 'g' || (x % 4), x" +
+                                        " FROM long_sequence(8000)",
+                                sqlExecutionContext
+                        );
+                        engine.releaseAllWriters();
+
+                        final String coveredSql = "SELECT grp, sum(payload) FROM t WHERE sym = 'A' GROUP BY grp ORDER BY grp";
+                        final StringSink expected = new StringSink();
+                        TestUtils.printSql(engine, sqlExecutionContext, coveredSql, expected);
+                        final String expectedStr = expected.toString();
+
+                        final StringSink actual = new StringSink();
+                        for (int i = 0; i < 50; i++) {
+                            TestUtils.printSql(engine, sqlExecutionContext, coveredSql, actual);
+                            Assert.assertEquals("covered result must be stable across queries at iteration " + i,
+                                    expectedStr, actual.toString());
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testKeyedParallelGroupByOverCoveringIndexDispatchesCoveredFrames() throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -158,7 +209,7 @@ public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoT
         // freeze remains correct hardening: it matches the base PageFrameSequence path and
         // keeps F3's frozen-only openRequiredSidecars no-op effective.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -230,56 +281,6 @@ public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoT
                         }
                         if (writerError.get() != null) {
                             throw new AssertionError("background writer failed", writerError.get());
-                        }
-                    },
-                    configuration,
-                    LOG
-            );
-        });
-    }
-
-    @Test
-    public void testCoveredAsyncGroupByTrackerBalancedAcrossManyQueries() throws Exception {
-        // Regression for the covered-buffer / per-query-tracker lifetime: run the covered async
-        // keyed GROUP BY many times under a real per-query MemoryTracker so the tracker is
-        // acquired, used, released, and recycled repeatedly. Covered decode buffers are
-        // query-lifetime and are freed only at the NEXT query's clear()/of() — AFTER the owning
-        // query's tracker has been recycled. They therefore must NOT be charged to that tracker
-        // (they use global NATIVE_INDEX_READER accounting); if they were, the deferred free would
-        // decrement a recycled block and PerQueryMemoryTracker.acquire()'s `assert getUsed() == 0`
-        // would trip on a later query. A clean run confirms covered buffers stay off the per-query
-        // tracker and the limit path is leak-free.
-        assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
-            TestUtils.execute(
-                    pool,
-                    (engine, compiler, sqlExecutionContext) -> {
-                        engine.execute(
-                                "CREATE TABLE t (" +
-                                        "  ts TIMESTAMP," +
-                                        "  sym SYMBOL INDEX TYPE POSTING INCLUDE (grp, payload)," +
-                                        "  grp VARCHAR," +
-                                        "  payload LONG" +
-                                        ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
-                                sqlExecutionContext
-                        );
-                        engine.execute(
-                                "INSERT INTO t SELECT (x * 200000000L)::timestamp, 'A', 'g' || (x % 4), x" +
-                                        " FROM long_sequence(8000)",
-                                sqlExecutionContext
-                        );
-                        engine.releaseAllWriters();
-
-                        final String coveredSql = "SELECT grp, sum(payload) FROM t WHERE sym = 'A' GROUP BY grp ORDER BY grp";
-                        final StringSink expected = new StringSink();
-                        TestUtils.printSql(engine, sqlExecutionContext, coveredSql, expected);
-                        final String expectedStr = expected.toString();
-
-                        final StringSink actual = new StringSink();
-                        for (int i = 0; i < 50; i++) {
-                            TestUtils.printSql(engine, sqlExecutionContext, coveredSql, actual);
-                            Assert.assertEquals("covered result must be stable across queries at iteration " + i,
-                                    expectedStr, actual.toString());
                         }
                     },
                     configuration,

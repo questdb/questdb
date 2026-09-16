@@ -28,6 +28,18 @@ import io.questdb.Metrics;
 
 public interface WorkerPoolConfiguration {
 
+    default int getFiberMaxLiveCount() {
+        return Math.max(64, 8 * getWorkerCount());
+    }
+
+    default int getFiberMountBudget() {
+        return 64;
+    }
+
+    default int getFiberRetainedCount() {
+        return Math.min(getFiberMaxLiveCount(), Math.max(16, 2 * getWorkerCount()));
+    }
+
     default Metrics getMetrics() {
         return Metrics.ENABLED;
     }
@@ -54,6 +66,10 @@ public interface WorkerPoolConfiguration {
 
     int getWorkerCount();
 
+    default WorkerPoolMode getWorkerPoolMode() {
+        return WorkerPoolMode.LEGACY;
+    }
+
     default long getYieldThreshold() {
         return 10;
     }
@@ -71,20 +87,11 @@ public interface WorkerPoolConfiguration {
     }
 
     /**
-     * If true, the pool runs in legacy mode: workers do NOT wrap their loop
-     * body in a {@link io.questdb.mp.continuation.WorkerContinuation} and
-     * {@code Job.cloneInstance()} is never invoked by the framework. Per-worker
-     * assignment via {@code WorkerPool.assign(int worker, Job job)} is only
-     * allowed on legacy pools, since the workerId carries identity meaning
-     * (used by the assigned Job's instance state).
-     * <p>
-     * Non-legacy (default) pools install continuations and require
-     * {@code Job.cloneInstance()} to provide per-cont-snapshot isolation;
-     * callers register Jobs via {@code WorkerPool.assign(Job job)} which
-     * clones once per worker.
+     * @deprecated use {@link #getWorkerPoolMode()}
      */
+    @Deprecated
     default boolean isLegacy() {
-        return false;
+        return getWorkerPoolMode() == WorkerPoolMode.LEGACY;
     }
 
     default int workerPoolPriority() {

@@ -27,6 +27,7 @@ package io.questdb.test.cairo.lv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableSnapshotRestore;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -36,6 +37,7 @@ import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -90,6 +92,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
     private static Path checkpointPath;
     private static Path triggerFilePath;
     private int checkpointRootLen;
+    private boolean hasLoggersToRestore;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -130,6 +133,9 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
     public void setUp() {
         // CHECKPOINT relies on the sync() syscall, unavailable on Windows; skip the whole suite there.
         Assume.assumeTrue(Os.type != Os.WINDOWS);
+        // Track the attempt so teardown also restores a partial class swap if setup fails.
+        hasLoggersToRestore = true;
+        LogFactory.enableGuaranteedLogging(TableWriter.class, TableSnapshotRestore.class);
         super.setUp();
         ff = testFilesFacade;
         testFilesFacade.reset();
@@ -148,12 +154,19 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
 
     @After
     public void tearDown() throws Exception {
-        super.tearDown();
-        // Reset the checkpoint in-progress flag in case a test failed before its own RELEASE, and
-        // wipe the checkpoint dir so it does not leak into the next test.
-        execute("CHECKPOINT RELEASE");
-        checkpointPath.trimTo(checkpointRootLen);
-        configuration.getFilesFacade().rmdir(checkpointPath.slash());
+        try {
+            super.tearDown();
+            // Reset the checkpoint in-progress flag in case a test failed before its own RELEASE, and
+            // wipe the checkpoint dir so it does not leak into the next test.
+            execute("CHECKPOINT RELEASE");
+            checkpointPath.trimTo(checkpointRootLen);
+            configuration.getFilesFacade().rmdir(checkpointPath.slash());
+        } finally {
+            if (hasLoggersToRestore) {
+                LogFactory.disableGuaranteedLogging(TableWriter.class, TableSnapshotRestore.class);
+                hasLoggersToRestore = false;
+            }
+        }
     }
 
     @Test
@@ -307,9 +320,9 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                 assertViewMatchesRecompute(viewSql);
                 assertCheckpointsDirExists("lv");
 
-                // Flush barrier on the same async log path: once this sentinel reaches the captured
-                // sink, any earlier ERROR (FIFO) is already present, so assertNotLogged is reliable.
-                LOG.info().$("live view checkpoints purge test flush barrier").$();
+                // Both emitters use guaranteed logging and share the console queue with this non-dropping
+                // ADVISORY barrier. Once capture observes it, their earlier ERRORs have reached the sink.
+                LOG.advisory().$("live view checkpoints purge test flush barrier").$();
                 capture.waitForRegex("live view checkpoints purge test flush barrier");
                 capture.assertNotLogged("invalid partition directory");
             } finally {

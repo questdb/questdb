@@ -315,7 +315,7 @@ public class InIPv4Test extends AbstractCairoTest {
             assertQuery("test where ip in ('127.0.0.1', '192.168.0.1')")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Async Filter workers: 1
+                            Async JIT Filter workers: 1
                               filter: ip in [127.0.0.1,192.168.0.1]
                                 PageFrame
                                     Row forward scan

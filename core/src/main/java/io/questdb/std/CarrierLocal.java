@@ -33,7 +33,7 @@ import java.util.function.Supplier;
 /**
  * Carrier-keyed thread-local storage. Replaces the previous
  * {@code java.lang.ThreadLocal} extension to make per-thread state safe under
- * raw {@link jdk.internal.vm.Continuation} usage in {@code Worker.loopBody}.
+ * raw {@link jdk.internal.vm.Continuation} usage in fibers.
  * <p>
  * Reads are routed through {@link CarrierIdentity#current()}, which is opaque
  * to C2 and therefore not loop-invariant from the JIT's perspective. A cont
@@ -49,8 +49,7 @@ import java.util.function.Supplier;
  * <p>
  * Worker threads call {@link CarrierIdentity#bind()} once at start-up. Threads
  * that never bind (test runners, ServerMain bootstrap, shutdown hooks) fall
- * back to a per-{@link Thread} store; those threads do not run inside the cont
- * scheduler, so the hoist hazard does not apply to them.
+ * back to a per-{@link Thread} store.
  * <p>
  * For the full problem analysis (C2 hoisting of {@code _currentThread} across
  * cont yield/resume) and the rationale for the FFI-backed carrier identity,
@@ -99,20 +98,27 @@ public class CarrierLocal<T> {
         return new CarrierLocal<>(initial::get);
     }
 
-    @SuppressWarnings("unchecked")
     public T get() {
-        int id = CarrierIdentity.current();
-        if (id < 0) {
+        return get(CarrierIdentity.current());
+    }
+
+    /**
+     * Same as {@link #get()} for a carrier id the caller has already sampled through
+     * {@link CarrierIdentity#current()}. Callers that branch on the id save a downcall.
+     */
+    @SuppressWarnings("unchecked")
+    public T get(int carrierId) {
+        if (carrierId < 0) {
             return fallback().get();
         }
-        CarrierLocalMap map = mapForOrNull(id);
+        CarrierLocalMap map = mapForOrNull(carrierId);
         if (map != null) {
             CarrierLocalMap.Entry e = map.getEntry(this);
             if (e != null) {
                 return (T) e.value;
             }
         }
-        return setInitialValue(id);
+        return setInitialValue(carrierId);
     }
 
     /**

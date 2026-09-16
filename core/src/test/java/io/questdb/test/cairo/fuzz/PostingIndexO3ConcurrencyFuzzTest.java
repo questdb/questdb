@@ -59,16 +59,6 @@ import org.junit.Test;
  */
 public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
 
-    // A tiny posting indexer spill budget forces compactIfOverBudget ->
-    // flushAllPending mid-build, so a full index() rebuild over an O3-merged or
-    // squashed partition trips the spill budget and commitDense must consolidate
-    // sparse gens -- the exact path the squash/covering SIGSEGV came from. The
-    // budget is engine-global, so the non-WAL oracle table spills identically and
-    // the result-set comparison stays apples-to-apples.
-    private void forcePostingSpill(Rnd rnd) {
-        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256L + rnd.nextInt(64 * 1024));
-    }
-
     @Test
     public void testCoveringPostingO3NativeSpillFuzz() throws Exception {
         Rnd rnd = generateRandom(LOG);
@@ -189,5 +179,15 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
         setFuzzCounts(true, 400_000, 500, 16, 8, 800, 60_000, 24);
         setFuzzProperties(1, 1, 1);
         runFuzz(rnd);
+    }
+
+    // A tiny posting indexer spill budget forces compactIfOverBudget ->
+    // flushAllPending mid-build, so a full index() rebuild over an O3-merged or
+    // squashed partition trips the spill budget and commitDense must consolidate
+    // sparse gens -- the exact path the squash/covering SIGSEGV came from. The
+    // budget is engine-global, so the non-WAL oracle table spills identically and
+    // the result-set comparison stays apples-to-apples.
+    private void forcePostingSpill(Rnd rnd) {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256L + rnd.nextInt(64 * 1024));
     }
 }

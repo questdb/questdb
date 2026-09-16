@@ -62,6 +62,8 @@ import java.io.Closeable;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 
 public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
+    @TestOnly
+    private static volatile Runnable constructorFailureHookForTesting;
     private static final PageFrameReducer REDUCER = AsyncFilteredRecordCursorFactory::filter;
     private RecordCursorFactory base;
     private final SCSequence collectSubSeq = new SCSequence();
@@ -92,6 +94,10 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             boolean enablePreTouch
     ) {
         super(base.getMetadata());
+        final Runnable constructorFailureHook = constructorFailureHookForTesting;
+        if (constructorFailureHook != null) {
+            constructorFailureHook.run();
+        }
         assert !(base instanceof AsyncFilteredRecordCursorFactory);
         this.base = base;
         this.filter = filter;
@@ -102,14 +108,17 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         // caller frees what it passed in (the filter and the base factory), so build the rest into
         // locals and release them here.
         //
-        // The per-worker filters have no owner until the atom takes them, and the atom belongs to the
-        // frame sequence from the moment the PageFrameSequence constructor is entered: that
-        // constructor closes the atom on its own failure path, and close() closes it afterwards.
-        // Nothing that can throw sits between the two calls, so isPerWorkerFiltersOwned covers the
-        // whole gap and every object below is closed exactly once on every path.
+        // The caller retains the per-worker filter list until this constructor returns. Once the atom
+        // takes the filters, its failure paths close them and null the list slots, so the caller can
+        // safely close any remaining entries. The atom belongs to the frame sequence from the moment
+        // the PageFrameSequence constructor is entered: that constructor closes the atom on its own
+        // failure path, and close() closes it afterwards. Nothing that can throw sits between the two
+        // calls, so isPerWorkerFiltersOwned covers the whole gap and every object below is closed
+        // exactly once on every path.
         AsyncFilteredRecordCursor cursor = null;
         AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor = null;
         PageFrameSequence<AsyncFilterAtom> frameSequence = null;
+        final int maxNegativeLimit;
         boolean isPerWorkerFiltersOwned = true;
         try {
             cursor = new AsyncFilteredRecordCursor(configuration, filter, base.getScanDirection());
@@ -139,26 +148,21 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                     workerCount,
                     PageFrameReduceTask.TYPE_FILTER
             );
+            maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
         } catch (Throwable th) {
-            Misc.free(frameSequence);
             if (isPerWorkerFiltersOwned) {
-                Misc.freeObjList(perWorkerFilters);
+                Misc.freeObjList(perWorkerFilters, th);
             }
             // The cursors are not open yet, and close() frees their records only once they are, so
             // release the records directly - the same call halfClose() makes on the open factory.
-            if (cursor != null) {
-                cursor.freeRecords();
-            }
-            if (negativeLimitCursor != null) {
-                negativeLimitCursor.freeRecords();
-            }
+            halfCloseBestEffort(th, frameSequence, cursor, negativeLimitCursor);
             throw th;
         }
         this.cursor = cursor;
         this.negativeLimitCursor = negativeLimitCursor;
         this.frameSequence = frameSequence;
         this.limitLoPos = limitLoPos;
-        this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
+        this.maxNegativeLimit = maxNegativeLimit;
         // Assigned last: _close() frees this field, so it must not be set before a statement that
         // can still throw, or the caller's own free would become a double free.
         this.limitLoFunction = limitLoFunction;
@@ -349,6 +353,11 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         halfClose(frameSequence, cursor, negativeLimitCursor);
     }
 
+    @TestOnly
+    public static void setConstructorFailureHookForTesting(@Nullable Runnable hook) {
+        constructorFailureHookForTesting = hook;
+    }
+
     private static void filter(
             int workerId,
             @NotNull PageFrameMemoryRecord record,
@@ -425,27 +434,31 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
 
     private static Throwable halfCloseBestEffort(
             Throwable cleanupFailure,
-            Closeable frameSequence,
-            RecordFreer cursor,
-            RecordFreer negativeLimitCursor
+            @Nullable Closeable frameSequence,
+            @Nullable RecordFreer cursor,
+            @Nullable RecordFreer negativeLimitCursor
     ) {
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, frameSequence);
-        try {
-            cursor.freeRecords();
-        } catch (Throwable th) {
-            if (cleanupFailure == null) {
-                cleanupFailure = th;
-            } else if (cleanupFailure != th) {
-                cleanupFailure.addSuppressed(th);
+        if (cursor != null) {
+            try {
+                cursor.freeRecords();
+            } catch (Throwable th) {
+                if (cleanupFailure == null) {
+                    cleanupFailure = th;
+                } else if (cleanupFailure != th) {
+                    cleanupFailure.addSuppressed(th);
+                }
             }
         }
-        try {
-            negativeLimitCursor.freeRecords();
-        } catch (Throwable th) {
-            if (cleanupFailure == null) {
-                cleanupFailure = th;
-            } else if (cleanupFailure != th) {
-                cleanupFailure.addSuppressed(th);
+        if (negativeLimitCursor != null) {
+            try {
+                negativeLimitCursor.freeRecords();
+            } catch (Throwable th) {
+                if (cleanupFailure == null) {
+                    cleanupFailure = th;
+                } else if (cleanupFailure != th) {
+                    cleanupFailure.addSuppressed(th);
+                }
             }
         }
         return cleanupFailure;

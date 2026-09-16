@@ -50,6 +50,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.network.IOContext;
+import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.Net;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
@@ -178,6 +179,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private PGPipelineEntry bindingServiceConfiguredFor;
     private int bufferRemainingOffset = 0;
     private int bufferRemainingSize = 0;
+    private PGConnectionFiberTask fiberTask;
     private boolean freezeRecvBuffer;
     private int namedStatementLimit;
     // PG wire protocol has two phases:
@@ -377,6 +379,22 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     @Override
     public TableWriterAPI getTableWriterAPI(CharSequence tableName, @NotNull String lockReason) {
         return getTableWriterAPI(engine.verifyTableName(tableName), lockReason);
+    }
+
+    public NetworkSqlExecutionCircuitBreaker getCircuitBreaker() {
+        return circuitBreaker;
+    }
+
+    /**
+     * Lazily creates the per-connection fiber task. The task follows this context's
+     * pooled lifecycle: recycled together, reopened by the dispatch job when a new
+     * connection incarnation finds its gate terminal.
+     */
+    public PGConnectionFiberTask getFiberTask(IODispatcher<PGConnectionContext> dispatcher, Metrics metrics) {
+        if (fiberTask == null) {
+            fiberTask = new PGConnectionFiberTask(this, dispatcher, metrics, engine.getTimerShards());
+        }
+        return fiberTask;
     }
 
     public void handleClientOperation(int operation) throws Exception {

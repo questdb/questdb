@@ -38,8 +38,12 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.Worker;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -47,10 +51,12 @@ import io.questdb.std.Rosti;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.RostiAllocFacadeImpl;
 import io.questdb.std.Unsafe;
+import io.questdb.tasks.VectorAggregateTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -59,7 +65,11 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class AggregateTest extends AbstractCairoTest {
     private static final int PAGE_FRAME_MAX_ROWS = 100;
@@ -1795,6 +1805,184 @@ public class AggregateTest extends AbstractCairoTest {
         });
     }
 
+    // A throw raised while a POOL WORKER aggregates a frame must fail the query. Before the
+    // AsyncQueryErrorState hand-off, GroupByVectorAggregateJob logged and swallowed it, the done
+    // latch still counted down, and the owner merged the rostis and returned an aggregate that
+    // silently omitted that frame's rows.
+    @Test
+    public void testRostiWorkerAggregationErrorFailsQuery() throws Exception {
+        final String workerFailureMessage = "injected worker aggregation failure";
+        // Small frames so the owner publishes many entries and the pool actually gets work;
+        // at the 1M default the whole table becomes a single task the owner runs itself.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
+
+        final AtomicReference<Thread> ownerThread = new AtomicReference<>();
+        final AtomicInteger workerFailures = new AtomicInteger();
+        final RostiAllocFacade rostiAllocFacade = new RostiAllocFacadeImpl() {
+            @Override
+            public void updateMemoryUsage(long pRosti, long oldSize) {
+                super.updateMemoryUsage(pRosti, oldSize);
+                if (Thread.currentThread() != ownerThread.get()) {
+                    // Only a pool worker ever fails, so a surfaced error can only have travelled
+                    // through the worker hand-off, never the owner's own work-stealing path -
+                    // that path already propagated before this change and would not pin it.
+                    workerFailures.incrementAndGet();
+                    throw CairoException.nonCritical().put(workerFailureMessage);
+                }
+                // The owner reaches this only by work-stealing. Yield to the pool so the first
+                // recorded error is a worker's; if no worker ever runs an entry, the assertion at
+                // the end fails loudly instead of the test passing vacuously.
+                final long deadlineMillis = System.currentTimeMillis() + 10_000;
+                while (workerFailures.get() == 0 && System.currentTimeMillis() < deadlineMillis) {
+                    Os.sleep(1);
+                }
+            }
+        };
+
+        executeWithPool(
+                4, 64, rostiAllocFacade, (CairoEngine engine, SqlCompiler _, SqlExecutionContext sqlExecutionContext, String _) -> {
+                    ownerThread.set(Thread.currentThread());
+                    engine.execute(
+                            "create table tab as (select cast(x % 16 as int) i, x l from long_sequence(100_000))",
+                            sqlExecutionContext
+                    );
+                    try (RecordCursorFactory factory = engine.select("select i, sum(l) from tab group by i", sqlExecutionContext)) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            //noinspection StatementWithEmptyBody
+                            while (cursor.hasNext()) {
+                                // Drain the whole cursor; a partial aggregate must not be reachable.
+                            }
+                            Assert.fail("worker aggregation failure did not fail the query");
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), workerFailureMessage);
+                        }
+                    }
+                    Assert.assertTrue("no pool worker ran a vector aggregate entry", workerFailures.get() > 0);
+                }
+        );
+    }
+
+    @Test
+    public void testRostiFiberHostOwnerReducesWithoutConsumers() throws Exception {
+        final AtomicReference<Thread> ownerThread = new AtomicReference<>();
+        final CountDownLatch ownerReduced = new CountDownLatch(1);
+        final RostiAllocFacade rostiAllocFacade = new RostiAllocFacadeImpl() {
+            @Override
+            public void updateMemoryUsage(long pRosti, long oldSize) {
+                super.updateMemoryUsage(pRosti, oldSize);
+                if (Thread.currentThread() == ownerThread.get()) {
+                    ownerReduced.countDown();
+                }
+            }
+        };
+
+        executeWithPool(
+                1, 2048, WorkerPoolMode.FIBER_HOST, rostiAllocFacade,
+                (CairoEngine engine, SqlCompiler _, SqlExecutionContext sqlExecutionContext, String _) -> {
+                    engine.execute(
+                            "create table tab as (select cast(x % 16 as int) i, x l from long_sequence(100_000))",
+                            sqlExecutionContext
+                    );
+                    Assert.assertNotNull(engine.getMessageBus().getQueryParallelFiberDispatcher());
+
+                    final RingQueue<VectorAggregateTask> queue = engine.getMessageBus().getVectorAggregateQueue();
+                    final MCSequence subSeq = engine.getMessageBus().getVectorAggregateSubSeq();
+                    final long consumedBefore = subSeq.current();
+                    final AtomicReference<Throwable> ownerFailure = new AtomicReference<>();
+                    final AtomicInteger groupCount = new AtomicInteger();
+                    final CountDownLatch ownerDone = new CountDownLatch(1);
+                    final Thread owner = new Thread(() -> {
+                        ownerThread.set(Thread.currentThread());
+                        try (
+                                RecordCursorFactory factory = engine.select("select i, sum(l) from tab group by i", sqlExecutionContext);
+                                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                        ) {
+                            final boolean[] isGroupSeen = new boolean[16];
+                            final Record record = cursor.getRecord();
+                            int count = 0;
+                            while (cursor.hasNext()) {
+                                final int key = record.getInt(0);
+                                Assert.assertTrue("unexpected group key " + key, key >= 0 && key < 16);
+                                Assert.assertFalse("duplicate group key " + key, isGroupSeen[key]);
+                                isGroupSeen[key] = true;
+                                final long expectedSum = key == 0
+                                        ? 8L * 6_250 * 6_251
+                                        : 6_250L * key + 8L * 6_249 * 6_250;
+                                Assert.assertEquals("wrong sum for group " + key, expectedSum, record.getLong(1));
+                                count++;
+                            }
+                            groupCount.set(count);
+                        } catch (Throwable th) {
+                            ownerFailure.set(th);
+                        } finally {
+                            ownerDone.countDown();
+                        }
+                    });
+                    owner.setDaemon(true);
+                    boolean isOwnerReductionObserved = false;
+                    boolean isPublishedTaskConsumed = false;
+                    boolean isOwnerCompleted = false;
+                    InterruptedException interruptedException = null;
+                    owner.start();
+                    try {
+                        isOwnerReductionObserved = ownerReduced.await(10, TimeUnit.SECONDS);
+                        isPublishedTaskConsumed = subSeq.current() > consumedBefore;
+                        if (isOwnerReductionObserved && isPublishedTaskConsumed) {
+                            isOwnerCompleted = ownerDone.await(10, TimeUnit.SECONDS);
+                        }
+                    } catch (InterruptedException e) {
+                        interruptedException = e;
+                    } finally {
+                        if (ownerDone.getCount() > 0) {
+                            sqlExecutionContext.getCircuitBreaker().cancel();
+                            while (ownerDone.getCount() > 0) {
+                                final long cursor = subSeq.next();
+                                if (cursor > -1) {
+                                    try {
+                                        queue.get(cursor).entry.run(-1, subSeq, cursor);
+                                    } catch (Throwable th) {
+                                        ownerFailure.compareAndSet(null, th);
+                                    }
+                                } else if (cursor < 0) {
+                                    Os.pause();
+                                }
+                            }
+                        }
+                        while (owner.isAlive()) {
+                            try {
+                                owner.join();
+                            } catch (InterruptedException e) {
+                                if (interruptedException == null) {
+                                    interruptedException = e;
+                                }
+                                sqlExecutionContext.getCircuitBreaker().cancel();
+                            }
+                        }
+                        if (interruptedException != null) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }
+                    if (interruptedException != null) {
+                        throw interruptedException;
+                    }
+                    Assert.assertTrue(
+                            "fiber-host owner did not reduce a vector aggregate entry",
+                            isOwnerReductionObserved
+                    );
+                    Assert.assertTrue("owner did not consume a published entry", isPublishedTaskConsumed);
+                    Assert.assertTrue("owner did not finish after reducing a published entry", isOwnerCompleted);
+                    Assert.assertFalse("owner thread did not terminate", owner.isAlive());
+                    Assert.assertNull(ownerFailure.get());
+                    Assert.assertEquals(16, groupCount.get());
+                    Assert.assertEquals(
+                            "query-pool consumer ran despite the zero-consumer fixture",
+                            0,
+                            engine.getMessageBus().getQueryParallelFiberDispatcher().getVectorAggregateCreatedTaskCount()
+                    );
+                }
+        );
+    }
+
     @Test
     public void testRostiWithColTopsAndIdleWorkers() throws Exception {
         executeWithPool(4, 16, AggregateTest::runCountTestWithColTops);
@@ -1853,6 +2041,79 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testRostiWithNoWorkers() throws Exception {
         executeWithPool(0, 0, AggregateTest::runGroupByTest);
+    }
+
+    @Test
+    public void testRostiWorkerErrorIsPropagatedAfterCleanup() throws Exception {
+        final AtomicBoolean isFailureInjected = new AtomicBoolean();
+        final CountDownLatch workerFailed = new CountDownLatch(1);
+        final RostiAllocFacade rostiAllocFacade = new RostiAllocFacadeImpl() {
+            @Override
+            public void updateMemoryUsage(long pRosti, long oldSize) {
+                super.updateMemoryUsage(pRosti, oldSize);
+                if (Worker.current() != null && isFailureInjected.compareAndSet(false, true)) {
+                    workerFailed.countDown();
+                    throw CairoException.critical(42)
+                            .position(7)
+                            .put("injected vector worker failure")
+                            .setOutOfMemory(true);
+                }
+                if (Worker.current() == null && !isFailureInjected.get()) {
+                    try {
+                        if (!workerFailed.await(30, TimeUnit.SECONDS)) {
+                            throw new AssertionError("timed out waiting for vector worker failure");
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError("interrupted waiting for vector worker failure", e);
+                    }
+                }
+            }
+        };
+
+        executeWithPool(
+                4,
+                16,
+                rostiAllocFacade,
+                (CairoEngine engine, SqlCompiler _, SqlExecutionContext sqlExecutionContext, String _) -> {
+                    engine.execute(
+                            "CREATE TABLE tab AS (SELECT rnd_double() d, (x % 16)::int i FROM long_sequence(10_000))",
+                            sqlExecutionContext
+                    );
+                    final String query = "SELECT i, sum(d) FROM tab GROUP BY i";
+                    assertQuery(query)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .assertsPlanContaining("GroupBy vectorized: true");
+
+                    try (
+                            RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                            RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                    ) {
+                        while (cursor.hasNext()) {
+                        }
+                        Assert.fail("expected vector worker failure");
+                    } catch (CairoException e) {
+                        Assert.assertEquals(42, e.getErrno());
+                        Assert.assertEquals(7, e.getPosition());
+                        Assert.assertTrue(e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "injected vector worker failure");
+                    }
+
+                    Assert.assertTrue(isFailureInjected.get());
+                    assertQuery("SELECT count() FROM (" + query + ")")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    count
+                                    16
+                                    """);
+                }
+        );
     }
 
     @Test
@@ -2241,6 +2502,16 @@ public class AggregateTest extends AbstractCairoTest {
             RostiAllocFacade rostiAllocFacade,
             CustomisableRunnable runnable
     ) throws Exception {
+        executeWithPool(workerCount, queueSize, null, rostiAllocFacade, runnable);
+    }
+
+    private void executeWithPool(
+            int workerCount,
+            int queueSize,
+            @Nullable WorkerPoolMode workerPoolMode,
+            RostiAllocFacade rostiAllocFacade,
+            CustomisableRunnable runnable
+    ) throws Exception {
         // we need to create entire engine
         assertMemoryLeak(() -> {
             if (workerCount > 0) {
@@ -2261,7 +2532,7 @@ public class AggregateTest extends AbstractCairoTest {
                     }
                 };
 
-                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+                final WorkerPoolConfiguration workerPoolConfiguration = new WorkerPoolConfiguration() {
                     @Override
                     public long getSleepTimeout() {
                         return 1;
@@ -2271,7 +2542,10 @@ public class AggregateTest extends AbstractCairoTest {
                     public int getWorkerCount() {
                         return workerCount - 1;
                     }
-                });
+                };
+                final WorkerPool pool = workerPoolMode == null
+                        ? TestWorkerPool.createWithRandomMode(TestUtils.generateRandom(LOG), workerPoolConfiguration)
+                        : new TestWorkerPool(workerPoolConfiguration, workerPoolMode);
 
                 execute(pool, runnable, configuration1, timestampTypeName);
             } else {

@@ -33,6 +33,10 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public interface FunctionFactory {
+    default int getExecutionRequirements() {
+        return SqlExecutionRequirements.NONE;
+    }
+
     /**
      * Function signature in a form of "name(type...)". Name is a literal that does not
      * start with number and contains no control characters, which can be confused with

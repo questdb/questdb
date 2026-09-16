@@ -37,19 +37,19 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-class LineTcpLegacyWriterJob implements Job, Closeable {
-    private final static Log LOG = LogFactory.getLog(LineTcpLegacyWriterJob.class);
+class LineTcpWriterJob implements Job, Closeable {
+    private static final Log LOG = LogFactory.getLog(LineTcpWriterJob.class);
     private final ObjList<TableUpdateDetails> assignedTables;
     private final long commitInterval;
     private final Metrics metrics;
     private final MillisecondClock millisecondClock;
+    private long nextCommitTime;
     private final RingQueue<LineTcpMeasurementEvent> queue;
     private final LineTcpMeasurementScheduler scheduler;
     private final Sequence sequence;
     private final int workerId;
-    private long nextCommitTime;
 
-    LineTcpLegacyWriterJob(
+    LineTcpWriterJob(
             int workerId,
             RingQueue<LineTcpMeasurementEvent> queue,
             Sequence sequence,
@@ -73,7 +73,6 @@ class LineTcpLegacyWriterJob implements Job, Closeable {
     @Override
     public void close() {
         LOG.debug().$("line protocol writer closing [workerId=").$(workerId).I$();
-        // Finish all jobs in the queue before stopping
         for (int n = 0; n < queue.getCycle(); n++) {
             if (!run(Job.TERMINATING_STATUS)) {
                 break;
@@ -83,17 +82,12 @@ class LineTcpLegacyWriterJob implements Job, Closeable {
 
     @Override
     public boolean run(@NotNull WorkerContext workerContext) {
-        boolean busy = drainQueue();
-        // while ILP is hammering the database via multiple connections the writer
-        // is likely to be very busy so commitTables() will run infrequently
-        // commit should run regardless the busy flag but has to finish quickly
-        // idea is to store the tables in a heap data structure being the tables most
-        // desperately need a commit on the top
-        if (!busy) {
+        final boolean isBusy = drainQueue();
+        if (!isBusy) {
             commitTables();
             tickWriters();
         }
-        return busy;
+        return isBusy;
     }
 
     private void commitTables() {
@@ -101,53 +95,48 @@ class LineTcpLegacyWriterJob implements Job, Closeable {
         if (wallClockMillis > nextCommitTime) {
             long minTableNextCommitTime = Long.MAX_VALUE;
             for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
-                // the heap based solution mentioned above will eliminate the minimum search
-                // we could just process the min element of the heap until we hit the first commit
-                // time greater than millis and that will be our nextCommitTime
+                final TableUpdateDetails tud = assignedTables.getQuick(n);
                 try {
-                    long tableNextCommitTime = assignedTables.getQuick(n).commitIfIntervalElapsed(wallClockMillis);
-                    // get current time again, commit is not instant and take quite some time.
+                    long tableNextCommitTime = tud.commitIfIntervalElapsed(wallClockMillis);
                     wallClockMillis = millisecondClock.getTicks();
                     if (tableNextCommitTime < minTableNextCommitTime) {
-                        // taking the earliest commit time
                         minTableNextCommitTime = tableNextCommitTime;
                     }
                 } catch (Throwable ex) {
                     LOG.critical()
-                            .$("commit failed [table=").$(assignedTables.getQuick(n).getTableToken())
+                            .$("commit failed [table=").$(tud.getTableToken())
                             .$(",ex=").$(ex)
                             .I$();
                     metrics.healthMetrics().incrementUnhandledErrors();
                 }
             }
-            // if no tables, just use the default commit interval
-            nextCommitTime = minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : wallClockMillis + commitInterval;
+            nextCommitTime = minTableNextCommitTime != Long.MAX_VALUE
+                    ? minTableNextCommitTime
+                    : wallClockMillis + commitInterval;
         }
     }
 
     private boolean drainQueue() {
-        boolean busy = false;
-        while (true) {
+        final int drainBudget = queue.getCycle();
+        boolean isBusy = false;
+        for (int drained = 0; drained < drainBudget; drained++) {
             long cursor;
             while ((cursor = sequence.next()) < 0) {
                 if (cursor == -1) {
-                    return busy;
+                    return isBusy;
                 }
                 Os.pause();
             }
-            busy = true;
+            isBusy = true;
             final LineTcpMeasurementEvent event = queue.get(cursor);
 
             try {
-                // we check the event's writer thread ID to avoid consuming
-                // incomplete events
-
                 final TableUpdateDetails tud = event.getTableUpdateDetails();
-                boolean closeWriter = false;
+                boolean isCloseWriter = false;
                 if (event.getWriterWorkerId() == workerId) {
                     try {
                         if (tud.isWriterInError() || tud.getWriter() == null) {
-                            closeWriter = true;
+                            isCloseWriter = true;
                         } else {
                             if (!tud.isAssignedToJob()) {
                                 assignedTables.add(tud);
@@ -167,17 +156,14 @@ class LineTcpLegacyWriterJob implements Job, Closeable {
                                 .$(", ex=").$(ex)
                                 .I$();
                         metrics.healthMetrics().incrementUnhandledErrors();
-                        closeWriter = true;
+                        isCloseWriter = true;
                         event.createWriterReleaseEvent(tud, false);
-                        // This is a critical error, so we treat it as an unhandled one.
                     }
-                } else {
-                    if (event.getWriterWorkerId() == LineTcpMeasurementEventType.ALL_WRITERS_RELEASE_WRITER) {
-                        closeWriter = true;
-                    }
+                } else if (event.getWriterWorkerId() == LineTcpMeasurementEventType.ALL_WRITERS_RELEASE_WRITER) {
+                    isCloseWriter = true;
                 }
 
-                if (closeWriter && tud.getWriter() != null) {
+                if (isCloseWriter && tud.getWriter() != null) {
                     scheduler.processWriterReleaseEvent(event, workerId);
                     assignedTables.remove(tud);
                     tud.setAssignedToJob(false);
@@ -185,10 +171,11 @@ class LineTcpLegacyWriterJob implements Job, Closeable {
                 }
             } catch (Throwable ex) {
                 LOG.error().$("failed to process ILP event because of exception [ex=").$(ex).I$();
+            } finally {
+                sequence.done(cursor);
             }
-
-            sequence.done(cursor);
         }
+        return isBusy;
     }
 
     private void tickWriters() {

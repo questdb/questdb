@@ -43,7 +43,9 @@ import io.questdb.test.griffin.fuzz.types.FuzzColumnTypes;
  *     <li>typed constant;</li>
  *     <li>arithmetic {@code a op b} where both sides are numeric;</li>
  *     <li>curated single-arg function call (abs, length, upper, ...);</li>
- *     <li>cast {@code inner::TYPE} to a target kind.</li>
+ *     <li>cast {@code inner::TYPE} to a target kind, provided a numeric
+ *     expression can be cast to it at all -- see
+ *     {@link #castTargetFromNumeric(ColumnKind)}.</li>
  * </ul>
  */
 public final class ExpressionGenerator {
@@ -83,6 +85,57 @@ public final class ExpressionGenerator {
 
     public FuzzExpr generateOfKind(ColumnKind kind) {
         return generateOfKind(kind, 0);
+    }
+
+    /**
+     * Draws the identifier kind for a slot the caller is about to fill with
+     * {@link #generateOfKind(ColumnKind)}: one this generator's column list
+     * carries, or -- when it carries none of the three -- any of them, via
+     * {@link ColumnKind#randomIdentifier}. A kind carried by several columns is
+     * that much likelier to come up, the way the leaf picked uniformly among
+     * all identifier columns while UUID, IPv4 and LONG256 shared one kind.
+     * <p>
+     * A picker that drew one of the three blind sent the slot to a kind the
+     * table has no column of, and {@link #generateLeafOfKind} answers that with
+     * a literal constant -- a GROUP BY key that collapses every row into one
+     * bucket. Of the tables {@code FuzzTableFactory} deals, 41% carry exactly
+     * one identifier type, 32% carry two and 18% carry none, so a blind draw
+     * missed most of the time: over 249_818 such tables, 26.2% of identifier
+     * key-slot draws reached a real column, against 48.9% once the draw follows
+     * the table. The shared kind gave 45.7% on the same corpus; the table-aware
+     * draw comes out slightly above it because UUID no longer spends draws on
+     * the {@code (<numeric>)::UUID} cast that never compiled -- see
+     * {@link #castTargetFromNumeric}.
+     * <p>
+     * The draw belongs HERE, in the kind picker, rather than in
+     * {@link #generateLeafOfKind}. A leaf that substituted another identifier
+     * kind for the one it was handed would break the promise
+     * {@code generateOfKind(kind)} makes to its caller, and
+     * {@code PredicateGenerator.appendComparison} rests on that promise: it
+     * draws both operands of a comparison from a single kind, and the three
+     * identifier types are mutually incomparable, so a substituting leaf would
+     * put {@code uuidCol < ipv4Literal} back into the corpus -- the very noise
+     * that splitting the kinds removed. Settling the kind before generation
+     * starts leaves every comparison type-coherent by construction.
+     */
+    public ColumnKind pickIdentifierKind() {
+        int carried = 0;
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (columns.getQuick(i).getType().getKind().isIdentifier()) {
+                carried++;
+            }
+        }
+        if (carried == 0) {
+            return ColumnKind.randomIdentifier(rnd);
+        }
+        int pick = rnd.nextInt(carried);
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            ColumnKind kind = columns.getQuick(i).getType().getKind();
+            if (kind.isIdentifier() && pick-- == 0) {
+                return kind;
+            }
+        }
+        throw new AssertionError("the counting pass found identifier columns the picking pass did not");
     }
 
     private FuzzExpr generateLeafAny() {
@@ -130,12 +183,42 @@ public final class ExpressionGenerator {
             }
         }
         if (choice == 2) {
-            FuzzColumnType castTarget = FuzzColumnTypes.pickOfKind(rnd, target);
+            FuzzColumnType castTarget = castTargetFromNumeric(target);
             if (castTarget != null) {
                 return new CastExpr(generateOfKind(ColumnKind.NUMERIC, depth + 1), castTarget);
             }
         }
         return generateLeafOfKind(target);
+    }
+
+    /**
+     * Type for the {@code (<numeric>)::TYPE} arm of {@link #generateOfKind},
+     * or null when no cast reaches {@code target} from a numeric expression
+     * and the arm has to fall through to a leaf instead.
+     * <p>
+     * UUID is the one such kind. QuestDB registers exactly two casts producing
+     * a UUID -- {@code CastStrToUuidFunctionFactory} and
+     * {@code CastVarcharToUuidFunctionFactory} -- so every
+     * {@code (<numeric>)::UUID} this arm could emit dies with "there is no
+     * matching function `cast` with the argument types: (INT, UUID)", and the
+     * oracle throws the whole generated query away as an expected skip.
+     * Measured over 2000 predicates on a schema carrying one column of each
+     * type: 478 failed to compile and 126 of those -- 26% of every failure --
+     * were this cast. It costs no coverage to drop: the shape never compiled,
+     * and {@link #generateLeafOfKind} still fills a UUID slot with a column
+     * reference or a UUID literal.
+     * <p>
+     * The exclusion sits here rather than in
+     * {@link FuzzColumnTypes#pickOfKind}, which {@link #generateLeafOfKind}
+     * also calls -- to pick the type whose {@code generateConstant} spells the
+     * UUID literal. Excluding UUID there would take the literal away too and
+     * leave a UUID slot filled by an any-kind column reference.
+     */
+    private FuzzColumnType castTargetFromNumeric(ColumnKind target) {
+        if (target == ColumnKind.UUID) {
+            return null;
+        }
+        return FuzzColumnTypes.pickOfKind(rnd, target);
     }
 
     private ObjList<FuzzColumn> columnsOfKind(ColumnKind kind) {

@@ -24,12 +24,15 @@
 
 package io.questdb.test.griffin.engine;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.PerWorkerLocks;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -219,6 +222,7 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
             final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
             circuitBreakers[t] = circuitBreaker;
             final Thread thread = new Thread(() -> {
+                final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
                 try {
                     start.await();
                     while (roundTickets.getAndIncrement() < totalRounds) {
@@ -247,6 +251,7 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
+                    SuspensionScope.restore(previousMode);
                     done.countDown();
                 }
             });
@@ -282,6 +287,38 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
                 Assert.assertFalse("worker did not stop: " + i, workers[i].isAlive());
             }
         }
+    }
+
+    @Test
+    public void testContentionSpinsOnNullScope() {
+        // A thread that never entered a suspension scope (an embedded caller) falls back to the
+        // legacy spin loop instead of failing the query.
+        final PerWorkerLocks locks = new PerWorkerLocks(configuration, 1);
+        final int heldSlot = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+        final SuspensionScope.Mode previousMode = SuspensionScope.enter(null);
+        try {
+            final AtomicBooleanCircuitBreaker sqlCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+            sqlCircuitBreaker.cancel();
+            try {
+                locks.acquireSlot(0, sqlCircuitBreaker);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "cancelled by user");
+            }
+            try {
+                locks.acquireSlot(0, (ExecutionCircuitBreaker) sqlCircuitBreaker);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "query aborted");
+            }
+            locks.releaseSlot(heldSlot);
+            final int slot = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+            Assert.assertEquals(heldSlot, slot);
+            locks.releaseSlot(slot);
+        } finally {
+            SuspensionScope.restore(previousMode);
+        }
+        Assert.assertEquals(0, locks.getAcquiredSlotCount());
     }
 
     @Test

@@ -47,6 +47,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -1271,7 +1272,7 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "rnd_double() val " +
                 "FROM long_sequence(10000))");
 
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, sparkline(val, 0.0, 1.0, 8) FROM tab GROUP BY sym ORDER BY sym";
 
@@ -1304,7 +1305,7 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "rnd_double() val " +
                 "FROM long_sequence(500000))");
 
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, sparkline(val, 0.0, 1.0, 8) FROM tab GROUP BY sym ORDER BY sym";
                 // Assert cursor is self-consistent across two executions
@@ -1328,7 +1329,7 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "timestamp_sequence('2024-01-01T00:00:00.000000Z', 60_000_000L) ts " +
                 "FROM long_sequence(2_000_000)) TIMESTAMP(ts) PARTITION BY MONTH");
 
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT ts, sparkline(val, 0.0, 1.0, 8) FROM tab SAMPLE BY 1h";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
@@ -1343,7 +1344,7 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "CAST(null AS double) val " +
                 "FROM long_sequence(100000))");
 
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                 String sql = "SELECT sym, sparkline(val) FROM tab GROUP BY sym ORDER BY sym";
                 assertQuery(sql)
@@ -1382,7 +1383,7 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
         final int steps = LEVELS * STEPS_PER_LEVEL;
         final String expected = expectedStaircase(STEPS_PER_LEVEL);
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new WorkerPool(() -> 2)) {
+            try (WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (key SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR",
@@ -1484,7 +1485,7 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                 + "FROM (SELECT key, sparkline(val) AS spark FROM tab) o "
                 + "JOIN LATERAL (SELECT rate FROM rates WHERE min_len <= length(o.spark)) sub";
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new WorkerPool(() -> 2)) {
+            try (WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (key SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR",
@@ -1597,7 +1598,7 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
         final String sql = "SELECT sparkline(val, 0.0, 7.0, " + NON_KEYED_WIDTH + ") FROM tab";
         final String expected = expectedStaircase(FRAMES_PER_LEVEL);
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new WorkerPool(() -> 2)) {
+            try (WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR",
