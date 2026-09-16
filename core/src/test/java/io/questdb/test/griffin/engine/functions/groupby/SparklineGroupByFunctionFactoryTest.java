@@ -1670,6 +1670,45 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSparklineOverUnorderedUnionMatchesTheOrderedForm() throws Exception {
+        // A UNION ALL emits branch A then branch B, so its rows are not ascending by the
+        // designated timestamp even though TIMESTAMP(ts) re-attaches one. sparkline() walks
+        // adjacent rows, so on master this silently drew the series twice, restarting
+        // mid-chart. Unlike twap(x, ts), sparkline(x) names no timestamp, so top-down column
+        // pruning used to drop the timestamp from the base's projection and leave nothing to
+        // order or sort by - hence a refusal where twap() was already repaired. The timestamp
+        // is now retained, so the unordered spelling and the explicitly ordered one must agree.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL INDEX, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z','a',1),
+                    ('2024-01-01T01:00:00.000000Z','b',2),
+                    ('2024-01-02T00:00:00.000000Z','a',3),
+                    ('2024-01-02T01:00:00.000000Z','c',4),
+                    ('2024-01-03T00:00:00.000000Z','b',5),
+                    ('2024-01-03T01:00:00.000000Z','a',6)
+                    """);
+            final String unordered = "SELECT sparkline(x) FROM ((SELECT ts, x FROM t UNION ALL SELECT ts, x FROM t) TIMESTAMP(ts))";
+            final String ordered = "SELECT sparkline(x) FROM ((SELECT ts, x FROM t UNION ALL SELECT ts, x FROM t ORDER BY ts) TIMESTAMP(ts))";
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, ordered, unordered, LOG);
+
+            // the same through a VIEW, the shape a deployed schema is most likely to hold,
+            // and with the parameterised overload, which shares the gate
+            execute("CREATE VIEW v AS (SELECT * FROM (SELECT ts, x FROM t UNION ALL SELECT ts, x FROM t) TIMESTAMP(ts))");
+            execute("CREATE VIEW vo AS (SELECT * FROM (SELECT ts, x FROM t UNION ALL SELECT ts, x FROM t ORDER BY ts) TIMESTAMP(ts))");
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "SELECT sparkline(x) FROM vo", "SELECT sparkline(x) FROM v", LOG);
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT sparkline(x, 0.0, 10.0, 8) FROM vo",
+                    "SELECT sparkline(x, 0.0, 10.0, 8) FROM v",
+                    LOG
+            );
+        });
+    }
+
     // Runs the keyed sparkline query and returns the number of groups whose
     // rendered sparkline deviates from the exact expected staircase; a wrong
     // group count also counts as a mismatch so a dropped group is caught.

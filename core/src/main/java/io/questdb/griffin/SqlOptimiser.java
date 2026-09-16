@@ -7631,6 +7631,22 @@ public class SqlOptimiser implements Mutable {
             // correctly propagates columns by position.
         }
 
+        // Retain the base's designated timestamp when this model calls an aggregate that needs the base
+        // ascending by it - twap(), sparkline(). sparkline()'s signature is sparkline(D): it reads the
+        // designated timestamp from the frame rather than naming it, so nothing in the query text
+        // references the timestamp column and top-down pruning drops it from the base's projection. The
+        // base then reaches the code generator with no timestamp column at all, which is neither
+        // orderable nor sortable, and the function has to refuse. twap(x, ts) names its timestamp and so
+        // never had the problem, which is the whole difference between the two.
+        if (nestedIsFlex
+                && nestedAllowsColumnChange
+                && hasAscendingTimestampGroupByFunc(sqlNodeStack, functionParser.getFunctionFactoryCache(), model.getColumns())) {
+            final CharSequence timestamp = findTimestamp(nested);
+            if (timestamp != null) {
+                addTopDownColumn(timestamp, nested);
+            }
+        }
+
         if (model.getWhereClause() != null) {
             if (allowColumnsChange) {
                 emitLiteralsTopDown(model.getWhereClause(), model);
