@@ -428,11 +428,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // lifetime and pay that cost on every subsequent clear(). Typical query nesting is one or two
     // levels, so retaining a small head covers realistic reuse while releasing pathological depth.
     private static final int MAX_RETAINED_WHERE_CLAUSE_PARSERS = 8;
-    // Shared by validateOrderSensitiveAggregates() and its VectorAggregateFunction twin, which
-    // generic erasure keeps as two methods. One constant so the two backstops cannot drift apart
-    // in the message a user sees.
-    private static final String ORDER_SENSITIVE_UNORDERED_BASE_MSG = "base query does not provide ASC order over designated TIMESTAMP column, "
-            + "required by an order-sensitive aggregate";
     private static final ModelOperator RESTORE_WHERE_CLAUSE = IQueryModel::restoreWhereClause;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_ALL_CONSTRUCTOR = ExceptAllRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
@@ -7626,8 +7621,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 null,
                                                 backup,
                                                 backupOwnsKeyFunc,
-                                                backup == null && canKeyBeNull(symbol, sharedKeyFunc),
-                                                true
+                                                backup == null && canKeyBeNull(symbol, sharedKeyFunc)
                                         );
                                         symbolValueFunc = null;
                                         partitionFrameCursorFactory = null;
@@ -7741,8 +7735,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         null,
                                         backup,
                                         true,
-                                        backup == null && canAnyKeyBeNull(intrinsicModel.keyValueFuncs, symbolMapReader),
-                                        true
+                                        backup == null && canAnyKeyBeNull(intrinsicModel.keyValueFuncs, symbolMapReader)
                                 );
                                 partitionFrameCursorFactory = null;
                                 filter = null;
@@ -10183,9 +10176,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             }
                         }
-                        final boolean accepted = factory.tryDisableTimestampOrdering(orderSensitive, null);
                         try {
-                            validateOrderSensitiveVectorAggregates(factory, tempVaf, accepted, model.getModelPosition());
+                            factory.tryDisableTimestampOrdering(orderSensitive, null);
                         } catch (Throwable e) {
                             Misc.freeObjList(tempVaf);
                             throw e;
@@ -10351,15 +10343,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // AsyncGroupByNotKeyedRecordCursorFactory adopts none, so the keyed
                         // site's shared-object hazard has no counterpart to defend against.
                         //
-                        // This must stay ABOVE the ownership transfer below. The guard
-                        // throws, and the transfer nulls innerProjectionFunctions and
-                        // outerProjectionFunctions -- the only owners the catch at the
-                        // bottom of this method can free the assembled functions
-                        // through. With both null, freeAssembledProjectionFunctions is
-                        // a no-op, so a throw between transfer and adoption leaks every
-                        // assembled projection function.
-                        final boolean accepted = offerUnorderedScan(factory, groupByFunctions, null);
-                        validateOrderSensitiveAggregates(factory, groupByFunctions, accepted, model.getModelPosition());
+                        // This must stay ABOVE the ownership transfer below. The offer
+                        // reaches GroupByFunction.isOrderSensitive() and the base
+                        // factory, either of which may throw, and the transfer nulls
+                        // innerProjectionFunctions and outerProjectionFunctions -- the
+                        // only owners the catch at the bottom of this method can free
+                        // the assembled functions through. With both null,
+                        // freeAssembledProjectionFunctions is a no-op, so a throw
+                        // between transfer and adoption leaks every assembled
+                        // projection function.
+                        offerUnorderedScan(factory, groupByFunctions, null);
 
                         // Transfer ownership to the factory constructor.
                         final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
@@ -10440,15 +10433,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // edit change a visibly shared name instead of swapping one identifier
                     // for a similar-looking one.
                     //
-                    // This must stay ABOVE the ownership transfer below. The guard throws,
-                    // and the transfer nulls innerProjectionFunctions and
+                    // This must stay ABOVE the ownership transfer below. The offer reaches
+                    // GroupByFunction.isOrderSensitive() and the base factory, either of
+                    // which may throw, and the transfer nulls innerProjectionFunctions and
                     // outerProjectionFunctions -- the only owners the catch at the bottom of
                     // this method can free the assembled functions through. With both null,
                     // freeAssembledProjectionFunctions is a no-op, so a throw between
                     // transfer and adoption leaks every assembled projection function.
                     final ListColumnFilter keyColumns = listColumnFilterCopy;
-                    final boolean accepted = offerUnorderedScan(factory, groupByFunctions, keyColumns);
-                    validateOrderSensitiveAggregates(factory, groupByFunctions, accepted, model.getModelPosition());
+                    offerUnorderedScan(factory, groupByFunctions, keyColumns);
 
                     // Transfer ownership to the factory constructor. The factory adopts the
                     // per-worker projection clones through the disjoint group-by/key views.
@@ -11976,75 +11969,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return base.tryDisableTimestampOrdering(orderSensitive, groupByKeyColumns);
     }
 
-    /**
-     * Reject a GROUP BY / SAMPLE BY whose aggregate depends on row order over a base that
-     * does not deliver designated-timestamp order AND did not accept this consumer's offer.
-     * <p>
-     * A base that accepted has asserted the arrangement is legal for these aggregates and
-     * these grouping columns -- a covering scan grouped by its own index column, say -- and
-     * owns that claim. Firing unconditionally would reject exactly the case the index-key
-     * rule legalises. What remains guarded is an unordered base this consumer did not
-     * arrange, such as a multi-key covering latestBy.
-     *
-     * @param position the query model's position, reported with the error -- the same
-     *                 {@code model.getModelPosition()} the sibling ordering guards in this
-     *                 class already pass, rather than a hard-coded 0
-     */
-    private static void validateOrderSensitiveAggregates(
-            RecordCursorFactory base,
-            ObjList<GroupByFunction> groupByFunctions,
-            boolean offerAccepted,
-            int position
-    ) throws SqlException {
-        // keep in sync with validateOrderSensitiveVectorAggregates(): same short-circuit terms,
-        // same scan-direction test, same message.
-        //
-        // getPageFrameScanDirection(), NOT getScanDirection(): every caller of this guard is about
-        // to build a page-frame consumer, and a factory that chooses between delegates at open time
-        // owes getScanDirection() an answer covering delegates a page-frame consumer can never be
-        // served by. Asking the wider question refused queries on the strength of a delegate that
-        // could not execute them -- see AdaptiveSymbolPatternRecordCursorFactory.
-        if (offerAccepted || base == null || groupByFunctions == null
-                || base.getPageFrameScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER) {
-            return;
-        }
-        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-            final GroupByFunction f = groupByFunctions.getQuick(i);
-            if (f != null && f.isOrderSensitive()) {
-                throw SqlException.$(position, ORDER_SENSITIVE_UNORDERED_BASE_MSG);
-            }
-        }
-    }
-
-    /**
-     * {@link VectorAggregateFunction} twin of {@link #validateOrderSensitiveAggregates}. The
-     * vectorized GROUP BY path carries its aggregates as {@code VectorAggregateFunction}
-     * rather than {@link GroupByFunction}, so it cannot share that method's signature (same
-     * erasure), but the backstop it provides is identical: reject a base advertising
-     * {@code SCAN_DIRECTION_OTHER} when it feeds an order-sensitive aggregate and did not
-     * accept this consumer's offer.
-     */
-    private static void validateOrderSensitiveVectorAggregates(
-            RecordCursorFactory base,
-            ObjList<VectorAggregateFunction> vafs,
-            boolean offerAccepted,
-            int position
-    ) throws SqlException {
-        // keep in sync with validateOrderSensitiveAggregates(): same short-circuit terms,
-        // same scan-direction test, same message -- including asking
-        // getPageFrameScanDirection() rather than getScanDirection(); see the note there.
-        if (offerAccepted || base == null || vafs == null
-                || base.getPageFrameScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER) {
-            return;
-        }
-        for (int i = 0, n = vafs.size(); i < n; i++) {
-            final VectorAggregateFunction f = vafs.getQuick(i);
-            if (f != null && f.isOrderSensitive()) {
-                throw SqlException.$(position, ORDER_SENSITIVE_UNORDERED_BASE_MSG);
-            }
-        }
-    }
-
     private RecordCursorFactory generateTableQuery0(
             @Transient IQueryModel model,
             @Transient SqlExecutionContext executionContext,
@@ -12452,8 +12376,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     null,
                                                     backup,
                                                     true,
-                                                    backup == null && canKeyBeNull(symbolKey, sharedKeyFunc),
-                                                    true
+                                                    backup == null && canKeyBeNull(symbolKey, sharedKeyFunc)
                                             );
                                         } catch (Throwable th) {
                                             Misc.free(backup);
@@ -12594,8 +12517,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             null,
                                             backup,
                                             true,
-                                            backup == null && canAnyKeyBeNull(intrinsicModel.keyValueFuncs, reader.getSymbolMapReader(keyReaderColIdx)),
-                                            true
+                                            backup == null && canAnyKeyBeNull(intrinsicModel.keyValueFuncs, reader.getSymbolMapReader(keyReaderColIdx))
                                     );
                                 } catch (Throwable th) {
                                     Misc.free(backup);
@@ -13723,8 +13645,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             effectiveKeys,
                             null,
                             false,
-                            false,
-                            true
+                            false
                     );
                 }
             }

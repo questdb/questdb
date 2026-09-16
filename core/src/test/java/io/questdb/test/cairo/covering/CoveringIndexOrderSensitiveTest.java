@@ -340,9 +340,18 @@ public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryT
      * can free assembled functions through. A {@code DirectArray} is tagged
      * {@code NATIVE_ND_ARRAY}, so a leak there is visible to {@code assertMemoryLeak}, which
      * heap-only projection functions are not; the ordering fix was verified by mutation at the
-     * time ({@code NATIVE_ND_ARRAY, difference: 24}). That fix stays in the code, but with the
-     * refusal gone there is no longer a reachable throw at this site, so this test can no longer
-     * cover it -- it now asserts only that the SUCCESS path leaks nothing.
+     * time ({@code NATIVE_ND_ARRAY, difference: 24}). That fix stays in the code, but there is no
+     * longer a reachable throw at this site, so this test can no longer cover it -- it now
+     * asserts only that the SUCCESS path leaks nothing.
+     * <p>
+     * An earlier revision of this file carried a second, detached javadoc further down claiming
+     * the opposite: that wrapped mode "is what makes the guard's throw reachable at all". It was
+     * stale before it was orphaned. Once the guard started asking
+     * {@code getPageFrameScanDirection()} the pattern factory stopped answering
+     * {@code SCAN_DIRECTION_OTHER} to it, and the guard has since been removed outright as
+     * unreachable -- see the removal commit for why, and
+     * {@link CoveringIndexSampleByRefusalTest} for the live choke point that does refuse an
+     * unordered base.
      */
     @Test
     public void testAsyncKeyedOrderSensitiveOverPatternFilterMatchesFullScan() throws Exception {
@@ -415,16 +424,6 @@ public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryT
         });
     }
 
-    /**
-     * A POSTING-indexed symbol whose pattern filter admits under 2% of rows, which is what puts
-     * {@code AdaptiveSymbolPatternRecordCursorFactory} into its wrapped mode. Wrapped mode is the
-     * one configuration that both supplies page frames -- so the group by is generated at an
-     * ASYNC site -- and advertises {@code SCAN_DIRECTION_OTHER}, because one of the delegates it
-     * may open is the cursor-order symbol-pattern index scan. That combination is what makes the
-     * guard's throw reachable at all. A covering {@code latestBy} base cannot do it: {@code
-     * latestBy} leaves both page-frame cursors null, so it is always generated serially, and the
-     * serial sites carry no guard.
-     */
     /**
      * sum()/avg() over DECIMAL256 carry a FIXED 256-bit running sum that THROWS
      * {@code Overflow in addition} on a partial sum outside 2^255, and DECIMAL256 is the widest

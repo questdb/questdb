@@ -220,6 +220,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // both modes: merged is strictly MORE ordered than "no guarantee", so advertising the
     // weaker answer and delivering the stronger one is pessimistic, never wrong.
     // Always false for single-key and latestBy, which never merge in the first place.
+    // <p>
+    // A factory is always BORN timestamp-ordered: the field has no constructor argument, so
+    // tryDisableTimestampOrdering() is the only thing that can ever set it. That is what makes
+    // "unordered implies a consumer asked for it" structural rather than a convention every
+    // construction site happens to follow. There used to be a tsOrderedFrames constructor
+    // parameter, passed true at all five sites; it is gone because a knob nobody turns states
+    // a contract the code does not actually rely on.
     private boolean unorderedFramesPermitted;
 
     public CoveringIndexRecordCursorFactory(
@@ -237,8 +244,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             @Nullable IntList patternKeys,
             @Nullable RecordCursorFactory backup,
             boolean backupOwnsKeyFunctions,
-            boolean isBackupSuppressedByHint,
-            boolean tsOrderedFrames
+            boolean isBackupSuppressedByHint
     ) {
         // keyValueFuncs (IN/= key list) and patternKeys (positive pattern's matched key set) are two
         // mutually exclusive ways to drive the multi-key merge; never both.
@@ -256,7 +262,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.latestBy = latestBy;
         this.latestByFilter = latestByFilter;
         this.patternKeys = patternKeys;
-        this.unorderedFramesPermitted = !tsOrderedFrames;
         this.queryColToIncludeIdx = queryColToIncludeIdx;
         // Defensive copy. The caller passes intrinsicModel.keyValueFuncs, which is a
         // POOLED ObjList owned by the compiler's WhereClauseParser (ObjectPool<IntrinsicModel>).
