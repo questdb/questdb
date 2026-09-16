@@ -110,94 +110,21 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
 
     public void add(int frameIndex, @Transient PageFrame frame) {
         if (frameSizes.size() >= frameIndex + 1) {
-            // The page frame is already cached; covered stash was populated on the
-            // first call for this frame, so no patching is needed here.
+            if (describesCachedFrame(frameIndex, frame)) {
+                // The page frame is already cached; covered stash was populated on the
+                // first call for this frame, so no patching is needed here.
+                return;
+            }
+            // A scan that skips rows materializes a different set of frames than a full scan does: the
+            // skip discards whole frames and lands part-way into the one it stops at, so the frame that
+            // takes an index in one pass is not the frame that took it in the previous one. Serving the
+            // previous frame's addresses under this frame's row count reads past the end of its columns,
+            // so the index takes the frame the scan is about to read instead. Row IDs handed out before
+            // this point address the frames of the pass that produced them and do not survive it.
+            store(frameIndex, frame, false);
             return;
         }
-
-        // Covered-frame stash (mirrors the parquet stash below) built in the SAME pass as the
-        // native page addresses, so a plain (non-covered) frame pays no second per-column loop.
-        // A covered frame always reports NATIVE, so only the native branch can populate this; for
-        // a parquet (or any non-covered) frame covered stays null and we store sentinels below.
-        boolean[] covered = null;
-        int[] columnInclude = null;
-        final byte format = frame.getFormat();
-        if (format == PartitionFormat.NATIVE) {
-            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                pageAddresses.add(frame.getPageAddress(columnIndex));
-                pageSizes.add(frame.getPageSize(columnIndex));
-                if (ColumnType.isVarSize(columnTypes.getQuick(columnIndex))) {
-                    auxPageAddresses.add(frame.getAuxPageAddress(columnIndex));
-                    auxPageSizes.add(frame.getAuxPageSize(columnIndex));
-                } else {
-                    auxPageAddresses.add(0);
-                    auxPageSizes.add(0);
-                }
-                if (frame.getColumnSource(columnIndex) == DataSource.COVERED) {
-                    if (covered == null) {
-                        covered = new boolean[columnCount];
-                        columnInclude = new int[columnCount];
-                        Arrays.fill(columnInclude, -1);
-                    }
-                    covered[columnIndex] = true;
-                    columnInclude[columnIndex] = frame.getCoveredIncludeIndex(columnIndex);
-                }
-            }
-        } else {
-            // For parquet frames, we still need to reserve space in flat arrays
-            // to maintain consistent indexing, but values will be unused.
-            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                pageAddresses.add(0);
-                pageSizes.add(0);
-                auxPageAddresses.add(0);
-                auxPageSizes.add(0);
-            }
-            hasParquetFrames = true;
-        }
-
-        // Defensive consistency check: a covering frame produces its per-column
-        // DataSource.COVERED flags and its per-frame covered accessors together, so the
-        // two must agree. A future PageFrame wrapper that delegates some but not all of
-        // the covered accessors (the realistic failure mode) would otherwise silently
-        // record the frame as non-covered (or half-covered) here, no-op'ing the worker
-        // covered-decode arm and producing wrong/NULL columns with no error. -ea is on in
-        // all tests + CI, so this turns that silent corruption into a loud failure.
-        assert coveredMetadataConsistent(frame, covered, format);
-
-        frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
-        frameFormats.add(format);
-        ParquetDecoder decoder = frame.getParquetDecoder();
-        parquetDecoders.add(decoder);
-        assert (decoder != null && decoder.getFileSize() > 0) || format != PartitionFormat.PARQUET;
-        parquetRowGroups.add(frame.getParquetRowGroup());
-        parquetRowGroupLos.add(frame.getParquetRowGroupLo());
-        parquetRowGroupHis.add(frame.getParquetRowGroupHi());
-        rowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
-        indexRowLos.add(frame.getIndexRowLo());
-
-        // Covered-frame stash populated in the native pass above. Single-key covered frames are
-        // metadata-only at production (CoveringPageFrameCursor#finalizeFrame emits PLACEHOLDER
-        // zero addresses), so those flat entries are 0 and the worker covered arm
-        // (PageFrameMemoryPool#patchCoveredFrameMemory) re-decodes and rebinds; multi-key
-        // (VALUE_NOT_FOUND) covered frames carry real eager addresses the worker arm leaves alone.
-        coveredColumns.add(covered);
-        coveredColumnIncludes.add(columnInclude);
-        if (covered != null) {
-            coveredKeys.add(frame.getCoveredKey());
-            coveredRowLos.add(frame.getCoveredRowLo());
-            coveredRowHis.add(frame.getCoveredRowHi());
-            coveredIncludeIndices.add(frame.getCoveredIncludeIndices());
-            // The covered frame carries a single per-partition posting reader;
-            // column/direction are advisory (see CoveringPageFrame#getIndexReader).
-            coveredIndexReaders.add(frame.getIndexReader(0, IndexReader.DIR_FORWARD));
-            hasCoveredFrames = true;
-        } else {
-            coveredKeys.add(SymbolTable.VALUE_NOT_FOUND);
-            coveredRowLos.add(-1);
-            coveredRowHis.add(-1);
-            coveredIncludeIndices.add(null);
-            coveredIndexReaders.add(null);
-        }
+        store(frameIndex, frame, true);
     }
 
     /**
@@ -545,6 +472,156 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             }
         } else {
             parquetDecoders.setQuick(frameIndex, frame.getParquetDecoder());
+        }
+    }
+
+    /**
+     * Tells whether the entry cached at {@code frameIndex} already stands for {@code frame}, i.e. the two
+     * describe the same rows in the same partition, in the same format. Only then do the cached addresses
+     * belong to the frame the caller is adding, and only then may {@link #add(int, PageFrame)} keep them.
+     */
+    private boolean describesCachedFrame(int frameIndex, @Transient PageFrame frame) {
+        final byte format = frame.getFormat();
+        if (frameFormats.getQuick(frameIndex) != format
+                || frameSizes.getQuick(frameIndex) != frame.getPartitionHi() - frame.getPartitionLo()
+                || rowIdOffsets.getQuick(frameIndex) != Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo())
+                || indexRowLos.getQuick(frameIndex) != frame.getIndexRowLo()) {
+            return false;
+        }
+        if (format == PartitionFormat.PARQUET) {
+            return parquetRowGroups.getQuick(frameIndex) == frame.getParquetRowGroup()
+                    && parquetRowGroupLos.getQuick(frameIndex) == frame.getParquetRowGroupLo()
+                    && parquetRowGroupHis.getQuick(frameIndex) == frame.getParquetRowGroupHi()
+                    && parquetDecoders.getQuick(frameIndex) == frame.getParquetDecoder();
+        }
+        return true;
+    }
+
+    /**
+     * Writes the frame's addresses and structure into the {@code frameIndex} slot, either appending a new
+     * slot ({@code append}) or overwriting the one a previous scan pass left there.
+     */
+    private void store(int frameIndex, @Transient PageFrame frame, boolean append) {
+        final int offset = frameIndex * columnCount;
+        // Covered-frame stash (mirrors the parquet stash below) built in the SAME pass as the
+        // native page addresses, so a plain (non-covered) frame pays no second per-column loop.
+        // A covered frame always reports NATIVE, so only the native branch can populate this; for
+        // a parquet (or any non-covered) frame covered stays null and we store sentinels below.
+        boolean[] covered = null;
+        int[] columnInclude = null;
+        final byte format = frame.getFormat();
+        if (format == PartitionFormat.NATIVE) {
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                final long auxAddress;
+                final long auxSize;
+                if (ColumnType.isVarSize(columnTypes.getQuick(columnIndex))) {
+                    auxAddress = frame.getAuxPageAddress(columnIndex);
+                    auxSize = frame.getAuxPageSize(columnIndex);
+                } else {
+                    auxAddress = 0;
+                    auxSize = 0;
+                }
+                if (append) {
+                    pageAddresses.add(frame.getPageAddress(columnIndex));
+                    pageSizes.add(frame.getPageSize(columnIndex));
+                    auxPageAddresses.add(auxAddress);
+                    auxPageSizes.add(auxSize);
+                } else {
+                    pageAddresses.set(offset + columnIndex, frame.getPageAddress(columnIndex));
+                    pageSizes.set(offset + columnIndex, frame.getPageSize(columnIndex));
+                    auxPageAddresses.set(offset + columnIndex, auxAddress);
+                    auxPageSizes.set(offset + columnIndex, auxSize);
+                }
+                if (frame.getColumnSource(columnIndex) == DataSource.COVERED) {
+                    if (covered == null) {
+                        covered = new boolean[columnCount];
+                        columnInclude = new int[columnCount];
+                        Arrays.fill(columnInclude, -1);
+                    }
+                    covered[columnIndex] = true;
+                    columnInclude[columnIndex] = frame.getCoveredIncludeIndex(columnIndex);
+                }
+            }
+        } else {
+            // For parquet frames, we still need to reserve space in flat arrays
+            // to maintain consistent indexing, but values will be unused.
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                if (append) {
+                    pageAddresses.add(0);
+                    pageSizes.add(0);
+                    auxPageAddresses.add(0);
+                    auxPageSizes.add(0);
+                } else {
+                    pageAddresses.set(offset + columnIndex, 0);
+                    pageSizes.set(offset + columnIndex, 0);
+                    auxPageAddresses.set(offset + columnIndex, 0);
+                    auxPageSizes.set(offset + columnIndex, 0);
+                }
+            }
+            hasParquetFrames = true;
+        }
+
+        // Defensive consistency check: a covering frame produces its per-column
+        // DataSource.COVERED flags and its per-frame covered accessors together, so the
+        // two must agree. A future PageFrame wrapper that delegates some but not all of
+        // the covered accessors (the realistic failure mode) would otherwise silently
+        // record the frame as non-covered (or half-covered) here, no-op'ing the worker
+        // covered-decode arm and producing wrong/NULL columns with no error. -ea is on in
+        // all tests + CI, so this turns that silent corruption into a loud failure.
+        assert coveredMetadataConsistent(frame, covered, format);
+
+        final long frameSize = frame.getPartitionHi() - frame.getPartitionLo();
+        final ParquetDecoder decoder = frame.getParquetDecoder();
+        assert (decoder != null && decoder.getFileSize() > 0) || format != PartitionFormat.PARQUET;
+        final long rowIdOffset = Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo());
+        // Covered-frame stash populated in the native pass above. Single-key covered frames are
+        // metadata-only at production (CoveringPageFrameCursor#finalizeFrame emits PLACEHOLDER
+        // zero addresses), so those flat entries are 0 and the worker covered arm
+        // (PageFrameMemoryPool#patchCoveredFrameMemory) re-decodes and rebinds; multi-key
+        // (VALUE_NOT_FOUND) covered frames carry real eager addresses the worker arm leaves alone.
+        final int coveredKey = covered != null ? frame.getCoveredKey() : SymbolTable.VALUE_NOT_FOUND;
+        final long coveredRowLo = covered != null ? frame.getCoveredRowLo() : -1;
+        final long coveredRowHi = covered != null ? frame.getCoveredRowHi() : -1;
+        final int[] coveredIncludes = covered != null ? frame.getCoveredIncludeIndices() : null;
+        // The covered frame carries a single per-partition posting reader;
+        // column/direction are advisory (see CoveringPageFrame#getIndexReader).
+        final IndexReader coveredReader = covered != null ? frame.getIndexReader(0, IndexReader.DIR_FORWARD) : null;
+        if (covered != null) {
+            hasCoveredFrames = true;
+        }
+
+        if (append) {
+            frameSizes.add(frameSize);
+            frameFormats.add(format);
+            parquetDecoders.add(decoder);
+            parquetRowGroups.add(frame.getParquetRowGroup());
+            parquetRowGroupLos.add(frame.getParquetRowGroupLo());
+            parquetRowGroupHis.add(frame.getParquetRowGroupHi());
+            rowIdOffsets.add(rowIdOffset);
+            indexRowLos.add(frame.getIndexRowLo());
+            coveredColumns.add(covered);
+            coveredColumnIncludes.add(columnInclude);
+            coveredKeys.add(coveredKey);
+            coveredRowLos.add(coveredRowLo);
+            coveredRowHis.add(coveredRowHi);
+            coveredIncludeIndices.add(coveredIncludes);
+            coveredIndexReaders.add(coveredReader);
+        } else {
+            frameSizes.setQuick(frameIndex, frameSize);
+            frameFormats.setQuick(frameIndex, format);
+            parquetDecoders.setQuick(frameIndex, decoder);
+            parquetRowGroups.setQuick(frameIndex, frame.getParquetRowGroup());
+            parquetRowGroupLos.setQuick(frameIndex, frame.getParquetRowGroupLo());
+            parquetRowGroupHis.setQuick(frameIndex, frame.getParquetRowGroupHi());
+            rowIdOffsets.setQuick(frameIndex, rowIdOffset);
+            indexRowLos.setQuick(frameIndex, frame.getIndexRowLo());
+            coveredColumns.setQuick(frameIndex, covered);
+            coveredColumnIncludes.setQuick(frameIndex, columnInclude);
+            coveredKeys.setQuick(frameIndex, coveredKey);
+            coveredRowLos.setQuick(frameIndex, coveredRowLo);
+            coveredRowHis.setQuick(frameIndex, coveredRowHi);
+            coveredIncludeIndices.setQuick(frameIndex, coveredIncludes);
+            coveredIndexReaders.setQuick(frameIndex, coveredReader);
         }
     }
 }
