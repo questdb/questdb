@@ -286,6 +286,25 @@ vm_wait_console() {  # RUNDIR TOKEN TIMEOUT
 # ORDERING IS LOAD-BEARING: this must only ever run AFTER the guest has armed
 # drop_writes. Reverse the order and a write can reach durability during the
 # join window, which is the exact failure this design exists to exclude.
+# KILL THE VM ON EVERY EXIT PATH, not just the ones someone remembered.
+#
+# Observed, not theorised: two t06 runs that FAILED left their qemu alive, because t06 kills
+# the VM at the end of phase one and on the success path, and has seven exit paths in between.
+# A leaked VM is not merely a stray process -- it holds its qemu.pid, and reap-state.sh refuses
+# any directory whose pid is alive, so the run dir becomes permanently unreapable and surfaces
+# later at check-host.sh's free-space gate looking like an infrastructure outage. The same
+# defect was fixed in lib/preflight.sh; counting exits against vm_kill calls says t01, t05,
+# t07, run-flush-sweep.sh, run-sf-replay.sh and run-st8-probe.sh are candidates too (issues/23).
+#
+# This kills only. It does NOT remove the run dir: keeping the disks on failure is deliberate
+# elsewhere in this harness, and a live qemu is exactly what stops that evidence being reaped
+# later. vm_kill is idempotent, so an explicit vm_kill on the success path stays correct.
+VM_KILL_ON_EXIT_DIR=""
+vm_kill_on_exit() {  # RUNDIR
+    VM_KILL_ON_EXIT_DIR="$1"
+    trap '[ -n "$VM_KILL_ON_EXIT_DIR" ] && vm_kill "$VM_KILL_ON_EXIT_DIR"' EXIT INT TERM
+}
+
 vm_kill() {  # RUNDIR
     local pid
     pid="$(cat "$1/qemu.pid" 2>/dev/null)" || return 0

@@ -109,6 +109,11 @@ fi
 STATE_DIR="${QDB_VMCRASH_STATE:-/data/qdb-vmcrash}"
 BASE="$STATE_DIR/base"; KEY="$BASE/id_ed25519"
 RUN="$STATE_DIR/t06"; rm -rf "$RUN"; mkdir -p "$RUN"
+# Seven of this file's exit paths sit between the replay boot and the verdict, and none of them
+# killed the VM: only the phase-one kill and the success path did. Two failing runs during the
+# reset work left a live qemu each, which also makes the run dir unreapable for good. Armed here
+# rather than after the boot, so an early bail cannot outrun it.
+vm_kill_on_exit "$RUN"
 
 qemu-img create -f qcow2 -b "$BASE/golden.qcow2" -F qcow2 "$RUN/overlay.qcow2" >/dev/null
 # ONE definition of the data device's size: it is the truncate argument AND pass B's dd
