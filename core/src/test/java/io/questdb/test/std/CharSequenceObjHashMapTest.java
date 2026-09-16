@@ -78,6 +78,27 @@ public class CharSequenceObjHashMapTest {
         }
     }
 
+    @Test
+    public void testRemoveAtQuick() {
+        final CharSequenceObjHashMap<Integer> map = new CharSequenceObjHashMap<>();
+        final String first = "first";
+        final String middle = "middle";
+        final String last = "last";
+        map.put(first, 1);
+        map.put(middle, 2);
+        map.put(last, 3);
+
+        map.removeAtQuick(map.keyIndex(middle), 1);
+
+        Assert.assertEquals(2, map.size());
+        Assert.assertEquals(-1, map.remove(middle));
+        Assert.assertSame(first, map.keys().getQuick(0));
+        Assert.assertSame(last, map.keys().getQuick(1));
+        Assert.assertEquals(Integer.valueOf(1), map.get(first));
+        Assert.assertEquals(Integer.valueOf(3), map.get(last));
+        Assert.assertTrue(map.keys().hasOnlyNullsBeyondSizeForTesting());
+    }
+
     private void assertKeys(CharSequenceObjHashMap<Object> map, ReadOnlyObjList<CharSequence> keys) {
         for (int j = 0, n = keys.size(); j < n; j++) {
             Assert.assertNotNull(map.get(keys.getQuick(j)));
