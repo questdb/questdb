@@ -11957,6 +11957,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * This is the consumer declaring what it needs, rather than the base guessing.
      * A LIMIT over an ordered scan must NOT do this: it relies on the ordered stream
      * to stop early, and losing that turns O(limit) into O(n log n).
+     * <p>
+     * The CAPABILITY half is deliberately not tested here. Per-key mode exists only on the
+     * page-frame path, and both call sites below do sit under a {@code supportsPageFrameCursor()}
+     * test -- but that is routing, held by the consumer, not something either party declares. The
+     * base refuses the offer itself when it has no page-frame cursor; see
+     * {@code CoveringIndexRecordCursorFactory#tryDisableTimestampOrdering}. Repeating the check
+     * here would leave two guards where only one is exercised by a test.
      */
     private static boolean offerUnorderedScan(
             RecordCursorFactory base,

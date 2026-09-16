@@ -225,6 +225,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // weaker answer and delivering the stronger one is pessimistic, never wrong.
     // Always false for single-key and latestBy, which never merge in the first place.
     // <p>
+    // The permission never outruns the CAPABILITY: tryDisableTimestampOrdering() refuses unless
+    // supportsPageFrameCursor() is true, so this field cannot be set on a factory that has no
+    // page-frame path to run per-key on. Without that check a backup-carrying factory -- which
+    // advertises no page frames at all -- could be granted the permission and would then report
+    // SCAN_DIRECTION_OTHER and print "frames: per-key (unordered)" for a mode it can never run.
+    // <p>
     // A factory is always BORN timestamp-ordered: the field has no constructor argument, so
     // tryDisableTimestampOrdering() is the only thing that can ever set it. That is what makes
     // "unordered implies a consumer asked for it" structural rather than a convention every
@@ -911,6 +917,28 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             boolean hasOrderSensitiveAggregates,
             @Nullable ListColumnFilter groupByKeyColumns
     ) {
+        // Per-key mode lives ONLY on the page-frame path, so a factory that produces no page
+        // frames cannot run it and must not be granted it. Today that means a factory carrying a
+        // backup: supportsPageFrameCursor() conjoins backup == null, because the compiler cannot
+        // know which of the two delegates an open will pick, and no index-scan backup has frames.
+        // <p>
+        // No caller can currently reach that combination: all three sites that can make the offer
+        // -- the two offerUnorderedScan() calls in SqlCodeGenerator and the vectorized site that
+        // calls this method directly -- sit behind a supportsPageFrameCursor() test, so a
+        // backup-carrying base is routed to the serial group by before any offer is made. That is
+        // a property of ROUTING, though, held by the consumer, and the whole point of this method
+        // is that a safety-critical property must be DECLARED rather than inferred. The backup
+        // term in supportsPageFrameCursor() arrived in a6f64f5cfe (#7559) and is what opened this
+        // gap -- exactly the kind of change that shifts routing quietly. So the capability is
+        // checked here, where it is stated, rather than left to three call sites that happen to
+        // test it and every future one that may not.
+        // <p>
+        // It is checked BEFORE the field write: every plan-time reader -- getScanDirection(),
+        // toPlan(), producesMaterializedPageFrames() -- reads unorderedFramesPermitted, so a guard
+        // placed after the write would return false and still have flipped the declaration.
+        if (!supportsPageFrameCursor()) {
+            return false;
+        }
         // Only the multi-key merge pays for ordering: single-key frames are already
         // per-key, and multi-key latestBy has its own ordering contract.
         if (latestBy || multiKeyPageFrameCursor == null) {
