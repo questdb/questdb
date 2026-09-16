@@ -628,7 +628,33 @@ stages:
               set -uo pipefail
               sudo apt-get update
               sudo apt-get install -y openjdk-25-jdk maven build-essential zip \
-                                      qemu-system-x86 qemu-utils genisoimage libcap2-bin
+                                      qemu-system-x86 qemu-utils genisoimage libcap2-bin acl
+
+              # Take the /dev/kvm grant HERE, after the install, because the install is what
+              # takes it away. qemu-system-common's postinst reloads and triggers the udev
+              # rules, and `KERNEL=="kvm", GROUP="kvm"` chowns the node back to root:kvm --
+              # discarding whatever the Incus profile put there at container start. That is
+              # the whole history of this gate: build 270612 passed with root:kvm 0666, where
+              # the 0666 came from a hot-plugged device and made the owner irrelevant; build
+              # 270627 failed with root:kvm 0660 on an identically configured agent, because
+              # its node was created at container start, where Incus 7.1 ignores `mode`.
+              #
+              # An ACL for this user is immediate (it is evaluated at open(2), so the running
+              # agent process needs no new session), it is the narrowest grant that works, and
+              # taking it after the disturbance means no container-image or profile change can
+              # silently undo it. The gate two steps below is still the authority: if this
+              # fails, the run stops there and says so.
+              if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+                echo "/dev/kvm already readable+writable by $(id -un)"
+              else
+                echo "/dev/kvm not usable by $(id -un) after the qemu install; taking an ACL"
+                ls -l /dev/kvm || true
+                sudo setfacl -m "u:$(id -un):rw" /dev/kvm \
+                  || { echo "setfacl failed; falling back to a mode grant"; sudo chmod 0666 /dev/kvm; }
+              fi
+              ls -l /dev/kvm || true
+              getfacl -p /dev/kvm 2>/dev/null | sed 's/^/  /' || true
+
               JAVA_PATH="/usr/lib/jvm/java-25-openjdk-amd64"
               echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
               echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
