@@ -101,7 +101,26 @@ vm_boot() {
         -pidfile "$rundir/qemu.pid"
         -daemonize
     )
-    [ -n "$data" ] && args+=( -drive "file=$data,if=virtio,format=raw,cache=$dcache,aio=threads" )
+    # DISCARD, on the DATA disk only, and OFF by default.
+    #
+    # The replay path needs to RESET the data device between boundaries (see replay_reset_cmd
+    # below). A 40 GiB dd costs ~40 s per boundary and is unaffordable at 1.9 s/point; an
+    # unmapping discard costs 8 ms for the whole device, measured.
+    #
+    # Default "ignore" because the RECORDING boot must not be perturbed: with unmap, a discard
+    # issued by mkfs or by the workload becomes a real hole AND is logged by dm-log-writes as a
+    # DISCARD entry, which changes what the recording contains. Only the replay boot sets this.
+    #
+    # QEMU's own default is also "ignore", and that is a TRAP, not a safe default: the guest
+    # still advertises discard support (discard_granularity=512, discard_max_bytes=2 GiB) and
+    # blkdiscard still returns success in 8 ms -- having reverted nothing. A reset built on it
+    # is a silent no-op, so replay_reset_cmd's caller MUST assert the reset really zeroes.
+    local ddiscard="${QDB_VM_DATA_DISCARD:-ignore}"
+    case "$ddiscard" in
+        ignore|unmap) ;;
+        *) echo "REFUSING: QDB_VM_DATA_DISCARD=$ddiscard is not one of ignore|unmap" >&2; return 64 ;;
+    esac
+    [ -n "$data" ] && args+=( -drive "file=$data,if=virtio,format=raw,cache=$dcache,aio=threads,discard=$ddiscard" )
     [ -n "$logdisk" ] && args+=( -drive "file=$logdisk,if=virtio,format=raw,cache=$dcache,aio=threads" )
     [ -n "$seed" ] && args+=( -drive "file=$seed,if=virtio,format=raw,media=cdrom,readonly=on" )
 
@@ -109,6 +128,73 @@ vm_boot() {
     echo >> "$rundir/cmdline"
     echo "$port" > "$rundir/ssh_port"
     qemu-system-x86_64 "${args[@]}"
+}
+
+# THE DEVICE RESET, and the assertion that it is real. ONE definition, because there are five
+# replay call sites (run-flush-sweep.sh main loop and densify, t06, t07, t10, run-sf-replay.sh)
+# and a reset that is present at some of them and absent at others is worse than none: it makes
+# the guard and the instrument disagree about what a boundary means.
+#
+# WHY A RESET IS NEEDED AT ALL. dm-log-writes is a PASS-THROUGH target: during the recording
+# every write reaches /dev/vdb as well as the log. After the reboot the data device therefore
+# still holds the FINAL crashed state, and replaying to boundary N re-applies the writes up to
+# N but cannot revert the ones issued after it. Mounting then runs ext4 journal recovery, which
+# writes -- so boundary N+1 also inherits boundary N's recovered state. Without a reset,
+# "everything after the boundary is gone" -- the README's central claim -- is simply not true,
+# and because every payload byte is a deterministic function of the row id, the leftover future
+# bytes are VALID bytes: the corruption oracle cannot tell "this block was durable" from "this
+# block still holds the end-of-run value". The error is in the direction of FALSE GREEN.
+#
+# run-st8-probe.sh:398-406 states this and zeroes with dd. t06 zeroes 64 MiB. The instrument
+# itself zeroed nothing. This is that fix, at a price the instrument can afford.
+#
+# QDB_REPLAY_RESET: blkdiscard (default) | none.
+#   none reproduces the pre-fix behaviour and exists for ONE reason -- the A/B that measures
+#   what the reset changes. It is not a performance knob; a sweep run with none is not evidence
+#   about the product, only about the instrument.
+replay_reset_cmd() {
+    case "${QDB_REPLAY_RESET:-blkdiscard}" in
+        none)       echo "true" ;;
+        # -f is NOT cosmetic. Every replay puts an ext4 signature back on the device, so from
+        # the second boundary on, blkdiscard sees a filesystem it is about to destroy. util-linux
+        # 2.39.3 (noble) warns and proceeds with rc=0 -- MEASURED, including that the device then
+        # reads as zeros -- but that behaviour is a deprecation away from a hard refusal, and a
+        # refusal would silently return the sweep to replaying onto the previous boundary's
+        # state. -f states the intent the sweep actually has.
+        blkdiscard) echo "sudo blkdiscard -f /dev/vdb" ;;
+        *) echo "false  # REFUSING: QDB_REPLAY_RESET=${QDB_REPLAY_RESET} is not one of blkdiscard|none" ;;
+    esac
+}
+
+# ASSERT THE RESET IS REAL, once, before the first replay. Not optional paranoia: with QEMU's
+# default discard=ignore the guest still advertises discard and blkdiscard still returns 0 in
+# 8 ms having reverted NOTHING (measured). That produces exactly the blended-state sweep this
+# reset exists to prevent, while looking like it worked. Writes a pattern, discards, requires
+# zeros back. Destroys the passed-through final state -- which is the point, and every later
+# boundary resets anyway.
+replay_reset_assert() {  # PORT KEY
+    local port="$1" key="$2" out
+    [ "${QDB_REPLAY_RESET:-blkdiscard}" = none ] && return 0
+    out=$(vm_ssh "$port" "$key" "
+        sudo dd if=/dev/urandom of=/dev/vdb bs=1M count=1 seek=1024 conv=fsync status=none
+        before=\$(sudo dd if=/dev/vdb bs=1M count=1 skip=1024 status=none | md5sum | cut -d' ' -f1)
+        $(replay_reset_cmd) || { echo 'RESET_REFUSED'; exit 1; }
+        after=\$(sudo dd if=/dev/vdb bs=1M count=1 skip=1024 status=none | md5sum | cut -d' ' -f1)
+        zero=\$(head -c 1048576 /dev/zero | md5sum | cut -d' ' -f1)
+        if [ \"\$after\" = \"\$zero\" ]; then echo RESET_REAL
+        elif [ \"\$after\" = \"\$before\" ]; then echo RESET_IGNORED
+        else echo RESET_PARTIAL; fi" 2>&1)
+    case "$out" in
+        *RESET_REAL*) return 0 ;;
+        *RESET_IGNORED*)
+            echo "LOUD_FAILURE: blkdiscard returned success and reverted nothing." >&2
+            echo "  The data drive was booted without discard=unmap, so the reset is a no-op and" >&2
+            echo "  every boundary would be replayed onto the previous boundary's state." >&2
+            echo "  Boot the replay VM with QDB_VM_DATA_DISCARD=unmap." >&2
+            return 1 ;;
+        *) echo "LOUD_FAILURE: device reset self-check did not report RESET_REAL: $out" >&2
+           return 1 ;;
+    esac
 }
 
 vm_ssh() {  # PORT KEY CMD...

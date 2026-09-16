@@ -275,8 +275,15 @@ vm_kill "$RUN"
 rm -f "$RUN/overlay.qcow2"
 qemu-img create -f qcow2 -b "$BASE/golden.qcow2" -F qcow2 "$RUN/overlay.qcow2" >/dev/null
 P2=$(vm_free_port)
-vm_boot "$RUN" "$RUN/overlay.qcow2" "$RUN/data.raw" "$P2" "" "$RUN/log.raw"
+# THE REPLAY BOOT, and the only boot that gets discard=unmap. The recording boot above must not
+# have it: an unmapping discard issued by the workload would become a DISCARD entry in the
+# dm-log-writes log and change what was recorded. Here there is nothing left to record, and the
+# data device has to be resettable between boundaries -- see replay_reset_cmd in lib/qemu.sh.
+QDB_VM_DATA_DISCARD=unmap vm_boot "$RUN" "$RUN/overlay.qcow2" "$RUN/data.raw" "$P2" "" "$RUN/log.raw"
 vm_wait_ssh "$P2" "$KEY" 240 || { keep; echo "LOUD_FAILURE: guest never rebooted"; exit 1; }
+RESET_CMD="$(replay_reset_cmd)"
+echo "  device reset between boundaries: ${QDB_REPLAY_RESET:-blkdiscard}"
+replay_reset_assert "$P2" "$KEY" || { keep; exit 1; }
 vm_scp "$P2" "$KEY" "$HERE/../../../benchmarks/target/benchmarks.jar" /opt/vmcrash/benchmarks.jar
 vm_scp_dir "$P2" "$KEY" "$HERE/guest" /opt/vmcrash/
 [ "$ARM" = product ] && vm_scp "$P2" "$KEY" "$DIST_TGZ" /opt/vmcrash/questdb-dist.tar.gz
@@ -329,6 +336,7 @@ JUNIT_CLASS="durability.$ARM.$MODE.W$WINDOW.$PROFILE"
 for n in $points; do
     point_started=$(date +%s)
     out=$(vm_ssh "$P2" "$KEY" "sudo umount /mnt/qdb 2>/dev/null; sudo dmsetup remove qdbdata 2>/dev/null; \
+        $RESET_CMD; \
         sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --replay /dev/vdb --to-flush $n 2>&1 | tail -1; \
         sudo mkdir -p /mnt/qdb; \
         if sudo mount ${QDB_FS_MOUNT_OPTS:+-o ${QDB_FS_MOUNT_OPTS}} /dev/vdb /mnt/qdb 2>/dev/null; then \
@@ -373,7 +381,12 @@ if [ -n "$failed_points" ] && [ "${QDB_SWEEP_DENSIFY:-true}" = "true" ]; then
             [ "$n" -lt 1 ] && continue
             [ "$n" -gt "$nflush" ] && continue
             point_started=$(date +%s)
+            # The densify pass replays BACKWARDS (f-2, f-1), so it is the call site that needs
+            # the reset most: without it the bracket around a failure is measured on the state
+            # of the HIGHER boundary just verified, and a bracket built on a blended state
+            # cannot bracket.
             out=$(vm_ssh "$P2" "$KEY" "sudo umount /mnt/qdb 2>/dev/null; sudo dmsetup remove qdbdata 2>/dev/null; \
+                $RESET_CMD; \
                 sudo python3 /opt/vmcrash/guest/replay-log.py --log /dev/vdc --replay /dev/vdb --to-flush $n 2>&1 | tail -1; \
                 sudo mkdir -p /mnt/qdb; \
                 if sudo mount ${QDB_FS_MOUNT_OPTS:+-o ${QDB_FS_MOUNT_OPTS}} /dev/vdb /mnt/qdb 2>/dev/null; then \
