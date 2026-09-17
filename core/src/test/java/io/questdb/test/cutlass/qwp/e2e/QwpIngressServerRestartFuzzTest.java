@@ -565,7 +565,9 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                     assertQuery(
                             "SELECT count_distinct(id) cnt FROM " + TABLE_NAME)
                             .noLeakCheck()
-                            .returnsOnce("cnt\n" + (2L * rowsPerPhase) + "\n");
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("cnt\n" + (2L * rowsPerPhase) + "\n");
                 }
             });
         } finally {

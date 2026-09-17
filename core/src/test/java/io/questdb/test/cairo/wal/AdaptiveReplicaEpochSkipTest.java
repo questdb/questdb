@@ -68,7 +68,9 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
                 // still writes the columns, so the row is readable.
                 assertQuery("select count() from x")
                         .noLeakCheck()
-                        .returnsOnce("""
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
                                 count
                                 1
                                 """);
@@ -156,7 +158,9 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
                 // Visibility is unaffected — lazy apply still wrote the columns.
                 assertQuery("select count() from x")
                         .noLeakCheck()
-                        .returnsOnce("""
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
                                 count
                                 1
                                 """);

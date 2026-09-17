@@ -94,7 +94,8 @@ public class AdaptiveReplicaBlockFileSkipTest extends AbstractCairoTest {
                 // Visibility is unaffected — skipping the fsync doesn't skip the write itself.
                 assertQuery("select sym, price from price_1h")
                         .noLeakCheck()
-                        .returnsOnce("""
+                        .expectSize()
+                        .returns("""
                                 sym\tprice
                                 gbpusd\t1.32
                                 """);
@@ -124,7 +125,8 @@ public class AdaptiveReplicaBlockFileSkipTest extends AbstractCairoTest {
 
             assertQuery("select sym, price from price_1h")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .expectSize()
+                    .returns("""
                             sym\tprice
                             gbpusd\t1.32
                             """);
@@ -157,7 +159,8 @@ public class AdaptiveReplicaBlockFileSkipTest extends AbstractCairoTest {
                 // Visibility is unaffected — the new definition is readable regardless of the sync skip.
                 assertQuery("select refresh_limit, refresh_limit_unit from materialized_views")
                         .noLeakCheck()
-                        .returnsOnce("""
+                        .noRandomAccess()
+                        .returns("""
                                 refresh_limit\trefresh_limit_unit
                                 2\tHOUR
                                 """);
