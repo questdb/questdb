@@ -1756,7 +1756,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     continue;
                 }
                 final String columnName = tableWriterMetadata.getColumnName(columnIndex);
-                final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getWriterIndex();
+                // Parquet field_id is the original writer index, stable across ALTER COLUMN TYPE.
+                final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getOriginalWriterIndex();
                 final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
                 final boolean notTheTimestamp = columnIndex != timestampIndex;
                 final boolean isNotNull = tableWriterMetadata.isNotNull(columnIndex);
