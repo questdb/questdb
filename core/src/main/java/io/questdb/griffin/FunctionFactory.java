@@ -134,6 +134,13 @@ public interface FunctionFactory {
      * is chosen, or failing that by sorting. Sorting the base of a query that contains no such function
      * would be a full-cardinality materialisation nobody asked for, which is why the answer has to stay
      * false by default.
+     * <p>
+     * This is the stronger of the engine's two order-sensitivity registries. The weaker one,
+     * {@code SqlOptimiser.orderedGroupByFunctions}, holds first(), first_not_null(), last() and
+     * last_not_null(); it only preserves an ORDER BY the query already carries and does not obtain one,
+     * because those four return a different answer over an unordered base rather than refusing. The two
+     * sets are disjoint on purpose, and the reasoning - including what declaring this flag on those four
+     * was measured to cost - is recorded next to that set.
      *
      * @return true if the produced function requires ascending designated-timestamp order from its base
      */

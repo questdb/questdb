@@ -178,6 +178,32 @@ public class SqlOptimiser implements Mutable {
     private static final IntHashSet limitTypes = new IntHashSet();
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
     private static final CharSequenceHashSet nullConstants = new CharSequenceHashSet();
+    /**
+     * Aggregates whose answer depends on the order their base hands rows over in. Read by
+     * {@link #hasOrderedGroupByFunc(ExpressionNode)}, which raises the model's order-by mnemonic to
+     * ORDER_BY_REQUIRED so an ORDER BY below is preserved rather than elided.
+     * <p>
+     * This is the WEAKER of the two order-sensitivity registries in the engine, and the difference is
+     * deliberate. The stronger one is {@link FunctionFactory#requiresAscendingDesignatedTimestamp()},
+     * indexed by name in {@link FunctionFactoryCache#isAscendingTimestampOrdered(CharSequence)} and
+     * declared today by twap() and sparkline() only. A function that declares it will have the order
+     * OBTAINED for it - the requirement restated on the base so the planner picks an ordered plan, or
+     * failing that a sort - because those two integrate across adjacent rows and refuse a base that
+     * does not provide the order.
+     * <p>
+     * The four names below do not refuse. Over a base that concatenates rather than merges they return
+     * the first or last row of the concatenation, which is not the earliest or latest in time - master
+     * does the same, and so does this release. Declaring the stronger flag on them would repair that,
+     * and was measured: it turns first()/last() over a UNION ALL into a merge, costs a sort over the
+     * aggregate for a keyed GROUP BY or LATEST ON base, and retains the base's designated timestamp in
+     * the projection of EVERY first()/last() query in the product - an extra column read on the most
+     * common aggregate shape in a time-series database, for which SqlOptimiserTest carries eight
+     * assertions that exist to pin the narrow projection. That is a behaviour and performance change to
+     * a surface far wider than the ordering corrections this registry pair came out of, so it is a
+     * decision of its own rather than a detail of one. See
+     * ScanDirectionContractTest#testFirstAndLastOverUnionAllDisagreeWithTheOrderedForm, which pins what
+     * they do today so the gap stays measured rather than assumed.
+     */
     private final static LowerCaseAsciiCharSequenceHashSet orderedGroupByFunctions;
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final CharacterStore characterStore;
