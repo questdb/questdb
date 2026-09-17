@@ -60,7 +60,8 @@ import java.util.zip.CRC32;
  * <p>
  * This is not hypothetical, and it is not the same question as the cross-version restore in
  * {@link LiveViewCheckpointReleaseCompatTest}. That case reads a tree an older build wrote,
- * and the answer there is "restore it". This case is the other direction: a user upgrades,
+ * and the answer there is "rebuild the view from its base table and retire the older tree".
+ * This case is the other direction: a user upgrades,
  * the newer build seals through its own writers, and the user then rolls back - or a mixed-
  * version cluster puts an older binary in front of a newer node's files. The answer there
  * cannot be "restore it", because this build does not know the shape. It has to be "notice,

@@ -56,8 +56,8 @@ import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
  * <p>
  * Both directions live here. {@link LiveViewCheckpointReleaseCompatTest} and
  * {@link LiveViewCheckpointReleaseShapesCompatTest} read trees an older, released build wrote
- * and expect the format block; {@link LiveViewCheckpointForwardCompatTest} reads a tree shaped
- * the way a newer build would write one and expects either the same block or a refusal and a
+ * and expect the upgrade rebuild; {@link LiveViewCheckpointForwardCompatTest} reads a tree shaped
+ * the way a newer build would write one and expects either the format block or a refusal and a
  * rebuild, depending on which gate the shape trips. They need the same things - a database root
  * the engine will open, a way to see which shape the head carries, a way to read the format
  * version a directory declares, and a way to state that not one of its files moved.
@@ -122,9 +122,10 @@ public abstract class AbstractLiveViewCheckpointCompatTest extends AbstractLiveV
     }
 
     /**
-     * Counts every file under a directory tree. The blocked disposition is about what does
-     * <b>not</b> happen to those files, and a count of them is the cheapest statement of it that
-     * an accidental partial reset cannot satisfy.
+     * Counts every file under a directory tree. The blocked disposition, and the catalogue load
+     * ahead of an upgrade rebuild, are about what does <b>not</b> happen to those files, and a
+     * count of them is the cheapest statement of it that an accidental partial reset cannot
+     * satisfy.
      */
     protected static long countFiles(File root) throws IOException {
         try (Stream<java.nio.file.Path> walk = java.nio.file.Files.walk(root.toPath())) {

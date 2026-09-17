@@ -451,6 +451,16 @@ public class LiveViewInstance implements QuietCloseable {
     // is another thread.
     private volatile int checkpointRecoveryPhase = LiveViewCheckpointRecoveryPhase.NONE;
     private volatile String checkpointRecoveryReason;
+    // Whether the view still owes the rebuild from its base table that an older checkpoint
+    // format asks for, and the operator text live_views() reports while it does. A flag
+    // rather than a phase: the phase is one field that a rebuild deferral overwrites and
+    // clears, and a view deferring its upgrade rebuild on apply lag still owes it. Derived
+    // rather than persisted, like a format block: the catalogue load sets it from the older
+    // superblock on every restart, and the refresh worker clears it, under the refresh latch,
+    // once the retire has removed that superblock. The reason goes down before the flag, so
+    // a reader that sees the flag sees its reason. Volatile for live_views().
+    private volatile boolean checkpointUpgradeRebuildPending;
+    private volatile String checkpointUpgradeRebuildReason;
     // Lifetime counts of the two destructive events a restart witness has to rule
     // out: applied-base rebuilds this instance started (one per restart at most
     // today, since the restore attempt is single-shot) and whole-timeline
@@ -1516,6 +1526,14 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return the operator text that goes with a pending upgrade rebuild, or null when
+     * none is pending. See {@link #isCheckpointUpgradeRebuildPending()}
+     */
+    public String getCheckpointUpgradeRebuildReason() {
+        return checkpointUpgradeRebuildReason;
+    }
+
+    /**
      * @return the {@code LiveViewCheckpointRestoreRoute} constant naming the route
      * this view's single restart recovery attempt took, or
      * {@link LiveViewCheckpointRestoreRoute#NONE} while no attempt has completed
@@ -2017,13 +2035,15 @@ public class LiveViewInstance implements QuietCloseable {
     public boolean isCheckpointRestoreSucceeded() {
         final int route = checkpointRestoreRoute;
         return route == LiveViewCheckpointRestoreRoute.TIMELINE_RESTORE
-                || route == LiveViewCheckpointRestoreRoute.FALLBACK_REBUILD;
+                || route == LiveViewCheckpointRestoreRoute.FALLBACK_REBUILD
+                || route == LiveViewCheckpointRestoreRoute.UPGRADE_REBUILD;
     }
 
     /**
-     * @return true when this view's checkpoint timeline declares a format version
-     * this build does not implement. The one kind of block that is about the files
-     * rather than the history: see {@link #isCheckpointRecoveryBlocked()}
+     * @return true when this view's checkpoint timeline declares a newer format
+     * version than this build implements. The one kind of block that is about the
+     * files rather than the history: see {@link #isCheckpointRecoveryBlocked()}. An
+     * older version is no block; see {@link #isCheckpointUpgradeRebuildPending()}
      */
     public boolean isCheckpointFormatBlocked() {
         return checkpointRecoveryPhase == LiveViewCheckpointRecoveryPhase.BLOCKED;
@@ -2058,6 +2078,17 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public boolean isCheckpointRebuildDeferred() {
         return checkpointRecoveryPhase == LiveViewCheckpointRecoveryPhase.REBUILD_DEFERRED;
+    }
+
+    /**
+     * @return true while this view, carried over from an older checkpoint format, still
+     * owes the rebuild from its base table that replaces its output and retires the older
+     * directory. The view is not stopped and not invalid: its first refresh turn runs the
+     * rebuild, or defers it while the base has not applied what the view consumed. Set at
+     * catalogue load, cleared once the older {@code _timeline} is gone
+     */
+    public boolean isCheckpointUpgradeRebuildPending() {
+        return checkpointUpgradeRebuildPending;
     }
 
     public boolean isInvalid() {
@@ -2171,7 +2202,7 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * Stops this view against the checkpoint format boundary. The caller has read
-     * a format version this build does not implement and has removed, rewritten
+     * a newer format version than this build implements and has removed, rewritten
      * and decoded nothing; this makes the refresh worker decline the view, so
      * nothing rebuilds its output from base rows that may no longer be the ones it
      * was built from.
@@ -2237,6 +2268,27 @@ public class LiveViewInstance implements QuietCloseable {
         // Reason first, as for a block: a reader that sees the phase sees its reason.
         checkpointRecoveryReason = reason.toString();
         checkpointRecoveryPhase = LiveViewCheckpointRecoveryPhase.REBUILD_DEFERRED;
+    }
+
+    /**
+     * Records that this view's checkpoint timeline declares an older format version, which
+     * this build does not read, and that the view owes a rebuild from its base table. The
+     * catalogue load calls this before the refresh worker has seen the view, after a
+     * reconciliation that removed and decoded nothing.
+     * <p>
+     * Unlike {@link #markCheckpointRecoveryBlocked} this stops nothing: the view keeps its
+     * status, its base WAL floor and its place in the refresh rotation, and its first refresh
+     * turn runs the rebuild. {@link #clearCheckpointUpgradeRebuildPending()} ends it.
+     *
+     * @param fromFormatVersion the format version the older timeline declares
+     */
+    public void markCheckpointUpgradeRebuildPending(int fromFormatVersion) {
+        // Reason first: a reader that sees the flag sees its reason.
+        checkpointUpgradeRebuildReason = "checkpoint timeline format version " + fromFormatVersion
+                + " was written by an older build (supported version " + LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION
+                + "); the view rebuilds from its base table on its first refresh and then checkpoints in the supported format."
+                + " Rows the base table no longer holds, after TTL, DROP/DETACH PARTITION or TRUNCATE, are not rebuilt";
+        checkpointUpgradeRebuildPending = true;
     }
 
     public void markAsDropped() {
@@ -2395,6 +2447,19 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Ends the pending upgrade rebuild. The refresh worker calls this under the refresh latch
+     * once a retire has removed the older {@code _timeline}, whichever retire that was: the
+     * upgrade rebuild's own, a seed sweep's, or the one repeated seal failures take. Until
+     * then the older superblock is still on disk, a restart would re-derive the pending
+     * rebuild from it, and so the flag stays.
+     */
+    public void clearCheckpointUpgradeRebuildPending() {
+        // Flag first, reason second, the reverse of the way in.
+        checkpointUpgradeRebuildPending = false;
+        checkpointUpgradeRebuildReason = null;
+    }
+
+    /**
      * Releases this primary's local timeline WAL-retention ownership, and with it
      * every figure describing the generation that ownership referred to. The
      * caller has just removed the timeline, so reporting the retired
@@ -2520,8 +2585,8 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * Records that the refresh worker declined this view's restart recovery
-     * because its timeline declares a format version this build does not
-     * implement. Emitted from the turn that declined, so the route names a
+     * because its timeline declares a newer format version than this build
+     * implements. Emitted from the turn that declined, so the route names a
      * decision that was actually taken rather than one derived from a flag.
      * <p>
      * Every turn over a blocked view declines it, and the idle scan takes many.
@@ -2547,11 +2612,20 @@ public class LiveViewInstance implements QuietCloseable {
     /**
      * Records that the applied-base rebuild finished and the view's derived state
      * came from the base table rather than from a published root. No generation or
-     * checkpoint id goes with it: the rebuild retired the timeline before it
-     * replayed, so there is no root to name.
+     * checkpoint id goes with it: the rebuild retired the timeline before its
+     * replacement committed, so there is no root to name.
      */
     public void recordCheckpointRestoreRebuilt() {
         checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.FALLBACK_REBUILD;
+    }
+
+    /**
+     * Records that the rebuild an older checkpoint format asks for finished, and that the
+     * view's derived state came from the base table. Emitted from the branch that ran it.
+     * No generation or checkpoint id goes with it: this build never read the older roots.
+     */
+    public void recordCheckpointRestoreUpgradeRebuilt() {
+        checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.UPGRADE_REBUILD;
     }
 
     /**

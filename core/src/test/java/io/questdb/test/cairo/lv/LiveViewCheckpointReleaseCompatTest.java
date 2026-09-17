@@ -27,9 +27,9 @@ package io.questdb.test.cairo.lv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
-import io.questdb.cairo.lv.LiveViewCheckpointRestoreRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
 import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewRebuildRestatementGuard;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
@@ -42,27 +42,26 @@ import java.io.File;
 import java.io.IOException;
 
 /**
- * What this build does with a checkpoint tree the released 10.0.1 build wrote: it blocks.
+ * What this build does with a checkpoint tree the released 10.0.1 build wrote: it rebuilds the
+ * view from its base table, on the view's first refresh, with no operator action.
  * <p>
  * 10.0.1 sealed an anchored view's state as a separate anchor root ({@code PAGE_KIND = 0x1b})
  * plus a function root per window call ({@code 0x18}). This build publishes one fused
  * {@code LiveViewCheckpointWindowRoot} ({@code 0x1d}) instead and carries no decoder for the
- * older shape at all, so it declares a higher {@code SLOT_FORMAT_VERSION} and stops at any
- * directory that declares another one. The tree is preserved to the file, the rows it
- * materialized are still served, and the way out is the operator's.
+ * older shape at all, so it declares a higher {@code SLOT_FORMAT_VERSION}. Live views were beta in
+ * 10.0.x, so a view that build left behind is not stopped for the operator to re-create: this
+ * build runs the same recompute a DROP and re-create would, from the base rows available today,
+ * and retires the released directory once the rebuild's replacement has committed.
  * <p>
- * That is a deliberate reversal of what this class used to assert. The earlier cut restored the
- * released roots through a retained decoder and converted them on the next seal; the decoder is
- * gone with the layout it read. Blocking rather than rebuilding is the point: this build cannot
- * show that replaying today's surviving base rows reproduces the output those roots stand for,
- * because TTL, DROP/DETACH PARTITION and TRUNCATE all take source rows a live view keeps its own
- * output for. So it stops and says so, and the operator decides.
+ * That recompute is also what it costs. A base that lost rows the view retained - TTL,
+ * DROP/DETACH PARTITION, TRUNCATE - comes back without them, and the restatement guard that
+ * refuses such a rebuild on every other route stands down for this one; the view logs what it can
+ * see of the loss and keeps refreshing. One case here pins that ending too.
  * <p>
- * {@link LiveViewCheckpointForwardCompatTest} pins the same block against a synthetic version -
- * a superblock this suite stamped. This class is the one that pins it against a version no test
- * wrote: a whole database root emitted by an unmodified 10.0.1 checkout and never touched by a
- * writer from this branch. A block that only ever fired on bytes the suite forged would prove
- * nothing about a real upgrade.
+ * {@link LiveViewCheckpointUpgradeRebuildTest} pins the crash, fault and deferral behaviour of the
+ * same route against a synthetic older version - a superblock that suite stamped. This class pins
+ * it against a version no test wrote: a whole database root emitted by an unmodified 10.0.1
+ * checkout and never touched by a writer from this branch.
  * <p>
  * To regenerate the fixture, copy {@code /lv/LiveViewReleaseFixtureGenerator.java.txt} into a
  * clean {@code 10.0.1} checkout's {@code io.questdb.test.cairo.lv} package and run it; the
@@ -96,120 +95,175 @@ public class LiveViewCheckpointReleaseCompatTest extends AbstractLiveViewCheckpo
     }
 
     @Test
-    public void testAReleasedCheckpointTreeBlocksTheViewAndKeepsEveryFile() throws Exception {
+    public void testAReleasedCheckpointTreeRebuildsTheViewFromItsBase() throws Exception {
         assertMemoryLeak(() -> {
             final long checkpointFilesBefore = openFixture();
             final File checkpointsRoot = checkpointsRoot("lv");
 
             // The premise, read out of the released bytes rather than out of the decision under
-            // test: this really is a directory another build wrote in a version this one does not
+            // test: this really is a directory an older build wrote in a version this one does not
             // implement.
             Assert.assertEquals(
                     "the fixture must declare the version 10.0.1 stamped",
                     RELEASED_FORMAT_VERSION,
                     readSuperblockFormatVersion(checkpointsRoot)
             );
-            Assert.assertNotEquals(
-                    "a fixture that declares this build's own version cannot exercise the boundary",
-                    LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION,
-                    RELEASED_FORMAT_VERSION
+            Assert.assertTrue(
+                    "a fixture that does not declare an older version cannot exercise the upgrade",
+                    RELEASED_FORMAT_VERSION < LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION
             );
 
-            // The boundary gate, not the reset one. A version this build does not implement is
-            // another build's generation announcing itself, and the directory is held for it.
+            // The upgrade arm, not the block and not the reset. The catalogue load decides it off
+            // the superblock alone, and rebuilds nothing yet.
             capture.drain();
-            capture.assertLogged("live view checkpoint timeline declares an unsupported format version");
+            capture.assertLogged("live view checkpoint timeline was written by an older format, rebuilding from base [view=");
+            capture.assertNotLogged("live view checkpoint timeline declares an unsupported format version");
             capture.assertNotLogged("live view checkpoint timeline carries a foreign layout version");
             capture.assertNotLogged("live view restart rebuilding from applied base");
 
             final LiveViewInstance instance = instance("lv");
-            Assert.assertTrue(instance.isCheckpointRecoveryBlocked());
-            // Not a durable invalidation - _lv.s.invalid stays clear, so a build that does read
-            // the released layout would resume this view with no operator action.
-            Assert.assertFalse("blocking must not write _lv.s.invalid", instance.isInvalid());
-            TestUtils.assertContains(
-                    instance.getCheckpointRecoveryReason(),
-                    "checkpoint timeline format version " + RELEASED_FORMAT_VERSION
-                            + " is not supported by this build"
-            );
-
-            // The refresh turn declined ahead of every other guard, so nothing opened a root.
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                driveRefreshToQuiescence(job);
-            }
+            Assert.assertTrue(instance.isCheckpointUpgradeRebuildPending());
+            Assert.assertFalse("an upgrade is not a block", instance.isCheckpointRecoveryBlocked());
+            Assert.assertFalse(instance.isInvalid());
             Assert.assertEquals(
-                    "upgrade_blocked",
-                    LiveViewCheckpointRestoreRoute.name(instance.getCheckpointRestoreRoute())
-            );
-            Assert.assertFalse(instance.isCheckpointRestoreAttempted());
-            Assert.assertEquals(0, instance.getCheckpointRebuildAttempts());
-            Assert.assertEquals(0, instance.getCheckpointTimelineResets());
-            Assert.assertEquals(
-                    "not one file of the released directory may move",
+                    "the catalogue load must not move a file of the released directory",
                     checkpointFilesBefore,
                     countFiles(checkpointsRoot)
             );
-            // And nothing below the superblock is reachable from here, which is what makes the
-            // file count the whole of what this build can say about the tree: the slots declare a
-            // version it does not implement, so its own meta store adopts no generation and the
-            // ladder underneath is neither read nor retired.
-            try (LiveViewCheckpointMetaStore store = openStore(instance)) {
-                Assert.assertFalse(
-                        "this build must not adopt a generation out of a blocked timeline",
-                        store.isValid()
-                );
-            }
-            assertNoRefreshFaults("lv");
-
-            // The rows the released build materialized are still served, and a new base commit
-            // does not move them: refresh is stopped, not merely restore.
-            final long processedBefore = instance.getLastProcessedSeqTxn();
+            // Until its first refresh turn the view serves the rows the released build
+            // materialized, and reports itself active with the rebuild it owes.
             assertReleasedRows();
+            assertQuery("SELECT view_status, checkpoint_recovery_phase, invalidation_reason, checkpoint_recovery_reason "
+                    + "FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_status\tcheckpoint_recovery_phase\tinvalidation_reason\tcheckpoint_recovery_reason\n"
+                            + "active\tupgrade_rebuild_pending\t\t" + instance.getCheckpointUpgradeRebuildReason() + "\n");
+            TestUtils.assertContains(
+                    instance.getCheckpointUpgradeRebuildReason(),
+                    "checkpoint timeline format version " + RELEASED_FORMAT_VERSION + " was written by an older build"
+            );
+
+            final LiveViewRebuildRestatementGuard guard;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                guard = job.rebuildRestatementGuardForTest();
+            }
+            capture.drain();
+            capture.assertLogged("live view restart rebuilding from applied base [view=lv, cause=timeline format upgrade");
+            capture.assertLogged("live view retired its older-format checkpoint timeline, the next seal writes the supported format [view=lv");
+            // The rebuild retired the released directory before its own post-replay seal, so no
+            // seal ever met the older superblock.
+            capture.assertNotLogged("could not write live view head checkpoint");
+            // Nothing below the superblock was ever decoded.
+            capture.assertNotLogged("could not restore live view from checkpoint timeline");
+            // The base still holds every row the view was built from, so nothing was restated.
+            capture.assertNotLogged("live view upgrade rebuild restates rows the view retained");
+            assertUpgradeRebuilt("lv");
+            Assert.assertEquals(1, instance.getCheckpointRebuildAttempts());
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_FORMAT_UPGRADE, guard.getAbstention());
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_NONE, guard.getVerdict());
+            assertNoRefreshFaults("lv");
+            assertReleasedRows();
+            assertViewMatchesRecompute();
+
+            // The rebuild's seal wrote this build's format in place of the released one.
+            Assert.assertEquals(
+                    LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION,
+                    readSuperblockFormatVersion(checkpointsRoot)
+            );
+            try (LiveViewCheckpointMetaStore store = openStore(instance)) {
+                Assert.assertTrue("the rebuilt view must publish a generation this build adopts", store.isValid());
+            }
+            assertQuery("SELECT view_status, checkpoint_recovery_phase, checkpoint_recovery_reason "
+                    + "FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_status\tcheckpoint_recovery_phase\tcheckpoint_recovery_reason\n"
+                            + "active\t\t\n");
+
+            // An ordinary view from here: a base commit refreshes incrementally, with no second
+            // rebuild, and a restart restores from the timeline the upgrade sealed.
             execute("INSERT INTO tx VALUES ('" + timestamp(50) + "', 'acct-1', 100.0)");
             drainWalQueue();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                for (int i = 0; i < 4; i++) {
-                    drainJob(job);
-                    drainWalQueue();
-                }
+                driveRefreshToQuiescence(job);
             }
-            assertReleasedRows();
-            Assert.assertEquals(
-                    "a blocked view must not advance its watermark",
-                    processedBefore,
-                    instance("lv").getLastProcessedSeqTxn()
-            );
+            Assert.assertEquals("the new commit must not rebuild", 1, instance.getCheckpointRebuildAttempts());
+            assertViewMatchesRecompute();
             assertNoRefreshFaults("lv");
 
-            // live_views() reports the status operators already search for, with the phase telling
-            // a format block apart from a durable invalidation.
-            assertQuery("SELECT view_status, checkpoint_recovery_phase, " +
-                    "invalidation_reason = checkpoint_recovery_reason AS reason_mirrored " +
-                    "FROM live_views() WHERE view_name = 'lv'")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .returns("view_status\tcheckpoint_recovery_phase\treason_mirrored\n" +
-                            "invalid\tblocked\ttrue\n");
-
-            // The disposition is derived from the superblock on every start, so a restart reaches
-            // it again with no marker of its own, and is as harmless as the first pass.
             restartCycle();
-            Assert.assertTrue(instance("lv").isCheckpointRecoveryBlocked());
-            Assert.assertEquals(checkpointFilesBefore, countFiles(checkpointsRoot));
-            Assert.assertEquals(RELEASED_FORMAT_VERSION, readSuperblockFormatVersion(checkpointsRoot));
-            assertReleasedRows();
+            Assert.assertFalse(instance("lv").isCheckpointUpgradeRebuildPending());
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
+            assertNoRefreshFaults("lv");
         });
     }
 
     @Test
-    public void testTheOperatorsReCreateIsTheWayOutOfABlockedReleasedTimeline() throws Exception {
+    public void testAReleasedViewWhoseBaseLostRowsRebuildsWithoutThem() throws Exception {
         assertMemoryLeak(() -> {
             openFixture();
-            Assert.assertTrue(instance("lv").isCheckpointRecoveryBlocked());
+            Assert.assertTrue(instance("lv").isCheckpointUpgradeRebuildPending());
 
-            // The documented exit, run as an operator would run it. SHOW CREATE LIVE VIEW has to
-            // work on a blocked view - the definition is what the re-create is built from - and
-            // its output has to re-execute, or the procedure the block points at is not one.
+            // The base loses the hour the view's every row came from before the view's first
+            // refresh turn, which is what an upgrade meets after TTL or DROP PARTITION ran on a
+            // base whose view kept its rows. A later hour's row keeps the base from being empty.
+            execute("INSERT INTO tx VALUES ('2026-01-01T10:00:00.000000Z', 'acct-1', 100.0)");
+            drainWalQueue();
+            execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-01T09'");
+            drainWalQueue();
+            assertReleasedRows();
+
+            final LiveViewRebuildRestatementGuard guard;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                guard = job.rebuildRestatementGuardForTest();
+            }
+
+            // The rebuild ran rather than refused - the guard would have refused it on any other
+            // route, off the same two transaction files - and the one thing that says the view
+            // lost rows is the advisory line.
+            capture.drain();
+            capture.assertLogged("live view upgrade rebuild restates rows the view retained [view=lv"
+                    + ", viewMinTs=2026-01-01T09:00:00.000000Z, baseRows=1, baseMinTs=2026-01-01T10:00:00.000000Z]");
+            capture.assertNotLogged("live view rebuild from the applied base refused");
+            assertUpgradeRebuilt("lv");
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_FORMAT_UPGRADE, guard.getAbstention());
+            assertNoRefreshFaults("lv");
+
+            // Fewer rows than the released view served: a recompute from what the base holds now.
+            assertQuery("SELECT created_at, account_id, cumulative_sum, cumulative_count FROM lv")
+                    .noLeakCheck()
+                    .timestamp("created_at")
+                    .expectSize()
+                    .returns("created_at\taccount_id\tcumulative_sum\tcumulative_count\n" +
+                            "2026-01-01T10:00:00.000000Z\tacct-1\t100.0\t1\n");
+            assertViewMatchesRecompute();
+            Assert.assertEquals(
+                    LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION,
+                    readSuperblockFormatVersion(checkpointsRoot("lv"))
+            );
+
+            // Settled: a restart restores from the rebuilt view's own seal, with no guard asking
+            // about the hour the base lost, because the view no longer holds it.
+            restartCycle();
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
+    public void testTheOperatorsReCreateStillWorksOnAReleasedView() throws Exception {
+        assertMemoryLeak(() -> {
+            openFixture();
+            Assert.assertTrue(instance("lv").isCheckpointUpgradeRebuildPending());
+
+            // The exit a 10.0.x view used to need, still available to an operator who would
+            // rather re-create than wait for the first refresh turn. SHOW CREATE LIVE VIEW has to
+            // work on a view that has not rebuilt yet, and its output has to re-execute.
             printSql("SHOW CREATE LIVE VIEW lv;");
             final String releasedDdl = sink.toString().replace("ddl\n", "");
             execute("DROP LIVE VIEW lv");
@@ -221,25 +275,19 @@ public class LiveViewCheckpointReleaseCompatTest extends AbstractLiveViewCheckpo
             }
 
             final LiveViewInstance recreated = instance("lv");
-            Assert.assertFalse("the re-created view must not be blocked", recreated.isCheckpointRecoveryBlocked());
+            Assert.assertFalse("the released directory went with the dropped view", recreated.isCheckpointUpgradeRebuildPending());
+            Assert.assertFalse(recreated.isCheckpointRecoveryBlocked());
             Assert.assertFalse(recreated.isInvalid());
+            Assert.assertEquals("a re-created view seeds rather than rebuilds", 0, recreated.getCheckpointRebuildAttempts());
             assertNoRefreshFaults("lv");
 
-            // A fresh directory, declaring this build's version - the released one went with the
-            // dropped view rather than being converted in place.
+            // A fresh directory, declaring this build's version.
             Assert.assertEquals(
                     LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION,
                     readSuperblockFormatVersion(checkpointsRoot("lv"))
             );
-
-            // The rows are a recomputation from the base rows available today, which is what makes
-            // this a separate operation rather than completion of an upgrade: had the base since
-            // lost history to TTL, DROP/DETACH PARTITION or TRUNCATE, they would differ from what
-            // the released view served - deliberately, and by the operator's own hand.
             assertViewMatchesRecompute();
 
-            // And it is an ordinary view from here: it seals its own timeline and a restart comes
-            // back on it.
             execute("INSERT INTO tx VALUES ('" + timestamp(50) + "', 'acct-1', 100.0)");
             drainWalQueue();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -258,8 +306,8 @@ public class LiveViewCheckpointReleaseCompatTest extends AbstractLiveViewCheckpo
     }
 
     /**
-     * Asserts the view still serves exactly the rows the released build materialized. Read
-     * through the ordinary cursor, so it covers what a user querying a blocked view gets.
+     * Asserts the view serves exactly the rows the released build materialized. Read through the
+     * ordinary cursor, so it covers what a user querying the view gets.
      */
     private void assertReleasedRows() throws Exception {
         assertQuery("SELECT created_at, account_id, cumulative_sum, cumulative_count FROM lv")
@@ -297,7 +345,7 @@ public class LiveViewCheckpointReleaseCompatTest extends AbstractLiveViewCheckpo
     }
 
     /**
-     * Unpacks the fixture and loads its catalogue, which is where the block is decided, and
+     * Unpacks the fixture and loads its catalogue, which is where the upgrade is decided, and
      * reports the file count the released tree arrived with. The count is taken before the
      * catalogue load so it is the released inventory rather than one this build has already had
      * an opportunity to change.

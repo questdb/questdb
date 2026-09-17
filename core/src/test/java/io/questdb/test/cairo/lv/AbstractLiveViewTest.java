@@ -240,6 +240,29 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
+     * Asserts the named view, carried over from an older checkpoint format, rebuilt its whole
+     * window from the applied base on the upgrade route, and that the rebuild retired the older
+     * directory: nothing is pending any more. Distinct from
+     * {@link #assertRebuiltFromAppliedBase(String)}, whose route a view that merely lost its
+     * timeline takes, with the restatement guard armed.
+     */
+    protected void assertUpgradeRebuilt(String viewName) {
+        final LiveViewInstance instance = restoreWitnessInstance(viewName);
+        assertRestoreRoute(viewName, LiveViewCheckpointRestoreRoute.UPGRADE_REBUILD, instance);
+        Assert.assertTrue(
+                "live view '" + viewName + "' took the upgrade route without starting a rebuild",
+                instance.getCheckpointRebuildAttempts() > 0
+        );
+        Assert.assertTrue(instance.isCheckpointRestoreSucceeded());
+        Assert.assertFalse(
+                "live view '" + viewName + "' rebuilt, but its older-format timeline is still pending retirement",
+                instance.isCheckpointUpgradeRebuildPending()
+        );
+        Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+        Assert.assertFalse(instance.isInvalid());
+    }
+
+    /**
      * Asserts the named view's restart recovery restored its window state from a published timeline
      * root, and that nothing rebuilt or reset on the way there.
      * <p>

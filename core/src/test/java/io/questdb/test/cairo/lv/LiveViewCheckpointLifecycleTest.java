@@ -55,6 +55,13 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.stream.Stream;
+
 public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
 
     private static final LongList EMPTY_SEGMENT_IDS = new LongList();
@@ -90,6 +97,7 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
                 result = LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true);
             }
             Assert.assertTrue(result.isFormatBlocked());
+            Assert.assertFalse("a newer version is a rollback, not an upgrade", result.isFormatUpgrade());
             Assert.assertFalse(result.isFormatReset());
             Assert.assertEquals(
                     LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 1,
@@ -191,6 +199,7 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
             }
             Assert.assertTrue(result.isFormatReset());
             Assert.assertFalse(result.isFormatBlocked());
+            Assert.assertFalse(result.isFormatUpgrade());
             Assert.assertEquals(
                     LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
                     result.getForeignFormatVersion()
@@ -232,6 +241,7 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
                 result = LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true);
             }
             Assert.assertTrue(result.isFormatBlocked());
+            Assert.assertFalse("a newer version is a rollback, not an upgrade", result.isFormatUpgrade());
             Assert.assertFalse("blocking is the opposite disposition to resetting", result.isFormatReset());
             Assert.assertEquals(
                     LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 1,
@@ -482,34 +492,89 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSupersededTimelineVersionBlocksInTheUpgradeDirection() throws Exception {
+    public void testSupersededTimelineVersionRefusesASealOverIt() throws Exception {
+        assertMemoryLeak(() -> {
+            ensureDirs();
+            publish(1, 1, 7, 0, 5);
+            declareTimelineFormatVersion(0, LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION - 1);
+            final Map<String, byte[]> filesBefore = snapshotCheckpointFiles();
+
+            // The writer's backstop, which an upgrade must not narrow. No reader accepts the
+            // older slot, so an append that went past its reconciliation would find both
+            // slots invalid and publish this build's superblock over the older build's
+            // segments: the mixed-format directory the boundary exists to prevent. The
+            // upgrade rebuild retires the older directory before its first seal; a seal that
+            // still meets it refuses.
+            try (
+                    LiveViewCheckpointTimelineStoreWriter writer = new LiveViewCheckpointTimelineStoreWriter(configuration);
+                    Path dir = checkpointsDir()
+            ) {
+                writer.append(
+                        dir, new ObjList<>(), null, 7, 0, 2, 2, 0, LIFECYCLE_IDENTITY, true, 10, 1,
+                        Numbers.LONG_NULL, Numbers.LONG_NULL, null
+                );
+                Assert.fail("a seal over an older-format timeline must refuse");
+            } catch (CairoException e) {
+                Assert.assertEquals(CairoException.LV_CHECKPOINT_FORMAT_BLOCKED, e.getErrno());
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "[version=" + (LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION - 1)
+                );
+            }
+            assertCheckpointFilesUnchanged(filesBefore);
+        });
+    }
+
+    @Test
+    public void testSupersededTimelineVersionReportsAnUpgradeAndTouchesNothing() throws Exception {
         assertMemoryLeak(() -> {
             ensureDirs();
             publish(1, 1, 7, 0, 5);
             touchFinal(false, 4);
+            // A repair that crashed with its candidate staged. The sweep that discards one runs
+            // below the format gate, and an upgrade must not reach it any more than a block does.
+            try (
+                    LiveViewCheckpointRepairState state = new LiveViewCheckpointRepairState(configuration);
+                    Path dir = checkpointsDir()
+            ) {
+                state.begin(dir, 31, 7, 0, 2, 31, 30, 1_000, 500, 800, 2_000, HighBoundTag.FINITE);
+                state.addOwnedSegmentId(11);
+                state.recordStage(RepairPublicationStage.CANDIDATE_ROOTS_AND_RUNTIME_READY);
+            }
 
-            // The migration direction, which is the one a released build would
-            // actually meet: a slot an EARLIER layout wrote. Both fields an older
-            // build stamps sit at offsets that do not move across versions, so this
-            // is what its file looks like to this one. The version it declares is
-            // one this build does not implement either way - the boundary is not
-            // directional - so an upgrade blocks exactly as a downgrade does, and
-            // for the same reason: a rebuild would replace output built from history
-            // this build cannot prove is still there.
-            supersedeTimelineFormatVersion(0);
+            // The migration direction, which is the one a released build would actually meet:
+            // a slot an EARLIER layout wrote, naming its version in both fields that carry one,
+            // as a real 10.0.x slot does. This build reads none of it, and the upgrade rebuilds
+            // the view from its base table instead. The reconciliation's part is to say so and
+            // leave every byte where it is: the older superblock is what re-derives the pending
+            // rebuild on a restart that comes before the rebuild retires the directory.
+            declareTimelineFormatVersion(0, LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION - 1);
+            final Map<String, byte[]> filesBefore = snapshotCheckpointFiles();
 
             final LiveViewCheckpointLifecycle.ReconcileResult result;
             try (Path dir = checkpointsDir()) {
                 result = LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true);
             }
-            Assert.assertTrue(result.isFormatBlocked());
+            Assert.assertTrue(result.isFormatUpgrade());
+            Assert.assertTrue("an upgrade refines the block, so a seal still refuses on it", result.isFormatBlocked());
+            Assert.assertFalse("the older directory is the witness, not something to reset", result.isFormatReset());
             Assert.assertEquals(
                     LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION - 1,
                     result.getForeignFormatVersion()
             );
             Assert.assertFalse(result.isEpochReplaced());
-            Assert.assertTrue("the older build's directory is preserved whole", checkpointsDirExists());
-            Assert.assertTrue(timelineExists());
+            Assert.assertEquals(-1, result.getWalPurgeFloor());
+            Assert.assertEquals(Numbers.LONG_NULL, result.getNormalizedBaseSeqTxn());
+            Assert.assertNull(result.getStats());
+            Assert.assertEquals(0, result.getRemovedOrphanCount());
+            Assert.assertEquals(0, result.getDiscardedRepairCount());
+            assertCheckpointFilesUnchanged(filesBefore);
+
+            // Read off the superblock rather than consumed, so a restart reaches it again.
+            try (Path dir = checkpointsDir()) {
+                Assert.assertTrue(LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true).isFormatUpgrade());
+            }
+            assertCheckpointFilesUnchanged(filesBefore);
         });
     }
 
@@ -573,8 +638,52 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testUpgradableFormatVersionsAreTheOlderReleasedOnes() {
+        Assert.assertFalse(LiveViewCheckpointLifecycle.isUpgradableFormatVersion(LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT));
+        Assert.assertFalse("no released build wrote version 0", LiveViewCheckpointLifecycle.isUpgradableFormatVersion(0));
+        for (int version = 1; version < LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION; version++) {
+            Assert.assertTrue(LiveViewCheckpointLifecycle.isUpgradableFormatVersion(version));
+        }
+        Assert.assertFalse(LiveViewCheckpointLifecycle.isUpgradableFormatVersion(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION));
+        Assert.assertFalse(LiveViewCheckpointLifecycle.isUpgradableFormatVersion(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 1));
+    }
+
+    @Test
+    public void testVersionZeroDeclarationStillBlocks() throws Exception {
+        assertMemoryLeak(() -> {
+            ensureDirs();
+            publish(1, 1, 7, 0, 5);
+
+            // A magic nibble of 0 beside a version field of 0 names version 0 twice, which is a
+            // declaration, but no released build wrote it. It stays a block rather than an
+            // upgrade: nothing a real upgrade meets has this shape, so rebuilding on it would be
+            // acting on a layout nobody produced.
+            declareTimelineFormatVersion(0, 0);
+            final Map<String, byte[]> filesBefore = snapshotCheckpointFiles();
+
+            final LiveViewCheckpointLifecycle.ReconcileResult result;
+            try (Path dir = checkpointsDir()) {
+                result = LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true);
+            }
+            Assert.assertTrue(result.isFormatBlocked());
+            Assert.assertFalse(result.isFormatUpgrade());
+            Assert.assertFalse(result.isFormatReset());
+            Assert.assertEquals(0, result.getForeignFormatVersion());
+            assertCheckpointFilesUnchanged(filesBefore);
+        });
+    }
+
     private static Path checkpointsDir() {
         return new Path().of(configuration.getDbRoot()).concat(LV_DIR).concat("_checkpoints");
+    }
+
+    private void assertCheckpointFilesUnchanged(Map<String, byte[]> before) throws IOException {
+        final Map<String, byte[]> after = snapshotCheckpointFiles();
+        Assert.assertEquals("no file may be added or removed", before.keySet(), after.keySet());
+        for (Map.Entry<String, byte[]> entry : before.entrySet()) {
+            Assert.assertArrayEquals("file changed: " + entry.getKey(), entry.getValue(), after.get(entry.getKey()));
+        }
     }
 
     /**
@@ -667,6 +776,29 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
                     LiveViewCheckpointLayout.dataDirPath(path, dir).$()
             );
         }
+    }
+
+    /**
+     * Stamps the magic and layout version a build of {@code formatVersion} writes into
+     * {@code slot}, checksum and all. The magic's trailing nibble tracks the version, so
+     * a released 10.0.x slot carries both as 1.
+     */
+    private void declareTimelineFormatVersion(int slot, int formatVersion) {
+        withTimelineMemory(mem -> {
+            final long base = (long) slot * LiveViewCheckpointSuperblock.SLOT_SIZE;
+            mem.putLong(
+                    base + LiveViewCheckpointSuperblock.SLOT_MAGIC_OFFSET,
+                    LiveViewCheckpointSuperblock.SLOT_MAGIC_FAMILY | formatVersion
+            );
+            mem.putInt(
+                    base + LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET,
+                    formatVersion
+            );
+            mem.putInt(
+                    base + LiveViewCheckpointSuperblock.SLOT_CRC_OFFSET,
+                    Zip.crc32(0, mem.addressOf(base), LiveViewCheckpointSuperblock.SLOT_CRC_COVERAGE)
+            );
+        });
     }
 
     private void ensureDirs() {
@@ -819,29 +951,6 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
         }
     }
 
-    /**
-     * Stamps the magic and layout version an earlier build wrote into {@code slot}.
-     * The magic's trailing nibble tracks the version, so a build one version back
-     * carries both one lower.
-     */
-    private void supersedeTimelineFormatVersion(int slot) {
-        withTimelineMemory(mem -> {
-            final long base = (long) slot * LiveViewCheckpointSuperblock.SLOT_SIZE;
-            mem.putLong(
-                    base + LiveViewCheckpointSuperblock.SLOT_MAGIC_OFFSET,
-                    LiveViewCheckpointSuperblock.SLOT_MAGIC - 1
-            );
-            mem.putInt(
-                    base + LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET,
-                    LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION - 1
-            );
-            mem.putInt(
-                    base + LiveViewCheckpointSuperblock.SLOT_CRC_OFFSET,
-                    Zip.crc32(0, mem.addressOf(base), LiveViewCheckpointSuperblock.SLOT_CRC_COVERAGE)
-            );
-        });
-    }
-
     private boolean segmentExists(boolean metadata, long segmentId, boolean temporary) {
         try (Path dir = checkpointsDir(); Path path = new Path()) {
             if (metadata) {
@@ -857,6 +966,23 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
             }
             return configuration.getFilesFacade().exists(path.$());
         }
+    }
+
+    /**
+     * Every file under the checkpoint directory, by relative path, with its bytes. What a
+     * format disposition that must touch nothing is compared against.
+     */
+    private Map<String, byte[]> snapshotCheckpointFiles() throws IOException {
+        final Map<String, byte[]> files = new TreeMap<>();
+        try (Path dir = checkpointsDir()) {
+            final java.nio.file.Path root = Paths.get(dir.toString());
+            try (Stream<java.nio.file.Path> walk = Files.walk(root)) {
+                for (java.nio.file.Path file : (Iterable<java.nio.file.Path>) walk.filter(Files::isRegularFile)::iterator) {
+                    files.put(root.relativize(file).toString(), Files.readAllBytes(file));
+                }
+            }
+        }
+        return files;
     }
 
     private void touchFinal(boolean metadata, long segmentId) {

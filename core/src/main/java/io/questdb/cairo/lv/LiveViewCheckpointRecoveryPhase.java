@@ -26,19 +26,28 @@ package io.questdb.cairo.lv;
 
 /**
  * Names why a live view's recovery stopped rather than finished - a checkpoint
- * format this build cannot read, or a rebuild from the base table that would
- * change output the view already retains - or why it has not finished yet: a
- * rebuild that waits for its base table to apply what the view consumed.
+ * format newer than this build can read, or a rebuild from the base table that
+ * would change output the view already retains - or why it has not finished yet:
+ * a rebuild that waits for its base table to apply what the view consumed.
  * <p>
  * A checkpoint timeline declares its layout in {@code _timeline}'s superblock
  * ({@link LiveViewCheckpointSuperblock#SLOT_FORMAT_VERSION}). A build that meets
- * a version it does not implement knows one thing about the directory: another
+ * a newer version than it implements knows one thing about the directory: a later
  * build owns it. It cannot read the roots, cannot say what history they cover,
  * and cannot prove that rebuilding the view from the base table would reproduce
  * the rows the view is already serving - TTL, DROP/DETACH PARTITION and TRUNCATE
  * all remove source rows a live view keeps its own output for. So it neither
  * reads nor removes the directory: the view stops refreshing and everything it
- * has stays where it is, which is {@link #BLOCKED}.
+ * has stays where it is, which is {@link #BLOCKED}. Going forward to the build
+ * that wrote the directory resumes the view.
+ * <p>
+ * An older version is not a phase. Live views were beta in the builds that wrote
+ * those layouts, and this build rebuilds such a view from its base table on its
+ * first refresh, without {@link LiveViewRebuildRestatementGuard}: the rebuild is the
+ * same recompute an operator's DROP and re-create would run, taken on the operator's
+ * behalf. Until it runs, {@code live_views()} reports
+ * {@link #UPGRADE_REBUILD_PENDING_NAME} for the view, which stays {@code active}; a
+ * rebuild that waits for the base's apply reports {@link #REBUILD_DEFERRED} instead.
  * <p>
  * The same hazard reaches a view on this build's own format through every other
  * route into the whole-view rebuild from the applied base: a restart that finds
@@ -64,8 +73,9 @@ package io.questdb.cairo.lv;
  * <p>
  * No phase is persisted. A format block is re-derived from the superblock on
  * every restart, so it survives a restart without a marker file of its own, and a
- * build that does implement the version simply never reaches it. A rebuild block
- * is re-derived by the restart's own recovery: the view restores from its timeline
+ * build that does implement the version simply never reaches it. A pending upgrade
+ * rebuild is re-derived the same way, until the rebuild retires the older directory.
+ * A rebuild block is re-derived by the restart's own recovery: the view restores from its timeline
  * if it can, and otherwise meets the same rebuild and the same refusal. A deferral
  * lives only as long as the process: a restart recovers through its own restore and
  * rebuild, which wait for the apply in place rather than defer.
@@ -80,9 +90,10 @@ package io.questdb.cairo.lv;
  * shows.
  *
  * <h2>Why the block is where this ends, rather than a recovery</h2>
- * A recovery would have to prove that replaying the source history still
- * available reproduces the output the view is already serving. QuestDB retains
- * no evidence that can prove it: WAL segments are purged once applied, dropped
+ * For a newer format and for a refused rebuild, a recovery would have to prove that
+ * replaying the source history still available reproduces the output the view is
+ * already serving. QuestDB retains no evidence that can prove it: WAL segments are
+ * purged once applied, dropped
  * and detached partitions are not archived, and TTL eviction keeps no journal of
  * what it removed. So the database does not decide. It stops, says why, and
  * leaves the decision to the operator, whose re-CREATE is an explicit act with
@@ -117,16 +128,17 @@ package io.questdb.cairo.lv;
  */
 public final class LiveViewCheckpointRecoveryPhase {
     /**
-     * The view's checkpoint timeline declares a format version this build does
-     * not implement. Refresh and checkpoint publication are stopped for the view,
+     * The view's checkpoint timeline declares a newer format version than this
+     * build implements. Refresh and checkpoint publication are stopped for the view,
      * and its checkpoint directory, materialized rows and watermarks are left
      * exactly as they are. The view stays queryable over the rows it had, reports
      * {@code invalid} as its status, and releases its base WAL floor.
      */
     public static final int BLOCKED = 1;
     /**
-     * The view is on this build's own format, or has no timeline at all. The
-     * ordinary lifecycle applies.
+     * The view is on this build's own format, has no timeline at all, or is on an
+     * older format whose upgrade rebuild is still to run. The ordinary lifecycle
+     * applies.
      */
     public static final int NONE = 0;
     /**
@@ -152,6 +164,13 @@ public final class LiveViewCheckpointRecoveryPhase {
      * for.
      */
     public static final int REBUILD_DEFERRED = 3;
+    /**
+     * Not a phase value but the name {@code live_views()} reports for a view carried over
+     * from an older checkpoint format whose upgrade rebuild has not run yet. The view is
+     * {@code active}, keeps refreshing from its first turn on, and the rebuild clears it.
+     * {@link #REBUILD_DEFERRED} outranks it: its reason names the upgrade as the cause.
+     */
+    public static final String UPGRADE_REBUILD_PENDING_NAME = "upgrade_rebuild_pending";
 
     private LiveViewCheckpointRecoveryPhase() {
     }
@@ -178,5 +197,17 @@ public final class LiveViewCheckpointRecoveryPhase {
             case REBUILD_DEFERRED -> "rebuild_deferred";
             default -> null;
         };
+    }
+
+    /**
+     * @param phase                   one of the {@code LiveViewCheckpointRecoveryPhase} constants
+     * @param isUpgradeRebuildPending whether the view still owes the rebuild an older checkpoint
+     *                                format asks for
+     * @return the name {@code live_views()} reports: the phase's own name when there is a phase,
+     * {@link #UPGRADE_REBUILD_PENDING_NAME} when there is none and the upgrade rebuild is owed,
+     * and null otherwise
+     */
+    public static String name(int phase, boolean isUpgradeRebuildPending) {
+        return phase == NONE && isUpgradeRebuildPending ? UPGRADE_REBUILD_PENDING_NAME : name(phase);
     }
 }

@@ -100,8 +100,9 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      * Version 2 is the layout in which {@link LiveViewCheckpointWindowRoot} is the only
      * state root an anchored view publishes. Version 1 also admitted the separate anchor
      * root plus one function root per grouped window call; this build has no decoder for
-     * that shape, so a directory declaring version 1 is preserved and its view stopped
-     * rather than read. See {@link #foreignFormatVersion}.
+     * that shape, so a directory declaring version 1 is never read: its view rebuilds from
+     * the base table and the rebuild retires the directory. See {@link #foreignFormatVersion}
+     * and {@link LiveViewCheckpointLifecycle#isUpgradableFormatVersion}.
      */
     public static final int SLOT_FORMAT_VERSION = 2;
     public static final int SLOT_FORMAT_VERSION_OFFSET = 8;
@@ -271,8 +272,8 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      * and the released version 1 did the same - so another build's slot names one
      * version twice. One field alone names nothing. A version field that reads
      * foreign under this build's own nibble is what a single flipped bit in that
-     * field looks like, and blocking on it would cost the operator a DROP and
-     * re-CREATE for damage the other slot recovers from. Such a slot is left to
+     * field looks like, and acting on it would stop the view, or rebuild it from the
+     * base table, for damage the other slot recovers from. Such a slot is left to
      * {@link #isForeignFormat} and to ordinary A/B selection, which rejects it on
      * the magic, the version or the checksum and falls back.
      * <p>
@@ -292,9 +293,11 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      * rest is damage, which an intact slot beside it recovers from and a rebuild
      * of derived state otherwise clears.
      * <p>
-     * Either direction blocks: a build one version back declares a lower version,
-     * a build one version on a higher one, and neither is a layout this one can
-     * read.
+     * Either direction is reported: a build one version back declares a lower
+     * version, a build one version on a higher one, and neither is a layout this one
+     * can read. What follows differs by direction - a higher version blocks the view,
+     * a lower one rebuilds it from the base table - and is the caller's to decide; see
+     * {@link LiveViewCheckpointLifecycle#isUpgradableFormatVersion}.
      *
      * @return the foreign format version the first such slot declares, or
      * {@link #NO_FOREIGN_FORMAT} when neither slot declares one

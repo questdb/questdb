@@ -74,14 +74,23 @@ import org.jetbrains.annotations.Nullable;
  *
  * <p>A {@code _timeline} that does declare a format version, and declares one
  * this build does not implement, is the exception. That is the format boundary
- * rather than damage: another build's generation, announcing itself. Removing it
- * would rebuild the view's whole output from whatever source rows survive today,
- * which TTL, DROP/DETACH PARTITION and TRUNCATE can have moved on from, so the
- * reconciliation touches nothing and reports
- * {@link ReconcileResult#isFormatBlocked()} instead. The caller stops the view's
- * refresh, which leaves the operator to decide whether re-creating it from the
- * base rows available today is what they want; see
- * {@link LiveViewCheckpointRecoveryPhase}.</p>
+ * rather than damage: another build's generation, announcing itself. The
+ * reconciliation touches nothing and reports {@link ReconcileResult#isFormatBlocked()},
+ * and the direction of the declared version decides what the caller does next.</p>
+ *
+ * <p>A newer version is a rollback: this build meets a directory a later build owns.
+ * Removing it would rebuild the view's whole output from whatever source rows survive
+ * today, which TTL, DROP/DETACH PARTITION and TRUNCATE can have moved on from, and it
+ * would destroy what a return to that build needs. So the caller stops the view's
+ * refresh and holds the directory for it; see {@link LiveViewCheckpointRecoveryPhase}.</p>
+ *
+ * <p>An older version is an upgrade, and the result also reports
+ * {@link ReconcileResult#isFormatUpgrade()}. Live views were beta in the builds that
+ * wrote those layouts, and this build rebuilds such a view from its base table on its
+ * first refresh rather than asking the operator to re-create it. The reconciliation
+ * still leaves the directory whole: while the older superblock exists, every restart
+ * re-derives the pending rebuild from it, so a crash anywhere before the rebuild
+ * retires the directory repeats the rebuild instead of losing it.</p>
  *
  * <p>Neither disposition takes a {@code _timeline} whose one foreign-looking slot
  * is damaged beside an intact one. A slot declares a format by naming its version
@@ -117,7 +126,9 @@ public final class LiveViewCheckpointLifecycle {
      * A directory whose {@code _timeline} declares a format version this build
      * does not implement short-circuits every other rule and is left exactly as
      * it is: the result reports {@link ReconcileResult#isFormatBlocked()} and the
-     * version it read, and nothing on disk is opened, removed or rewritten.
+     * version it read, and nothing on disk is opened, removed or rewritten. A
+     * version below this build's own, and no lower than 1, additionally reports
+     * {@link ReconcileResult#isFormatUpgrade()}; see {@link #isUpgradableFormatVersion}.
      * <p>
      * A directory written under a foreign layout that declares no such version
      * short-circuits the same way but is removed whole, and the result reports
@@ -152,9 +163,19 @@ public final class LiveViewCheckpointLifecycle {
         // A timeline that names its own format goes first: a version this build
         // does not implement is another build's generation, and the whole
         // disposition is to leave it alone. Nothing below may open, remove or
-        // rewrite any part of it, the repair sweep included.
+        // rewrite any part of it, the repair sweep included. That holds for an
+        // older version too: its superblock is what tells every restart that the
+        // view still owes its upgrade rebuild.
         final int foreignFormatVersion = foreignTimelineFormatVersion(configuration, checkpointsDir);
         if (foreignFormatVersion != LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT) {
+            if (isUpgradableFormatVersion(foreignFormatVersion)) {
+                LOG.info().$("live view checkpoint timeline declares an older format version, leaving it for the upgrade rebuild [path=")
+                        .$(checkpointsDir)
+                        .$(", version=").$(foreignFormatVersion)
+                        .$(", supported=").$(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION)
+                        .I$();
+                return ReconcileResult.formatUpgrade(foreignFormatVersion);
+            }
             LOG.error().$("live view checkpoint timeline declares an unsupported format version, blocking [path=")
                     .$(checkpointsDir)
                     .$(", version=").$(foreignFormatVersion)
@@ -250,6 +271,7 @@ public final class LiveViewCheckpointLifecycle {
             return new ReconcileResult(
                     true,
                     false,
+                    false,
                     LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
                     -1,
                     Numbers.LONG_NULL,
@@ -271,6 +293,24 @@ public final class LiveViewCheckpointLifecycle {
         final CleanupResult cleanup = cleanupOrphans(configuration, checkpointsDir, nextSegmentIdCeiling);
         cleanup.add(uncatalogued);
         return result(false, walPurgeFloor, normalizedBaseSeqTxn, cleanup, purgeResult, stats, repairSweep);
+    }
+
+    /**
+     * Whether a declared checkpoint format version is one this build upgrades by rebuilding
+     * the view from its base table, rather than one it blocks on.
+     * <p>
+     * The rule is a range, {@code [1, SLOT_FORMAT_VERSION)}, rather than the one older
+     * version that exists today, so every later bump inherits it: a build that raises
+     * {@link LiveViewCheckpointSuperblock#SLOT_FORMAT_VERSION} rebuilds the views the build
+     * before it wrote. A bump that wants a real migration of the older layout instead - a
+     * decoder that restores from it - must opt that version out here.
+     * <p>
+     * Version 0 stays blocked. A slot can declare it, since a magic nibble of 0 beside a
+     * version field of 0 names the same version twice, but no released build wrote it, so
+     * nothing a real upgrade meets has that shape.
+     */
+    public static boolean isUpgradableFormatVersion(int formatVersion) {
+        return formatVersion >= 1 && formatVersion < LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION;
     }
 
     /**
@@ -868,6 +908,7 @@ public final class LiveViewCheckpointLifecycle {
         return new ReconcileResult(
                 epochReplaced,
                 false,
+                false,
                 LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
                 walPurgeFloor,
                 normalizedBaseSeqTxn,
@@ -905,11 +946,11 @@ public final class LiveViewCheckpointLifecycle {
     public static final class ReconcileResult {
         private static final LongList EMPTY_SEGMENT_IDS = new LongList();
         private static final ReconcileResult FORMAT_RESET = new ReconcileResult(
-                false, true, LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
+                false, true, false, LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
                 -1, Numbers.LONG_NULL, 0, 0, 0, null, null, 0, 0
         );
         private static final ReconcileResult NOT_OWNER = new ReconcileResult(
-                false, false, LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
+                false, false, false, LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
                 -1, Numbers.LONG_NULL, 0, 0, 0, null, null, 0, 0
         );
         private final int discardedRepairCount;
@@ -920,6 +961,7 @@ public final class LiveViewCheckpointLifecycle {
         private final long finalOrphanUpperBound;
         private final int foreignFormatVersion;
         private final boolean formatReset;
+        private final boolean formatUpgrade;
         private final int liveSegmentCount;
         private final long normalizedBaseSeqTxn;
         private final long obsoleteSegmentBytes;
@@ -932,6 +974,7 @@ public final class LiveViewCheckpointLifecycle {
         private ReconcileResult(
                 boolean epochReplaced,
                 boolean formatReset,
+                boolean formatUpgrade,
                 int foreignFormatVersion,
                 long walPurgeFloor,
                 long normalizedBaseSeqTxn,
@@ -945,6 +988,7 @@ public final class LiveViewCheckpointLifecycle {
         ) {
             this.epochReplaced = epochReplaced;
             this.formatReset = formatReset;
+            this.formatUpgrade = formatUpgrade;
             this.foreignFormatVersion = foreignFormatVersion;
             this.walPurgeFloor = walPurgeFloor;
             this.normalizedBaseSeqTxn = normalizedBaseSeqTxn;
@@ -969,7 +1013,20 @@ public final class LiveViewCheckpointLifecycle {
          */
         private static ReconcileResult formatBlocked(int foreignFormatVersion) {
             return new ReconcileResult(
-                    false, false, foreignFormatVersion,
+                    false, false, false, foreignFormatVersion,
+                    -1, Numbers.LONG_NULL, 0, 0, 0, null, null, 0, 0
+            );
+        }
+
+        /**
+         * A reconciliation that read an older format version this build upgrades by
+         * rebuilding the view from its base table. It did nothing at all, exactly as
+         * {@link #formatBlocked} did: the older superblock stays on disk as the witness
+         * that the rebuild is still owed.
+         */
+        private static ReconcileResult formatUpgrade(int foreignFormatVersion) {
+            return new ReconcileResult(
+                    false, false, true, foreignFormatVersion,
                     -1, Numbers.LONG_NULL, 0, 0, 0, null, null, 0, 0
             );
         }
@@ -1083,12 +1140,25 @@ public final class LiveViewCheckpointLifecycle {
 
         /**
          * @return true when the checkpoint timeline declares a format version this
-         * build does not implement. The reconciliation left the directory
-         * untouched; the caller must stop the view's refresh and hold its base WAL
-         * rather than treat this as a view with no timeline
+         * build does not implement, older or newer. The reconciliation left the
+         * directory untouched, and nothing may publish over it: a caller that is about
+         * to seal refuses on this. A caller deciding the view's disposition asks
+         * {@link #isFormatUpgrade()} first, which refines this for an older version;
+         * otherwise it must stop the view's refresh rather than treat this as a view
+         * with no timeline
          */
         public boolean isFormatBlocked() {
             return foreignFormatVersion != LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT;
+        }
+
+        /**
+         * @return true when the checkpoint timeline declares an older format version
+         * this build upgrades by rebuilding the view from its base table. Implies
+         * {@link #isFormatBlocked()}: the directory is left whole and is still no
+         * place to publish, until the rebuild retires it
+         */
+        public boolean isFormatUpgrade() {
+            return formatUpgrade;
         }
 
         /**

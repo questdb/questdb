@@ -196,7 +196,7 @@ import io.questdb.std.ObjList;
  *     <li>Where the view's recovery stands - {@code checkpoint_recovery_phase} and
  *     {@code checkpoint_recovery_reason}. Both are NULL for a view whose recovery finished
  *     or never had to run, which is the steady state. A {@code blocked} phase means this
- *     build read a checkpoint layout version it does not implement, and
+ *     build read a checkpoint layout version newer than it implements, and
  *     {@code rebuild_blocked} that a rebuild from the base table would have dropped rows
  *     the view retains; either way refresh stopped with the view's checkpoints, rows and
  *     watermarks all intact, and the reason carries the evidence and the way out. Such a
@@ -208,7 +208,11 @@ import io.questdb.std.ObjList;
  *     view already holds output of, stays {@code active}, and resumes by itself once the
  *     base applies them. The reason names the base and the commit, which is what tells a
  *     view waiting on a base whose WAL apply is suspended apart from one merely lagging.
- *     Both are read once per row, phase first, so a row never pairs a phase with a
+ *     {@code upgrade_rebuild_pending} is not a block either: the view was carried over
+ *     from an older checkpoint layout, stays {@code active}, and rebuilds from its base
+ *     table on its first refresh, after which both columns clear. A rebuild that waits for
+ *     the base's apply reports {@code rebuild_deferred} instead, naming the upgrade as its
+ *     cause. Both are read once per row, phase first, so a row never pairs a phase with a
  *     reason from before it, and a NULL phase always comes with a NULL reason. See
  *     {@link io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase}.</li>
  *     <li>What the view's refresh is waiting for - {@code base_apply_wait_seqtxn} and
@@ -445,6 +449,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                 private long[] checkpointRepair;
                 private long checkpointRepairOutcome;
                 private long[] checkpointTimeline;
+                private boolean checkpointUpgradeRebuildPending;
                 private LiveViewDefinition definition;
                 private CairoEngine engine;
                 private LiveViewInstance instance;
@@ -460,6 +465,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                     checkpointRepair = null;
                     checkpointRepairOutcome = 0;
                     checkpointTimeline = null;
+                    checkpointUpgradeRebuildPending = false;
                     definition = null;
                     engine = null;
                     instance = null;
@@ -818,10 +824,14 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // have dropped rows it retains - and what tells a blocked view
                         // apart from a durably invalidated one under the same
                         // view_status; or why it has not finished yet, rebuild_deferred
-                        // on a rebuild waiting for its base table's apply. Both NULL for
-                        // a view whose recovery finished or never had to run.
-                        case COLUMN_CHECKPOINT_RECOVERY_PHASE ->
-                                LiveViewCheckpointRecoveryPhase.name(checkpointRecoveryPhase);
+                        // on a rebuild waiting for its base table's apply; or
+                        // upgrade_rebuild_pending on a view carried over from an older
+                        // checkpoint format that has not rebuilt from its base table yet.
+                        // Both NULL for a view whose recovery finished or never had to run.
+                        case COLUMN_CHECKPOINT_RECOVERY_PHASE -> LiveViewCheckpointRecoveryPhase.name(
+                                checkpointRecoveryPhase,
+                                checkpointUpgradeRebuildPending
+                        );
                         case COLUMN_CHECKPOINT_RECOVERY_REASON -> checkpointRecoveryReason;
                         // The dependency plans a localized repair would union, read off
                         // the compiled SELECT. NULL until the view compiles one.
@@ -884,6 +894,19 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                     this.checkpointRecoveryReason = checkpointRecoveryPhase == LiveViewCheckpointRecoveryPhase.NONE
                             ? null
                             : instance.getCheckpointRecoveryReason();
+                    // A pending upgrade rebuild reports only where no phase does, and a
+                    // deferral outranks it, whose reason already names the upgrade. Flag
+                    // then reason, for the order argument above: the writer puts the
+                    // reason down before the flag and clears the flag before the reason.
+                    // A NULL reason read beside a set flag is the clear landing between the
+                    // two reads, so it reports as no longer pending.
+                    if (checkpointRecoveryPhase == LiveViewCheckpointRecoveryPhase.NONE
+                            && instance.isCheckpointUpgradeRebuildPending()) {
+                        this.checkpointRecoveryReason = instance.getCheckpointUpgradeRebuildReason();
+                        this.checkpointUpgradeRebuildPending = checkpointRecoveryReason != null;
+                    } else {
+                        this.checkpointUpgradeRebuildPending = false;
+                    }
                     // The apply-lag wait, target then stamp. The writer publishes the target
                     // before the stamp and clears the stamp before the target, so a reader in
                     // this order sees at worst a stamp whose target it read too early - which

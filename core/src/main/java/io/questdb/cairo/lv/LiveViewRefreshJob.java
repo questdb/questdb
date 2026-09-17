@@ -87,6 +87,7 @@ import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.Job;
 import io.questdb.std.Chars;
 import io.questdb.std.CharSequenceHashSet;
@@ -237,6 +238,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // The segment's replacement is in the live view's WAL and not in its table. No later
     // segment may read coordinates off a table that does not hold it, so the loop stops.
     private static final int SEGMENT_STEP_UNAPPLIED = 3;
+    // The cause the rebuild an older checkpoint format asks for names itself by, in its log
+    // lines and in the reason a deferral of it publishes.
+    private static final String UPGRADE_REBUILD_CAUSE = "timeline format upgrade";
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
     private final AnchorDispatchingCursor anchorDispatchingCursor = new AnchorDispatchingCursor();
     // Reusable {minTs, maxTs} out-pair from computeApplyAheadBounds. Worker-owned;
@@ -4403,6 +4407,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * plus CREATE. The two calls must stay in this order - the timeline arm keeps the
      * floor pinned until {@code clearCheckpointTimelineOwnership()} runs after the
      * on-disk retire, so no purge can outrun a root a restart could still restore.
+     * <p>
+     * This is also where an upgrade rebuild whose own retire could not remove the older
+     * {@code _timeline} ends: every seal after it refuses against the older superblock,
+     * and the retire here clears the view's pending flag once the file is gone.
      */
     private void retireCheckpointStateAfterRepeatedSealFailure(LiveViewInstance instance, long nowUs, int streak) {
         instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
@@ -4501,8 +4509,42 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$(t).I$();
         }
+        if (instance.isCheckpointUpgradeRebuildPending()) {
+            clearUpgradeRebuildPendingIfRetired(instance);
+        }
         instance.recordCheckpointTimelineReset();
         instance.clearCheckpointTimelineOwnership();
+    }
+
+    /**
+     * Ends a view's pending upgrade rebuild once the older {@code _timeline} is gone, and only
+     * then. That file is what re-derives the pending rebuild on every restart, and every seal
+     * refuses to publish over it, so a flag cleared while it survives would claim an upgrade
+     * the directory still disagrees with. Whatever else a partial retire left - segment
+     * directories, a retirement work set - declares no format, and the next seal's
+     * reconciliation collects it as orphans of a directory with no timeline.
+     */
+    private void clearUpgradeRebuildPendingIfRetired(LiveViewInstance instance) {
+        try (Path timelinePath = new Path()) {
+            timelinePath.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
+                    .concat(LiveViewCheckpointLayout.TIMELINE_FILE_NAME);
+            if (engine.getConfiguration().getFilesFacade().exists(timelinePath.$())) {
+                LOG.error().$("live view could not retire its older-format checkpoint timeline, the upgrade stays pending [view=")
+                        .$(instance.getDefinition().getViewName()).I$();
+                return;
+            }
+        } catch (Throwable t) {
+            LOG.error().$("could not check the live view checkpoint timeline after a retire [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$(t).I$();
+            return;
+        }
+        instance.clearCheckpointUpgradeRebuildPending();
+        LOG.info().$("live view retired its older-format checkpoint timeline, the next seal writes the supported format [view=")
+                .$(instance.getDefinition().getViewName())
+                .$(", supported=").$(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION).I$();
     }
 
     /**
@@ -8528,7 +8570,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * moves - when the view retains rows the snapshot has no history for, or when the
      * recompute reproduces fewer rows below the durable frontier than the view holds. A full
      * rebuild also retires its timeline only after that second check, just before it commits,
-     * rather than before its scan, so a refusal leaves the timeline standing.
+     * rather than before its scan, so a refusal leaves the timeline standing. The upgrade
+     * rebuild of a view carried over from an older checkpoint format is the exception to both:
+     * the guard stands down for it, and its older directory goes only after the commit.
      * <p>
      * A localized rebuild runs one turn at a time. Its interval is finite but can
      * still be dense enough to hold more rows than one refresh turn should carry,
@@ -9037,7 +9081,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // prepareWholeViewReplacement). Its timeline is the one thing a refusal
                 // must leave standing: the restart that retries the recovery restores from
                 // it whenever it can. Nothing between here and there reads the head or the
-                // timeline, and nothing durable moves.
+                // timeline, and nothing durable moves. The upgrade rebuild of a view carried
+                // over from an older checkpoint format retires later still, once its
+                // replacement has committed; see the publication tail below.
                 if (!resuming) {
                     if (timelineCapture == null && localized) {
                         // Localized repair with no capture to splice through - the view's
@@ -9896,6 +9942,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
 
             try {
+                if (fullRebuild && repairPublication.hasCommittedReplacement() && instance.isCheckpointUpgradeRebuildPending()) {
+                    // The upgrade rebuild of a view carried over from an older checkpoint
+                    // format kept that directory through its commit (see
+                    // prepareWholeViewReplacement), and retires it now that the replacement is
+                    // durable: a crash before this point restarts on the older superblock and
+                    // rebuilds again. Ahead of the post-replay seal below, whose reconciliation
+                    // would otherwise meet the older superblock and refuse to publish over it.
+                    //
+                    // A retire that leaves _timeline behind keeps the pending flag and is not
+                    // retried here. The seals that follow refuse against the older superblock,
+                    // and the third refusal in a row retires the timeline through
+                    // retireCheckpointStateAfterRepeatedSealFailure, which clears the flag: a
+                    // bounded fault that costs no invalidation.
+                    retireCheckpointTimeline(instance);
+                }
                 if (repairPublication.hasCommittedReplacement()) {
                     // Post-commit reconciliation. The replacement is durable in the live
                     // view's own WAL, but every coordinate the rest of this method derives -
@@ -12067,6 +12128,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * here is what only a restart decides: that a never-materialized view needs
      * nothing, and that every way the restore cannot run or does not finish ends
      * in the applied-base rebuild.
+     * <p>
+     * A view carried over from an older checkpoint format decides first, because its
+     * timeline is one this build never restores from: it takes the upgrade rebuild,
+     * and a never-materialized one only retires the older directory.
      */
     private void tryRestoreFromTimeline(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
         final long durableBaseSeqTxn = instance.getAppliedWatermark();
@@ -12078,10 +12143,31 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             durableFrontierTimestamp = durableLvRowCount == 0 ? Numbers.LONG_NULL : lvReader.getMaxTimestamp();
             durableLvSeqTxn = lvReader.getSeqTxn();
         }
-
-        if (durableLvRowCount == 0
+        final boolean isNeverMaterialized = durableLvRowCount == 0
                 && instance.getStateReader().getLastProcessedSeqTxn()
-                < instance.getStateReader().getSubscribeFromSeqTxn()) {
+                < instance.getStateReader().getSubscribeFromSeqTxn();
+
+        if (instance.isCheckpointUpgradeRebuildPending()) {
+            if (isNeverMaterialized) {
+                // Identity state is the exact runtime, so nothing needs rebuilding. The
+                // older directory still has to go: left in place, it would refuse this
+                // view's first seal, which is the writer's backstop against publishing
+                // over a layout this build does not read.
+                LOG.info().$("live view carried over from an older checkpoint format holds no output, retiring its timeline [view=")
+                        .$(instance.getDefinition().getViewName()).I$();
+                retireCheckpointTimeline(instance);
+                return;
+            }
+            rebuildTimelineRecoveryFromAppliedBase(
+                    instance,
+                    windowFactory,
+                    durableBaseSeqTxn,
+                    UPGRADE_REBUILD_CAUSE
+            );
+            return;
+        }
+
+        if (isNeverMaterialized) {
             // Identity state is already the exact runtime for a never-materialized
             // ACTIVE view. Avoid creating an empty timeline file merely to prove it.
             return;
@@ -12129,6 +12215,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     null
             );
         } catch (Throwable t) {
+            if (t instanceof CairoException ce && ce.isCancellation()) {
+                // DROP, invalidation or engine shutdown, and possibly out of the rebuild one
+                // of the branches above ran: none of them is a failed restore to rebuild over.
+                throw ce;
+            }
             LOG.error().$("could not restore live view from checkpoint timeline, rebuilding derived state [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$(t).I$();
@@ -12369,6 +12460,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    /**
+     * The restart's whole-view rebuild from the applied base, for a view whose timeline cannot
+     * be restored from. The route it records names why: {@code upgrade_rebuild} for a view
+     * carried over from an older checkpoint format, {@code fallback_rebuild} for every other
+     * cause.
+     * <p>
+     * The upgrade rebuild differs in two places, both keyed off the instance's pending flag
+     * rather than the cause. {@link #armRebuildRestatementGuard} stands the guard down for it,
+     * and the older directory is retired after the replacement commits rather than before it
+     * (see {@link #prepareWholeViewReplacement}). A crash between the commit and the retire
+     * leaves the older superblock on disk, and the restart runs the upgrade rebuild again over
+     * the output the first one committed. A crash after the retire and before the first seal
+     * leaves no timeline at all, and the restart takes the missing-timeline route with the
+     * guard armed: the view's rows then equal a recompute, so the guard passes unless the base
+     * lost rows in between, and in that case the view stops as any view restarting without a
+     * timeline would.
+     */
     private void rebuildTimelineRecoveryFromAppliedBase(
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
@@ -12380,6 +12488,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", cause=").$(cause)
                 .$(", appliedWatermark=").$(durableBaseSeqTxn).I$();
         instance.recordCheckpointRebuildAttempt();
+        // Read before the rebuild: a rebuild that retires the older directory clears the flag.
+        final boolean isUpgradeRebuild = instance.isCheckpointUpgradeRebuildPending();
         try {
             o3HeadMissReplay(
                     instance,
@@ -12389,7 +12499,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     durableBaseSeqTxn,
                     true
             );
-            instance.recordCheckpointRestoreRebuilt();
+            if (isUpgradeRebuild) {
+                instance.recordCheckpointRestoreUpgradeRebuilt();
+            } else {
+                instance.recordCheckpointRestoreRebuilt();
+            }
         } catch (LiveViewRebuildRefusedException refused) {
             // Not a failure: the rebuild would have dropped rows the view retains, and it
             // stopped before anything moved. The view keeps its rows and stays valid, and
@@ -12397,6 +12511,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             blockRefusedRebuild(instance, cause);
             instance.recordCheckpointRestoreRebuildBlocked();
         } catch (Throwable t) {
+            if (t instanceof CairoException ce && ce.isCancellation()) {
+                // DROP, invalidation or engine shutdown tripped the breaker mid-scan, and the
+                // rebuild unwound before its replacement committed. None of them is a failed
+                // rebuild: the first two end the view's refreshing life anyway, and a shutdown
+                // leaves a restart to run the same recovery again - for a view carried over
+                // from an older checkpoint format, off the older superblock the rebuild did not
+                // reach. Invalidating here would stop, durably, every view a shutdown caught
+                // in its restart rebuild. handleRefreshFailure takes the cancellation from here.
+                throw ce;
+            }
             LOG.critical().$("live view restart applied-base rebuild failed [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$(t).I$();
@@ -12438,8 +12562,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * <p>
      * The durable evidence comes off the view's table and the base evidence off the pinned
      * reader, both from their transaction files: nothing here scans a row.
+     * <p>
+     * A view carried over from an older checkpoint format stands the guard down ahead of every
+     * other check, the configuration switch included: its rebuild is the upgrade, and refusing
+     * it would leave the view nothing to resume from. The history floor is still compared, and
+     * a breach is logged rather than refused, so a view that came back without rows its base
+     * lost has a line saying so. The row shortfall is not: it needs the replay's count.
      */
     private void armRebuildRestatementGuard(LiveViewInstance instance, TableReader reader, long effectiveSeqTxn) {
+        if (instance.isCheckpointUpgradeRebuildPending()) {
+            try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+                final long baseRows = reader.size();
+                if (lvReader.size() > 0 && (baseRows == 0 || lvReader.getMinTimestamp() < reader.getMinTimestamp())) {
+                    final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
+                    final LogRecord record = LOG.advisory().$("live view upgrade rebuild restates rows the view retained [view=")
+                            .$(instance.getDefinition().getViewName())
+                            .$(", viewMinTs=").$ts(driver, lvReader.getMinTimestamp())
+                            .$(", baseRows=").$(baseRows);
+                    if (baseRows > 0) {
+                        record.$(", baseMinTs=").$ts(driver, reader.getMinTimestamp());
+                    }
+                    record.I$();
+                }
+            }
+            restatementGuard.disarm(LiveViewRebuildRestatementGuard.ABSTAIN_FORMAT_UPGRADE);
+            return;
+        }
         if (!engine.getConfiguration().isLiveViewRebuildRestatementGuardEnabled()) {
             restatementGuard.disarm(LiveViewRebuildRestatementGuard.ABSTAIN_DISABLED);
             return;
@@ -12604,13 +12752,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * it can - and so the retire still precedes the commit, as it did when it ran before the
      * scan: a crash between the two leaves no root describing output the replacement has
      * moved.
+     * <p>
+     * A view carried over from an older checkpoint format clears the head here and keeps its
+     * directory until after the commit, where {@link #o3HeadMissReplay} retires it ahead of the
+     * post-replay seal. The reason to retire first does not hold for it - this build never
+     * restores from the older layout, so a restart re-derives the upgrade rebuild rather than
+     * restoring stale roots - and retiring after the commit is what makes a crash between the
+     * two cost a second rebuild rather than a restart without the older superblock, which would
+     * take the missing-timeline route and its guard over rows the first rebuild never replaced.
      */
     private void prepareWholeViewReplacement(LiveViewInstance instance) {
         if (restatementGuard.isRowShortfall()) {
             restatementGuard.refuse(LiveViewRebuildRestatementGuard.VERDICT_ROW_SHORTFALL);
             throw LiveViewRebuildRefusedException.instance();
         }
-        retireCheckpointStateOnO3(instance, true);
+        retireCheckpointStateOnO3(instance, !instance.isCheckpointUpgradeRebuildPending());
     }
 
     /**
@@ -14600,14 +14756,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // tilt (Worker.runAsap, no nap) while one worker refreshes, an O(workers x views)
         // busy-spin. The notification-driven caller ignores the result.
         boolean attempted = false;
-        // Checkpoint format boundary: the view's timeline declares a layout version
-        // this build does not implement, so this build may neither read it nor
+        // Checkpoint format boundary: the view's timeline declares a newer layout
+        // version than this build implements, so this build may neither read it nor
         // publish over it, and it cannot prove that rebuilding the view from the
         // base rows that survive today would reproduce the output the view already
         // serves. Decline the whole turn - restore, seed sweep, drain, flush and
         // seal alike - ahead of every other guard, so no watermark advances and no
         // generic missing-timeline recovery below reaches the directory. The view
         // keeps serving the rows it has; see LiveViewCheckpointRecoveryPhase.
+        //
+        // An older layout version is not a block and passes. Nothing between here and
+        // the restore attempt below reads the view's checkpoint directory, and that
+        // attempt is where its upgrade rebuild runs.
         //
         // A view whose rebuild from the applied base was refused is declined the
         // same way: every turn that ran over it would ask for the same rebuild. Its
@@ -14767,8 +14927,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // serving disk-only meanwhile.
                         return false;
                     }
+                    final boolean isSeedActive = instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE;
+                    if (isSeedActive && instance.isCheckpointUpgradeRebuildPending()) {
+                        // A view carried over from an older checkpoint format rebuilds from
+                        // the applied base below, and the restart route that runs it waits
+                        // for the base's apply in place and invalidates the view durably once
+                        // cairo.live.view.flush.retry.max.duration.micros elapses. A base apply
+                        // backlog is ordinary on the first start after an upgrade, so defer the
+                        // way a running recovery does instead, ahead of the flag: the apply-lag
+                        // catch below arms the back-off with no failure accounting, and the
+                        // attempt is still unmade on the turn that retries it. A
+                        // never-materialized view rebuilds nothing and defers here only while
+                        // the base is behind the view's own watermarks.
+                        ensureBaseAppliedForRebuild(instance, rebuildSnapshotFloor(instance), UPGRADE_REBUILD_CAUSE);
+                        // The base has applied what the rebuild pins, so any wait an earlier turn's
+                        // deferral opened is over. The restart attempt ends in no refresh success of
+                        // its own when there is nothing left to drain, so nothing else would end the
+                        // episode, and base_apply_wait_* would keep reporting it.
+                        instance.clearApplyLagDeferral();
+                    }
                     instance.setCheckpointRestoreAttempted();
-                    if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
+                    if (isSeedActive) {
                         // Baseline observability: time bounded generation selection,
                         // root restore, and the (B,F] replay. Recorded once
                         // per LV lifetime regardless of outcome. Surfaced via

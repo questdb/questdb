@@ -26,6 +26,7 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
+import io.questdb.cairo.lv.LiveViewCheckpointRestoreRoute;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewLifecycleState;
@@ -135,6 +136,20 @@ public class LiveViewLifecycleStateTest {
         Assert.assertTrue(LiveViewCheckpointRecoveryPhase.isBlocked(LiveViewCheckpointRecoveryPhase.BLOCKED));
         Assert.assertTrue(LiveViewCheckpointRecoveryPhase.isBlocked(LiveViewCheckpointRecoveryPhase.REBUILD_BLOCKED));
         Assert.assertFalse(LiveViewCheckpointRecoveryPhase.isBlocked(LiveViewCheckpointRecoveryPhase.REBUILD_DEFERRED));
+        // A pending upgrade rebuild is a name, not a phase: it reports only where no phase does,
+        // and a deferral - whose reason names the upgrade - outranks it.
+        Assert.assertEquals("upgrade_rebuild_pending", LiveViewCheckpointRecoveryPhase.name(LiveViewCheckpointRecoveryPhase.NONE, true));
+        Assert.assertNull(LiveViewCheckpointRecoveryPhase.name(LiveViewCheckpointRecoveryPhase.NONE, false));
+        Assert.assertEquals("rebuild_deferred", LiveViewCheckpointRecoveryPhase.name(LiveViewCheckpointRecoveryPhase.REBUILD_DEFERRED, true));
+        Assert.assertEquals("rebuild_blocked", LiveViewCheckpointRecoveryPhase.name(LiveViewCheckpointRecoveryPhase.REBUILD_BLOCKED, true));
+        // And the restart route names that go with the phases, including the upgrade rebuild's.
+        Assert.assertNull(LiveViewCheckpointRestoreRoute.name(LiveViewCheckpointRestoreRoute.NONE));
+        Assert.assertEquals("timeline_restore", LiveViewCheckpointRestoreRoute.name(LiveViewCheckpointRestoreRoute.TIMELINE_RESTORE));
+        Assert.assertEquals("fallback_rebuild", LiveViewCheckpointRestoreRoute.name(LiveViewCheckpointRestoreRoute.FALLBACK_REBUILD));
+        Assert.assertEquals("blocked", LiveViewCheckpointRestoreRoute.name(LiveViewCheckpointRestoreRoute.BLOCKED));
+        Assert.assertEquals("upgrade_blocked", LiveViewCheckpointRestoreRoute.name(LiveViewCheckpointRestoreRoute.UPGRADE_BLOCKED));
+        Assert.assertEquals("rebuild_blocked", LiveViewCheckpointRestoreRoute.name(LiveViewCheckpointRestoreRoute.REBUILD_BLOCKED));
+        Assert.assertEquals("upgrade_rebuild", LiveViewCheckpointRestoreRoute.name(LiveViewCheckpointRestoreRoute.UPGRADE_REBUILD));
     }
 
     @Test

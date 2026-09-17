@@ -350,18 +350,28 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                                     true
                             );
                     if (reconciliation.isFormatBlocked()) {
-                        // The directory belongs to a build with another layout, and
-                        // the reconciliation left it whole rather than resetting it.
-                        // Publishing here would write this build's pages beside pages
-                        // it cannot read - the mixed-format directory the boundary
-                        // exists to prevent. The refresh worker declines a blocked
-                        // view before it ever reaches a seal, so this is the case
-                        // that gate cannot see: a directory that turned foreign
-                        // under a running view. Refusing the seal is the whole of
-                        // the response - the view is not blocked from here, because
-                        // the phase is a catalogue-load disposition taken before any
-                        // repair can be parked on the instance, and the next restart
-                        // reaches it in the ordinary way.
+                        // The directory belongs to a build with another layout, older
+                        // or newer, and the reconciliation left it whole rather than
+                        // resetting it. Publishing here would write this build's pages
+                        // beside pages it cannot read - the mixed-format directory the
+                        // boundary exists to prevent. Both directions refuse, and this
+                        // must not narrow to the newer one: an older superblock no
+                        // reader accepts would leave both slots invalid to append0,
+                        // which would publish this build's superblock over the older
+                        // segments.
+                        //
+                        // The refresh worker declines a blocked view before it ever
+                        // reaches a seal, and retires an older directory in the upgrade
+                        // rebuild before that rebuild's own seal, so two cases reach
+                        // here: a directory that turned foreign under a running view,
+                        // and an upgrade rebuild whose retire could not remove the older
+                        // _timeline. Refusing the seal is the whole of the response. The
+                        // view is not blocked from here, because the phase is a
+                        // catalogue-load disposition taken before any repair can be
+                        // parked on the instance, and the next restart reaches it in
+                        // the ordinary way; and repeated refusals retire the timeline
+                        // through the refresh worker's seal-failure path, which is what
+                        // ends the second case.
                         throw CairoException.critical(CairoException.LV_CHECKPOINT_FORMAT_BLOCKED)
                                 .put("live view checkpoint timeline declares an unsupported format version")
                                 .put(" [version=").put(reconciliation.getForeignFormatVersion())

@@ -1072,9 +1072,33 @@ public class CairoEngine implements Closeable, WriterSource {
                                                 0,
                                                 true
                                         );
+                                if (reconciliation.isFormatUpgrade()) {
+                                    // The timeline declares an older layout version,
+                                    // which this build does not read. Reconciliation
+                                    // read the superblock and stopped there, as for a
+                                    // newer version, but the disposition is the
+                                    // opposite: live views were beta in the builds that
+                                    // wrote those layouts, so the view rebuilds from its
+                                    // base table on its first refresh instead of waiting
+                                    // for an operator's DROP and re-create, which would
+                                    // run the same recompute. Until then it stays active
+                                    // and queryable over the rows it has, and holds its
+                                    // base WAL floor from its consumed watermark as any
+                                    // view does at restart. The older superblock stays
+                                    // on disk until the rebuild retires it, so a restart
+                                    // before that reaches this arm again. Checked ahead
+                                    // of the block: an upgrade is a refinement of it.
+                                    LOG.info().$("live view checkpoint timeline was written by an older format, rebuilding from base [view=")
+                                            .$(tableToken)
+                                            .$(", version=").$(reconciliation.getForeignFormatVersion())
+                                            .$(", supported=").$(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION)
+                                            .I$();
+                                    instance.markCheckpointUpgradeRebuildPending(reconciliation.getForeignFormatVersion());
+                                    continue;
+                                }
                                 if (reconciliation.isFormatBlocked()) {
-                                    // The timeline declares a layout version this
-                                    // build does not implement. Reconciliation read
+                                    // The timeline declares a newer layout version than
+                                    // this build implements. Reconciliation read
                                     // the superblock and stopped there, so the
                                     // directory, the view's rows and its watermarks
                                     // are all as the other build left them. Block the

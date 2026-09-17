@@ -83,6 +83,8 @@ import org.jetbrains.annotations.NotNull;
  * <ul>
  *     <li>there is nothing to protect: the view's table is empty, or the operator turned the
  *     guard off ({@link #ABSTAIN_DISABLED}, {@link #ABSTAIN_NOTHING_RETAINED});</li>
+ *     <li>the view was carried over from an older checkpoint format and rebuilds on upgrade,
+ *     where a refusal would leave nothing to resume from ({@link #ABSTAIN_FORMAT_UPGRADE});</li>
  *     <li>a backlog transaction can legitimately lower the output at or below the frontier,
  *     because incremental refresh propagates it and the rebuild restates nothing by following
  *     it: a REPLACE_RANGE commit whose delete band reaches the frontier (a materialized-view
@@ -126,6 +128,14 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
      * {@code cairo.live.view.rebuild.restatement.guard.enabled} is off.
      */
     public static final int ABSTAIN_DISABLED = 1;
+    /**
+     * The rebuild is the one a view carried over from an older checkpoint format owes on
+     * upgrade. The view cannot resume from a layout this build does not read, and stopping it
+     * would leave the operator only the same recompute through DROP and re-create, so the
+     * rebuild follows the base table. The job still compares the history floor and logs what
+     * it finds, without refusing.
+     */
+    public static final int ABSTAIN_FORMAT_UPGRADE = 5;
     /**
      * The guard is armed and compares.
      */
@@ -188,6 +198,7 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
             case ABSTAIN_NOTHING_RETAINED -> "nothing retained";
             case ABSTAIN_BACKLOG_MAY_REMOVE -> "backlog may remove rows";
             case ABSTAIN_BACKLOG_UNREADABLE -> "backlog unreadable";
+            case ABSTAIN_FORMAT_UPGRADE -> "format upgrade";
             default -> "not evaluated";
         };
     }

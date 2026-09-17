@@ -47,12 +47,13 @@ package io.questdb.cairo.lv;
  * the way there.
  * <p>
  * {@link #UPGRADE_BLOCKED} is the one route no restore ran for: the timeline declares
- * a format version this build does not implement, so the refresh worker declined the
+ * a newer format version than this build implements, so the refresh worker declined the
  * attempt instead of making one. {@link #REBUILD_BLOCKED} is the other decision rather
  * than outcome: the restore could not be used, the applied-base rebuild that covers for
  * it started, and {@link LiveViewRebuildRestatementGuard} refused it before it committed.
- * The upgrade rebuild that would follow a successful source-history preflight is
- * withdrawn with that preflight and has no route.
+ * {@link #UPGRADE_REBUILD} is the applied-base rebuild an older format version asks
+ * for, which runs without that guard and is named apart so a restart witness can tell a
+ * view that upgraded from one that lost its timeline.
  */
 public final class LiveViewCheckpointRestoreRoute {
     /**
@@ -63,8 +64,8 @@ public final class LiveViewCheckpointRestoreRoute {
      */
     public static final int BLOCKED = 3;
     /**
-     * No attempt was made: the view's checkpoint timeline declares a format version this
-     * build does not implement, and {@link LiveViewCheckpointRecoveryPhase#BLOCKED} holds
+     * No attempt was made: the view's checkpoint timeline declares a newer format version
+     * than this build implements, and {@link LiveViewCheckpointRecoveryPhase#BLOCKED} holds
      * its refresh. Distinct from {@link #BLOCKED}, which is an attempt that ran and left
      * the view without derived state; here the derived state on disk is intact and this
      * build simply may not touch it. The refresh worker emits it from the turn it
@@ -75,7 +76,7 @@ public final class LiveViewCheckpointRestoreRoute {
      * The timeline was absent, unusable, or fenced off by a repair marker, and the view
      * recomputed its whole window from the applied base instead. Correct rows, but the
      * roots the previous process published are gone: the rebuild retires the timeline
-     * before it replays.
+     * before its replacement commits.
      */
     public static final int FALLBACK_REBUILD = 2;
     /**
@@ -101,6 +102,16 @@ public final class LiveViewCheckpointRestoreRoute {
      * {@link LiveViewInstance#getCheckpointRestoreCheckpointId()} name it.
      */
     public static final int TIMELINE_RESTORE = 1;
+    /**
+     * The timeline declared an older format version, which this build does not read, and
+     * the view recomputed its whole window from the applied base instead, with
+     * {@link LiveViewRebuildRestatementGuard} standing down. The rows are a recompute from
+     * the base rows available today, so a base that lost rows the view retained - TTL,
+     * DROP/DETACH PARTITION, TRUNCATE - comes back without them. The rebuild retires the
+     * older directory after its replacement commits, and the next seal writes this build's
+     * format.
+     */
+    public static final int UPGRADE_REBUILD = 6;
 
     private LiveViewCheckpointRestoreRoute() {
     }
@@ -117,6 +128,7 @@ public final class LiveViewCheckpointRestoreRoute {
             case BLOCKED -> "blocked";
             case UPGRADE_BLOCKED -> "upgrade_blocked";
             case REBUILD_BLOCKED -> "rebuild_blocked";
+            case UPGRADE_REBUILD -> "upgrade_rebuild";
             default -> null;
         };
     }
