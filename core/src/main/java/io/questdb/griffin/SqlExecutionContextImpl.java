@@ -68,6 +68,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SqlExecutionContextImpl implements SqlExecutionContext {
     private static final IntHashSet SKIP_TELEMETRY_EVENTS = new IntHashSet();
+    private static final int TIMESTAMP_NOT_REQUIRED = 0;
+    /**
+     * The consumer needs the designated timestamp column and needs the base to already scan it
+     * ascending, because it has no way to obtain that order itself.
+     */
+    private static final int TIMESTAMP_REQUIRED_ASC = 1;
+    /**
+     * The consumer needs the designated timestamp column but obtains ascending order over it itself -
+     * see {@link SqlExecutionContext#pushTimestampRequiredFlag(boolean, boolean)}.
+     */
+    private static final int TIMESTAMP_REQUIRED_ANY_ORDER = 2;
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
     private final Decimal128 decimal128 = new Decimal128();
@@ -470,8 +481,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isTimestampAscOrderRequired() {
+        return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == TIMESTAMP_REQUIRED_ASC;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
-        return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == 1;
+        return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() != TIMESTAMP_NOT_REQUIRED;
     }
 
     @Override
@@ -524,7 +540,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public void pushTimestampRequiredFlag(boolean flag) {
-        timestampRequiredStack.push(flag ? 1 : 0);
+        pushTimestampRequiredFlag(flag, true);
+    }
+
+    @Override
+    public void pushTimestampRequiredFlag(boolean flag, boolean ascOrderRequired) {
+        timestampRequiredStack.push(
+                flag
+                        ? (ascOrderRequired ? TIMESTAMP_REQUIRED_ASC : TIMESTAMP_REQUIRED_ANY_ORDER)
+                        : TIMESTAMP_NOT_REQUIRED
+        );
     }
 
     @Override

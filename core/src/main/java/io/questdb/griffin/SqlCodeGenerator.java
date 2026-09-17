@@ -9047,7 +9047,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // We require timestamp with asc order.
             final int timestampIndex;
             // Require timestamp in sub-query when it's not additionally specified as timestamp(col).
-            executionContext.pushTimestampRequiredFlag(model.getTimestamp() == null);
+            // The order is required too, but this generator obtains it rather than depending on it - the
+            // optimiser has already restated it as an ORDER BY the planner can answer with a merge, and
+            // the gate below sorts whatever is left. So the requirement travels with ascOrderRequired =
+            // false: the projection models between here and the base must keep the timestamp column, but
+            // must not refuse on this generator's behalf at generateSelectChoose's copy of this gate.
+            // That copy runs first, and refusing there skips both tiers - which is what made one
+            // redundant pair of parentheses, an alias, a select *, a WHERE, a LIMIT or a VIEW over the
+            // same base throw "ASC order over TIMESTAMP column is required but not provided".
+            executionContext.pushTimestampRequiredFlag(model.getTimestamp() == null, false);
             try {
                 factory = generateSubQuery(model, executionContext);
                 timestampIndex = getTimestampIndex(model, factory);
@@ -9830,7 +9838,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (timestampIndex == -1) {
                     throw SqlException.$(model.getModelPosition(), "TIMESTAMP column is required but not provided");
                 }
-                if (factory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
+                // Only refuse on the direction for a consumer that cannot obtain the order itself - a
+                // time-series join, which has no plan to fall back to and whose remedy is to write the
+                // ORDER BY inside the sub-query. An order-sensitive SAMPLE BY does have one and asks for
+                // the column without the order (isTimestampAscOrderRequired() is false); refusing here
+                // would pre-empt both of its tiers, and does so one projection model earlier than its own
+                // gate, so a query that merges as `... from (U) timestamp(ts) sample by ...` would throw
+                // as `... from ((U) timestamp(ts)) sample by ...`.
+                if (executionContext.isTimestampAscOrderRequired()
+                        && factory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
                     throw SqlException.$(model.getModelPosition(), "ASC order over TIMESTAMP column is required but not provided");
                 }
             }
