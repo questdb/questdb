@@ -135,7 +135,8 @@ public class QueryTracingTest extends AbstractCairoTest {
         }
 
         assertQuery("select query_text from " + TABLE_NAME)
-                .returnsOnce(
+                .expectSize()
+                .returns(
                         "query_text\n" +
                                 "select 1\n" +
                                 "select 2\n" +
@@ -147,7 +148,7 @@ public class QueryTracingTest extends AbstractCairoTest {
                         " where query_text = 'late select'" +
                         " and query_start = cast(" + (firstHour + Micros.HOUR_MICROS - 1) + " as timestamp)" +
                         " and ts > query_start"
-        ).returnsOnce("count\n1\n");
+        ).noRandomAccess().expectSize().returns("count\n1\n");
     }
 
     @Test
@@ -166,7 +167,8 @@ public class QueryTracingTest extends AbstractCairoTest {
         }
 
         assertQuery("select \"column\", type from table_columns('" + TABLE_NAME + "') where \"column\" = '" + COLUMN_QUERY_START + "'")
-                .returnsOnce("column\ttype\n" + COLUMN_QUERY_START + "\tTIMESTAMP\n");
+                .noRandomAccess()
+                .returns("column\ttype\n" + COLUMN_QUERY_START + "\tTIMESTAMP\n");
     }
 
     @Test
