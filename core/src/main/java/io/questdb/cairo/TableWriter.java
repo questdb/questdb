@@ -1754,7 +1754,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
         if (partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
             if (!tableToken.isWal()) {
-                // The partition is active; conversion is unsupported for non-WAL tables.
+                // Direct conversion of an active partition remains unsupported for non-WAL tables.
+                // Storage policies use the guarded generate-and-switch path instead.
                 LOG.info()
                         .$("skipping active partition as it cannot be converted to parquet format [table=")
                         .$(tableToken)
@@ -3039,6 +3040,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     noOpRowCount++;
                     return NOOP_ROW;
                 }
+                if (isLastPartitionParquet()) {
+                    // The active native files were removed by a storage-policy switch. Resume writes
+                    // through O3 so the committed parquet body is merged instead of dereferencing the
+                    // intentionally closed native append columns.
+                    return newRowO3(timestamp);
+                }
                 updateMaxTimestamp(timestamp);
                 break;
             default:
@@ -3087,15 +3094,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
-        if (partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
-            // The partition is active; conversion is currently unsupported.
-            LOG.info()
-                    .$("skipping active partition as it cannot be converted to parquet format [table=")
-                    .$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                    .I$();
-            return -1L;
-        }
 
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
         if (partitionIndex < 0) {
@@ -3712,8 +3710,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return false;
     }
 
-    // Returns SWITCH_OK (0) on successful switch, SWITCH_SKIPPED (-2) if the partition was
-    // skipped (active or already parquet), SWITCH_NO_PARQUET (-1) if there is no parquet file to switch to.
+    // Returns SWITCH_OK (0) on successful switch, SWITCH_SKIPPED (-2) if the partition is already
+    // parquet, SWITCH_NO_PARQUET (-1) if there is no parquet file to switch to.
     public int switchNativePartitionWithParquet(long partitionTimestamp, long parquetFileSize) {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
@@ -3729,10 +3727,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
-        if (partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
-            // The partition is active; conversion is currently unsupported.
-            return SWITCH_SKIPPED;
-        }
+        final boolean activePartition = partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp());
 
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
         if (partitionIndex < 0) {
@@ -3749,6 +3744,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // parquet file has not been generated yet
             return SWITCH_NO_PARQUET;
         }
+        if (activePartition) {
+            closeActivePartition(false);
+        }
 
         int partitionCount = txWriter.getPartitionCount();
         squashPartitionForce(partitionIndex);
@@ -3761,6 +3759,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$("skipping switch to parquet, due to partition squash [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                     .I$();
+            if (activePartition && isLastPartitionClosed()) {
+                openLastPartition();
+            }
             return SWITCH_NO_PARQUET;
         }
 
@@ -3834,6 +3835,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
+            if (activePartition && !txWriter.isPartitionParquet(partitionIndex) && isLastPartitionClosed()) {
+                openLastPartition();
+            }
         }
 
         // Post-commit: the switch is logically complete. Everything below is
@@ -7938,8 +7942,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // reads column data through the Parquet decoder and wires up the covering
         // sidecars. The native path below assumes native column files; for a
         // Parquet partition the covering seal would dereference a null FilesFacade.
-        // Non-WAL tables cannot have a Parquet active partition (see
-        // convertPartitionNativeToParquet), so this only fires for WAL tables.
+        // Storage policies may convert the active partition on WAL and non-WAL tables.
         final int lastPartitionIndex = txWriter.getPartitionCount() - 1;
         if (lastPartitionIndex >= 0 && txWriter.isPartitionParquet(lastPartitionIndex)) {
             try {

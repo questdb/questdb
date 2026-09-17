@@ -3120,7 +3120,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSwitchNativePartitionWithParquetActivePartition() throws Exception {
+    public void testSwitchNativePartitionWithParquetActivePartitionWithoutParquet() throws Exception {
         assertMemoryLeak(() -> {
             int N = 10000;
             create(FF, PartitionBy.DAY, N);
@@ -3139,11 +3139,11 @@ public class TableWriterTest extends AbstractCairoTest {
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
                 activePartitionTimestamp = writer.getTxWriter().getMaxTimestamp();
 
-                // switchNativePartitionWithParquet on the active partition should return SWITCH_SKIPPED
-                // without throwing an exception
-                Assert.assertEquals(TableWriter.SWITCH_SKIPPED, writer.switchNativePartitionWithParquet(activePartitionTimestamp, -1));
+                // Active partitions are supported, so the missing generated parquet is the only reason
+                // this switch cannot proceed.
+                Assert.assertEquals(TableWriter.SWITCH_NO_PARQUET, writer.switchNativePartitionWithParquet(activePartitionTimestamp, -1));
 
-                // Partition should remain native (not converted)
+                // Partition should remain native (not converted).
                 TxWriter txWriter = writer.getTxWriter();
                 int partitionIndex = txWriter.getPartitionIndex(
                         txWriter.getLogicalPartitionTimestamp(activePartitionTimestamp)
