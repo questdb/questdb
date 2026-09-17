@@ -99,13 +99,14 @@ public class QwpNotNullIntegrationTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
+            assertQuery("SELECT count() FROM qwp_nn_omitted")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             count
                             0
-                            """,
-                    "SELECT count() FROM qwp_nn_omitted"
-            );
+                            """);
         });
     }
 
@@ -135,13 +136,14 @@ public class QwpNotNullIntegrationTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
+            assertQuery("SELECT x, y, ts FROM qwp_nn_valid")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             x\ty\tts
                             1.5\t2.0\t1970-01-01T00:00:01.000000Z
-                            """,
-                    "SELECT x, y, ts FROM qwp_nn_valid"
-            );
+                            """);
         });
     }
 

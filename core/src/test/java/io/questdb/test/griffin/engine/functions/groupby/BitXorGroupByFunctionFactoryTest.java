@@ -476,18 +476,35 @@ public class BitXorGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                 // Pin the multi-frame shape: without several partitions there is nothing to merge.
-                TestUtils.assertSql(compiler, sqlExecutionContext, "select count() from table_partitions('t')", sink, """
-                        count
-                        8
-                        """);
-                TestUtils.assertSql(compiler, sqlExecutionContext, "select bit_xor(v) from t", sink, """
-                        bit_xor
-                        -9223372036854775807
-                        """);
-                TestUtils.assertSql(compiler, sqlExecutionContext, "select g, bit_xor(v) from t order by g", sink, """
-                        g\tbit_xor
-                        a\t-9223372036854775807
-                        """);
+                assertQuery("select count() from table_partitions('t')")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("""
+                                count
+                                8
+                                """);
+                assertQuery("select bit_xor(v) from t")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("""
+                                bit_xor
+                                -9223372036854775807
+                                """);
+                assertQuery("select g, bit_xor(v) from t order by g")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                g\tbit_xor
+                                a\t-9223372036854775807
+                                """);
             }, configuration, LOG);
         }
     }

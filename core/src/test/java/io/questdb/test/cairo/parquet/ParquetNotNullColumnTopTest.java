@@ -104,8 +104,11 @@ public class ParquetNotNullColumnTopTest extends AbstractCairoTest {
             // type's null sentinel (the NOT NULL CursorPrinter branch renders raw
             // bit patterns, so INT_NULL is -2147483648 and LONG_NULL is
             // -9223372036854775808).
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\ta\tb\tc
                             2024-06-10T00:00:00.000000Z\t1\t-2147483648\t-9223372036854775808
                             2024-06-10T00:00:01.000000Z\t2\t-2147483648\t-9223372036854775808
@@ -116,9 +119,7 @@ public class ParquetNotNullColumnTopTest extends AbstractCairoTest {
                             2024-06-10T00:00:06.000000Z\t7\t70\t700
                             2024-06-10T00:00:07.000000Z\t8\t80\t800
                             2024-06-10T00:00:08.000000Z\t9\t90\t900
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
 
             // NOT NULL flag must survive in the parquet partition's metadata.
             try (TableReader reader = engine.getReader("t")) {
@@ -134,8 +135,11 @@ public class ParquetNotNullColumnTopTest extends AbstractCairoTest {
             // reconstruct the same column_top sentinel layout.
             execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-06-10'");
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\ta\tb\tc
                             2024-06-10T00:00:00.000000Z\t1\t-2147483648\t-9223372036854775808
                             2024-06-10T00:00:01.000000Z\t2\t-2147483648\t-9223372036854775808
@@ -146,9 +150,7 @@ public class ParquetNotNullColumnTopTest extends AbstractCairoTest {
                             2024-06-10T00:00:06.000000Z\t7\t70\t700
                             2024-06-10T00:00:07.000000Z\t8\t80\t800
                             2024-06-10T00:00:08.000000Z\t9\t90\t900
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
 
             try (TableReader reader = engine.getReader("t")) {
                 TableReaderMetadata md = reader.getMetadata();

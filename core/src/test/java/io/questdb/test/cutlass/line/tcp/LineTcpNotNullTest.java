@@ -85,13 +85,14 @@ public class LineTcpNotNullTest extends AbstractLineTcpReceiverTest {
                 assertFalse("auto-created columns must not carry NOT NULL", md.isNotNull(extraIdx));
             }
 
-            assertSql(
-                    """
+            assertQuery("SELECT x, y, extra, ts FROM ilp_autocreate")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             x\ty\textra\tts
                             1.5\t2.0\t3.0\t1989-12-31T23:26:40.000000Z
-                            """,
-                    "SELECT x, y, extra, ts FROM ilp_autocreate"
-            );
+                            """);
         });
     }
 
@@ -118,13 +119,14 @@ public class LineTcpNotNullTest extends AbstractLineTcpReceiverTest {
             drainWalQueue();
 
             // Expect zero rows: the WAL apply must have rejected the violating row.
-            assertSql(
-                    """
+            assertQuery("SELECT count() FROM ilp_not_null")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             count
                             0
-                            """,
-                    "SELECT count() FROM ilp_not_null"
-            );
+                            """);
         });
     }
 }
