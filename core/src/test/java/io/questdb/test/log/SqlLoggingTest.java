@@ -1,15 +1,23 @@
 package io.questdb.test.log;
 
+import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableReader;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.QueryTrace;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.http.TestHttpClient;
 import io.questdb.test.tools.LogCapture;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.Map;
 
 public class SqlLoggingTest extends AbstractCairoTest {
     private static final LogCapture capture = new LogCapture();
@@ -33,7 +41,7 @@ public class SqlLoggingTest extends AbstractCairoTest {
     @Test
     public void testCreateLiveView() throws Exception {
         assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root)) {
+            try (final ServerMain serverMain = createServerWithQueryProgressLogging()) {
                 serverMain.start();
 
                 try (TestHttpClient httpClient = new TestHttpClient(HttpClientFactory.newPlainTextInstance())) {
@@ -55,9 +63,69 @@ public class SqlLoggingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDisabledProgressLoggingPreservesErrorsAndReaderLeaks() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.LOG_SQL_QUERY_PROGRESS_ENABLED, false);
+            final String successfulQuery = "select 1 /* progress-disabled-success */";
+            final String failedQuery = "select 1 /* progress-disabled-error */";
+            final String leakedQuery = "select 1 /* progress-disabled-leak */";
+            final long beginNanos = configuration.getNanosecondClock().getTicks();
+
+            QueryProgress.logStart(1, successfulQuery, sqlExecutionContext, false);
+            QueryProgress.logEnd(1, successfulQuery, sqlExecutionContext, beginNanos);
+            QueryProgress.logError(
+                    CairoException.nonCritical().put("expected test failure"),
+                    2,
+                    failedQuery,
+                    sqlExecutionContext,
+                    beginNanos
+            );
+
+            execute("create table progress_disabled_reader_leak (x int)");
+            try (TableReader reader = engine.getReader("progress_disabled_reader_leak")) {
+                ObjList<TableReader> leakedReaders = new ObjList<>();
+                leakedReaders.add(reader);
+                QueryProgress.logEnd(3, leakedQuery, sqlExecutionContext, beginNanos, leakedReaders, null);
+            }
+
+            capture.drain();
+            capture.assertNotLogged(successfulQuery);
+            capture.assertLogged("err [id=2, sql=`" + failedQuery);
+            capture.assertLogged("brk [id=3, sql=`" + leakedQuery);
+        });
+    }
+
+    @Test
+    public void testDisabledProgressLoggingStillTracesSuccessfulQueries() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.LOG_SQL_QUERY_PROGRESS_ENABLED, false);
+            node1.setProperty(PropertyKey.QUERY_TRACING_ENABLED, true);
+            engine.getMessageBus().getQueryTraceQueue().clear();
+
+            final String query = "select 1 /* progress-disabled-trace */";
+            final QueryTrace expected = new QueryTrace();
+            expected.queryText = query;
+            final long beginNanos = configuration.getNanosecondClock().getTicks();
+
+            QueryProgress.logStart(4, query, sqlExecutionContext, false);
+            QueryProgress.logEnd(4, query, sqlExecutionContext, beginNanos, null, expected);
+
+            final QueryTrace actual = new QueryTrace();
+            Assert.assertTrue(engine.getMessageBus().getQueryTraceQueue().tryDequeue(actual));
+            Assert.assertEquals(query, actual.queryText);
+            Assert.assertEquals(
+                    sqlExecutionContext.getSecurityContext().getPrincipal().toString(),
+                    actual.principal
+            );
+            capture.drain();
+            capture.assertNotLogged(query);
+        });
+    }
+
+    @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root)) {
+            try (final ServerMain serverMain = createServerWithQueryProgressLogging()) {
                 serverMain.start();
 
                 // HTTP JSON test
@@ -109,6 +177,13 @@ public class SqlLoggingTest extends AbstractCairoTest {
                 null,
                 null,
                 null
+        );
+    }
+
+    private static ServerMain createServerWithQueryProgressLogging() {
+        return ServerMain.create(
+                root,
+                Map.of(PropertyKey.LOG_SQL_QUERY_PROGRESS_ENABLED.getEnvVarName(), "true")
         );
     }
 

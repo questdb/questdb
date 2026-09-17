@@ -371,6 +371,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final DateLocale locale;
     private final Log log;
     private final boolean logLevelVerbose;
+    private final boolean logSqlQueryProgressEnabled;
     private final boolean logSqlQueryProgressExe;
     private final DateFormat logTimestampFormat;
     private final DateLocale logTimestampLocale;
@@ -925,6 +926,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.validator = newValidator();
         this.staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
         this.dynamicProperties = dynamicProperties;
+        this.logSqlQueryProgressEnabled = getBoolean(properties, env, PropertyKey.LOG_SQL_QUERY_PROGRESS_ENABLED, false);
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
         final boolean memoryUsageLogEnabled = getBoolean(properties, env, PropertyKey.MEMORY_USAGE_LOG_ENABLED, true);
@@ -943,7 +945,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 memoryUsageLogInterval
         );
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
-        this.isQueryTracingEnabled = getBoolean(properties, env, PropertyKey.QUERY_TRACING_ENABLED, false);
+        final boolean isQueryTracingRequested = getBoolean(properties, env, PropertyKey.QUERY_TRACING_ENABLED, true);
         this.cairoMetadataCacheSnapshotOrdered = getBoolean(properties, env, PropertyKey.CAIRO_METADATA_CACHE_SNAPSHOT_ORDERED, true);
         this.cairoTableRegistryAutoReloadFrequency = getMillis(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
@@ -2402,6 +2404,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                     && !sqlParallelReadParquetEnabled && !sqlParallelTopKEnabled && !sqlParallelWindowJoinEnabled) {
                 // All type of parallel queries are disabled. Don't start the query thread pool
                 sharedWorkerPoolQueryConfiguration.sharedWorkerCount = 0;
+            }
+
+            final boolean hasQueryTracingWorker = sharedWorkerPoolQueryConfiguration.sharedWorkerCount > 0
+                    || networkPoolWorkerCount > 0;
+            this.isQueryTracingEnabled = !isReadOnlyInstance && isQueryTracingRequested && hasQueryTracingWorker;
+            if (!isReadOnlyInstance && isQueryTracingRequested && !hasQueryTracingWorker) {
+                log.advisory().$("query tracing was disabled because no shared query or network worker can consume trace events").$();
             }
 
             this.walParallelExecutionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_APPLY_PARALLEL_SQL_ENABLED, true);
@@ -4571,6 +4580,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getLogLevelVerbose() {
             return logLevelVerbose;
+        }
+
+        @Override
+        public boolean isLogSqlQueryProgressEnabled() {
+            return logSqlQueryProgressEnabled;
         }
 
         @Override

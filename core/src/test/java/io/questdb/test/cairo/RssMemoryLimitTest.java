@@ -49,6 +49,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         LogFactory.enableGuaranteedLogging(QueryProgress.class, ApplyWal2TableJob.class);
+        node1.setProperty(PropertyKey.LOG_SQL_QUERY_PROGRESS_ENABLED, true);
         super.setUp();
         capture.start();
     }

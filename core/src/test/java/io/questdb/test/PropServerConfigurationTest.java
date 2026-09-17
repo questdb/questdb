@@ -203,6 +203,7 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().getCircuitBreakerConfiguration().isEnabled());
         Assert.assertEquals(2_000_000, configuration.getCairoConfiguration().getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
 
+        Assert.assertFalse(configuration.getCairoConfiguration().isLogSqlQueryProgressEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().getLogSqlQueryProgressExe());
 
         Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
@@ -432,7 +433,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
         Assert.assertTrue(configuration.getMemoryConfiguration().isMemoryUsageLogEnabled());
         Assert.assertEquals(60_000, configuration.getMemoryConfiguration().getMemoryUsageLogInterval());
-        Assert.assertFalse(configuration.getCairoConfiguration().isQueryTracingEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isQueryTracingEnabled());
 
         Assert.assertEquals(4, configuration.getCairoConfiguration().getQueryCacheEventQueueCapacity());
         Assert.assertEquals(16777216, configuration.getCairoConfiguration().getDataAppendPageSize());
@@ -531,6 +532,16 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1000, configuration.getExportPoolConfiguration().getYieldThreshold());
 
         Assert.assertFalse(configuration.getCairoConfiguration().useWithinLatestByOptimisation());
+    }
+
+    @Test
+    public void testSqlQueryProgressLoggingCanBeEnabled() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.LOG_SQL_QUERY_PROGRESS_ENABLED.getPropertyPath(), "true");
+
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+
+        Assert.assertTrue(configuration.getCairoConfiguration().isLogSqlQueryProgressEnabled());
     }
 
     @Test
@@ -2748,7 +2759,39 @@ public class PropServerConfigurationTest {
         readOnly.setProperty(PropertyKey.SHARED_NETWORK_WORKER_COUNT.getPropertyPath(), "0");
         readOnly.setProperty(PropertyKey.SHARED_WRITE_WORKER_COUNT.getPropertyPath(), "0");
         readOnly.setProperty(PropertyKey.READ_ONLY_INSTANCE.getPropertyPath(), "true");
-        Assert.assertTrue(newPropServerConfiguration(readOnly).getCairoConfiguration().isReadOnlyInstance());
+        readOnly.setProperty(PropertyKey.QUERY_TRACING_ENABLED.getPropertyPath(), "true");
+        final CairoConfiguration readOnlyCairoConfiguration = newPropServerConfiguration(readOnly).getCairoConfiguration();
+        Assert.assertTrue(readOnlyCairoConfiguration.isReadOnlyInstance());
+        Assert.assertFalse(readOnlyCairoConfiguration.isQueryTracingEnabled());
+    }
+
+    @Test
+    public void testQueryTracingRequiresSharedWorker() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_WORKER_COUNT.getPropertyPath(), "1");
+        properties.setProperty(PropertyKey.PG_WORKER_COUNT.getPropertyPath(), "1");
+        properties.setProperty(PropertyKey.LINE_TCP_IO_WORKER_COUNT.getPropertyPath(), "1");
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_COUNT.getPropertyPath(), "0");
+        properties.setProperty(PropertyKey.SHARED_QUERY_WORKER_COUNT.getPropertyPath(), "0");
+
+        Assert.assertFalse(newPropServerConfiguration(properties).getCairoConfiguration().isQueryTracingEnabled());
+
+        properties.setProperty(PropertyKey.QUERY_TRACING_ENABLED.getPropertyPath(), "true");
+        Assert.assertFalse(newPropServerConfiguration(properties).getCairoConfiguration().isQueryTracingEnabled());
+
+        properties.setProperty(PropertyKey.SHARED_QUERY_WORKER_COUNT.getPropertyPath(), "1");
+        Assert.assertTrue(newPropServerConfiguration(properties).getCairoConfiguration().isQueryTracingEnabled());
+
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED.getPropertyPath(), "false");
+        Assert.assertFalse(newPropServerConfiguration(properties).getCairoConfiguration().isQueryTracingEnabled());
+
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_COUNT.getPropertyPath(), "1");
+        Assert.assertTrue(newPropServerConfiguration(properties).getCairoConfiguration().isQueryTracingEnabled());
     }
 
     @Test

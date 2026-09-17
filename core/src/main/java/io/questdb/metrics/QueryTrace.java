@@ -33,16 +33,16 @@ public class QueryTrace implements ValueHolder<QueryTrace> {
     public long executionNanos;
     public boolean isJit;
     public String principal;
+    public long queryStartTimestamp;
     public String queryText;
-    public long timestamp;
 
     @Override
     public void clear() {
         executionNanos = 0;
         isJit = false;
         principal = null;
+        queryStartTimestamp = 0;
         queryText = null;
-        timestamp = 0;
     }
 
     @Override
@@ -50,7 +50,7 @@ public class QueryTrace implements ValueHolder<QueryTrace> {
         dest.executionNanos = executionNanos;
         dest.isJit = isJit;
         dest.principal = principal;
+        dest.queryStartTimestamp = queryStartTimestamp;
         dest.queryText = queryText;
-        dest.timestamp = timestamp;
     }
 }
