@@ -235,7 +235,11 @@ public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryT
             for (String agg : aggs) {
                 final String indexed = "SELECT param_id, " + agg + "(value) FROM telemetry" +
                         " WHERE param_id IN ('SFID','HOTMIC') ORDER BY param_id";
-                assertQuery(indexed).noLeakCheck().assertsPlanContaining("frames: per-key");
+                // The MODE, not the plan. A plan assertion here is satisfied by the permission
+                // alone, so this arm would keep passing over a fixture that had fallen under the
+                // density crossover and was answering entirely through the merge -- which is the
+                // one execution path it is not trying to test.
+                assertRunsPerKeyMode(indexed);
                 assertSameResult(
                         indexed,
                         "SELECT /*+ no_index */ param_id, " + agg + "(value) FROM telemetry" +
@@ -255,7 +259,10 @@ public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryT
             createTelemetryMultiPartition();
             final String indexed = "SELECT param_id, twap(value, ts) FROM telemetry" +
                     " WHERE param_id IN ('SFID','HOTMIC') ORDER BY param_id";
-            assertQuery(indexed).noLeakCheck().assertsPlanContaining("frames: per-key");
+            // The MODE, not the plan: this is the ACCEPTANCE half of the twap() case, so an arm
+            // that silently ran the merge would be asserting the opposite of its subject while
+            // still printing 'frames: per-key' and returning identical rows.
+            assertRunsPerKeyMode(indexed);
             assertSameResult(
                     indexed,
                     "SELECT /*+ no_index */ param_id, twap(value, ts) FROM telemetry" +
@@ -438,16 +445,20 @@ public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryT
      * reported, but an accumulator silently wrapping instead would be worse.
      * <p>
      * The {@code sum(value)} control is what stops this being vacuous. It is the same query over
-     * the same fixture with a DOUBLE column, and it DOES take per-key, so the merge below is kept
-     * because of the AGGREGATE and not because the fixture is too small or too sparse to qualify.
+     * the same fixture with a DOUBLE column, and it must RUN per-key -- asserted from the mode
+     * counters -- so the merge below is kept because of the AGGREGATE and not because the fixture
+     * is too small or too sparse to qualify.
+     * <p>
+     * That control used to assert the PLAN, which proves nothing of the sort: the plan prints the
+     * permission the compiler granted, and at 60 rows per pair this fixture printed
+     * {@code per-key (unordered)} while every execution took the merge -- leaving this class 14/14
+     * green with the thing it exists to pin untested. See {@link #assertRunsPerKeyMode}.
      */
     @Test
     public void testSumAvgOverDecimal256KeepTheMerge() throws Exception {
         assertMemoryLeak(() -> {
             createAlternatingDecimal256Table();
-            assertQuery("SELECT sum(value) FROM dec_tel WHERE param_id IN ('A','B')")
-                    .noLeakCheck()
-                    .assertsPlanContaining("frames: per-key (unordered)");
+            assertRunsPerKeyMode("SELECT sum(value) FROM dec_tel WHERE param_id IN ('A','B')");
             for (String agg : new String[]{"sum(v)", "avg(v)", "avg(v, 0)"}) {
                 final String indexed = "SELECT " + agg + " FROM dec_tel WHERE param_id IN ('A','B')";
                 assertQuery(indexed).noLeakCheck().assertsPlanNotContaining("frames: per-key");
@@ -469,10 +480,18 @@ public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryT
      * the largest DECIMAL(76,0) there is and {@code 'B'} its negation. Timestamp order therefore
      * keeps every partial sum inside one operand; key-major order does not.
      * <p>
-     * Six hundred rows per key, not six, because per-key mode declines below 256 rows per
-     * (key, partition) pair. A six-row fixture would fall back to the merge on density and prove
-     * nothing about the aggregate. The DOUBLE {@code value} column carries the control query that
-     * pins the fixture really is per-key-eligible.
+     * Six hundred rows per key, not six, because per-key mode declines on density and a fixture
+     * under the crossover would fall back to the merge and prove nothing about the aggregate.
+     * Every row here lands in one daily partition, so rows per (key, partition) pair is just rows
+     * per key: {@code long_sequence(1200)} over two keys gives 600, against a crossover of 64 --
+     * the control query is not keyed, so it reaches the async not-keyed offer site, which makes
+     * one pass per frame and therefore faces the base unmultiplied.
+     * <p>
+     * The DOUBLE {@code value} column carries the control query, which asserts the MODE from the
+     * counters. That matters here more than anywhere: at {@code long_sequence(120)} this fixture
+     * holds 60 rows per pair, four short of the crossover, so it takes the merge -- and while the
+     * control asserted the plan instead, the whole class stayed green in exactly that state. The
+     * row count and the control are a pair; neither is load-bearing without the other.
      */
     private void createAlternatingDecimal256Table() throws Exception {
         final String max = "9999999999999999999999999999999999999999999999999999999999999999999999999999";

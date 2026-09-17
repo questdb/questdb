@@ -25,9 +25,11 @@
 package io.questdb.test.cairo.covering;
 
 import io.questdb.PropertyKey;
+import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 
 public abstract class AbstractCoveringIndexQueryTest extends AbstractCairoTest {
@@ -55,6 +57,44 @@ public abstract class AbstractCoveringIndexQueryTest extends AbstractCairoTest {
         TestUtils.assertEquals(reference, indexed);
     }
 
+    /**
+     * RUN {@code sql} and assert the execution really took per-key (unordered) frame mode.
+     * <p>
+     * This is what {@code assertsPlanContaining("frames: per-key")} is NOT, and the distinction is
+     * the one this package gets wrong most often. The plan prints the plan-stable PERMISSION the
+     * compiler granted. Whether an execution exercises it is decided per open, from the
+     * frame-count ceiling and the density estimate, and an open that declines returns the SAME
+     * ROWS through the merge -- so a fixture drifting under the density crossover leaves every
+     * plan assertion and every result assertion green while the mode under test stops running
+     * altogether. Measured on {@code dec_tel} at 60 rows per pair: the plan says
+     * {@code per-key (unordered)}, {@code perKeyOpens=0}, {@code mergedOpens=1}, class 14/14
+     * green.
+     * <p>
+     * {@code assertsPlanContaining} does not even execute the query (it is documented as
+     * "without running the query for a result"), so it cannot move these counters at all. Any arm
+     * whose javadoc claims a control "DOES take per-key" needs this, not that.
+     */
+    protected void assertRunsPerKeyMode(String sql) throws Exception {
+        CoveringIndexRecordCursorFactory.resetModeSelectionsForTesting();
+        printSql(sql, new StringSink());
+        final long perKeyOpens = CoveringIndexRecordCursorFactory.getPerKeyModeOpensForTesting();
+        final long mergedOpens = CoveringIndexRecordCursorFactory.getMergedModeOpensForTesting();
+        Assert.assertTrue(
+                "this query was supposed to RUN per-key mode and did not: perKeyOpens=" + perKeyOpens
+                        + ", mergedOpens=" + mergedOpens + ". The plan would still print"
+                        + " 'frames: per-key (unordered)' here -- that is the permission, not the"
+                        + " mode -- so whatever this arm is controlling for is no longer controlled."
+                        + " Most likely the fixture fell under the density crossover. Query: " + sql,
+                perKeyOpens > 0
+        );
+        Assert.assertEquals(
+                "this query opened per-key mode but ALSO fell back to the merge on another open,"
+                        + " so the arm below is averaging two modes. Query: " + sql,
+                0,
+                mergedOpens
+        );
+    }
+
     protected void createFlights() throws Exception {
         execute("CREATE TABLE flights (flight_ground INT, start_time TIMESTAMP, end_time TIMESTAMP)");
         execute("INSERT INTO flights VALUES (100, '1970-01-01T00:00:02.000000Z', '1970-01-01T00:00:08.000000Z')");
@@ -75,14 +115,21 @@ public abstract class AbstractCoveringIndexQueryTest extends AbstractCairoTest {
      * partitions instead of one.
      * <p>
      * The ROW COUNT is set by the density the per-key gate needs, not by the partition count:
-     * 200 000 rows over 4 keys and 70 partitions is ~714 rows per (key, partition) pair, 2.8x
-     * {@code PER_KEY_MIN_ROWS_PER_PAIR}. It held 10 000 rows -- ~35 per pair, three above the
-     * gate -- while that constant was 32. When the crossover was swept directly and the
-     * constant moved to 256, this fixture fell under it, and every suite built on it would have
-     * quietly stopped running per-key mode at all while still passing: they assert the PLAN,
-     * which prints the plan-stable permission and is blind to the flip.
+     * 200 000 rows over 4 keys and 70 partitions is ~714 rows per (key, partition) pair. The
+     * crossover it has to clear is per-CONSUMER -- {@code PER_KEY_MIN_ROWS_PER_PAIR_BASE} times
+     * the passes that consumer makes over each frame -- so the bar differs between the suites
+     * built on this fixture: 64 for the order-sensitive arms, which run on the async group by,
+     * and 128 for the two-aggregate vectorized query the density suite uses. 714 clears both with
+     * room, which is the point of the headroom.
+     * <p>
+     * It held 10 000 rows -- ~35 per pair, three above the gate -- while the constant was a flat
+     * 32. When the crossover was first swept and that became a flat 256, this fixture fell under
+     * it, and every suite built on it would have quietly stopped running per-key mode at all
+     * while still passing: they asserted the PLAN, which prints the plan-stable permission and is
+     * blind to the flip.
      * {@code CoveringIndexPerKeyDensityTest.testSharedMultiPartitionFixtureKeepsPerKey} is the
-     * arm that is not, and it is what caught this.
+     * arm that is not, and it is what caught this. The order-sensitive arms over this fixture now
+     * assert the mode themselves, through {@link #assertRunsPerKeyMode}.
      * <p>
      * The single-partition fixtures cannot exercise the invariant that per-key acceptance
      * rests on: "per-key mode iterates partitions OUTER, so one key's frames still arrive in
