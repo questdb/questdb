@@ -194,6 +194,7 @@ public final class TableUtils {
      */
     public static final String TXN_FILE_NAME = "_txn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
+    public static final int TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC = 0x41504354; // "APCT"
     // transaction file structure
     // @formatter:off
     public static final int TX_BASE_HEADER_SECTION_PADDING = 12; // Add some free space into header for future use
@@ -222,6 +223,11 @@ public final class TableUtils {
     public static final long TX_OFFSET_LAG_ROW_COUNT_32 = TX_OFFSET_LAG_TXN_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MIN_TIMESTAMP_64 = TX_OFFSET_LAG_ROW_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MAX_TIMESTAMP_64 = TX_OFFSET_LAG_MIN_TIMESTAMP_64 + 8;
+    // Last successful table-writer commit that affected the active logical partition. This uses
+    // the 12 bytes of pre-existing padding before MAP_WRITER_COUNT. The marker is required because
+    // old transaction records did not guarantee zero-filled padding.
+    public static final long TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64 = TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8;
+    public static final long TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32 = TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64 + 8;
     // @formatter:on
     public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
@@ -2519,6 +2525,8 @@ public final class TableUtils {
 
         txMem.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, Long.MAX_VALUE);
         txMem.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, Long.MIN_VALUE);
+        txMem.putLong(baseOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64, Numbers.LONG_NULL);
+        txMem.putInt(baseOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32, TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC);
         txMem.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, 0);
         txMem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, 0);
         txMem.putInt(baseOffset + TX_OFFSET_CHECKSUM_32, EMPTY_TABLE_LAG_CHECKSUM);
@@ -3338,6 +3346,6 @@ public final class TableUtils {
 
     static {
         //noinspection ConstantValue
-        assert TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8 <= TX_OFFSET_MAP_WRITER_COUNT_32;
+        assert TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32 + Integer.BYTES <= TX_OFFSET_MAP_WRITER_COUNT_32;
     }
 }

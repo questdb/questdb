@@ -186,6 +186,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             putLong(TX_OFFSET_SEQ_TXN_64, seqTxn);
             putLong(TX_OFFSET_MAX_TIMESTAMP_64, maxTimestamp);
             putLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64, transientRowCount);
+            putLong(TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64, activePartitionLastCommitMicros);
+            putInt(TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32, TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC);
             putLagValues();
 
             // Store symbol counts. Unfortunately we cannot skip it in here
@@ -352,6 +354,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             ObjList<? extends SymbolCountProvider> symbolCountProviders
     ) {
         recordStructureVersion++;
+        this.activePartitionLastCommitMicros = Numbers.LONG_NULL;
         this.fixedRowCount = fixedRowCount;
         this.maxTimestamp = maxTimestamp;
         this.transientRowCount = transientRowCount;
@@ -384,6 +387,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         prevMinTimestamp = Long.MAX_VALUE;
         maxTimestamp = prevMaxTimestamp;
         minTimestamp = prevMinTimestamp;
+    }
+
+    public void setActivePartitionLastCommitMicros(long commitMicros) {
+        activePartitionLastCommitMicros = Math.max(activePartitionLastCommitMicros, commitMicros);
     }
 
     public void setColumnVersion(long newVersion) {
@@ -557,6 +564,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         writeAreaSize = calculateWriteSize();
         writeBaseOffset = calculateWriteOffset(writeAreaSize);
+        activePartitionLastCommitMicros = Numbers.LONG_NULL;
         resetTxn(
                 txMemBase,
                 writeBaseOffset,
@@ -684,6 +692,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         putLong(TX_OFFSET_COLUMN_VERSION_64, columnVersion);
         putLong(TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
         putLong(TX_OFFSET_SEQ_TXN_64, seqTxn);
+        putLong(TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64, activePartitionLastCommitMicros);
+        putInt(TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32, TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC);
         putLagValues();
         putInt(TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
         putInt(TX_OFFSET_CHECKSUM_32, calculateTxnLagChecksum(txn, seqTxn, lagRowCount, lagMinTimestamp, lagMaxTimestamp, lagTxnCount));

@@ -3184,19 +3184,6 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Post-commit extension hook for engines that track activity of a table's active logical
-     * partition. The base implementation is intentionally empty.
-     */
-    public void notifyTableDataCommit(
-            TableToken tableToken,
-            long activePartitionFloor,
-            long tableTxn,
-            long commitMicros,
-            boolean activePartitionAffected
-    ) {
-    }
-
-    /**
      * Publishes notification of table transaction to the queue. The intent is to notify Apply2WalJob that
      * there are WAL files to be merged into the table. Notification can fail if the queue is full, in
      * which case it will have to be republished from a persisted storage. However, this method does not
