@@ -86,6 +86,7 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class LogFactoryTest {
@@ -1199,6 +1200,114 @@ public class LogFactoryTest {
             factory.flushJobs();
         }
         Assert.assertTrue(new File(expectedLogFile).length() > 0);
+    }
+
+    @Test
+    public void testRollingFileWriterDoesNotRollOnOpen() throws Exception {
+        final long ticks = MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z");
+        final MicrosecondClock clock = () -> ticks;
+        final String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
+        final String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
+        final File expectedLogFile = new File(base + "mylog-2015-05-03.log");
+        TestUtils.writeStringToFile(expectedLogFile, "existing log");
+
+        try (RingQueue<LogRecordUtf8Sink> queue = new RingQueue<>(
+                LogRecordUtf8Sink::new,
+                1024,
+                2,
+                MemoryTag.NATIVE_DEFAULT
+        )) {
+            final SPSequence pubSeq = new SPSequence(queue.getCycle());
+            final SCSequence subSeq = new SCSequence();
+            pubSeq.then(subSeq).then(pubSeq);
+
+            try (LogRollingFileWriter writer = new LogRollingFileWriter(
+                    TestFilesFacadeImpl.INSTANCE,
+                    clock,
+                    queue,
+                    subSeq,
+                    LogLevel.INFO
+            )) {
+                writer.setLocation(logFile);
+                writer.bindProperties(LogFactory.getInstance());
+            }
+        }
+
+        Assert.assertEquals("existing log", TestUtils.readStringFromFile(expectedLogFile));
+        Assert.assertFalse(new File(expectedLogFile + ".1").exists());
+    }
+
+    @Test
+    public void testRollingFileWriterFlushesAfterDeadline() throws Exception {
+        final AtomicLong ticks = new AtomicLong(MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"));
+        final String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
+        final String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
+        final File expectedLogFile = new File(base + "mylog-2015-05-03.log");
+
+        try (RingQueue<LogRecordUtf8Sink> queue = new RingQueue<>(
+                LogRecordUtf8Sink::new,
+                1024,
+                2,
+                MemoryTag.NATIVE_DEFAULT
+        )) {
+            final SPSequence pubSeq = new SPSequence(queue.getCycle());
+            final SCSequence subSeq = new SCSequence();
+            pubSeq.then(subSeq).then(pubSeq);
+
+            try (LogRollingFileWriter writer = new LogRollingFileWriter(
+                    TestFilesFacadeImpl.INSTANCE,
+                    ticks::get,
+                    queue,
+                    subSeq,
+                    LogLevel.INFO
+            )) {
+                writer.setLocation(logFile);
+                writer.bindProperties(LogFactory.getInstance());
+
+                final long cursor = pubSeq.next();
+                Assert.assertTrue(cursor > -1);
+                final LogRecordUtf8Sink sink = queue.get(cursor);
+                sink.setLevel(LogLevel.INFO);
+                sink.put("test");
+                pubSeq.done(cursor);
+
+                Assert.assertTrue(writer.runSerially());
+                Assert.assertEquals(0, expectedLogFile.length());
+
+                ticks.addAndGet(2 * Micros.MILLI_MICROS);
+                Assert.assertTrue(writer.runSerially());
+                Assert.assertEquals("test", TestUtils.readStringFromFile(expectedLogFile));
+            }
+        }
+    }
+
+    @Test
+    public void testRollingFileWriterFlushesOnIdleWorker() throws Exception {
+        final long startTicks = MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z");
+        final long startNanos = System.nanoTime();
+        final MicrosecondClock clock = () -> startTicks + TimeUnit.NANOSECONDS.toMicros(System.nanoTime() - startNanos);
+        final String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
+        final String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
+        final File expectedLogFile = new File(base + "mylog-2015-05-03.log");
+
+        try (LogFactory factory = new LogFactory()) {
+            factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
+                final LogRollingFileWriter writer = new LogRollingFileWriter(
+                        TestFilesFacadeImpl.INSTANCE,
+                        clock,
+                        ring,
+                        seq,
+                        level
+                );
+                writer.setLocation(logFile);
+                return writer;
+            }));
+            factory.bind();
+            factory.startThread();
+
+            factory.create("x").xinfo().$("test").$();
+            TestUtils.assertEventually(() -> Assert.assertTrue(expectedLogFile.length() > 0), 5);
+        }
     }
 
     @Test
