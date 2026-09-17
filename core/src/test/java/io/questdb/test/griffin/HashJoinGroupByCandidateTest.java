@@ -36,13 +36,16 @@ import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.HashJoinGroupByCandidate;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
 import io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunction;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.Chars;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -243,6 +246,16 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             execute("alter table p add column unsupported varchar");
             assertCandidate("select p.country, sum(r.energy_kwh)" + JOIN, true);
             assertCandidate("select p.unsupported, sum(r.energy_kwh)" + JOIN, false);
+            // Key type changes rebind the analysis: INT to SYMBOL on both sides and back.
+            execute("alter table p alter column plant_id type symbol");
+            assertMismatchedKeys("select p.country, sum(r.energy_kwh)" + JOIN);
+            execute("alter table r alter column plant_id type symbol");
+            assertCandidate("select p.country, sum(r.energy_kwh)" + JOIN, true);
+            Assert.assertTrue(isSymbolKey("select p.country, sum(r.energy_kwh)" + JOIN));
+            execute("alter table p alter column plant_id type int");
+            execute("alter table r alter column plant_id type int");
+            assertCandidate("select p.country, sum(r.energy_kwh)" + JOIN, true);
+            Assert.assertFalse(isSymbolKey("select p.country, sum(r.energy_kwh)" + JOIN));
             execute("alter table p alter column plant_id type long");
             execute("alter table r alter column plant_id type long");
             assertCandidate("select p.country, sum(r.energy_kwh)" + JOIN, false);
@@ -255,7 +268,6 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             createTables();
             for (String sql : new String[]{
                     "select p.country, sum(r.energy_kwh) from r join p on r.long_key=p.long_key",
-                    "select p.country, sum(r.energy_kwh) from r join p on r.sym_key=p.sym_key",
                     "select p.country, sum(r.energy_kwh) from r join p on r.plant_id+1=p.plant_id",
                     "select p.country, sum(r.energy_kwh)" + JOIN + " and r.long_key=p.long_key",
                     "select p.country, sum(r.energy_kwh)" + JOIN + " where r.energy_kwh > p.installed_kwp",
@@ -274,6 +286,56 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("alter table r add column str_key string");
+            execute("alter table r add column vc_key varchar");
+            execute("alter table p add column str_key string");
+            execute("alter table p add column vc_key varchar");
+            for (String sql : new String[]{
+                    "select p.country, sum(r.energy_kwh) from r join p on r.sym_key=p.sym_key",
+                    "select p.country, sum(r.energy_kwh) from r left join p on r.sym_key=p.sym_key",
+                    "select p.country, sum(r.energy_kwh) from p right join r on r.sym_key=p.sym_key",
+                    "select p.sym_key, count(*), count(p.sym_key) from r join p on p.sym_key=r.sym_key where p.sym_key in ('a','b')",
+                    "select count(*) from r left join p on r.sym_key=p.sym_key and p.country = 'ES' where r.sym_key is null"
+            }) {
+                assertCandidate(sql, true);
+                Assert.assertTrue(sql, isSymbolKey(sql));
+            }
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                // A RIGHT join builds the SQL left table, so the probe key is r's column.
+                HashJoinGroupByCandidate candidate = candidate(compiler,
+                        "select p.country, sum(r.energy_kwh) from p right join r on r.sym_key=p.sym_key");
+                Assert.assertNotNull(candidate);
+                Assert.assertTrue(candidate.isInputSwapped());
+                Assert.assertEquals(5, candidate.getProbeKeyColumn());
+                Assert.assertEquals(4, candidate.getBuildKeyColumn());
+            }
+            Assert.assertFalse(isSymbolKey("select p.country, sum(r.energy_kwh)" + JOIN));
+            assertPlanContains("select p.country, sum(r.energy_kwh) from r join p on r.sym_key=p.sym_key", "symbolKeyJoin: true", true);
+            try (RecordCursorFactory factory = select("explain select p.country, sum(r.energy_kwh)" + JOIN);
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                while (cursor.hasNext()) {
+                    Assert.assertFalse(Chars.contains(cursor.getRecord().getStrA(0), "symbolKeyJoin"));
+                }
+            }
+            // Text and mixed-type keys keep the ordinary plan and its own key conversions.
+            for (String on : new String[]{
+                    "r.sym_key=p.str_key", "r.str_key=p.sym_key", "r.sym_key=p.vc_key", "r.vc_key=p.sym_key",
+                    "r.str_key=p.str_key", "r.vc_key=p.vc_key"
+            }) {
+                assertCandidate("select p.country, sum(r.energy_kwh) from r join p on " + on, false);
+                assertPlanContains("select p.country, sum(r.energy_kwh) from r join p on " + on, "Hash Join", false);
+            }
+            // SYMBOL against INT fails the ordinary compile as before.
+            for (String on : new String[]{"r.sym_key=p.plant_id", "r.plant_id=p.sym_key"}) {
+                assertMismatchedKeys("select p.country, sum(r.energy_kwh) from r join p on " + on);
+            }
+        });
+    }
+
     private void assertCandidate(String sql, boolean expected) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             Assert.assertEquals(sql, expected, candidate(compiler, sql) != null);
@@ -281,6 +343,17 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         // All supported and rejected SQL still compile through the existing execution path.
         try (RecordCursorFactory ignored = select(sql)) {
             Assert.assertNotNull(ignored);
+        }
+    }
+
+    private void assertMismatchedKeys(String sql) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            Assert.assertNull(sql, candidate(compiler, sql));
+        }
+        try (RecordCursorFactory ignored = select(sql)) {
+            Assert.fail("expected a join key type mismatch: " + sql);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "join column type mismatch");
         }
     }
 
@@ -314,6 +387,14 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         model.toSink(after);
         Assert.assertEquals("candidate analysis mutated the model", before.toString(), after.toString());
         return candidate;
+    }
+
+    private boolean isSymbolKey(String sql) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            HashJoinGroupByCandidate candidate = candidate(compiler, sql);
+            Assert.assertNotNull(sql, candidate);
+            return candidate.isSymbolKey();
+        }
     }
 
     private void createTables() throws Exception {

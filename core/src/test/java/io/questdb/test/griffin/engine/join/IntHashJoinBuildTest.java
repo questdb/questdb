@@ -32,15 +32,20 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.join.IntHashJoinBuild;
+import io.questdb.griffin.engine.join.SymbolKeyTranslator;
+import io.questdb.std.Chars;
 import io.questdb.std.Hash;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -68,6 +73,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class IntHashJoinBuildTest extends AbstractCairoTest {
     private static final SqlExecutionCircuitBreaker NOOP = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+    private static final Symbols POPULATED_SYMBOLS = new Symbols(
+            "symbol-0", "symbol-1", "symbol-2", "symbol-3", "symbol-4", "symbol-5",
+            "symbol-6", "symbol-7", "symbol-8", "symbol-9", "symbol-10", "symbol-11"
+    );
 
     @Test
     public void testCompressedIncrementalHeapBoundAndGrowthCap() throws Exception {
@@ -244,12 +253,12 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                  RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 for (long hint : new long[]{limit / 16 + 1, Long.MAX_VALUE}) {
                     build.open(tracker, NOOP);
-                    CairoException error = Assert.assertThrows(CairoException.class, () -> build.build(cursor, 0, hint));
+                    CairoException error = Assert.assertThrows(CairoException.class, () -> build.build(cursor, 0, hint, null));
                     TestUtils.assertContains(error.getFlyweightMessage(), "hash join build buffer overflow");
                     Assert.assertEquals(0, tracker.getUsed());
                     cursor.toTop();
                     build.open(tracker, NOOP);
-                    FrozenHashJoinBuild.Probe probe = build.build(cursor, 0, 1).newProbe();
+                    FrozenHashJoinBuild.Probe probe = build.build(cursor, 0, 1, null).newProbe();
                     Assert.assertTrue(probe.findSingleUnchecked(17));
                     Assert.assertEquals(17, probe.getRecord().getInt(0));
                     build.close();
@@ -259,7 +268,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 // The largest legal hint reaches tracked allocation and is rejected
                 // by this tiny memory limit, rather than wrapping its compressed offset.
                 build.open(tracker, NOOP);
-                CairoException error = Assert.assertThrows(CairoException.class, () -> build.build(cursor, 0, limit / 16));
+                CairoException error = Assert.assertThrows(CairoException.class, () -> build.build(cursor, 0, limit / 16, null));
                 TestUtils.assertContains(error.getFlyweightMessage(), "query memory limit exceeded");
                 TestUtils.assertContains(error.getFlyweightMessage(), ", size=" + limit + ",");
                 Assert.assertEquals(0, tracker.getUsed());
@@ -271,10 +280,13 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
     public void testUniqueDuplicateAndEmptyBuildReuseAcrossPayloadWidths() throws Exception {
         assertMemoryLeak(() -> {
             AtomicInteger row = new AtomicInteger();
+            Symbols symbols = new Symbols();
+            symbols.put(1, "Aa", "BB");
             Record source = new Record() {
                 @Override
                 public int getInt(int column) {
-                    return row.get();
+                    // Column 1 is the SYMBOL payload, stored as its source key.
+                    return column != 1 ? row.get() : row.get() % 3 == 2 ? SymbolTable.VALUE_IS_NULL : row.get() % 3;
                 }
 
                 @Override
@@ -284,11 +296,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
 
                 @Override
                 public CharSequence getSymA(int column) {
-                    return switch (row.get() % 3) {
-                        case 0 -> "Aa";
-                        case 1 -> "BB";
-                        default -> null;
-                    };
+                    return symbols.valueOf(column, getInt(column));
                 }
             };
             // Empty, narrow and wide layouts, with growth through page/cache-line boundaries.
@@ -314,7 +322,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                             expected.computeIfAbsent(key, ignored -> new ArrayList<>()).add(r);
                             build.append(key, source);
                         }
-                        FrozenHashJoinBuild frozen = build.freeze();
+                        FrozenHashJoinBuild frozen = build.freeze(symbols);
                         Assert.assertEquals(count, frozen.getRowCount());
                         Assert.assertEquals(expected.size(), frozen.getKeyCount());
                         Assert.assertEquals(tracker.getUsed(), frozen.getSizeInBytes());
@@ -376,7 +384,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAllPayloadTypesAndPrunedMappingAfterCursorClose() throws Exception {
+    public void testAllPayloadTypesAndPrunedMapping() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table payload (b boolean, by byte, sh short, ch char, i int, l long, d date, ts timestamp, "
                     + "ns timestamp_ns, f float, dbl double, s symbol, unused string)");
@@ -392,17 +400,18 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     types.add(source.getMetadata().getColumnType(index));
                     mapping.add(index);
                 }
-                try (IntHashJoinBuild build = new IntHashJoinBuild(types, mapping, 2, 16)) {
+                try (IntHashJoinBuild build = new IntHashJoinBuild(types, mapping, 2, 16);
+                     RecordCursor cursor = source.getCursor(sqlExecutionContext)) {
                     build.open(null, NOOP);
-                    try (RecordCursor cursor = source.getCursor(sqlExecutionContext)) {
-                        Assert.assertTrue(cursor.hasNext());
-                        Assert.assertEquals(ColumnType.FLOAT, types.getColumnType(2));
-                        Assert.assertEquals(1.25f, cursor.getRecord().getFloat(mapping.getQuick(2)), 0);
-                        build.append(42, cursor.getRecord());
-                        Assert.assertTrue(cursor.hasNext());
-                        build.append(43, cursor.getRecord());
-                    }
-                    FrozenHashJoinBuild.Probe probe = build.freeze().newProbe();
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(ColumnType.FLOAT, types.getColumnType(2));
+                    Assert.assertEquals(1.25f, cursor.getRecord().getFloat(mapping.getQuick(2)), 0);
+                    build.append(42, cursor.getRecord());
+                    Assert.assertTrue(cursor.hasNext());
+                    build.append(43, cursor.getRecord());
+                    Assert.assertFalse(cursor.hasNext());
+                    // SYMBOL payloads resolve through the open source cursor, whose position no longer matters.
+                    FrozenHashJoinBuild.Probe probe = build.freeze(cursor).newProbe();
                     probe.find(42);
                     Assert.assertTrue(probe.hasNext());
                     probe.next();
@@ -420,6 +429,8 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     Assert.assertEquals(12, record.getByte(10));
                     Assert.assertTrue(record.getBool(11));
                     Assert.assertFalse(probe.hasNext());
+                    Assert.assertTrue(probe.getSymbolTable(0) instanceof StaticSymbolTable);
+                    Assert.assertEquals(0, ((StaticSymbolTable) probe.getSymbolTable(0)).keyOf("ES"));
                     probe.find(43);
                     probe.next();
                     Assert.assertNull(record.getSymA(0));
@@ -454,7 +465,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 for (int execution = 0; execution < 2; execution++) {
                     cursor.toTop();
                     build.open(tracker, NOOP);
-                    FrozenHashJoinBuild frozen = build.build(cursor, 0, cursor.size());
+                    FrozenHashJoinBuild frozen = build.build(cursor, 0, cursor.size(), null);
                     Assert.assertEquals(10_000, frozen.getRowCount());
                     Assert.assertEquals(capacity, tracker.getUsed());
                     Assert.assertEquals(capacity, frozen.getSizeInBytes());
@@ -466,7 +477,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     Assert.assertEquals(0, tracker.getUsed());
                     build.open(tracker, NOOP);
                     CairoException error = Assert.assertThrows(CairoException.class,
-                            () -> build.build(cursor, 0, Long.MAX_VALUE));
+                            () -> build.build(cursor, 0, Long.MAX_VALUE, null));
                     TestUtils.assertContains(error.getFlyweightMessage(), "hash join build buffer overflow");
                     Assert.assertEquals(0, tracker.getUsed());
                 }
@@ -609,7 +620,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 populate(build, record, tracker, counting);
                 long checks = counting.getCheckCount();
                 build.close();
-                // Includes initialization, copied rows, hash/row/dictionary growth and freeze.
+                // Includes initialization, copied rows, hash/row growth and freeze.
                 for (long failAt = 1; failAt <= checks; failAt++) {
                     final long failureCheck = failAt;
                     CountingSqlExecutionCircuitBreaker breaker = new CountingSqlExecutionCircuitBreaker(NOOP) {
@@ -657,46 +668,43 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
     @Test
     public void testRehashChecksCancellationPerMiBOfSlots() throws Exception {
         assertMemoryLeak(() -> {
-            // Row 65_536 rehashes 2 MiB of symbol slots and row 131_072 rehashes 2 MiB of key slots.
+            // Row 131_072 rehashes 2 MiB of key slots.
             final int rows = 131_073;
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(64 * 1024 * 1024);
                  IntHashJoinBuild build = newBuild(2, 16, ColumnType.SYMBOL)) {
-                io.questdb.std.str.StringSink text = new io.questdb.std.str.StringSink();
                 Source source = new Source();
-                source.text = text;
-                for (String failSite : new String[]{null, "growKeyTable", "growSymbolTable"}) {
+                Symbols symbols = new Symbols("reused");
+                for (String failSite : new String[]{null, "growKeyTable"}) {
                     SiteBreaker breaker = new SiteBreaker(failSite);
                     build.open(tracker, breaker);
                     try {
                         for (int row = 0; row < rows; row++) {
                             breaker.row = row;
-                            text.clear();
-                            text.put(row);
+                            source.row = row;
                             build.append(row, source);
                         }
                         Assert.assertNull("expected cancellation inside " + failSite, failSite);
-                        Assert.assertEquals(rows, build.freeze().getRowCount());
-                        Assert.assertEquals("appended and interned rows must not check", 0, breaker.rowChecks);
-                        // One check per rehash plus one per MiB of old slots: 19 key and 22 symbol checks.
+                        Assert.assertEquals(rows, build.freeze(symbols).getRowCount());
+                        Assert.assertEquals("appended rows must not check", 0, breaker.rowChecks);
+                        // One check per rehash plus one per MiB of old slots: 19 key checks.
                         Assert.assertTrue("key rehash checks: " + breaker.keyRehashChecks,
                                 breaker.keyRehashChecks > 0 && breaker.keyRehashChecks < 64);
-                        Assert.assertTrue("symbol rehash checks: " + breaker.symbolRehashChecks,
-                                breaker.symbolRehashChecks > 0 && breaker.symbolRehashChecks < 64);
                         build.close();
                     } catch (CairoException e) {
                         Assert.assertNotNull("unexpected interruption: " + e.getFlyweightMessage(), failSite);
                         Assert.assertTrue(e.isCancellation());
                         // The first rehash of more than 1 MiB of old slots checks again inside its loop.
-                        Assert.assertEquals(failSite.equals("growKeyTable") ? 131_072 : 65_536, breaker.failedRow);
+                        Assert.assertEquals(131_072, breaker.failedRow);
                     }
                     Assert.assertEquals("rehash cancellation releases all allocations", 0, tracker.getUsed());
                     Assert.assertEquals(0, build.getSizeInBytes());
                 }
                 build.open(tracker, NOOP);
-                text.clear();
-                text.put("reused");
+                source.row = 0;
                 build.append(1, source);
-                Assert.assertEquals(1, build.freeze().getRowCount());
+                FrozenHashJoinBuild.Probe probe = build.freeze(symbols).newProbe();
+                Assert.assertTrue(probe.findSingleUnchecked(1));
+                TestUtils.assertEquals("reused", probe.getRecord().getSymA(0));
                 build.close();
                 Assert.assertEquals(0, tracker.getUsed());
             }
@@ -744,25 +752,29 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
     @Test
     public void testConcurrentLookupsAndIndependentSymbolFlyweights() throws Exception {
         assertMemoryLeak(() -> {
-            try (IntHashJoinBuild build = newBuild(2, 16, ColumnType.SYMBOL, ColumnType.DOUBLE)) {
+            execute("CREATE TABLE src (k INT, s SYMBOL, d DOUBLE)");
+            execute("""
+                    INSERT INTO src
+                    SELECT ((x - 1) % 100)::INT, CASE WHEN x % 2 = 1 THEN 'ES' ELSE 'IT' END, (x - 1) + 0.25
+                    FROM long_sequence(10_000)
+                    """);
+            try (IntHashJoinBuild build = new IntHashJoinBuild(new ArrayColumnTypes().add(ColumnType.SYMBOL).add(ColumnType.DOUBLE), indexes(1, 2), 2, 16);
+                 RecordCursorFactory factory = select("src");
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 build.open(null, NOOP);
-                Source source = new Source();
-                for (int i = 0; i < 10_000; i++) {
-                    source.row = i;
-                    source.text = (i & 1) == 0 ? "ES" : "IT";
-                    build.append(i % 100, source);
-                }
-                FrozenHashJoinBuild frozen = build.freeze();
+                FrozenHashJoinBuild frozen = build.build(cursor, 0);
                 ExecutorService executor = Executors.newFixedThreadPool(4);
                 CountDownLatch start = new CountDownLatch(1);
                 List<Future<?>> futures = new ArrayList<>();
                 try {
                     for (int worker = 0; worker < 4; worker++) {
                         final int shift = worker;
+                        // The owner binds probes and their symbol table views before publication.
+                        FrozenHashJoinBuild.Probe a = frozen.newProbe();
+                        FrozenHashJoinBuild.Probe b = frozen.newProbe();
+                        Assert.assertNotSame(a.getSymbolTable(0), b.getSymbolTable(0));
                         futures.add(executor.submit(() -> {
                             // Task submission and the latch publish the completed build.
-                            FrozenHashJoinBuild.Probe a = frozen.newProbe();
-                            FrozenHashJoinBuild.Probe b = frozen.newProbe();
                             start.await();
                             for (int i = 0; i < 1000; i++) {
                                 int key = (i + shift) % 100;
@@ -776,6 +788,8 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                                     TestUtils.assertEquals((key & 1) == 0 ? "ES" : "IT", first);
                                     Assert.assertEquals(row + 0.25, a.getRecord().getDouble(1), 0);
                                     TestUtils.assertEquals((key & 1) == 0 ? "IT" : "ES", b.getRecord().getSymB(0));
+                                    // Another view's flyweight does not overwrite this one.
+                                    TestUtils.assertEquals((key & 1) == 0 ? "ES" : "IT", first);
                                 }
                                 Assert.assertFalse(a.hasNext());
                                 Assert.assertFalse(b.hasNext());
@@ -804,11 +818,16 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(4096);
                  IntHashJoinBuild build = newBuild(2, 16, ColumnType.SYMBOL)) {
+                Symbols symbols = new Symbols("fresh");
                 Assert.assertEquals(0, tracker.getUsed());
                 Assert.assertEquals(0, build.getSizeInBytes());
                 Assert.assertThrows(IllegalStateException.class, build::freeze);
                 build.open(tracker, NOOP);
-                FrozenHashJoinBuild frozen = build.freeze();
+                // A SYMBOL payload cannot resolve without a source; the failure closes the build.
+                Assert.assertThrows(IllegalArgumentException.class, build::freeze);
+                Assert.assertEquals(0, tracker.getUsed());
+                build.open(tracker, NOOP);
+                FrozenHashJoinBuild frozen = build.freeze(symbols);
                 Assert.assertEquals(0, frozen.getRowCount());
                 Assert.assertEquals(0, frozen.getKeyCount());
                 Assert.assertEquals(tracker.getUsed(), frozen.getSizeInBytes());
@@ -825,10 +844,8 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 Assert.assertEquals(0, tracker.getUsed());
                 Assert.assertThrows(IllegalStateException.class, () -> frozen.newProbe());
                 build.open(tracker, NOOP);
-                Source source = new Source();
-                source.text = "fresh";
-                build.append(1, source);
-                probe = build.freeze().newProbe();
+                build.append(1, new Source());
+                probe = build.freeze(symbols).newProbe();
                 probe.find(1);
                 probe.next();
                 Assert.assertEquals(0, probe.getRecord().getInt(0));
@@ -912,29 +929,28 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
     @Test
     public void testHighSymbolCardinalityAndDuplicateGrowthAccounting() throws Exception {
         assertMemoryLeak(() -> {
-            StringBuilder symbol = new StringBuilder();
-            Record source = new Record() {
-                @Override
-                public CharSequence getSymA(int col) {
-                    return symbol;
-                }
-            };
+            String[] values = new String[8192];
+            for (int i = 0; i < values.length; i++) {
+                values[i] = "country-with-a-long-name-" + i;
+            }
+            Symbols symbols = new Symbols(values);
+            Source source = new Source();
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(0);
-                 IntHashJoinBuild build = newBuild(2, 16, ColumnType.SYMBOL)) {
+                 IntHashJoinBuild build = newBuild(2, 16, ColumnType.SYMBOL);
+                 IntHashJoinBuild intBuild = newBuild(2, 16, ColumnType.INT)) {
                 long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP);
                 for (long limit : new long[]{4096, 16384, 65536, 0}) {
                     tracker.setLimit(limit);
                     try {
                         build.open(tracker, NOOP);
-                        for (int i = 0; i < 8192; i++) {
-                            symbol.setLength(0);
-                            symbol.append("country-with-a-long-name-").append(i);
+                        for (int i = 0; i < values.length; i++) {
+                            source.symbol = i;
                             build.append(i % 257, source);
                             Assert.assertEquals(build.getSizeInBytes(), tracker.getUsed());
                             Assert.assertEquals(Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP) - baseline, tracker.getUsed());
                         }
                         Assert.assertEquals(0, limit);
-                        FrozenHashJoinBuild.Probe probe = build.freeze().newProbe();
+                        FrozenHashJoinBuild.Probe probe = build.freeze(symbols).newProbe();
                         probe.find(0);
                         int matches = 0;
                         while (probe.hasNext()) {
@@ -943,6 +959,14 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                             matches++;
                         }
                         Assert.assertEquals(32, matches);
+                        // Distinct symbols cost exactly what distinct INT payloads cost: no dictionary copy.
+                        intBuild.open(null, NOOP);
+                        for (int i = 0; i < values.length; i++) {
+                            source.symbol = i;
+                            intBuild.append(i % 257, source);
+                        }
+                        Assert.assertEquals(intBuild.freeze().getSizeInBytes(), build.getSizeInBytes());
+                        intBuild.close();
                     } catch (CairoException ex) {
                         Assert.assertTrue(ex.isOutOfMemory());
                         Assert.assertNotEquals(0, limit);
@@ -961,14 +985,16 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(1);
                  IntHashJoinBuild build = newBuild(2, 16, ColumnType.SYMBOL, ColumnType.DOUBLE)) {
-                // Sweep byte limits through all small hash, row, symbol-index and text allocations.
+                // Sweep byte limits through all small hash and row allocations.
                 int failures = 0;
+                long peak = 0;
                 for (long limit = 1; limit <= 16_384; limit++) {
                     tracker.setLimit(limit);
                     try {
                         populate(build, new Source(), tracker, NOOP);
                         Assert.assertEquals(build.getSizeInBytes(), tracker.getUsed());
                         build.close();
+                        peak = limit;
                         break;
                     } catch (CairoException e) {
                         Assert.assertTrue(e.isOutOfMemory());
@@ -977,7 +1003,9 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals("all partial build allocations must be released", 0, tracker.getUsed());
                 }
-                Assert.assertTrue(failures > 1000);
+                // Every limit below the peak fails, and the peak covers growth of both buffers.
+                Assert.assertEquals(peak - 1, failures);
+                Assert.assertTrue("peak: " + peak, peak > 256);
                 tracker.setLimit(1_000_000);
                 populate(build, new Source(), tracker, NOOP);
                 build.close();
@@ -1095,92 +1123,97 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                  IntHashJoinBuild build = newBuild(2, 16, ColumnType.SYMBOL, ColumnType.DOUBLE)) {
                 build.open(tracker, NOOP);
                 Source source = new Source();
-                source.text = "ES";
                 build.append(1, source);
                 Record broken = new Record() {
                     @Override
-                    public CharSequence getSymA(int col) {
-                        return "allocated before failure";
+                    public double getDouble(int col) {
+                        throw new IllegalStateException("source getter failed");
                     }
 
                     @Override
-                    public double getDouble(int col) {
-                        throw new IllegalStateException("source getter failed");
+                    public int getInt(int col) {
+                        return 0;
                     }
                 };
                 Assert.assertThrows(IllegalStateException.class, () -> build.append(2, broken));
                 Assert.assertEquals(0, tracker.getUsed());
                 build.open(tracker, NOOP);
                 build.append(2, source);
-                Assert.assertEquals(1, build.freeze().getRowCount());
+                Assert.assertEquals(1, build.freeze(new Symbols("ES")).getRowCount());
             }
         });
     }
 
     @Test
-    public void testSymbolOwnershipHashCollisionsAndNulls() throws Exception {
+    public void testSymbolPayloadsResolveThroughSourceViews() throws Exception {
         assertMemoryLeak(() -> {
-            try (IntHashJoinBuild build = newBuild(2, 16, ColumnType.SYMBOL, ColumnType.SYMBOL, ColumnType.DOUBLE)) {
+            // Payload columns 0 and 1 read source columns 3 and 5, whose dictionaries differ.
+            ArrayColumnTypes types = new ArrayColumnTypes().add(ColumnType.SYMBOL).add(ColumnType.SYMBOL).add(ColumnType.DOUBLE);
+            try (IntHashJoinBuild build = new IntHashJoinBuild(types, indexes(3, 5, 0), 2, 16)) {
                 build.open(null, NOOP);
-                StringBuilder text = new StringBuilder();
-                String[] values = {null, "", "Aa", "BB", "AaAa", "BBBB", "AaBB", "BBAa", "ES", "IT", "国家🌞", "ES"};
+                Symbols symbols = new Symbols();
+                symbols.put(3, "", "Aa", "BB", "ES", "国家🌞");
+                symbols.put(5, "IT", "ES");
+                int[][] rows = {{0, 1}, {1, 0}, {3, SymbolTable.VALUE_IS_NULL}, {SymbolTable.VALUE_IS_NULL, 1}, {4, 0}, {3, 1}};
+                int[] row = new int[2];
                 Record source = new Record() {
-                    @Override
-                    public CharSequence getSymA(int col) {
-                        return text;
-                    }
-
                     @Override
                     public double getDouble(int col) {
                         return Double.NaN;
                     }
-                };
-                for (int i = 0; i < values.length; i++) {
-                    if (values[i] == null) {
-                        build.append(i, new Source());
-                    } else {
-                        text.setLength(0);
-                        text.append(values[i]);
-                        build.append(i, source);
+
+                    @Override
+                    public int getInt(int col) {
+                        return col == 3 ? row[0] : col == 5 ? row[1] : -1;
                     }
+                };
+                for (int i = 0; i < rows.length; i++) {
+                    row[0] = rows[i][0];
+                    row[1] = rows[i][1];
+                    build.append(i, source);
                 }
-                text.setLength(0);
-                text.append("source overwritten");
-                FrozenHashJoinBuild.Probe probe = build.freeze().newProbe();
-                int es = -1;
-                for (int i = 0; i < values.length; i++) {
+                // Mutating the source after the copy does not change stored keys.
+                row[0] = row[1] = 2;
+                FrozenHashJoinBuild frozen = build.freeze(symbols);
+                Assert.assertEquals(0, symbols.newSymbolTableCalls);
+                FrozenHashJoinBuild.Probe probe = frozen.newProbe();
+                FrozenHashJoinBuild.Probe peer = frozen.newProbe();
+                // Each probe takes one view per SYMBOL payload column, from its mapped source column.
+                Assert.assertEquals(4, symbols.newSymbolTableCalls);
+                Assert.assertEquals("[3,5,3,5]", symbols.requestedColumns.toString());
+                for (int i = 0; i < rows.length; i++) {
                     probe.find(i);
                     probe.next();
                     Record record = probe.getRecord();
-                    TestUtils.assertEquals(values[i], record.getSymA(0));
-                    TestUtils.assertEquals(values[i], record.getSymB(1));
-                    Assert.assertEquals(record.getInt(0), record.getInt(1));
-                    if (values[i] == null) {
-                        Assert.assertEquals(SymbolTable.VALUE_IS_NULL, record.getInt(0));
-                    } else {
-                        Assert.assertTrue(Double.isNaN(record.getDouble(2)));
-                        Assert.assertTrue(record.getInt(0) >= 0);
-                    }
-                    if ("ES".equals(values[i])) {
-                        if (es >= 0) {
-                            Assert.assertEquals(es, record.getInt(0));
-                        }
-                        es = record.getInt(0);
-                    }
+                    Assert.assertEquals(rows[i][0], record.getInt(0));
+                    Assert.assertEquals(rows[i][1], record.getInt(1));
+                    TestUtils.assertEquals(symbols.valueOf(3, rows[i][0]), record.getSymA(0));
+                    TestUtils.assertEquals(symbols.valueOf(5, rows[i][1]), record.getSymB(1));
+                    Assert.assertTrue(Double.isNaN(record.getDouble(2)));
                 }
-                SymbolTable a = probe.getSymbolTable(0);
-                SymbolTable b = probe.newSymbolTable(0);
-                CharSequence first = a.valueOf(1); // Aa
-                a.valueBOf(2); // BB: independent B flyweight
-                b.valueOf(3);
-                probe.getSymbolTable(1).valueOf(4);
-                TestUtils.assertEquals("Aa", first);
-                // Ten distinct values: keys outside [0, 10) resolve to null, as in SymbolMapReaderImpl.
-                TestUtils.assertEquals("国家🌞", a.valueOf(9));
-                for (int key : new int[]{-1, SymbolTable.VALUE_NOT_FOUND, 10, Integer.MAX_VALUE}) {
-                    Assert.assertNull(a.valueOf(key));
-                    Assert.assertNull(b.valueBOf(key));
+                probe.find(4);
+                probe.next();
+                CharSequence a = probe.getRecord().getSymA(0);
+                peer.find(2);
+                peer.next();
+                TestUtils.assertEquals("ES", peer.getRecord().getSymA(0));
+                TestUtils.assertEquals("国家🌞", a);
+                SymbolTable view = probe.getSymbolTable(0);
+                Assert.assertSame(view, probe.getSymbolTable(0));
+                Assert.assertNotSame(view, peer.getSymbolTable(0));
+                Assert.assertNotSame(view, probe.getSymbolTable(1));
+                SymbolTable fresh = probe.newSymbolTable(1);
+                Assert.assertNotSame(fresh, probe.getSymbolTable(1));
+                Assert.assertEquals(5, symbols.newSymbolTableCalls);
+                TestUtils.assertEquals("ES", fresh.valueOf(1));
+                // Keys outside a dictionary resolve as the source resolves them.
+                for (int key : new int[]{-1, SymbolTable.VALUE_NOT_FOUND, 5, Integer.MAX_VALUE}) {
+                    Assert.assertNull(view.valueOf(key));
+                    Assert.assertNull(fresh.valueBOf(key));
                 }
+                build.close();
+                Assert.assertThrows(AssertionError.class, () -> probe.getSymbolTable(0));
+                Assert.assertThrows(AssertionError.class, () -> probe.newSymbolTable(0));
             }
         });
     }
@@ -1192,11 +1225,16 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
             org.junit.Assume.assumeTrue(bean.isThreadAllocatedMemorySupported());
             bean.setThreadAllocatedMemoryEnabled(true);
             ArrayColumnTypes types = new ArrayColumnTypes().add(ColumnType.SYMBOL);
+            String[] values = new String[65_536];
+            for (int i = 0; i < values.length; i++) {
+                values[i] = Integer.toString(i);
+            }
+            // The source hands out one retained view, so only the build itself can allocate.
+            Symbols symbols = new Symbols(values);
+            symbols.isViewShared = true;
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(64 * 1024 * 1024);
                  IntHashJoinBuild build = new IntHashJoinBuild(types, indexes(0), 2, 16, true)) {
                 Source source = new Source();
-                io.questdb.std.str.StringSink text = new io.questdb.std.str.StringSink(64);
-                source.text = text;
                 FrozenHashJoinBuild.Probe probe = null;
                 long allocated = 0;
                 // Keep the setup cardinality fixed while warming the JVM's loop backedges.
@@ -1208,11 +1246,10 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     build.open(tracker, NOOP);
                     int rows = execution < warmupExecutions ? 512 : 65_536;
                     for (int row = 0; row < rows; row++) {
-                        text.clear();
-                        text.put(row);
+                        source.symbol = row;
                         build.append(row, source);
                     }
-                    FrozenHashJoinBuild snapshot = build.freeze();
+                    FrozenHashJoinBuild snapshot = build.freeze(symbols);
                     if (probe == null) probe = snapshot.newProbe();
                     else probe.reopen();
                     for (int row = 0; row < rows; row++) {
@@ -1239,31 +1276,31 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(1 << 20);
                  IntHashJoinBuild build = new IntHashJoinBuild(types, indexes(0), 2, 16, true)) {
                 Source source = new Source();
-                source.text = "old";
+                Symbols oldSymbols = new Symbols("old");
                 build.open(tracker, NOOP);
                 build.append(1, source);
-                FrozenHashJoinBuild snapshot = build.freeze();
+                FrozenHashJoinBuild snapshot = build.freeze(oldSymbols);
                 FrozenHashJoinBuild.Probe probe = snapshot.newProbe();
                 FrozenHashJoinBuild.Probe peer = snapshot.newProbe();
-                SymbolTable symbols = probe.newSymbolTable(0);
                 probe.find(1);
                 long oldHandle = probe.next();
-                TestUtils.assertEquals("old", symbols.valueOf(0));
+                TestUtils.assertEquals("old", probe.getRecord().getSymA(0));
                 build.close();
                 Assert.assertEquals(0, tracker.getUsed());
                 Assert.assertThrows(IllegalStateException.class, probe::reopen);
 
                 build.open(tracker, NOOP);
-                source.text = "new";
+                Symbols newSymbols = new Symbols("new");
                 for (int row = 0; row < 4096; row++) {
                     build.append(row, source);
                 }
-                Assert.assertSame(snapshot, build.freeze());
+                Assert.assertSame(snapshot, build.freeze(newSymbols));
                 Assert.assertThrows(AssertionError.class, () -> probe.find(1));
                 Assert.assertThrows(AssertionError.class, probe::next);
                 Assert.assertThrows(AssertionError.class, () -> probe.findUnchecked(1));
                 Assert.assertThrows(AssertionError.class, () -> probe.findSingleUnchecked(1));
-                Assert.assertThrows(AssertionError.class, () -> symbols.valueOf(0));
+                Assert.assertThrows(AssertionError.class, () -> probe.getSymbolTable(0));
+                Assert.assertThrows(AssertionError.class, () -> probe.newSymbolTable(0));
                 probe.reopen();
                 Assert.assertThrows(AssertionError.class, () -> probe.recordAt(oldHandle));
                 // Both table capacity and native backing grew in the new execution.
@@ -1274,17 +1311,193 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 probe.find(4095);
                 probe.next();
                 TestUtils.assertEquals("new", probe.getRecord().getSymA(0));
+                TestUtils.assertEquals("new", probe.newSymbolTable(0).valueOf(0));
+                // Only the two original bindings used the previous execution's source.
+                Assert.assertEquals(2, oldSymbols.newSymbolTableCalls);
+                Assert.assertEquals(2, newSymbols.newSymbolTableCalls);
                 // Rebinding one acquired slot must not revive another slot's view.
                 Assert.assertThrows(AssertionError.class, () -> peer.find(1));
                 peer.reopen();
                 peer.find(1);
                 peer.next();
                 TestUtils.assertEquals("new", peer.getRecord().getSymA(0));
-                io.questdb.std.Misc.freeIfCloseable(symbols);
-                SymbolTable reused = probe.newSymbolTable(0);
-                Assert.assertSame(symbols, reused);
-                TestUtils.assertEquals("new", reused.valueOf(0));
-                io.questdb.std.Misc.freeIfCloseable(reused);
+                build.close();
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolKeyTranslationCachesDistinctKeysAndDropsMissingOnes() throws Exception {
+        assertMemoryLeak(() -> {
+            // Equal text has different keys in the two dictionaries; IT and FR are absent from the probe.
+            Symbols buildSymbols = new Symbols("ES", "IT", "FR", "DE");
+            Symbols probeSymbols = new Symbols("DE", "ES");
+            final int nil = SymbolTable.VALUE_IS_NULL;
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(1 << 20);
+                 IntHashJoinBuild build = new IntHashJoinBuild(new ArrayColumnTypes().add(ColumnType.SYMBOL), indexes(0), 2, 16, true);
+                 SymbolKeyTranslator translator = new SymbolKeyTranslator()) {
+                FrozenHashJoinBuild.Probe probe = null;
+                // The second execution drops the only duplicates, leaving a unique build.
+                int[][] executions = {{0, 1, 0, nil, 3, 2, 0, 3, nil}, {1, 0, 2, 3, 1, nil}};
+                for (int[] keys : executions) {
+                    buildSymbols.resetCounts();
+                    probeSymbols.resetCounts();
+                    build.open(tracker, NOOP);
+                    translator.of(probeSymbols.newTable(0), buildSymbols.newTable(0), tracker, NOOP);
+                    Assert.assertEquals(4 * Integer.BYTES, translator.getSizeInBytes());
+                    FrozenHashJoinBuild frozen = build.build(new KeyCursor(buildSymbols, keys), 0, keys.length, translator);
+                    translator.close();
+                    Assert.assertEquals(build.getSizeInBytes(), tracker.getUsed());
+                    int distinct = 0;
+                    int expectedRows = 0;
+                    for (int i = 0; i < keys.length; i++) {
+                        boolean isFirst = true;
+                        for (int j = 0; j < i; j++) {
+                            isFirst &= keys[j] != keys[i];
+                        }
+                        if (isFirst && keys[i] != nil) {
+                            distinct++;
+                        }
+                        if (keys[i] != 1 && keys[i] != 2) {
+                            expectedRows++;
+                        }
+                    }
+                    // One dictionary lookup per distinct non-null build key, none per row or for null.
+                    Assert.assertEquals(distinct, probeSymbols.keyOfCalls);
+                    Assert.assertEquals(distinct, buildSymbols.valueOfCalls);
+                    Assert.assertEquals(expectedRows, frozen.getRowCount());
+                    Assert.assertEquals(3, frozen.getKeyCount());
+                    Assert.assertEquals(keys.length != 9, frozen.getRowCount() == frozen.getKeyCount());
+                    if (probe == null) {
+                        probe = frozen.newProbe();
+                    } else {
+                        probe.reopen();
+                    }
+                    // Probe keys: DE is 0, ES is 1, and null build keys match null probe keys.
+                    for (int probeKey : new int[]{0, 1, nil, SymbolTable.VALUE_NOT_FOUND, 2}) {
+                        probe.find(probeKey);
+                        int matches = 0;
+                        while (probe.hasNext()) {
+                            probe.next();
+                            // The payload keeps the build key, which resolves to the same text.
+                            int buildKey = probe.getRecord().getInt(0);
+                            TestUtils.assertEquals(probeSymbols.valueOf(0, probeKey), probe.getRecord().getSymA(0));
+                            Assert.assertEquals(probeKey == nil ? nil : probeKey == 0 ? 3 : 0, buildKey);
+                            matches++;
+                        }
+                        int expected = 0;
+                        for (int key : keys) {
+                            if (probeKey == nil ? key == nil : probeKey == 0 ? key == 3 : probeKey == 1 && key == 0) {
+                                expected++;
+                            }
+                        }
+                        Assert.assertEquals(expected, matches);
+                    }
+                    build.close();
+                    Assert.assertEquals(0, tracker.getUsed());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolKeyTranslatorBoundsMemoryAndReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(15);
+                 SymbolKeyTranslator translator = new SymbolKeyTranslator()) {
+                Symbols buildSymbols = new Symbols("a", "b", "c", "d");
+                Symbols probeSymbols = new Symbols("d", "c", "b", "a");
+                // The cache holds four INT keys: 16 bytes exceed the limit and nothing stays charged.
+                CairoException error = Assert.assertThrows(CairoException.class,
+                        () -> translator.of(probeSymbols.newTable(0), buildSymbols.newTable(0), tracker, NOOP));
+                Assert.assertTrue(error.isOutOfMemory());
+                Assert.assertEquals(0, tracker.getUsed());
+                Assert.assertEquals(0, translator.getSizeInBytes());
+                translator.close();
+
+                // Cancellation while clearing the cache releases it as well.
+                tracker.setLimit(1 << 20);
+                CountingSqlExecutionCircuitBreaker cancelled = new CountingSqlExecutionCircuitBreaker(NOOP) {
+                    @Override
+                    public void statefulThrowExceptionIfTrippedTimeThrottled() {
+                        throw CairoException.queryCancelled(1);
+                    }
+                };
+                Assert.assertThrows(CairoException.class,
+                        () -> translator.of(probeSymbols.newTable(0), buildSymbols.newTable(0), tracker, cancelled));
+                Assert.assertEquals(0, tracker.getUsed());
+
+                translator.of(probeSymbols.newTable(0), buildSymbols.newTable(0), tracker, NOOP);
+                Assert.assertEquals(16, tracker.getUsed());
+                for (int pass = 0; pass < 2; pass++) {
+                    for (int key = 0; key < 4; key++) {
+                        Assert.assertEquals(3 - key, translator.translate(key));
+                    }
+                }
+                Assert.assertEquals(4, probeSymbols.keyOfCalls);
+                Assert.assertEquals(SymbolTable.VALUE_IS_NULL, translator.translate(SymbolTable.VALUE_IS_NULL));
+                Assert.assertEquals(4, probeSymbols.keyOfCalls);
+                // A key outside the build dictionary resolves as the ordinary join resolves it, uncached.
+                for (int key : new int[]{4, -1}) {
+                    Assert.assertEquals(SymbolTable.VALUE_IS_NULL, translator.translate(key));
+                    Assert.assertEquals(SymbolTable.VALUE_IS_NULL, translator.translate(key));
+                }
+                Assert.assertEquals(8, probeSymbols.keyOfCalls);
+
+                // Rebinding releases the old cache and resolves every key again for the new dictionaries.
+                Symbols grownBuild = new Symbols("a", "b", "c", "d", "e", "f", "g", "h");
+                translator.of(new Symbols("h", "a").newTable(0), grownBuild.newTable(0), tracker, NOOP);
+                Assert.assertEquals(32, tracker.getUsed());
+                Assert.assertEquals(1, translator.translate(0));
+                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, translator.translate(3));
+                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, translator.translate(3));
+                Assert.assertEquals(0, translator.translate(7));
+                Assert.assertEquals(3, grownBuild.valueOfCalls);
+
+                // An empty build dictionary needs no cache.
+                translator.of(probeSymbols.newTable(0), new Symbols().newTable(0), tracker, NOOP);
+                Assert.assertEquals(0, tracker.getUsed());
+                Assert.assertEquals(SymbolTable.VALUE_IS_NULL, translator.translate(SymbolTable.VALUE_IS_NULL));
+                translator.close();
+                translator.close();
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolKeyTranslationFailureClosesBuild() throws Exception {
+        assertMemoryLeak(() -> {
+            Symbols buildSymbols = new Symbols("ES", "IT");
+            Symbols probeSymbols = new Symbols("IT", "ES");
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(1 << 20);
+                 IntHashJoinBuild build = new IntHashJoinBuild(new ArrayColumnTypes().add(ColumnType.SYMBOL), indexes(0), 2, 16, true);
+                 SymbolKeyTranslator translator = new SymbolKeyTranslator()) {
+                int[] keys = new int[4096];
+                for (int i = 0; i < keys.length; i++) {
+                    keys[i] = i % 2;
+                }
+                probeSymbols.failKeyOfAt = 2;
+                build.open(tracker, NOOP);
+                translator.of(probeSymbols.newTable(0), buildSymbols.newTable(0), tracker, NOOP);
+                Assert.assertThrows(IllegalStateException.class,
+                        () -> build.build(new KeyCursor(buildSymbols, keys), 0, -1, translator));
+                Assert.assertEquals(0, build.getSizeInBytes());
+                translator.close();
+                Assert.assertEquals(0, tracker.getUsed());
+
+                probeSymbols.failKeyOfAt = 0;
+                build.open(tracker, NOOP);
+                translator.of(probeSymbols.newTable(0), buildSymbols.newTable(0), tracker, NOOP);
+                FrozenHashJoinBuild frozen = build.build(new KeyCursor(buildSymbols, keys), 0, -1, translator);
+                translator.close();
+                Assert.assertEquals(4096, frozen.getRowCount());
+                Assert.assertEquals(2, frozen.getKeyCount());
+                FrozenHashJoinBuild.Probe probe = frozen.newProbe();
+                probe.find(0);
+                probe.next();
+                TestUtils.assertEquals("IT", probe.getRecord().getSymA(0));
                 build.close();
                 Assert.assertEquals(0, tracker.getUsed());
             }
@@ -1313,10 +1526,10 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
         build.open(tracker, breaker);
         for (int i = 0; i < 12; i++) {
             record.row = i;
-            record.text = "symbol-" + i;
+            record.symbol = i;
             build.append(i, record);
         }
-        FrozenHashJoinBuild frozen = build.freeze();
+        FrozenHashJoinBuild frozen = build.freeze(POPULATED_SYMBOLS);
         Assert.assertEquals(12, frozen.getRowCount());
     }
 
@@ -1332,7 +1545,6 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
         private String previousSite = "";
         private int row;
         private int rowChecks;
-        private int symbolRehashChecks;
 
         private SiteBreaker(String failSite) {
             super(NOOP);
@@ -1364,9 +1576,8 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     .map(StackWalker.StackFrame::getMethodName)
                     .orElse(""));
             switch (site) {
-                case "append", "appendRow", "build", "intern", "symbolEquals" -> rowChecks++;
+                case "append", "appendRow", "build" -> rowChecks++;
                 case "growKeyTable" -> keyRehashChecks++;
-                case "growSymbolTable" -> symbolRehashChecks++;
                 default -> {
                 }
             }
@@ -1379,9 +1590,76 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
         }
     }
 
+    /** Replays INT build keys from column 0 and resolves SYMBOL columns through the given source. */
+    private static class KeyCursor implements RecordCursor {
+        private final int[] keys;
+        private final Record record = new Record() {
+            @Override
+            public int getInt(int col) {
+                return keys[row];
+            }
+        };
+        private final Symbols symbols;
+        private int row = -1;
+
+        private KeyCursor(Symbols symbols, int[] keys) {
+            this.symbols = symbols;
+            this.keys = keys;
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public Record getRecord() {
+            return record;
+        }
+
+        @Override
+        public Record getRecordB() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return symbols.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public boolean hasNext() {
+            return ++row < keys.length;
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return symbols.newSymbolTable(columnIndex);
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long size() {
+            return keys.length;
+        }
+
+        @Override
+        public void toTop() {
+            row = -1;
+        }
+    }
+
     private static class Source implements Record {
         private int row;
-        private CharSequence text;
+        private int symbol;
 
         @Override
         public double getDouble(int col) {
@@ -1389,8 +1667,112 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
         }
 
         @Override
-        public CharSequence getSymA(int col) {
-            return text;
+        public int getInt(int col) {
+            return symbol;
+        }
+    }
+
+    /**
+     * Static dictionaries per source column. Column 0 is the default. Counts lookups and view
+     * requests, and returns independent views unless a test asks for one retained view.
+     */
+    private static class Symbols implements SymbolTableSource {
+        private final ObjList<ObjList<String>> dictionaries = new ObjList<>();
+        private final IntList requestedColumns = new IntList();
+        private int failKeyOfAt;
+        private boolean isViewShared;
+        private int keyOfCalls;
+        private int newSymbolTableCalls;
+        private Table sharedView;
+        private int valueOfCalls;
+
+        private Symbols(String... values) {
+            put(0, values);
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return newTable(columnIndex);
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            newSymbolTableCalls++;
+            requestedColumns.add(columnIndex);
+            if (isViewShared) {
+                if (sharedView == null) {
+                    sharedView = newTable(columnIndex);
+                }
+                return sharedView;
+            }
+            return newTable(columnIndex);
+        }
+
+        private Table newTable(int columnIndex) {
+            return new Table(dictionaries.getQuick(columnIndex));
+        }
+
+        private void put(int columnIndex, String... values) {
+            ObjList<String> dictionary = new ObjList<>();
+            for (String value : values) {
+                dictionary.add(value);
+            }
+            dictionaries.extendAndSet(columnIndex, dictionary);
+        }
+
+        private void resetCounts() {
+            keyOfCalls = 0;
+            valueOfCalls = 0;
+        }
+
+        private String valueOf(int columnIndex, int key) {
+            ObjList<String> dictionary = dictionaries.getQuick(columnIndex);
+            return key >= 0 && key < dictionary.size() ? dictionary.getQuick(key) : null;
+        }
+
+        private class Table implements StaticSymbolTable {
+            private final ObjList<String> dictionary;
+
+            private Table(ObjList<String> dictionary) {
+                this.dictionary = dictionary;
+            }
+
+            @Override
+            public boolean containsNullValue() {
+                return false;
+            }
+
+            @Override
+            public int getSymbolCount() {
+                return dictionary.size();
+            }
+
+            @Override
+            public int keyOf(CharSequence value) {
+                if (++keyOfCalls == failKeyOfAt) {
+                    throw new IllegalStateException("injected symbol lookup failure");
+                }
+                if (value == null) {
+                    return SymbolTable.VALUE_IS_NULL;
+                }
+                for (int i = 0, n = dictionary.size(); i < n; i++) {
+                    if (Chars.equals(value, dictionary.getQuick(i))) {
+                        return i;
+                    }
+                }
+                return SymbolTable.VALUE_NOT_FOUND;
+            }
+
+            @Override
+            public CharSequence valueBOf(int key) {
+                return valueOf(key);
+            }
+
+            @Override
+            public CharSequence valueOf(int key) {
+                valueOfCalls++;
+                return key >= 0 && key < dictionary.size() ? dictionary.getQuick(key) : null;
+            }
         }
     }
 }

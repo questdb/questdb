@@ -31,8 +31,10 @@ import io.questdb.cairo.sql.SymbolTableSource;
  * Immutable lookup backing, borrowed from its builder for one execution. Publish
  * this object through the frame-task publication barrier before probing. The owner
  * must drain all probes and finish reading output symbols before closing the build.
- * Handles, records, symbol tables and their flyweights expire together at close.
- * A later partitioned implementation can route keys without changing this contract.
+ * Handles and records expire at close. Symbol tables come from the build's source,
+ * so they stay valid only while that source stays open, and the owner closes the
+ * source after the build. A later partitioned implementation can route keys without
+ * changing this contract.
  */
 public interface FrozenHashJoinBuild {
     long getKeyCount();
@@ -49,7 +51,10 @@ public interface FrozenHashJoinBuild {
     Probe newProbe();
 
     interface Probe extends SymbolTableSource {
-        /** Explicitly bind this slot-owned view to a refreshed snapshot, after consumer drain. */
+        /**
+         * Explicitly bind this slot-owned view to a refreshed snapshot, after consumer drain.
+         * This also takes fresh symbol tables from the build's source, so call it on the owner.
+         */
         void reopen();
 
         /** Replaces the current duplicate iterator, including on a miss, and clears the payload record. */

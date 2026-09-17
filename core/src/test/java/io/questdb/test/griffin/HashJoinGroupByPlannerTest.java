@@ -140,6 +140,51 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            // Equal key text has different symbol keys in the two tables, '3' exists only in r,
+            // '9' only in p, and both sides have null keys.
+            execute("create table r (plant_id symbol, reading_ts timestamp, energy_kwh double, irradiance_wm2 double, "
+                    + "plant_str string, plant_vc varchar) timestamp(reading_ts) partition by month");
+            execute("create table p (plant_id symbol, country symbol, installed_kwp double, plant_str string, plant_vc varchar)");
+            execute("""
+                    insert into p values
+                        ('9', 'FR', 3, '9', '9'), ('2', null, null, '2', '2'), ('1', 'ES', 5, '1', '1'),
+                        ('1', 'ES', 7, '1', '1'), ('1', 'IT', null, '1', '1'), (null, 'ES', 11, null, null)
+                    """);
+            execute("""
+                    insert into r values
+                        ('1', '2020-01-01', 10, 100, '1', '1'), ('3', '2020-01-02', 30, 300, '3', '3'),
+                        ('1', '2020-01-03', 20, 200, '1', '1'), ('2', '2020-02-01', 40, null, '2', '2'),
+                        (null, '2021-01-01', 50, 500, null, null)
+                    """);
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                for (int j = 0; j < JOINS.length; j++) {
+                    String join = JOINS[j];
+                    String sql = SELECT + join + " order by country, yr, mo";
+                    assertDifferential(sql, context, true);
+                    assertDifferential(SCALAR_SELECT + join, context, true);
+                    assertDifferential("select p.plant_id, r.plant_id rp, count(*) n, sum(r.energy_kwh) energy"
+                            + join + " order by p.plant_id, rp", context, true);
+                    assertDifferential(SELECT + join + " where p.country = 'ES' order by country, yr, mo", context, true);
+                    try (RecordCursorFactory factory = engine.select(sql, context)) {
+                        String plan = plan(factory, context);
+                        Assert.assertTrue(plan, plan.contains("symbolKeyJoin: true"));
+                        Assert.assertTrue(plan, plan.contains("inputSwapped: " + (j == 2)));
+                    }
+                    // Mixed text keys keep the ordinary plan, which converts the keys itself.
+                    for (String column : new String[]{"plant_str", "plant_vc"}) {
+                        assertDifferential(SELECT + join.replace("p.plant_id", "p." + column) + " order by country, yr, mo", context, false);
+                        assertDifferential(SELECT + join.replace("r.plant_id", "r." + column) + " order by country, yr, mo", context, false);
+                    }
+                }
+                context.setParallelHashJoinGroupByEnabled(false);
+                assertDifferential(SELECT + JOINS[0] + " order by country, yr, mo", context, false);
+            }
+        });
+    }
+
+    @Test
     public void testUnsupportedShapes() throws Exception {
         assertMemoryLeak(() -> {
             createTables();

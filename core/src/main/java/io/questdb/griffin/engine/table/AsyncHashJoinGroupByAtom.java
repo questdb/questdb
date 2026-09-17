@@ -30,8 +30,10 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.HashJoinGroupByFunctions;
@@ -45,27 +47,36 @@ import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.join.HashJoinGroupByRecord;
 import io.questdb.griffin.engine.join.IntHashJoinBuild;
+import io.questdb.griffin.engine.join.SymbolKeyTranslator;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.TestOnly;
 
 /**
- * Owns execution backing; functions and filter context are borrowed from the factory.
- * Each acquired slot owns every mutable probe/record/decoder/aggregate view. The
- * frozen build is published by UnorderedPageFrameSequence before reducers run.
- * clear() requires all reducers to have finished and output consumers to be done.
+ * Owns execution backing; functions, filter context and the build factory are borrowed
+ * from the factory. Each acquired slot owns every mutable probe/record/decoder/aggregate
+ * view. init() builds on the owner once the probe frame cursor is open, because SYMBOL
+ * keys translate through the probe's symbol tables. The build cursor stays open until
+ * clear(), because build SYMBOL payloads resolve through its symbol tables. The frozen
+ * build is published by UnorderedPageFrameSequence before reducers run. clear()
+ * requires all reducers to have finished and output consumers to be done.
  */
 public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLockOwner {
+    private final RecordCursorFactory buildFactory;
     private final int buildKeyColumn;
     private final AsyncFilterContext filterContext;
     private final HashJoinGroupByFunctions functions;
+    // Null for INT keys.
+    private final SymbolKeyTranslator keyTranslator;
     private final boolean outer;
     private final PerWorkerLocks perWorkerLocks;
     private final int probeKeyColumn;
     private final ObjList<HashJoinGroupByRecord> records = new ObjList<>();
     private final ObjList<Slot> slots = new ObjList<>();
     private IntHashJoinBuild build;
+    private RecordCursor buildCursor;
     private FrozenHashJoinBuild frozen;
     private boolean isBuildUnique;
     private boolean functionsInitialized;
@@ -75,17 +86,20 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
 
     AsyncHashJoinGroupByAtom(
             CairoEngine engine,
+            RecordCursorFactory buildFactory,
             HashJoinGroupByMetadata metadata,
             HashJoinGroupByFunctions functions,
             AsyncFilterContext filterContext,
             boolean outer,
             int workerCount
     ) {
+        this.buildFactory = buildFactory;
         this.functions = functions;
         this.filterContext = filterContext;
         this.outer = outer;
         this.probeKeyColumn = metadata.getProbeKeyColumn();
         this.buildKeyColumn = metadata.getBuildKeyColumn();
+        this.keyTranslator = metadata.isSymbolKey() ? new SymbolKeyTranslator() : null;
         CairoConfiguration configuration = engine.getConfiguration();
         perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
         try {
@@ -158,6 +172,10 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         frozen = null;
         isBuildUnique = false;
         failure = Misc.freeBestEffort(failure, build);
+        failure = Misc.freeBestEffort(failure, keyTranslator);
+        // Functions, slots and the build have released every symbol table view of this cursor.
+        failure = Misc.freeBestEffort(failure, buildCursor);
+        buildCursor = null;
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -191,7 +209,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         try {
-            assert frozen != null;
+            assert frozen == null && buildCursor == null;
+            build(symbolTableSource, executionContext);
             // Join fanout is not bounded by a frame, so reducers check once per page frame of matched pairs.
             pairsPerCheck = Math.max(1, executionContext.getPageFrameMaxRows());
             if (shardingContext != null) {
@@ -217,8 +236,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             functionsInitialized = true;
             functions.init(records, executionContext);
         } catch (Throwable th) {
-            // The sequence closes the frame cursor when init throws. Release
-            // functions while their borrowed symbol sources are still alive.
+            // The sequence closes the frame cursor when init throws. Release functions
+            // while their borrowed symbol sources are still alive, then the build cursor.
             try {
                 clear();
             } catch (Throwable cleanup) {
@@ -249,11 +268,27 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         return failure;
     }
 
-    void build(RecordCursor cursor, SqlExecutionContext executionContext) {
+    // The caller's failure path closes the build, the translator and the build cursor.
+    private void build(SymbolTableSource probeSymbols, SqlExecutionContext executionContext) throws SqlException {
+        final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+        buildCursor = buildFactory.getCursor(executionContext);
         // The child cursor is fresh. Unknown/filtered sizes retain incremental growth.
-        final long rowCountHint = cursor.size();
-        build.open(executionContext.getMemoryTracker(), executionContext.getCircuitBreaker());
-        frozen = build.build(cursor, buildKeyColumn, rowCountHint);
+        final long rowCountHint = buildCursor.size();
+        build.open(memoryTracker, circuitBreaker);
+        if (keyTranslator != null) {
+            keyTranslator.of(
+                    (StaticSymbolTable) probeSymbols.newSymbolTable(probeKeyColumn),
+                    (StaticSymbolTable) buildCursor.newSymbolTable(buildKeyColumn),
+                    memoryTracker,
+                    circuitBreaker
+            );
+        }
+        frozen = build.build(buildCursor, buildKeyColumn, rowCountHint, keyTranslator);
+        if (keyTranslator != null) {
+            // Translation ends with the build; do not hold the cache while probing.
+            keyTranslator.close();
+        }
         isBuildUnique = frozen.getRowCount() == frozen.getKeyCount();
     }
 

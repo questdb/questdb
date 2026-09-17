@@ -68,6 +68,7 @@ public final class HashJoinGroupByCandidate {
     private final ExpressionNode buildOnFilter;
     private final IntList columnSources;
     private final LowerCaseCharSequenceIntHashMap[] inputColumns;
+    private final boolean isSymbolKey;
     private final IQueryModel joinModel;
     private final int logicalJoinType;
     private final IntList postJoinFilterSources;
@@ -79,7 +80,7 @@ public final class HashJoinGroupByCandidate {
     private final RecordMetadata resolvedMetadata;
     private final ObjList<ExpressionNode> resolvedPostJoinFilters;
 
-    private HashJoinGroupByCandidate(Analyzer analyzer, int probeKeyColumn, int buildKeyColumn) {
+    private HashJoinGroupByCandidate(Analyzer analyzer, int probeKeyColumn, int buildKeyColumn, boolean isSymbolKey) {
         this.probeBaseMetadata = GenericRecordMetadata.copyOf(analyzer.sources[1 - analyzer.buildIndex]);
         this.postJoinFilterSources = analyzer.postJoinFilterSources;
         this.inputColumns = analyzer.inputColumns;
@@ -91,6 +92,7 @@ public final class HashJoinGroupByCandidate {
         this.resolvedPostJoinFilters = analyzer.resolvedPostJoinFilters;
         this.buildIndex = analyzer.buildIndex;
         this.buildKeyColumn = buildKeyColumn;
+        this.isSymbolKey = isSymbolKey;
         this.buildOnFilter = analyzer.buildOnFilter;
         this.joinModel = analyzer.join;
         this.logicalJoinType = analyzer.joinType;
@@ -135,6 +137,11 @@ public final class HashJoinGroupByCandidate {
 
     public boolean isInputSwapped() {
         return logicalJoinType == IQueryModel.JOIN_RIGHT_OUTER;
+    }
+
+    /** Both key columns are SYMBOL; otherwise both are INT. */
+    public boolean isSymbolKey() {
+        return isSymbolKey;
     }
 
     /** Exact implementations, not SQL names or supportsParallelism() alone. */
@@ -259,8 +266,10 @@ public final class HashJoinGroupByCandidate {
                     leftReader.getMetadata(), rightReader.getMetadata(), parser, executionContext);
             int a = analyzer.resolveInput(keys.aIndexes.getQuick(0), keys.aNames.getQuick(0), 0);
             int b = analyzer.resolveInput(keys.bIndexes.getQuick(0), keys.bNames.getQuick(0), 0);
-            if (a < 0 || b < 0 || analyzer.metadata.getColumnType(a) != ColumnType.INT
-                    || analyzer.metadata.getColumnType(b) != ColumnType.INT) {
+            // SYMBOL keys match by text: the build translates them into the probe's symbol keys.
+            // Mixed key types, including SYMBOL against STRING or VARCHAR, keep the ordinary plan.
+            final int keyType = a < 0 || b < 0 ? ColumnType.UNDEFINED : analyzer.metadata.getColumnType(a);
+            if ((keyType != ColumnType.INT && keyType != ColumnType.SYMBOL) || analyzer.metadata.getColumnType(b) != keyType) {
                 return null;
             }
             analyzer.requiredBuildColumns.clear();
@@ -301,7 +310,8 @@ public final class HashJoinGroupByCandidate {
             }
             int buildKey = keys.aIndexes.getQuick(0) == analyzer.buildIndex ? a : b;
             int probeKey = buildKey == a ? b : a;
-            return new HashJoinGroupByCandidate(analyzer, analyzer.columnIndexes.getQuick(probeKey), analyzer.columnIndexes.getQuick(buildKey));
+            return new HashJoinGroupByCandidate(analyzer, analyzer.columnIndexes.getQuick(probeKey),
+                    analyzer.columnIndexes.getQuick(buildKey), keyType == ColumnType.SYMBOL);
         } catch (SqlException e) {
             // The ordinary plan reports errors in its own compile order, and only its interval extraction
             // and generateFilter() compile optimiser-internal nodes such as and_offset. A failed

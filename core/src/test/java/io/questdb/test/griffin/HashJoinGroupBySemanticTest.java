@@ -323,9 +323,11 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                     // PostgreSQL-style ::float means DOUBLE (SqlParser.rewritePgCast),
                     // unlike a FLOAT table column. Check the compiled allowlist boundary.
                     assertDifferential("select sum(r.d::float)" + from(join), context, true);
-                    for (String on : new String[]{"r.id=p.id and r.i=p.i", "r.id+1=p.id", "r.l=p.l", "r.s=p.s", "r.d=p.d", "r.t=p.t"}) {
+                    for (String on : new String[]{"r.id=p.id and r.i=p.i", "r.id+1=p.id", "r.l=p.l", "r.d=p.d", "r.t=p.t"}) {
                         assertDifferential("select count(*) from " + PROJECTED_R + join + PROJECTED_P + " on " + on, context, false);
                     }
+                    // SYMBOL keys match by text through reordered projections.
+                    assertDifferential("select count(*) from " + PROJECTED_R + join + PROJECTED_P + " on r.s=p.s", context, true);
                     for (String barrier : new String[]{"select distinct r.s from ", "select r.s from "}) {
                         String inner = barrier + PROJECTED_R + join + PROJECTED_P + " on r.id=p.id"
                                 + (barrier.contains("distinct") ? "" : " limit 2");

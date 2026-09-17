@@ -331,8 +331,11 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
             execute("insert into r values (1,1,'a','2020-01-01'), (2,2,'b','2020-01-02')");
             execute("insert into p values (1,4,'a','2020-01-01'), (2,8,'b','2020-01-02')");
             try (SqlExecutionContextImpl context = context(engine, 4)) {
+                // SYMBOL keys are eligible, also when the probe key column is indexed.
+                assertDifferential("select sum(r.d) from r join p on r.s=p.s", context, true);
+                assertDifferential("select p.s, sum(r.d) from r join p on r.s=p.s order by p.s", context, true);
                 for (String sql : new String[]{
-                        "select sum(r.d) from r join p on r.s=p.s",
+                        "select sum(r.d) from r join p on r.s=p.s where r.s='a'",
                         "select sum(r.d) from r join p on r.id::long=p.id::long",
                         "select sum(r.d) from r join p on r.id+1=p.id",
                         "select sum(r.d) from r cross join p",

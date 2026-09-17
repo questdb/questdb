@@ -61,10 +61,12 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * Takes ownership of both child factories, functions and the interpreted probe
  * filter context on entry, including construction failure. Borrows metadata only
  * during construction. Callers must compile functions for the same worker count.
+ * The atom borrows the build factory and the frame sequence closes the atom first.
  */
 public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final String condition;
     private final boolean inputSwapped;
+    private final boolean isSymbolKey;
     private final RecordMetadata joinedMetadata;
     private final int logicalJoinType;
     private final boolean outer;
@@ -112,6 +114,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         this.workerCount = workerCount;
         this.logicalJoinType = logicalJoinType;
         this.inputSwapped = inputSwapped;
+        this.isSymbolKey = metadata.isSymbolKey();
         try {
             this.joinedMetadata = GenericRecordMetadata.copyOf(metadata.getJoinedMetadata());
             this.condition = metadata.getCondition();
@@ -120,7 +123,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                     || filterContext.getCompiledFilter() != null) {
                 throw new IllegalArgumentException("unsupported fused hash join execution inputs");
             }
-            AsyncHashJoinGroupByAtom atom = new AsyncHashJoinGroupByAtom(engine, metadata,
+            AsyncHashJoinGroupByAtom atom = new AsyncHashJoinGroupByAtom(engine, buildFactory, metadata,
                     functions, filterContext, outer, workerCount);
             // The sequence takes atom ownership on entry, also on constructor failure.
             frameSequence = new UnorderedPageFrameSequence<>(engine, engine.getConfiguration(),
@@ -149,9 +152,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         cursor.open(executionContext.getCircuitBreaker());
         try {
             executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
-            try (RecordCursor buildCursor = buildFactory.getCursor(executionContext)) {
-                frameSequence.getAtom().build(buildCursor, executionContext);
-            }
+            // The atom builds once the probe frame cursor is open; see AsyncHashJoinGroupByAtom.init().
             final int order = probeFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
             frameSequence.of(probeFactory, executionContext, order);
             return cursor;
@@ -180,6 +181,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         sink.attr("physicalJoinType").val(outer ? "left outer" : "inner");
         sink.attr("inputSwapped").val(inputSwapped);
         sink.attr("condition").val(condition);
+        if (isSymbolKey) {
+            sink.attr("symbolKeyJoin").val(true);
+        }
         sink.attr("buildStrategy").val("shared");
         if (!functions.isKeyed()) {
             sink.attr("aggregation").val("scalar");

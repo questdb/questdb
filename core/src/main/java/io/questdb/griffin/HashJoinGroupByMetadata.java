@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
@@ -44,6 +45,7 @@ import java.io.Closeable;
  * payload. Joined columns are the physical probe columns followed by payload fields;
  * expressions retain their logical aliases even when RIGHT becomes LEFT OUTER.
  * Input mappings are compiled-record index -> base-table index, not writer indexes.
+ * Build SYMBOL payloads keep the build input's symbol keys and its static symbol tables.
  * Construct before the candidate's borrowed models are mutated or the compiler reused.
  */
 public final class HashJoinGroupByMetadata implements Closeable {
@@ -52,6 +54,8 @@ public final class HashJoinGroupByMetadata implements Closeable {
     private final ExpressionNode buildOnFilter;
     private final ObjList<QueryColumn> columns = new ObjList<>();
     private final String condition;
+    private final boolean hasStaticSymbolTables;
+    private final boolean isSymbolKey;
     private final JoinRecordMetadata joinedMetadata;
     private final GenericRecordMetadata payloadMetadata = new GenericRecordMetadata();
     private final int probeColumnCount;
@@ -73,6 +77,14 @@ public final class HashJoinGroupByMetadata implements Closeable {
         probeColumnCount = probeMetadata.getColumnCount();
         probeKeyColumn = requireColumn(probeBaseColumns, candidate.getProbeKeyColumn());
         buildKeyColumn = requireColumn(buildBaseColumns, candidate.getBuildKeyColumn());
+        isSymbolKey = candidate.isSymbolKey();
+        final int keyType = isSymbolKey ? ColumnType.SYMBOL : ColumnType.INT;
+        if (probeMetadata.getColumnType(probeKeyColumn) != keyType || buildMetadata.getColumnType(buildKeyColumn) != keyType) {
+            throw SqlException.$(0, "hash join input key type mismatch");
+        }
+        // Symbol keys translate through, and payload symbols resolve with, the inputs' static tables.
+        boolean hasStaticSymbolTables = !isSymbolKey
+                || (probeMetadata.isSymbolTableStatic(probeKeyColumn) && buildMetadata.isSymbolTableStatic(buildKeyColumn));
         condition = candidate.getProbeModel().getName() + "." + probeMetadata.getColumnName(probeKeyColumn)
                 + "=" + candidate.getBuildModel().getName() + "." + buildMetadata.getColumnName(buildKeyColumn);
         joinedMetadata = new JoinRecordMetadata(configuration,
@@ -85,9 +97,13 @@ public final class HashJoinGroupByMetadata implements Closeable {
             for (int i = 0; i < required.size(); i++) {
                 int column = requireColumn(buildBaseColumns, required.getQuick(i));
                 buildColumns.add(column);
-                // The frozen dictionary provides SymbolTable, not StaticSymbolTable
-                // (there is no keyOf contract). Do not inherit the input capability.
-                TableColumnMetadata metadata = copyColumn(buildMetadata, column, false);
+                // The payload stores the input's symbol keys, and probes resolve them through
+                // the open build cursor's tables, so the input's capability carries over.
+                boolean isSymbolTableStatic = buildMetadata.isSymbolTableStatic(column);
+                if (ColumnType.isSymbol(buildMetadata.getColumnType(column)) && !isSymbolTableStatic) {
+                    hasStaticSymbolTables = false;
+                }
+                TableColumnMetadata metadata = copyColumn(buildMetadata, column, isSymbolTableStatic);
                 payloadMetadata.add(metadata);
                 joinedMetadata.add(candidate.getBuildModel().getName(), metadata);
             }
@@ -125,6 +141,7 @@ public final class HashJoinGroupByMetadata implements Closeable {
                     postJoinFilter = and;
                 }
             }
+            this.hasStaticSymbolTables = hasStaticSymbolTables;
         } catch (Throwable th) {
             Misc.free(joinedMetadata, th);
             throw th;
@@ -159,6 +176,18 @@ public final class HashJoinGroupByMetadata implements Closeable {
 
     public int getProbeKeyColumn() {
         return probeKeyColumn;
+    }
+
+    /**
+     * False when a SYMBOL key or build SYMBOL payload column lacks a static symbol table.
+     * Base-table columns always have one; the planner keeps the ordinary plan otherwise.
+     */
+    public boolean hasStaticSymbolTables() {
+        return hasStaticSymbolTables;
+    }
+
+    public boolean isSymbolKey() {
+        return isSymbolKey;
     }
 
     public HashJoinGroupByRecord newRecord() {

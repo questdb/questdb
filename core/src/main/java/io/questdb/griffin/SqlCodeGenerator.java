@@ -5048,6 +5048,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             try (HashJoinGroupByMetadata metadata = new HashJoinGroupByMetadata(configuration, candidate,
                     probeInput.getMetadata(), probeColumns,
                     build.getMetadata(), candidate.getInputColumns(build.getMetadata(), true))) {
+                if (!metadata.hasStaticSymbolTables()) {
+                    return null;
+                }
                 functions = compileHashJoinGroupByFunctions(model, metadata, workerCount, executionContext);
                 if (metadata.getBuildOnFilter() != null) {
                     build = new FilteredRecordCursorFactory(build,

@@ -317,12 +317,11 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             try (Fixture fixture = new Fixture(AGGREGATES + OUTER);
-                 IntHashJoinBuild build = new IntHashJoinBuild(fixture.metadata.getPayloadMetadata(), fixture.metadata.getBuildColumns(), 4, 2)) {
+                 IntHashJoinBuild build = new IntHashJoinBuild(fixture.metadata.getPayloadMetadata(), fixture.metadata.getBuildColumns(), 4, 2);
+                 // Build symbols resolve through the build cursor, so it stays open while probing.
+                 RecordCursor buildCursor = fixture.buildFactory.getCursor(sqlExecutionContext)) {
                 build.open(sqlExecutionContext.getMemoryTracker(), sqlExecutionContext.getCircuitBreaker());
-                FrozenHashJoinBuild frozen;
-                try (RecordCursor cursor = fixture.buildFactory.getCursor(sqlExecutionContext)) {
-                    frozen = build.build(cursor, fixture.metadata.getBuildKeyColumn());
-                }
+                FrozenHashJoinBuild frozen = build.build(buildCursor, fixture.metadata.getBuildKeyColumn());
                 try (RecordCursor cursor = fixture.probeFactory.getCursor(sqlExecutionContext)) {
                     Assert.assertTrue(cursor.hasNext());
                     FrozenHashJoinBuild.Probe a = frozen.newProbe();
@@ -616,12 +615,11 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
             Collections.sort(expected);
             // Each acquired slot, including the owner, evaluates the same pairs using
             // its own functions and build view. Scheduling and merging are later tasks.
-            try (IntHashJoinBuild build = new IntHashJoinBuild(metadata.getPayloadMetadata(), metadata.getBuildColumns(), 4, 2)) {
+            try (IntHashJoinBuild build = new IntHashJoinBuild(metadata.getPayloadMetadata(), metadata.getBuildColumns(), 4, 2);
+                 // Build symbols resolve through the build cursor, so it stays open while probing.
+                 RecordCursor buildCursor = buildFactory.getCursor(sqlExecutionContext)) {
                 build.open(sqlExecutionContext.getMemoryTracker(), sqlExecutionContext.getCircuitBreaker());
-                FrozenHashJoinBuild frozen;
-                try (RecordCursor cursor = buildFactory.getCursor(sqlExecutionContext)) {
-                    frozen = build.build(cursor, metadata.getBuildKeyColumn());
-                }
+                FrozenHashJoinBuild frozen = build.build(buildCursor, metadata.getBuildKeyColumn());
                 try (RecordCursor cursor = probeFactory.getCursor(sqlExecutionContext)) {
                     ObjList<HashJoinGroupByRecord> records = new ObjList<>();
                     ObjList<FrozenHashJoinBuild.Probe> probes = new ObjList<>();
