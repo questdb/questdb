@@ -1954,6 +1954,26 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetPartitionRowCountAfterWriterReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE partition_rows (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final TableToken tableToken = engine.verifyTableName("partition_rows");
+            try (TableWriter writer = getWriter(tableToken)) {
+                writer.newRow(0).append();
+                writer.newRow(Micros.DAY_MICROS).append();
+                writer.commit();
+            }
+            engine.releaseAllWriters();
+
+            try (TableWriter writer = getWriter(tableToken)) {
+                Assert.assertEquals(1, writer.getPartitionRowCountByPartitionTimestamp(0));
+                Assert.assertEquals(1, writer.getPartitionRowCountByPartitionTimestamp(Micros.DAY_MICROS));
+                Assert.assertEquals(-1, writer.getPartitionRowCountByPartitionTimestamp(2 * Micros.DAY_MICROS));
+            }
+        });
+    }
+
+    @Test
     public void testNonWalCommitDoesNotDrainAsyncCommandQueue() throws Exception {
         // commit() must NOT drain the async command queue. A non-WAL writer is drained by its
         // ingestion tick() and on pool return (with structure changes allowed); draining at commit

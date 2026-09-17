@@ -2607,7 +2607,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public long getPartitionRowCountByPartitionTimestamp(long partitionTimestamp) {
-        return txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        return partitionIndex > -1 ? getPartitionSize(partitionIndex) : -1L;
     }
 
     public long getPartitionSize(int partitionIndex) {
