@@ -469,7 +469,7 @@ public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryT
      * the largest DECIMAL(76,0) there is and {@code 'B'} its negation. Timestamp order therefore
      * keeps every partial sum inside one operand; key-major order does not.
      * <p>
-     * Sixty rows per key, not six, because per-key mode declines below ~32 rows per
+     * Six hundred rows per key, not six, because per-key mode declines below 256 rows per
      * (key, partition) pair. A six-row fixture would fall back to the merge on density and prove
      * nothing about the aggregate. The DOUBLE {@code value} column carries the control query that
      * pins the fixture really is per-key-eligible.
@@ -488,7 +488,7 @@ public class CoveringIndexOrderSensitiveTest extends AbstractCoveringIndexQueryT
                 " CASE WHEN x % 2 = 0 THEN '" + max + "'::DECIMAL(76,0)" +
                 "      ELSE '-" + max + "'::DECIMAL(76,0) END," +
                 " x::double" +
-                " FROM long_sequence(120)");
+                " FROM long_sequence(1200)");
     }
 
     /**

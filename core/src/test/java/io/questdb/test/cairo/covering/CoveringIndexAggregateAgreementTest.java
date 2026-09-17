@@ -422,7 +422,7 @@ public class CoveringIndexAggregateAgreementTest extends AbstractCoveringIndexQu
      * missing column.
      * <p>
      * 10 000 rows over four keys, two of them selected, is 2500 rows per (key, partition) pair --
-     * comfortably above the ~32 rows per pair below which per-key mode declines on density, so the
+     * comfortably above the 256 rows per pair below which per-key mode declines on density, so the
      * per-key assertions are not fighting the crossover heuristic. Every fifth {@code value} is
      * NULL so the aggregates' null handling is on the path too. {@code w} is a small positive
      * weight, kept away from zero because vwap()/weighted_avg()/weighted_stddev() divide by its

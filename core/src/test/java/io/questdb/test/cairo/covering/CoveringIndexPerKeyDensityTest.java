@@ -31,15 +31,21 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Pins the PERFORMANCE crossover on the per-key (unordered) covering scan: below roughly 30
+ * Pins the PERFORMANCE crossover on the per-key (unordered) covering scan: below roughly 200
  * rows per (key, partition) pair, per-key mode must hand back to the timestamp-ordered merge.
  * <p>
- * Per-key costs a fixed 1.2-1.8 us per FRAME regardless of how many rows that frame carries,
- * and it emits one frame per non-empty (key, partition) pair. So on identical data, with only
- * the partition count varying, it measured 2.9x FASTER at P=1, parity at P=4 and 3.0x SLOWER at
- * P=32 -- a straight inversion of the 12x win the mode was added for. The crossover is where
- * the fixed per-frame cost stops being amortised: ~30 rows per pair measured, 31.6 by analytic
- * fit, {@code PER_KEY_MIN_ROWS_PER_PAIR = 32} as shipped.
+ * Per-key costs a fixed 3.9-5.3 us per FRAME regardless of how many rows that frame carries,
+ * and it emits one frame per non-empty (key, partition) pair, so its win is entirely a function
+ * of how many rows each pair holds. The crossover is where that fixed cost stops being
+ * amortised. Swept directly in {@code CoveringIndexPerKeyCrossoverPerfTest} -- mode DRIVEN
+ * through the override rather than inferred from the data, both arms over the same bytes,
+ * bookended -- it sits at 168-246 rows per pair (geometric mean 197) and barely moves across
+ * K = 4..512, P = 16..512 or worker counts 2, 8 and 31. {@code PER_KEY_MIN_ROWS_PER_PAIR = 256}
+ * as shipped, the smallest power of two at or above every measured crossover.
+ * <p>
+ * It read 32 until that sweep, on the strength of a partition-count sweep rather than a density
+ * sweep. At 32 rows per pair per-key measures 3.2-5.2x SLOWER than the merge -- the gate was
+ * admitting the exact inversion it exists to prevent.
  * <p>
  * The two UNIFORM fixtures differ in exactly one thing. Same four keys, same
  * {@link #PARTITIONS} partitions, same columns, same query -- only the number of rows per pair
@@ -67,7 +73,11 @@ import org.junit.Test;
  */
 public class CoveringIndexPerKeyDensityTest extends AbstractCoveringIndexQueryTest {
 
-    private static final int DENSE_ROWS_PER_PAIR = 200;
+    // The shipped PER_KEY_MIN_ROWS_PER_PAIR. Not readable from here -- it is package-private in
+    // io.questdb.griffin.engine.table -- so every density in this file is stated as a multiple
+    // of this, and the two numbers move together.
+    private static final int CROSSOVER = 256;
+    private static final int DENSE_ROWS_PER_PAIR = 1000;
     private static final int KEYS = 4;
     private static final int PARTITIONS = 40;
     private static final int SPARSE_ROWS_PER_PAIR = 5;
@@ -80,7 +90,7 @@ public class CoveringIndexPerKeyDensityTest extends AbstractCoveringIndexQueryTe
      * <p>
      * This is the shape the gate exists to catch, and the one a prefix sample gets exactly
      * backwards: four partitions at 1000 rows per pair followed by 600 at 2 leaves an overall
-     * 8.6 rows per pair, well under the crossover, but any sample taken from the front of the
+     * 8.6 rows per pair, a thirtieth of the crossover, but any sample taken from the front of the
      * scan sees only the head and admits per-key. Measured on this fixture with the mode forced
      * either way, per-key runs 1.25x slower than the merge; lengthening the tail to 2000
      * partitions takes that to 1.72x.
@@ -96,7 +106,7 @@ public class CoveringIndexPerKeyDensityTest extends AbstractCoveringIndexQueryTe
             assertSameResult(QUERY, referenceOf(QUERY));
             Assert.assertEquals(
                     "a dense HEAD admitted per-key on a table whose overall density (8.6 rows per"
-                            + " pair) is a quarter of the crossover. The density estimate is scoring the"
+                            + " pair) is a thirtieth of the crossover. The density estimate is scoring the"
                             + " front of the scan instead of the whole of it, which is the exact"
                             + " inversion this gate exists to prevent: per-key measures 1.25x SLOWER"
                             + " than the merge on this fixture.",
@@ -113,28 +123,28 @@ public class CoveringIndexPerKeyDensityTest extends AbstractCoveringIndexQueryTe
     /**
      * Pairs the index holds no rows for must not enter the denominator.
      * <p>
-     * Eight keys round-robined one per partition at 100 rows each: seven of every eight (key,
+     * Eight keys round-robined one per partition at 1000 rows each: seven of every eight (key,
      * partition) pairs are EMPTY, and per-key emits no frame for an empty pair, so every frame
-     * it does emit carries 100 rows -- 3.1x the crossover. Dividing the matched rows by ALL
-     * sampled pairs instead of the non-empty ones scores this shape 12 and rejects it.
+     * it does emit carries 1000 rows -- 3.9x the crossover. Dividing the matched rows by ALL
+     * sampled pairs instead of the non-empty ones scores this shape 125 and rejects it.
      */
     @Test(timeout = 300_000)
     public void testEmptyPairsDoNotDragTheDensityDown() throws Exception {
         assertMemoryLeak(() -> {
             createTelemetryTable();
-            // Partition p holds key 'K' + (p % 8) and nothing else, 100 rows.
+            // Partition p holds key 'K' + (p % 8) and nothing else, 1000 rows.
             execute("INSERT INTO telemetry SELECT" +
-                    " ((((x - 1) / 100) * 86400000000L) + (((x - 1) % 100) * 1000L))::timestamp," +
-                    " concat('K', (((x - 1) / 100) % 8)::string)," +
+                    " ((((x - 1) / 1000) * 86400000000L) + (((x - 1) % 1000) * 1000L))::timestamp," +
+                    " concat('K', (((x - 1) / 1000) % 8)::string)," +
                     " x::double" +
-                    " FROM long_sequence(8000)");
+                    " FROM long_sequence(80000)");
             assertPartitionCount(80);
             final String sql = "SELECT param_id, avg(value) a, count() c FROM telemetry" +
                     " WHERE param_id IN ('K0','K1','K2','K3','K4','K5','K6','K7') ORDER BY param_id";
             CoveringIndexRecordCursorFactory.resetModeSelectionsForTesting();
             assertSameResult(sql, referenceOf(sql));
             Assert.assertTrue(
-                    "100 rows per EMITTED frame -- 3.1x the crossover -- was rejected. The density"
+                    "1000 rows per EMITTED frame -- 3.9x the crossover -- was rejected. The density"
                             + " estimate is dividing by every sampled (key, partition) pair rather than"
                             + " by the non-empty ones per-key actually emits a frame for, so a shape is"
                             + " scored by how many of its keys are ABSENT from a partition.",
@@ -149,7 +159,7 @@ public class CoveringIndexPerKeyDensityTest extends AbstractCoveringIndexQueryTe
      * This is the motivating workload for the whole per-key mode -- a telemetry parameter
      * commissioned mid-history is the norm -- and the one a prefix sample scores ZERO on,
      * because every partition the sample looks at predates the symbol. Here the four queried
-     * keys appear only from partition 50 onwards and then run at 200 rows per pair, 6.2x the
+     * keys appear only from partition 50 onwards and then run at 1000 rows per pair, 3.9x the
      * crossover.
      */
     @Test(timeout = 300_000)
@@ -161,12 +171,12 @@ public class CoveringIndexPerKeyDensityTest extends AbstractCoveringIndexQueryTe
                     " 'PREDECESSOR'," +
                     " x::double" +
                     " FROM long_sequence(5000)");
-            insertUniformBlock(50, 100, 200);
+            insertUniformBlock(50, 100, DENSE_ROWS_PER_PAIR);
             assertPartitionCount(150);
             CoveringIndexRecordCursorFactory.resetModeSelectionsForTesting();
             assertSameResult(QUERY, referenceOf(QUERY));
             Assert.assertTrue(
-                    "four keys recorded only from partition 50 onwards, at 200 rows per pair (6.2x"
+                    "four keys recorded only from partition 50 onwards, at 1000 rows per pair (3.9x"
                             + " the crossover), fell back to the merge. The density estimate is"
                             + " sampling the front of the scan, where the keys do not exist yet, and"
                             + " scoring them zero. A parameter commissioned partway through history is"
@@ -180,16 +190,21 @@ public class CoveringIndexPerKeyDensityTest extends AbstractCoveringIndexQueryTe
      * One leading partition holding eight rows must not change the decision on an otherwise
      * uniform table.
      * <p>
-     * Both arms are the SAME 100-partition, 16 000-row, 40-rows-per-pair table; the only
-     * difference is a single extra leading partition of 8 rows, 0.05% of the data. A four-frame
-     * prefix sample scores the two 30 and 40 -- opposite sides of the crossover -- so the
+     * Both arms are the SAME 100-partition, 160 000-row, 400-rows-per-pair table; the only
+     * difference is a single extra leading partition of 8 rows, 0.005% of the data. A
+     * four-frame prefix sample scores the two on opposite sides of the crossover, so the
      * decision inverts on a partition holding a twentieth of a percent of the rows.
+     * <p>
+     * The uniform density has to sit ABOVE the crossover for this to mean anything: if both
+     * arms decline on density the assertion below compares false against false and passes
+     * having tested nothing. 400 rows per pair is 1.6x the crossover, and the leading partition
+     * drags the mean only to 396 -- still above it, which is the whole claim.
      */
     @Test(timeout = 300_000)
     public void testLeadingSparsePartitionDoesNotFlipAUniformTable() throws Exception {
         assertMemoryLeak(() -> {
             createTelemetryTable();
-            insertUniformBlock(1, 100, 40);
+            insertUniformBlock(1, 100, 400);
             assertPartitionCount(100);
             CoveringIndexRecordCursorFactory.resetModeSelectionsForTesting();
             assertSameResult(QUERY, referenceOf(QUERY));
@@ -199,12 +214,20 @@ public class CoveringIndexPerKeyDensityTest extends AbstractCoveringIndexQueryTe
                     "the gate never ran on the control arm, so the comparison below proves nothing",
                     perKeyWithoutLeader || CoveringIndexRecordCursorFactory.getMergedModeOpensForTesting() > 0
             );
+            Assert.assertTrue(
+                    "the control arm is a UNIFORM table at 400 rows per pair, 1.6x the crossover,"
+                            + " and it declined per-key. Both arms of the comparison below now"
+                            + " answer false and it passes having tested nothing -- either the"
+                            + " crossover moved above this fixture's density or the estimate is"
+                            + " under-counting a flat table.",
+                    perKeyWithoutLeader
+            );
 
             execute("DROP TABLE telemetry");
             createTelemetryTable();
             // Two rows per key in the leading partition, then the identical uniform block.
             insertUniformBlock(0, 1, 2);
-            insertUniformBlock(1, 100, 40);
+            insertUniformBlock(1, 100, 400);
             assertPartitionCount(101);
             CoveringIndexRecordCursorFactory.resetModeSelectionsForTesting();
             assertSameResult(QUERY, referenceOf(QUERY));
@@ -212,8 +235,8 @@ public class CoveringIndexPerKeyDensityTest extends AbstractCoveringIndexQueryTe
                     CoveringIndexRecordCursorFactory.getPerKeyModeOpensForTesting() > 0;
 
             Assert.assertEquals(
-                    "adding ONE leading partition of 8 rows -- 0.05% of the table -- flipped the"
-                            + " per-key decision on an otherwise uniform 40-rows-per-pair table. The"
+                    "adding ONE leading partition of 8 rows -- 0.005% of the table -- flipped the"
+                            + " per-key decision on an otherwise uniform 400-rows-per-pair table. The"
                             + " density estimate is reading a prefix of the partition axis, which on a"
                             + " full scan is its OLDEST end, so the least representative partition in"
                             + " the table gets a quarter of the vote.",
@@ -231,7 +254,7 @@ public class CoveringIndexPerKeyDensityTest extends AbstractCoveringIndexQueryTe
             assertSameResult(QUERY, referenceOf(QUERY));
             Assert.assertTrue(
                     "at " + DENSE_ROWS_PER_PAIR + " rows per (key, partition) pair -- " +
-                            (DENSE_ROWS_PER_PAIR / 32) + "x the crossover -- the merge was chosen."
+                            (DENSE_ROWS_PER_PAIR / CROSSOVER) + "x the crossover -- the merge was chosen."
                             + " The density estimate is rejecting shapes per-key is supposed to win,"
                             + " which is the 12x win this whole mode exists for.",
                     CoveringIndexRecordCursorFactory.getPerKeyModeOpensForTesting() > 0
@@ -245,16 +268,19 @@ public class CoveringIndexPerKeyDensityTest extends AbstractCoveringIndexQueryTe
     }
 
     /**
-     * Headroom canary on the shared multi-partition fixture: 10,000 rows over 4 keys and 70
-     * daily partitions is ~35.7 rows per (key, partition) pair against a crossover of 32 -- a
-     * margin of about 12%. That is the tightest realistic shape in the suite, and it is the one
-     * that says what raising {@code PER_KEY_MIN_ROWS_PER_PAIR} would cost: at 36 this fixture
-     * flips to the merge and every test built on it stops exercising per-key mode at all, while
-     * still passing, because merged returns the same rows.
+     * Headroom canary on the shared multi-partition fixture: 200,000 rows over 4 keys and 70
+     * daily partitions is ~714 rows per (key, partition) pair, 2.8x the crossover. If that
+     * fixture ever falls under the crossover, every test built on it stops exercising per-key
+     * mode at all while still passing, because merged returns the same rows.
      * <p>
-     * Sibling suites over this fixture ({@code CoveringIndexTelemetryShapeTest},
-     * {@code CoveringIndexOrderSensitiveTest}) assert only the PLAN, which prints the
-     * plan-stable permission and is therefore blind to the flip. This is the arm that is not.
+     * This arm has already earned its keep once. The fixture held 10,000 rows -- ~35 per pair,
+     * three above the then-crossover of 32 -- and this was the ONLY test that failed when the
+     * crossover was re-measured at ~200 and the constant moved to 256. Sibling suites over the
+     * fixture ({@code CoveringIndexTelemetryShapeTest}, {@code CoveringIndexOrderSensitiveTest},
+     * {@code CoveringIndexScanDirectionTest}) assert only the PLAN, which prints the
+     * plan-stable permission and is therefore blind to the flip; they would have gone green and
+     * silently stopped covering the mode. The fixture was made 20x denser rather than this
+     * canary relaxed.
      */
     @Test(timeout = 300_000)
     public void testSharedMultiPartitionFixtureKeepsPerKey() throws Exception {
@@ -263,10 +289,11 @@ public class CoveringIndexPerKeyDensityTest extends AbstractCoveringIndexQueryTe
             CoveringIndexRecordCursorFactory.resetModeSelectionsForTesting();
             assertSameResult(QUERY, referenceOf(QUERY));
             Assert.assertTrue(
-                    "the shared 70-partition fixture (~35.7 rows per (key, partition) pair) fell back"
-                            + " to the merge. It sits only ~12% above the 32-row crossover, so either the"
-                            + " constant moved or the density estimate is under-counting. Every sibling"
-                            + " suite over this fixture asserts the plan only and would not have noticed.",
+                    "the shared 70-partition fixture (~714 rows per (key, partition) pair) fell back"
+                            + " to the merge. It sits 2.8x above the " + CROSSOVER + "-row crossover, so"
+                            + " either the constant moved or the density estimate is under-counting."
+                            + " Every sibling suite over this fixture asserts the plan only and would"
+                            + " not have noticed: they would stay green and stop covering per-key mode.",
                     CoveringIndexRecordCursorFactory.getPerKeyModeOpensForTesting() > 0
             );
         });
@@ -280,8 +307,8 @@ public class CoveringIndexPerKeyDensityTest extends AbstractCoveringIndexQueryTe
             assertSameResult(QUERY, referenceOf(QUERY));
             Assert.assertEquals(
                     "at " + SPARSE_ROWS_PER_PAIR + " rows per (key, partition) pair, far below the"
-                            + " ~30-row crossover, per-key mode was chosen. Per-key pays a fixed"
-                            + " 1.2-1.8 us per frame and emits one frame per pair, so at this density"
+                            + " " + CROSSOVER + "-row crossover, per-key mode was chosen. Per-key pays"
+                            + " a fixed 3.9-5.3 us per frame and emits one frame per pair, so at this density"
                             + " it is several times SLOWER than the merge it replaced.",
                     0,
                     CoveringIndexRecordCursorFactory.getPerKeyModeOpensForTesting()

@@ -72,7 +72,7 @@ import org.junit.Test;
  * </ul>
  * The performance crossover is switched off for both arms (see {@link #setUp()}). Note what
  * that concedes: a correctly tuned crossover would have rejected BOTH of these shapes on
- * density alone, because clearing ~30 rows per pair while also reaching 524,288 frames needs
+ * density alone, because clearing ~256 rows per pair while also reaching 524,288 frames needs
  * 15.7M selected rows. That is a reason to keep the two gates independent, not a reason to drop
  * the ceiling -- the ceiling is a correctness invariant and must not rest on a tuned number
  * that a later benchmark could move.
@@ -98,7 +98,7 @@ public class CoveringIndexPerKeyFrameCeilingTest extends AbstractCoveringIndexQu
     public void setUp() {
         super.setUp();
         // Isolate the ceiling. This fixture holds exactly one row per (key, partition), so the
-        // performance crossover (~30 rows per pair) would reject BOTH arms and neither would say
+        // performance crossover (256 rows per pair) would reject BOTH arms and neither would say
         // anything about the frame-count bound. 0 admits any density.
         CoveringIndexRecordCursorFactory.setMinRowsPerKeyPartitionForTesting(0);
     }

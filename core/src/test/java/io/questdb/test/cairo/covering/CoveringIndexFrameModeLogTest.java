@@ -75,13 +75,13 @@ public class CoveringIndexFrameModeLogTest extends AbstractCoveringIndexQueryTes
     public void testDenseOpenLogsPerKeyWithTheNumbersBehindIt() throws Exception {
         assertMemoryLeak(() -> {
             createTelemetryTable();
-            // 40 partitions x 4 keys x 200 rows per pair: 6.2x the crossover.
-            insertUniformBlock(40, 200);
+            // 40 partitions x 4 keys x 1000 rows per pair: 3.9x the crossover.
+            insertUniformBlock(40, 1000);
             printSql(QUERY, sink);
             capture.drain();
             capture.assertLoggedRE(
                     "covering scan frame mode \\[table=telemetry, mode=per-key, reason=density, keys=4, "
-                            + "partitionsUpper=40, framesUpper=\\d+, frameCeiling=\\d+, rowsPerPair=200, crossover=32]"
+                            + "partitionsUpper=40, framesUpper=\\d+, frameCeiling=\\d+, rowsPerPair=1000, crossover=256]"
             );
         });
     }
@@ -96,7 +96,7 @@ public class CoveringIndexFrameModeLogTest extends AbstractCoveringIndexQueryTes
             capture.drain();
             capture.assertLoggedRE(
                     "covering scan frame mode \\[table=telemetry, mode=merged, reason=density, keys=4, "
-                            + "partitionsUpper=40, framesUpper=\\d+, frameCeiling=\\d+, rowsPerPair=5, crossover=32]"
+                            + "partitionsUpper=40, framesUpper=\\d+, frameCeiling=\\d+, rowsPerPair=5, crossover=256]"
             );
         });
     }

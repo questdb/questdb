@@ -134,17 +134,34 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // The density below which per-key mode is a pessimisation, in rows per
     // (key, partition-frame) pair.
     //
-    // Per-key costs a FIXED 1.2-1.8 us per frame, independent of how many rows the frame
-    // carries, so its win is entirely a function of how many rows each pair holds. Measured on
-    // identical data with only the partition count varying: P=1 per-key is 2.9x FASTER, P=4 is
-    // parity, P=32 is 3.0x SLOWER. The crossover sits at ~30 rows per pair (analytic fit 31.6).
-    // Above it per-key wins hugely -- 42x at K=512 on a table holding 400,000 rows per key.
+    // Per-key costs a FIXED cost per frame, independent of how many rows the frame carries, and
+    // emits one frame per non-empty pair, so its win is entirely a function of how many rows
+    // each pair holds. That fixed cost measures 3.9-5.3 us per (key, partition) frame on a
+    // 32-core box -- NOT the 1.2-1.8 us this comment claimed until the crossover was swept
+    // directly -- and the crossover is proportional to it.
+    //
+    // Swept with the mode DRIVEN through setMinRowsPerKeyPartitionForTesting rather than
+    // inferred from the data, both arms over the same bytes in the same engine, each block
+    // checked against the mode counters and bookended by re-running the first arm: the crossover
+    // sits at 168-246 rows per pair (geometric mean 197, least-squares fit on time-vs-rows
+    // 156-324) and is remarkably flat -- it moves less than 1.5x across K = 4..512,
+    // P = 16..512 and worker counts 2, 8 and 31. At the 32 this constant used to hold, per-key
+    // measured 3.2-5.2x SLOWER than the merge, and 8-12x slower at 8 rows per pair: the exact
+    // inversion the gate exists to prevent, admitted by the gate itself.
+    //
+    // 256 is the smallest power of two at or above EVERY measured crossover, and the over-shoot
+    // is deliberate because the error is asymmetric. Below the crossover per-key loses up to
+    // 12x; the band this declines but could have won (168-256) wins at most 1.44x, measured.
+    // Above the constant the win is large and grows: 1.7-3.1x at 1024 rows per pair, 4.2x at
+    // 400,000.
     //
     // Unlike MAX_PER_KEY_PAGE_FRAMES this IS a tuned constant: getting it wrong costs speed,
     // never correctness. That is exactly why it carries a test override and the ceiling does
     // not, and why the two are separate gates rather than one predicate -- a correctness
     // invariant must not be able to move when someone retunes a benchmark number.
-    static final int PER_KEY_MIN_ROWS_PER_PAIR = 32;
+    //
+    // CoveringIndexPerKeyCrossoverPerfTest is the sweep, and re-runs on demand.
+    static final int PER_KEY_MIN_ROWS_PER_PAIR = 256;
     // Test-only crossover override; -1 means "use HEAP_MERGE_MIN_KEYS".
     @TestOnly
     static int heapMergeMinKeysOverride = -1;
@@ -1237,8 +1254,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * So the denominator counts only pairs the probe found rows in. Dividing by every sampled
      * pair scores a shape by how many of its keys are absent rather than by how much work each
      * emitted frame carries, and rejects shapes per-key wins by a wide margin: eight keys
-     * round-robined one per partition at 100 rows each is 100 rows per emitted frame, 3.1x the
-     * crossover, and scores 12 under the old denominator.
+     * round-robined one per partition at 1000 rows each is 1000 rows per emitted frame, 3.9x the
+     * crossover, and scores 125 under the old denominator.
      * <p>
      * <b>Spread, not prefix.</b> Both axes are sampled by STRIDE across their whole range, not
      * by taking a prefix. A prefix sample of the partition axis reads the OLDEST partitions of

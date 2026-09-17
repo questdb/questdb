@@ -71,8 +71,18 @@ public abstract class AbstractCoveringIndexQueryTest extends AbstractCairoTest {
 
     /**
      * Same four keys and the same NULL pattern as {@link #createTelemetryWithNulls()}, but
-     * 600 s apart instead of 1 s, so the 10 000 rows span ~69 days and land in ~70 daily
+     * 30 s apart instead of 1 s, so the 200 000 rows span ~69 days and land in ~70 daily
      * partitions instead of one.
+     * <p>
+     * The ROW COUNT is set by the density the per-key gate needs, not by the partition count:
+     * 200 000 rows over 4 keys and 70 partitions is ~714 rows per (key, partition) pair, 2.8x
+     * {@code PER_KEY_MIN_ROWS_PER_PAIR}. It held 10 000 rows -- ~35 per pair, three above the
+     * gate -- while that constant was 32. When the crossover was swept directly and the
+     * constant moved to 256, this fixture fell under it, and every suite built on it would have
+     * quietly stopped running per-key mode at all while still passing: they assert the PLAN,
+     * which prints the plan-stable permission and is blind to the flip.
+     * {@code CoveringIndexPerKeyDensityTest.testSharedMultiPartitionFixtureKeepsPerKey} is the
+     * arm that is not, and it is what caught this.
      * <p>
      * The single-partition fixtures cannot exercise the invariant that per-key acceptance
      * rests on: "per-key mode iterates partitions OUTER, so one key's frames still arrive in
@@ -87,14 +97,17 @@ public abstract class AbstractCoveringIndexQueryTest extends AbstractCairoTest {
      */
     protected void createTelemetryMultiPartition() throws Exception {
         createTelemetryTable();
-        execute("INSERT INTO telemetry SELECT (x * 600000000L)::timestamp," +
+        execute("INSERT INTO telemetry SELECT (x * 30000000L)::timestamp," +
                 " CASE WHEN x % 4 = 0 THEN 'SFID' WHEN x % 4 = 1 THEN 'HOTMIC'" +
                 "      WHEN x % 4 = 2 THEN 'KCAS' ELSE 'CALT' END," +
                 " CASE WHEN x % 5 = 0 THEN NULL ELSE x::double END" +
-                " FROM long_sequence(10000)");
+                " FROM long_sequence(200000)");
         // Non-vacuity guard: the whole point of this fixture is MANY partitions. If a future
         // edit to the spacing or the row count collapses it back to one, every test built on
-        // it silently reverts to proving nothing about cross-partition frame order.
+        // it silently reverts to proving nothing about cross-partition frame order. The
+        // spacing and the row count move TOGETHER -- halving one and doubling the other keeps
+        // this count -- so this guard does not also protect the density; that is what the
+        // density canary is for.
         final StringSink partitionCount = new StringSink();
         printSql("SELECT count() c FROM table_partitions('telemetry')", partitionCount);
         TestUtils.assertEquals("c\n70\n", partitionCount);
