@@ -3604,6 +3604,57 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullRefreshFailedCompileReportsASaneRefreshDuration() throws Exception {
+        // The pre-flight failure returns before insertAsSelect, which is what stamps the start
+        // timestamp; refreshFailState still stamps a fresh finish timestamp. Left alone, the pair
+        // straddles the successful refresh that preceded it and materialized_views reports the whole
+        // gap -- here thirteen months -- as this refresh's duration. Assert the duration, not that the
+        // fields are populated: they are populated either way.
+        final String durationSql = "select view_name, view_status, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                "last_refresh_finish_timestamp - last_refresh_start_timestamp as refresh_duration_us " +
+                "from materialized_views";
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute("insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01');");
+            currentMicros = parseFloorPartialTimestamp("2001-01-01T01:01:01.000000Z");
+            drainQueues();
+
+            assertQuery(durationSql)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_duration_us
+                            price_1h\tvalid\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\t0
+                            """);
+
+            execute("alter table base_price drop column price");
+            drainQueues();
+
+            // Time passes -- the view sits broken for over a year before anyone reaches for a full
+            // refresh. The clock must move, or the bug is invisible: the changed tests pin currentMicros
+            // to one value across both the success and the failure.
+            currentMicros = parseFloorPartialTimestamp("2002-02-02T02:02:02.000000Z");
+            execute("refresh materialized view price_1h full");
+            drainQueues();
+
+            // The failed attempt happened at 2002-02-02 and took no time at all.
+            assertQuery(durationSql)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_duration_us
+                            price_1h\tinvalid\t2002-02-02T02:02:02.000000Z\t2002-02-02T02:02:02.000000Z\t0
+                            """);
+        });
+    }
+
+    @Test
     public void testFullRefreshOfDroppedView() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(

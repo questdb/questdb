@@ -640,6 +640,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$(", errorPos=").$(e.getPosition())
                     .$(", error=").$safe(e.getFlyweightMessage())
                     .I$();
+            // Record that a refresh was attempted now. refreshFailState stamps a fresh finish
+            // timestamp, and insertAsSelect -- which every other refresh failure reaches -- is what
+            // stamps the matching start timestamp. A pre-flight failure returns before it, so without
+            // this the start timestamp is still the one from the last SUCCESSFUL refresh and
+            // materialized_views reports the gap between the two as this refresh's duration (months,
+            // for a view that broke long ago). Stamped before refreshFailState takes its own tick, so
+            // start <= finish and the view cannot report "refreshing" (MatViewsFunctionFactory derives
+            // that status from start > finish).
+            viewState.setLastRefreshStartTimestampUs(microsecondClock.getTicks());
             refreshFailState(viewDefinition, viewState, walWriter, e);
             return false;
         }
