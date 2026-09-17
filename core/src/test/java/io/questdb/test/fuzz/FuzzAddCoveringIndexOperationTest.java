@@ -82,7 +82,7 @@ public class FuzzAddCoveringIndexOperationTest extends AbstractCairoTest {
             includeColumnIndices.add(0);
 
             final FuzzAddCoveringIndexOperation op =
-                    new FuzzAddCoveringIndexOperation(symbolColumnIndex, includeColumnIndices);
+                    new FuzzAddCoveringIndexOperation(symbolColumnIndex, includeColumnIndices, "POSTING");
 
             // Must not surface "indexes are only supported for symbol type": the operation has to
             // be resilient to the target column no longer being a symbol when the ALTER executes.
