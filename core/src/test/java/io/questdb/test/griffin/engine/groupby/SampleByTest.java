@@ -4077,6 +4077,92 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     /**
+     * The same shape with an outer ORDER BY. Restating a timestamp order on the base is only ours to do
+     * when the user has not written an order or a row set of their own, so the restatement bails on an
+     * outer ORDER BY - except for the one spelling that asks for the very order being restated,
+     * {@code ORDER BY <designated timestamp>} ascending and nothing else. That one merges; everything
+     * else keeps taking the sort.
+     * <p>
+     * The distinction is worth a test because it is invisible in the rows: every arm here returns the
+     * same three buckets, in the order its own ORDER BY asks for, whichever plan it takes. What differs
+     * is what the plan does to 20M union rows before the SAMPLE BY sees them. Measured at
+     * N = 10M rows per branch: the merge answers in 245 ms, the sort in 690 ms with
+     * cairo.sql.sort.key.max.bytes raised to 8 GB, and at the default 64 MB the sort does not answer at
+     * all - "limit of 67108864 memory exceeded in EncodedSort". So "order by ts" taking the sort was not
+     * a slower answer, it was no answer.
+     * <p>
+     * The bailing arms are each a distinct reason to bail, and none of them is about the rows: DESC and
+     * "c" are an order the user wrote that is not this one, "ts, c" and "c, ts" carry a term this
+     * restatement says nothing about, and LIMIT makes the row set theirs rather than the row order.
+     */
+    @Test
+    public void testOrderSensitiveSampleByOverUnionAllWithOuterOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SCAN_DIRECTION_DDL);
+            execute(SCAN_DIRECTION_ROWS);
+            final String base = "(select ts, x from sdt union all select ts, x from sdt) timestamp(ts)";
+            final String stem = "select ts, count() c from " + base + " sample by 1d fill(null) ";
+            final String ascending = """
+                    ts\tc
+                    2024-01-01T00:00:00.000000Z\t4
+                    2024-01-02T00:00:00.000000Z\t4
+                    2024-01-03T00:00:00.000000Z\t4
+                    """;
+
+            // asks for the order the restatement produces, so it is restated and the union merges
+            for (String tail : new String[]{"order by ts", "order by ts asc", "order by 1"}) {
+                assertQuery(stem + tail)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .withPlanContaining("Union All Merge", "order: [ts asc]")
+                        .withPlanNotContaining("Encode sort")
+                        .returns(ascending);
+            }
+
+            // an order or a row set of the user's own: the restatement bails and the sort supplies the order
+            assertQuery(stem + "order by ts desc")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .withPlanContaining("Encode sort", "keys: [ts desc]", "Union All")
+                    .withPlanNotContaining("Union All Merge")
+                    .returns("""
+                            ts\tc
+                            2024-01-03T00:00:00.000000Z\t4
+                            2024-01-02T00:00:00.000000Z\t4
+                            2024-01-01T00:00:00.000000Z\t4
+                            """);
+
+            for (String tail : new String[]{"order by c", "order by ts, c", "order by c, ts"}) {
+                assertQuery(stem + tail)
+                        .noLeakCheck()
+                        .inferTimestamp()
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .withPlanContaining("Encode sort", "Union All")
+                        .withPlanNotContaining("Union All Merge")
+                        .returns(ascending);
+            }
+
+            assertQuery(stem + "order by ts limit 2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .withPlanContaining("Limit", "Encode sort", "keys: [ts]", "Union All")
+                    .withPlanNotContaining("Union All Merge")
+                    .returns("""
+                            ts\tc
+                            2024-01-01T00:00:00.000000Z\t4
+                            2024-01-02T00:00:00.000000Z\t4
+                            """);
+        });
+    }
+
+    /**
      * The same statement over an aggregating base. There is no ordered plan to select here - a keyed
      * GROUP BY emits rows in map order and nothing merges that - so this is where the sort belongs,
      * and it is over the aggregate (three rows) rather than the input.

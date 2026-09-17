@@ -5529,6 +5529,27 @@ public class SqlOptimiser implements Mutable {
         return isTimestampLiteral(timestampArg, timestampColumn);
     }
 
+    /**
+     * True when this model's own ORDER BY is exactly {@code ORDER BY <timestamp>} ascending, on one
+     * unqualified column, with no LIMIT - an order-by that asks for nothing the model does not already
+     * produce, rather than one that claims the row order or the row set.
+     * <p>
+     * Used by {@link #restateTimestampOrderForOrderSensitiveBase(IQueryModel)}. Everything it excludes is
+     * excluded because restating a base order underneath it would be reasoning about an order or a row set
+     * the user wrote: a DESC term, a term on another column, a leading or trailing extra term, an
+     * expression rather than a plain column, and any LIMIT.
+     */
+    private boolean isAscendingTimestampOrderBy(IQueryModel model, CharSequence timestamp) {
+        if (model.getOrderBy().size() != 1 || model.getLimitLo() != null) {
+            return false;
+        }
+        if (model.getOrderByDirection().getQuick(0) != IQueryModel.ORDER_DIRECTION_ASCENDING) {
+            return false;
+        }
+        final ExpressionNode term = model.getOrderBy().getQuick(0);
+        return term.type == LITERAL && Chars.equalsIgnoreCase(term.token, timestamp);
+    }
+
     // True when this model is a UNION ALL branch (has siblings via getUnionModel()) whose single-column
     // order-by advice resolves to the union's designated timestamp - the precondition for pushing that
     // timestamp order uniformly into every branch.
@@ -8514,15 +8535,27 @@ public class SqlOptimiser implements Mutable {
      * not provide designated TIMESTAMP column" (SampleByTest#testTimestampIsRequiredBeforeSubqueryWithExplicitTs2).
      * A model with shared references is skipped for the same reason: its rows are consumed by more than one
      * parent, only one of which asked for this order.
+     * <p>
+     * An ORDER BY on the consumer itself is the same question asked one level up, and the answer is the same
+     * except in one case: {@code ORDER BY <designated timestamp>} ascending asks for the order this method
+     * restates, so bailing on it buys nothing and costs the merge. That one spelling is admitted - see
+     * {@link #isAscendingTimestampOrderBy(IQueryModel, CharSequence)} for what "that one spelling" excludes.
+     * Order-by advice reaching this model is still a bail outright: it is the parent's requirement seen
+     * through a channel that says nothing about which spelling produced it.
      */
     private void restateTimestampOrderForOrderSensitiveBase(IQueryModel model) {
-        if (model.getOrderBy().size() > 0
-                || model.getOrderByAdvice().size() > 0
-                || !hasNestedUnionAll(model)) {
+        if (model.getOrderByAdvice().size() > 0 || !hasNestedUnionAll(model)) {
             return;
         }
         if (model.getSampleBy() == null
                 && !hasAscendingTimestampGroupByFunc(sqlNodeStack, functionParser.getFunctionFactoryCache(), model.getColumns())) {
+            return;
+        }
+        final CharSequence timestamp = findTimestamp(model);
+        if (timestamp == null) {
+            return;
+        }
+        if (model.getOrderBy().size() > 0 && !isAscendingTimestampOrderBy(model, timestamp)) {
             return;
         }
         final IQueryModel base = model.getNestedModel();
@@ -8537,10 +8570,7 @@ public class SqlOptimiser implements Mutable {
                 break;
             }
         }
-        final CharSequence timestamp = findTimestamp(model);
-        if (timestamp != null) {
-            base.addOrderBy(nextLiteral(timestamp), IQueryModel.ORDER_DIRECTION_ASCENDING);
-        }
+        base.addOrderBy(nextLiteral(timestamp), IQueryModel.ORDER_DIRECTION_ASCENDING);
     }
 
     private void resolveJoinColumns(IQueryModel model) throws SqlException {
