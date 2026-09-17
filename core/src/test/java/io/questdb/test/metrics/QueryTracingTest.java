@@ -88,7 +88,7 @@ public class QueryTracingTest extends AbstractCairoTest {
                             exampleQuery
                     ))
                             .noLeakCheck()
-                            .returnsOnce(String.format("%s\t%s\tstarted\n%s\tadmin\ttrue\n", COLUMN_QUERY_TEXT, COLUMN_PRINCIPAL, exampleQuery));
+                            .returns(String.format("%s\t%s\tstarted\n%s\tadmin\ttrue\n", COLUMN_QUERY_TEXT, COLUMN_PRINCIPAL, exampleQuery));
                     break;
                 } catch (SqlException | AssertionError e) {
                     if (sleepMillis >= 6400) {
