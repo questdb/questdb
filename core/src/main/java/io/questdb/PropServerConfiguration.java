@@ -945,7 +945,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 memoryUsageLogInterval
         );
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
-        this.isQueryTracingEnabled = !isReadOnlyInstance && getBoolean(properties, env, PropertyKey.QUERY_TRACING_ENABLED, true);
+        final boolean isQueryTracingRequested = getBoolean(properties, env, PropertyKey.QUERY_TRACING_ENABLED, true);
         this.cairoMetadataCacheSnapshotOrdered = getBoolean(properties, env, PropertyKey.CAIRO_METADATA_CACHE_SNAPSHOT_ORDERED, true);
         this.cairoTableRegistryAutoReloadFrequency = getMillis(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
@@ -2404,6 +2404,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                     && !sqlParallelReadParquetEnabled && !sqlParallelTopKEnabled && !sqlParallelWindowJoinEnabled) {
                 // All type of parallel queries are disabled. Don't start the query thread pool
                 sharedWorkerPoolQueryConfiguration.sharedWorkerCount = 0;
+            }
+
+            final boolean hasQueryTracingWorker = sharedWorkerPoolQueryConfiguration.sharedWorkerCount > 0
+                    || networkPoolWorkerCount > 0;
+            this.isQueryTracingEnabled = !isReadOnlyInstance && isQueryTracingRequested && hasQueryTracingWorker;
+            if (!isReadOnlyInstance && isQueryTracingRequested && !hasQueryTracingWorker) {
+                log.advisory().$("query tracing was disabled because no shared query or network worker can consume trace events").$();
             }
 
             this.walParallelExecutionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_APPLY_PARALLEL_SQL_ENABLED, true);

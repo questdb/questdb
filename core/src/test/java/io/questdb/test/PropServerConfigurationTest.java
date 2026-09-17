@@ -2766,6 +2766,35 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testQueryTracingRequiresSharedWorker() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_WORKER_COUNT.getPropertyPath(), "1");
+        properties.setProperty(PropertyKey.PG_WORKER_COUNT.getPropertyPath(), "1");
+        properties.setProperty(PropertyKey.LINE_TCP_IO_WORKER_COUNT.getPropertyPath(), "1");
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_COUNT.getPropertyPath(), "0");
+        properties.setProperty(PropertyKey.SHARED_QUERY_WORKER_COUNT.getPropertyPath(), "0");
+
+        Assert.assertFalse(newPropServerConfiguration(properties).getCairoConfiguration().isQueryTracingEnabled());
+
+        properties.setProperty(PropertyKey.QUERY_TRACING_ENABLED.getPropertyPath(), "true");
+        Assert.assertFalse(newPropServerConfiguration(properties).getCairoConfiguration().isQueryTracingEnabled());
+
+        properties.setProperty(PropertyKey.SHARED_QUERY_WORKER_COUNT.getPropertyPath(), "1");
+        Assert.assertTrue(newPropServerConfiguration(properties).getCairoConfiguration().isQueryTracingEnabled());
+
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED.getPropertyPath(), "false");
+        Assert.assertFalse(newPropServerConfiguration(properties).getCairoConfiguration().isQueryTracingEnabled());
+
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_COUNT.getPropertyPath(), "1");
+        Assert.assertTrue(newPropServerConfiguration(properties).getCairoConfiguration().isQueryTracingEnabled());
+    }
+
+    @Test
     public void testMatViewRefreshWorkerCountZeroDisablesRefresh() throws Exception {
         final Properties properties = new Properties();
         properties.setProperty(PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT.getPropertyPath(), "0");
