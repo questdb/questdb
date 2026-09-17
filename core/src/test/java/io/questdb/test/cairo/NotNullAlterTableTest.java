@@ -442,6 +442,79 @@ public class NotNullAlterTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterColumnDropNotNullUpdatesDependentViewMetadata() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v LONG NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE VIEW vv AS (SELECT v FROM t)");
+            drainWalAndViewQueues();
+            assertQuery("SELECT notNull FROM table_columns('vv') WHERE column = 'v'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("notNull\ntrue\n");
+
+            execute("ALTER TABLE t ALTER COLUMN v SET NULL");
+            drainWalAndViewQueues();
+
+            assertQuery("SELECT notNull FROM table_columns('t') WHERE column = 'v'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("notNull\nfalse\n");
+            assertQuery("SELECT notNull FROM table_columns('vv') WHERE column = 'v'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("notNull\nfalse\n");
+        });
+    }
+
+    @Test
+    public void testAlterColumnSetNotNullUpdatesDependentViewMetadata() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE VIEW vv AS (SELECT v FROM t)");
+            drainWalAndViewQueues();
+            assertQuery("SELECT notNull FROM table_columns('vv') WHERE column = 'v'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("notNull\nfalse\n");
+
+            execute("ALTER TABLE t ALTER COLUMN v SET NOT NULL");
+            drainWalAndViewQueues();
+
+            assertQuery("SELECT notNull FROM table_columns('t') WHERE column = 'v'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("notNull\ntrue\n");
+            assertQuery("SELECT notNull FROM table_columns('vv') WHERE column = 'v'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("notNull\ntrue\n");
+        });
+    }
+
+    @Test
+    public void testCompileViewRefreshesNotNullMetadata() throws Exception {
+        // Explicit COMPILE VIEW must notice a nullability-only change: the view
+        // metadata comparison has to include the NOT NULL flag, otherwise the
+        // catalogue keeps the stale flag while the base table and any freshly
+        // created equivalent view report the new one.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE VIEW vv AS (SELECT v FROM t)");
+            drainWalAndViewQueues();
+
+            execute("ALTER TABLE t ALTER COLUMN v SET NOT NULL");
+            drainWalAndViewQueues();
+            execute("COMPILE VIEW vv");
+            drainWalAndViewQueues();
+
+            assertQuery("SELECT notNull FROM table_columns('vv') WHERE column = 'v'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("notNull\ntrue\n");
+        });
+    }
+
+    @Test
     public void testSetNotNullPersistsThroughSequencerReload() throws Exception {
         assertMemoryLeak(() -> {
             // Regression: SET_COLUMN_NOT_NULL used to be non-structural, so the

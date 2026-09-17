@@ -750,6 +750,61 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjectionPreservesNotNullOnPassThroughColumn() throws Exception {
+        // A virtual projection must keep the NOT NULL flag of a pass-through
+        // column: the raw sentinel bit pattern in a NOT NULL column is data and
+        // must render as a value whether or not sibling columns are computed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (i INT NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (-2147483648, '2024-01-01')");
+            execute("INSERT INTO t VALUES (7, '2024-01-02')");
+
+            assertQuery("SELECT i, 1 AS one FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i\tone
+                            -2147483648\t1
+                            7\t1
+                            """);
+            assertQuery("SELECT count() FROM (SELECT i, 1 AS one FROM t) WHERE i IS NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            0
+                            """);
+        });
+    }
+
+    @Test
+    public void testProjectionKeepsNullablePassThroughNullable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE u (i INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO u VALUES (NULL, '2024-01-01')");
+            execute("INSERT INTO u VALUES (7, '2024-01-02')");
+
+            assertQuery("SELECT i, 1 AS one FROM u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i\tone
+                            null\t1
+                            7\t1
+                            """);
+            assertQuery("SELECT count() FROM (SELECT i, 1 AS one FROM u) WHERE i IS NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            1
+                            """);
+        });
+    }
+
+    @Test
     public void testNotNullLongSentinelPrintsValue() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x LONG NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1818,15 +1873,16 @@ public class NotNullColumnTest extends AbstractCairoTest {
                         (42, NULL, '2024-01-02')
                     """);
 
-            // COALESCE(x, y): x is NOT NULL so y is unreachable; the sentinel
-            // bit pattern from row 1 renders as "null" (nullable result type)
-            // but is distinct from the y fallback.
+            // COALESCE(x, y): x is NOT NULL so y is unreachable; the factory
+            // returns x's column function verbatim, the projection keeps its
+            // NOT NULL flag, and the sentinel bit pattern from row 1 renders
+            // as data — identical to SELECT x.
             assertQuery("SELECT coalesce(x, y) c FROM t ORDER BY ts")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
                             c
-                            null
+                            -9223372036854775808
                             42
                             """);
 

@@ -461,7 +461,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     @Override
     public boolean shouldCompileDependentViews() {
         return switch (command) {
-            case ADD_COLUMN, RENAME_COLUMN, DROP_COLUMN, RENAME_TABLE, CHANGE_COLUMN_TYPE -> true;
+            case ADD_COLUMN, RENAME_COLUMN, DROP_COLUMN, RENAME_TABLE, CHANGE_COLUMN_TYPE,
+                 SET_COLUMN_NOT_NULL, DROP_COLUMN_NOT_NULL -> true;
             default -> false;
         };
     }

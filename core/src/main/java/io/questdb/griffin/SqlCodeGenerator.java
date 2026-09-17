@@ -1624,6 +1624,60 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return toleranceInterval;
     }
 
+    /**
+     * Set-operation result nullability follows the output row population:
+     * UNION and UNION ALL emit rows from both branches, so a result column is
+     * NOT NULL only when it is NOT NULL in both branches (conjunction, this
+     * method). The EXCEPT and INTERSECT families emit rows from branch A only,
+     * so they keep branch A's flags verbatim and must NOT call this method:
+     * dropping the flag there would re-interpret branch A's sentinel-as-data
+     * bit patterns as NULL.
+     * <p>
+     * The result metadata shares column instances with branch A's factory
+     * metadata (shallow copies), so a column whose flag must drop is replaced
+     * with a flag-cleared copy rather than mutated in place.
+     */
+    private static RecordMetadata unionResultNullability(RecordMetadata unionMetadata, RecordMetadata metadataB) {
+        final int columnCount = unionMetadata.getColumnCount();
+        boolean changeRequired = false;
+        for (int i = 0; i < columnCount; i++) {
+            if (unionMetadata.isNotNull(i) && !metadataB.isNotNull(i)) {
+                changeRequired = true;
+                break;
+            }
+        }
+        if (!changeRequired) {
+            return unionMetadata;
+        }
+        final GenericRecordMetadata conjoined = new GenericRecordMetadata();
+        for (int i = 0; i < columnCount; i++) {
+            final TableColumnMetadata column = unionMetadata.getColumnMetadata(i);
+            if (column.isNotNull() && !metadataB.isNotNull(i)) {
+                final TableColumnMetadata copy = new TableColumnMetadata(
+                        column.getColumnName(),
+                        column.getColumnType(),
+                        column.getIndexType(),
+                        column.getIndexValueBlockCapacity(),
+                        column.isSymbolTableStatic(),
+                        column.getMetadata(),
+                        column.getWriterIndex(),
+                        column.isDedupKeyFlag(),
+                        column.getReplacingIndex(),
+                        column.isSymbolCacheFlag(),
+                        column.getSymbolCapacity(),
+                        column.getOriginalWriterIndex()
+                );
+                copy.setParquetEncodingConfig(column.getParquetEncodingConfig());
+                // notNullFlag stays false: the nullable branch B contributes rows too
+                conjoined.add(copy);
+            } else {
+                conjoined.add(column);
+            }
+        }
+        conjoined.setTimestampIndex(unionMetadata.getTimestampIndex());
+        return conjoined;
+    }
+
     private static int validateAndGetSlaveTimestampIndex(RecordMetadata slaveMetadata, RecordCursorFactory slaveBase) {
         int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
         // slave.supportsFilterStealing() means slave is nothing but a filter.
@@ -1665,7 +1719,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int typeA = typesA.getColumnType(i);
             int typeB = typesB.getColumnType(i);
             int targetType = getUnionCastType(typeA, typeB);
-            metadata.add(new TableColumnMetadata(typesA.getColumnName(i), targetType));
+            TableColumnMetadata widened = new TableColumnMetadata(typesA.getColumnName(i), targetType);
+            // Explicitly nullable, for every set operation: widened values pass
+            // through cast functions that can map a branch's sentinel bit pattern
+            // to the target type's NULL, so NOT NULL cannot be promised here even
+            // when both branches carry the flag.
+            widened.setNotNullFlag(false);
+            metadata.add(widened);
         }
         return metadata;
     }
@@ -10381,6 +10441,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                 }
                 assert m != null;
+                // A pass-through of a NOT NULL column stays NOT NULL; a computed
+                // column is nullable unless the function proves otherwise.
+                m.setNotNullFlag(function.isNotNull());
                 final ColumnFunction cf = ColumnFunction.unwrap(function);
                 if (cf != null) {
                     final int baseColIdx = cf.getColumnIndex();
@@ -10422,6 +10485,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 timestampType,
                                 timestampFunction.getMetadata()
                         );
+                        m.setNotNullFlag(timestampFunction.isNotNull());
                         virtualMetadata.add(m);
                         priorityMetadata.add(m);
                         isTimestampRestored = true;
@@ -10462,6 +10526,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 timestampFunction.getType(),
                                 timestampFunction.getMetadata()
                         );
+                        m.setNotNullFlag(timestampFunction.isNotNull());
                         virtualMetadata.add(m);
                         priorityMetadata.add(m);
                         break;
@@ -11382,7 +11447,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             isSeedRequired,
                             pendingSymbolColumnsB
                     );
-                    final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
+                    final RecordMetadata unionMetadata = castIsRequired
+                            ? widenSetMetadata(metadataA, metadataB)
+                            : unionResultNullability(GenericRecordMetadata.removeTimestamp(metadataA), metadataB);
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
                         castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
@@ -11420,7 +11487,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             castFunctionsA = generateCastFunctions(executionContext, mergeMetadata, metadataA, positionA);
                             castFunctionsB = generateCastFunctions(executionContext, mergeMetadata, metadataB, positionB);
                         } else {
-                            mergeMetadata = GenericRecordMetadata.copyOfNew(metadataA);
+                            mergeMetadata = unionResultNullability(GenericRecordMetadata.copyOfNew(metadataA), metadataB);
                         }
                         return generateMergeUnionAllFactory(
                                 model,
@@ -11436,7 +11503,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     prepareMergeUnionAllFactory(factoryA);
                     prepareMergeUnionAllFactory(factoryB);
-                    final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
+                    final RecordMetadata unionMetadata = castIsRequired
+                            ? widenSetMetadata(metadataA, metadataB)
+                            : unionResultNullability(GenericRecordMetadata.removeTimestamp(metadataA), metadataB);
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
                         castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
@@ -11455,6 +11524,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 case IQueryModel.SET_OPERATION_EXCEPT: {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
+                    // EXCEPT emits branch A rows only: keep branch A's nullability flags (see unionResultNullability)
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
@@ -11475,6 +11545,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 case IQueryModel.SET_OPERATION_EXCEPT_ALL: {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
+                    // EXCEPT ALL emits branch A rows only: keep branch A's nullability flags (see unionResultNullability)
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
@@ -11494,6 +11565,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 case IQueryModel.SET_OPERATION_INTERSECT: {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
+                    // INTERSECT emits branch A rows only: keep branch A's nullability flags (see unionResultNullability)
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
@@ -11514,6 +11586,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 case IQueryModel.SET_OPERATION_INTERSECT_ALL: {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
+                    // INTERSECT ALL emits branch A rows only: keep branch A's nullability flags (see unionResultNullability)
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
