@@ -40,6 +40,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -141,6 +143,11 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 2);
             createTypedTable("r", 0);
             createTypedTable("p", 1);
+            try (TableReader r = getReader("r"); TableReader p = getReader("p")) {
+                // The SYMBOL key s holds equal text under different symbol keys in r and p.
+                Assert.assertNotEquals(r.getSymbolMapReader(r.getMetadata().getColumnIndex("s")).keyOf("s2"),
+                        p.getSymbolMapReader(p.getMetadata().getColumnIndex("s")).keyOf("s2"));
+            }
             String columns = "";
             for (String table : new String[]{"r", "p"}) {
                 for (String column : new String[]{"b", "y", "h", "c", "i", "l", "dt", "t", "ns", "f", "d", "s"}) {
@@ -149,23 +156,26 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
             }
             try (SqlExecutionContextImpl context = context(engine, 4)) {
                 context.changePageFrameSizes(1, 2);
-                for (String join : JOINS) {
-                    for (boolean keyed : new boolean[]{false, true}) {
-                        String sql = "select " + (keyed ? columns + ", " : "") + AGGREGATES + join
-                                + (keyed ? " order by " + columns : "");
-                        try (RecordCursorFactory factory = engine.select(sql, context)) {
-                            fused(factory);
-                            assertAgainstBaseline(sql, factory, context);
-                            execute("alter table r convert partition to parquet where t < '2020-01-02'");
-                            assertAgainstBaseline(sql, factory, context);
-                            execute("alter table p convert partition to parquet where t >= '2020-01-02'");
-                            assertAgainstBaseline(sql, factory, context);
-                            execute("alter table r convert partition to parquet where t >= '2020-01-02'");
-                            execute("alter table p convert partition to parquet where t < '2020-01-02'");
-                            assertAgainstBaseline(sql, factory, context);
-                            execute("alter table r convert partition to native where t >= 0");
-                            execute("alter table p convert partition to native where t >= 0");
-                            assertAgainstBaseline(sql, factory, context);
+                // The SYMBOL key s has a column top on both sides, so null keys above the tops match.
+                for (String key : new String[]{"r.id=p.id", "r.s=p.s"}) {
+                    for (String join : JOINS) {
+                        for (boolean keyed : new boolean[]{false, true}) {
+                            String sql = "select " + (keyed ? columns + ", " : "") + AGGREGATES + join.replace("r.id=p.id", key)
+                                    + (keyed ? " order by " + columns : "");
+                            try (RecordCursorFactory factory = engine.select(sql, context)) {
+                                fused(factory);
+                                assertAgainstBaseline(sql, factory, context);
+                                execute("alter table r convert partition to parquet where t < '2020-01-02'");
+                                assertAgainstBaseline(sql, factory, context);
+                                execute("alter table p convert partition to parquet where t >= '2020-01-02'");
+                                assertAgainstBaseline(sql, factory, context);
+                                execute("alter table r convert partition to parquet where t >= '2020-01-02'");
+                                execute("alter table p convert partition to parquet where t < '2020-01-02'");
+                                assertAgainstBaseline(sql, factory, context);
+                                execute("alter table r convert partition to native where t >= 0");
+                                execute("alter table p convert partition to native where t >= 0");
+                                assertAgainstBaseline(sql, factory, context);
+                            }
                         }
                     }
                 }
@@ -183,9 +193,12 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                     execute("alter table " + table + " alter column f type double");
                     execute("alter table " + table + " alter column i type long");
                 }
-                for (String join : JOINS) {
-                    assertDifferential("select " + AGGREGATES + join + where, context, true);
-                    assertDifferential("select " + columns + ", " + AGGREGATES + join + where + " order by " + columns, context, true);
+                for (String key : new String[]{"r.id=p.id", "r.s=p.s"}) {
+                    for (String join : JOINS) {
+                        String from = join.replace("r.id=p.id", key) + where;
+                        assertDifferential("select " + AGGREGATES + from, context, true);
+                        assertDifferential("select " + columns + ", " + AGGREGATES + from + " order by " + columns, context, true);
+                    }
                 }
             }
         });
@@ -254,21 +267,29 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
     public void testCoveringIndexInputsKeepOrdinaryPlans() throws Exception {
         assertMemoryLeak(() -> {
             for (String table : new String[]{"r", "p"}) {
+                // r and p write 'a' and 'b' first in different orders, so the texts have different symbol keys.
+                String first = table.equals("r") ? "a" : "b";
+                String second = table.equals("r") ? "b" : "a";
                 execute("create table " + table + " (id int, s symbol index type posting include (id,d), d double, ts timestamp) timestamp(ts) partition by day bypass wal");
-                execute("insert into " + table + " select x::int, 'a', 1.0, x::timestamp from long_sequence(128)");
+                execute("insert into " + table + " select x::int, case when x%4=1 then '" + first + "' else '" + second + "' end, "
+                        + "x*0.5, x::timestamp from long_sequence(128)");
             }
             engine.releaseAllWriters();
             try (SqlExecutionContextImpl context = context(engine, 4)) {
                 context.changePageFrameSizes(1, 1);
-                for (String source : new String[]{"r", "p"}) {
+                for (String key : new String[]{"r.id=p.id", "r.s=p.s"}) {
                     for (boolean isKeyed : new boolean[]{false, true}) {
-                        String sql = "select " + (isKeyed ? "r.id, " : "")
-                                + "sum(r.d), count(*) from r join p on r.id=p.id where " + source + ".s='a'";
-                        context.setParallelHashJoinGroupByEnabled(false);
-                        try (RecordCursorFactory baseline = engine.select(sql, context)) {
-                            Assert.assertTrue(plan(baseline, context), plan(baseline, context).contains("CoveringIndex"));
+                        String select = "select " + (isKeyed ? "r.id, " : "") + "sum(r.d), count(*) from r join p on " + key;
+                        for (String source : new String[]{"r", "p"}) {
+                            String sql = select + " where " + source + ".s='a'";
+                            context.setParallelHashJoinGroupByEnabled(false);
+                            try (RecordCursorFactory baseline = engine.select(sql, context)) {
+                                Assert.assertTrue(plan(baseline, context), plan(baseline, context).contains("CoveringIndex"));
+                            }
+                            assertDifferential(sql, context, false);
                         }
-                        assertDifferential(sql, context, false);
+                        // Without a predicate on the indexed column, the covered key column is an ordinary input.
+                        assertDifferential(select + (isKeyed ? " order by r.id" : ""), context, true);
                     }
                 }
             }
@@ -288,46 +309,72 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
     @Test
     public void testSourceInvalidationAndSymbolRebinding() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table r (id int, d double, s symbol)");
-            execute("create table p (id int, d double, s symbol)");
-            execute("insert into r values (1,1,'r'), (2,2,'s')");
-            execute("insert into p values (1,4,'old'), (1,null,null)");
+            // k holds the text of id, so the SYMBOL key joins the same rows as the INT key does.
+            execute("create table r (id int, d double, s symbol, k symbol)");
+            execute("create table p (id int, d double, s symbol, k symbol)");
+            execute("insert into r values (1,1,'r','1'), (2,2,'s','2'), (null,4,'t',null)");
+            execute("insert into p values (1,4,'old','1'), (1,null,null,'1'), (null,32,'old',null)");
             try (SqlExecutionContextImpl context = context(engine, 4)) {
                 context.with(AllowAllSecurityContext.INSTANCE, bindVariableService, null, -1, null);
-                for (String join : JOINS) {
-                    for (boolean keyed : new boolean[]{false, true}) {
-                        bindVariableService.setDouble(0, 2);
-                        bindVariableService.setStr(1, "old");
-                        String sql = "select " + (keyed ? "r.s, p.s, " : "")
-                                + "count(*) n, sum(r.d*$1) d" + join + " where p.s=$2 or p.s is null"
-                                + (keyed ? " order by r.s,p.s" : "");
-                        try (RecordCursorFactory factory = engine.select(sql, context)) {
-                            fused(factory);
-                            assertAgainstBaseline(sql, factory, context);
-                            execute("truncate table p");
-                            execute("insert into p values (1,8,'new'), (2,16,'new'), (2,null,null)");
-                            bindVariableService.setDouble(0, 0.5);
-                            bindVariableService.setStr(1, "new");
-                            assertAgainstBaseline(sql, factory, context);
-                            execute("truncate table p");
-                            assertAgainstBaseline(sql, factory, context);
-                            execute("insert into p values (1,4,'old'), (1,null,null)");
+                for (String key : new String[]{"r.id=p.id", "r.k=p.k"}) {
+                    for (String join : JOINS) {
+                        for (boolean keyed : new boolean[]{false, true}) {
+                            bindVariableService.setDouble(0, 2);
+                            bindVariableService.setStr(1, "old");
+                            String sql = "select " + (keyed ? "r.s, p.s, " : "")
+                                    + "count(*) n, sum(r.d*$1) d" + join.replace("r.id=p.id", key) + " where p.s=$2 or p.s is null"
+                                    + (keyed ? " order by r.s,p.s" : "");
+                            try (RecordCursorFactory factory = engine.select(sql, context)) {
+                                fused(factory);
+                                assertAgainstBaseline(sql, factory, context);
+                                // TRUNCATE drops the symbol maps, and the new rows assign the key texts in reverse order.
+                                execute("truncate table p");
+                                execute("insert into p values (2,16,'new','2'), (1,8,'new','1'), (2,null,null,'2'), (3,64,'new','3')");
+                                bindVariableService.setDouble(0, 0.5);
+                                bindVariableService.setStr(1, "new");
+                                assertAgainstBaseline(sql, factory, context);
+                                execute("truncate table p");
+                                assertAgainstBaseline(sql, factory, context);
+                                execute("insert into p values (1,4,'old','1'), (1,null,null,'1'), (null,32,'old',null)");
+                            }
                         }
                     }
                 }
+                for (String key : new String[]{"r.id=p.id", "r.k=p.k"}) {
+                    for (String table : new String[]{"r", "p"}) {
+                        for (boolean keyed : new boolean[]{false, true}) {
+                            String sql = "select " + (keyed ? "r.id, " : "") + AGGREGATES + JOINS[1].replace("r.id=p.id", key)
+                                    + (keyed ? " order by r.id" : "");
+                            try (RecordCursorFactory factory = engine.select(sql, context)) {
+                                AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
+                                assertAgainstBaseline(sql, factory, context);
+                                execute("alter table " + table + " add column extra int");
+                                Assert.assertThrows(TableReferenceOutOfDateException.class, () -> result(factory, context));
+                                Assert.assertEquals(0, fused.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                                Assert.assertNull(context.getMemoryTracker());
+                                assertDifferential(sql, context, true);
+                                execute("alter table " + table + " drop column extra");
+                            }
+                        }
+                    }
+                }
+                // A SYMBOL key changed to VARCHAR on either side invalidates the factory, and the
+                // recompiled query keeps the ordinary plan until the key is SYMBOL again.
                 for (String table : new String[]{"r", "p"}) {
                     for (boolean keyed : new boolean[]{false, true}) {
-                        String sql = "select " + (keyed ? "r.id, " : "") + AGGREGATES + JOINS[1]
-                                + (keyed ? " order by r.id" : "");
+                        String sql = "select " + (keyed ? "p.s, " : "") + AGGREGATES + JOINS[1].replace("r.id=p.id", "r.k=p.k")
+                                + (keyed ? " order by p.s" : "");
                         try (RecordCursorFactory factory = engine.select(sql, context)) {
                             AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
                             assertAgainstBaseline(sql, factory, context);
-                            execute("alter table " + table + " add column extra int");
+                            execute("alter table " + table + " alter column k type varchar");
                             Assert.assertThrows(TableReferenceOutOfDateException.class, () -> result(factory, context));
                             Assert.assertEquals(0, fused.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                             Assert.assertNull(context.getMemoryTracker());
+                            assertDifferential(sql, context, false);
+                            execute("alter table " + table + " alter column k type symbol");
+                            Assert.assertThrows(TableReferenceOutOfDateException.class, () -> result(factory, context));
                             assertDifferential(sql, context, true);
-                            execute("alter table " + table + " drop column extra");
                         }
                     }
                 }
@@ -374,6 +421,81 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testWalDedupTableWithCoveringIndexedSymbolKey() throws Exception {
+        assertMemoryLeak(() -> {
+            // r is a WAL fact table with DEDUP on the timestamp and the SYMBOL key, and the key
+            // carries a posting index that covers the value columns.
+            execute("create table r (k symbol index type posting include (id,d), id int, d double, ts timestamp) "
+                    + "timestamp(ts) partition by day wal dedup upsert keys(ts,k)");
+            execute("create table p (k symbol, id int, s symbol, d double)");
+            // p writes the key texts in a different order, so equal text has different symbol keys.
+            execute("insert into p select ('k'||(8-x%9))::symbol, (8-x%9)::int, ('s'||(x%3))::symbol, x*0.5 from long_sequence(12)");
+            execute("insert into r select ('k'||((x-1)%7))::symbol, ((x-1)%7)::int, x*0.25, "
+                    + "timestamp_sequence('2020-01-01', 3_600_000_000) from long_sequence(96)");
+            drainWalQueue();
+            ObjList<String> queries = new ObjList<>();
+            for (String key : new String[]{"r.id=p.id", "r.k=p.k"}) {
+                for (String join : JOINS) {
+                    String from = join.replace("r.id=p.id", key);
+                    queries.add("select count(*) n, sum(r.d) rd, sum(p.d) pd, count(r.k) rk, count(p.k) pk" + from);
+                    queries.add("select p.s, r.k, count(*) n, sum(r.d) rd, sum(p.d) pd" + from + " order by p.s, r.k");
+                }
+            }
+            ObjList<RecordCursorFactory> factories = new ObjList<>();
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                context.changePageFrameSizes(1, 8);
+                for (int i = 0; i < queries.size(); i++) {
+                    factories.add(engine.select(queries.getQuick(i), context));
+                    fused(factories.getLast());
+                }
+                assertAgainstBaseline(queries, factories, context);
+                // Every other row has the (ts, k) of a committed row and replaces it.
+                execute("insert into r select ('k'||((2*(x-1))%7))::symbol, ((2*(x-1))%7)::int, -x*1.0, "
+                        + "timestamp_sequence('2020-01-01', 7_200_000_000) from long_sequence(48)");
+                drainWalQueue();
+                assertAgainstBaseline(queries, factories, context);
+                // Out-of-order rows replace a row, add a key text only r has, add a key text p has
+                // but r lacked, and add a null key. p adds a key text and a null key as well.
+                execute("insert into r values ('k0',0,300.0,'2020-01-01'), ('k9',9,200.0,'2020-01-02T01:00'), "
+                        + "('k8',8,100.0,'2019-12-31T12:00'), (null,null,50.0,'2020-01-03T00:30')");
+                execute("insert into p values ('k10',10,'s9',1.0), (null,null,'s0',2.0)");
+                drainWalQueue();
+                assertQuery("select count(*) n, count_distinct(k) keys, sum(d) d from r")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("""
+                                n\tkeys\td
+                                99\t9\t63.0
+                                """);
+                assertAgainstBaseline(queries, factories, context);
+                // A predicate on the indexed key selects the covering index and keeps the ordinary plan.
+                for (String key : new String[]{"r.id=p.id", "r.k=p.k"}) {
+                    for (String predicate : new String[]{"r.k='k1'", "r.k in ('k1','k9')"}) {
+                        String sql = "select sum(r.d), count(*) from r join p on " + key + " where " + predicate;
+                        context.setParallelHashJoinGroupByEnabled(false);
+                        try (RecordCursorFactory baseline = engine.select(sql, context)) {
+                            Assert.assertTrue(plan(baseline, context), plan(baseline, context).contains("CoveringIndex"));
+                        }
+                        assertDifferential(sql, context, false);
+                    }
+                    // A predicate on a covered value column does not select the index.
+                    assertDifferential("select sum(r.d), count(*) from r join p on " + key + " where r.d > 0", context, true);
+                }
+            } finally {
+                Misc.freeObjList(factories);
+            }
+        });
+    }
+
+    static void assertAgainstBaseline(ObjList<String> queries, ObjList<RecordCursorFactory> factories, SqlExecutionContextImpl context) throws Exception {
+        for (int i = 0; i < queries.size(); i++) {
+            assertAgainstBaseline(queries.getQuick(i), factories.getQuick(i), context);
+        }
     }
 
     static void assertDifferential(String sql, SqlExecutionContextImpl context, boolean enabled) throws Exception {
@@ -451,7 +573,7 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
         execute("insert into " + table + " select ((x+" + offset + ")%3)::int, "
                 + "timestamp_sequence('2020-01-02', 3600000000), x%2=0, x::byte, x::short, 'A'::char, "
                 + "x::int, x, '2020-01-01'::date, '2020-01-01T00:00:00.000000123'::timestamp_ns, "
-                + "(x*0.5)::float, case when x%2=0 then null else x*0.25 end, ('s'||x)::symbol from long_sequence(4)");
+                + "(x*0.5)::float, case when x%2=0 then null else x*0.25 end, ('s'||(x+" + offset + "))::symbol from long_sequence(4)");
     }
 
     private void insertRandomRows(String table, int rows, int domain, int scenario, Rnd rnd) throws Exception {

@@ -506,46 +506,79 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLargeBuildDictionaryMemoryLimitClosesBuildCursorAndReuses() throws Exception {
+    public void testTranslationCacheAndBuildMemoryLimitsCloseBuildCursorAndReuse() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            // SYMBOL keys translate through a cache of 400,000 bytes for this build dictionary.
+            // SYMBOL keys translate through a cache of 400,000 bytes for this build dictionary. The
+            // probe holds every key text, so the build keeps every translated row.
             execute("insert into p select " + key("x::int") + ", 'ES', 1.0 from long_sequence(100_000)");
+            execute("insert into r select " + key("x::int") + ", timestamp_sequence('2021-03-01', 1_000_000), 1.0, 2.0 from long_sequence(100_000)");
+            final long cacheSize = 400_000;
+            final long cacheLimit = 256 * 1024;
+            final long buildLimit = 1024 * 1024;
             MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
-            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(256 * 1024)) {
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(0)) {
                 for (boolean keyed : new boolean[]{true, false}) {
-                    Hook hook = new Hook();
-                    hook.instrumentBuild = true;
-                    String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
-                    try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
-                        tracker.setLimit(256 * 1024);
-                        sqlExecutionContext.setMemoryTracker(tracker);
-                        try (RecordCursor ignored = f.getRawCursor()) {
-                            Assert.fail("expected the build to exceed the memory limit");
-                        } catch (CairoException ex) {
-                            Assert.assertTrue(ex.isOutOfMemory());
-                            boolean isInTranslator = false;
-                            for (StackTraceElement frame : ex.getStackTrace()) {
-                                isInTranslator |= frame.getClassName().endsWith("SymbolKeyTranslator");
+                    // A filtered build cursor has no size, so the build reads and translates rows
+                    // before it outgrows the limit. Otherwise the build sizes its rows up front.
+                    for (boolean isBuildFiltered : new boolean[]{false, true}) {
+                        Hook hook = new Hook();
+                        hook.instrumentBuild = true;
+                        hook.isBuildFiltered = isBuildFiltered;
+                        hook.isBuildAccepted = true;
+                        AtomicLong usedWhileReading = new AtomicLong();
+                        hook.onLimit = () -> usedWhileReading.set(tracker.getUsed());
+                        String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
+                        try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
+                            // With SYMBOL keys, the lower limit rejects the translation cache. The higher one
+                            // admits the cache, and the build exceeds the limit afterwards.
+                            for (long limit : new long[]{cacheLimit, buildLimit}) {
+                                final boolean isCacheFailure = isSymbolKey && limit == cacheLimit;
+                                int opens = hook.buildOpens;
+                                hook.calls.set(0);
+                                usedWhileReading.set(-1);
+                                tracker.setLimit(limit);
+                                sqlExecutionContext.setMemoryTracker(tracker);
+                                try (RecordCursor ignored = f.getRawCursor()) {
+                                    Assert.fail("expected the build to exceed the memory limit");
+                                } catch (CairoException ex) {
+                                    Assert.assertTrue(ex.isOutOfMemory());
+                                    boolean isInTranslator = false;
+                                    boolean isInBuild = false;
+                                    for (StackTraceElement frame : ex.getStackTrace()) {
+                                        isInTranslator |= frame.getClassName().endsWith("SymbolKeyTranslator");
+                                        isInBuild |= frame.getClassName().endsWith("IntHashJoinBuild")
+                                                && frame.getMethodName().equals("build");
+                                    }
+                                    // INT keys have no cache, so they fail while the build stores rows.
+                                    Assert.assertEquals(isCacheFailure, isInTranslator);
+                                    Assert.assertEquals(!isCacheFailure, isInBuild);
+                                } finally {
+                                    sqlExecutionContext.setMemoryTracker(previous);
+                                }
+                                Assert.assertEquals(opens + 1, hook.buildOpens);
+                                Assert.assertEquals(hook.buildOpens, hook.buildCloses);
+                                Assert.assertEquals(!isCacheFailure && isBuildFiltered, hook.buildReads > 0);
+                                if (!isCacheFailure && isBuildFiltered) {
+                                    // The build reads its rows while the tracker charges the whole cache.
+                                    Assert.assertTrue(usedWhileReading.get() > 0);
+                                    Assert.assertEquals(isSymbolKey, usedWhileReading.get() >= cacheSize);
+                                }
+                                Assert.assertEquals(0, tracker.getUsed());
+                                Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                                tracker.setLimit(0);
+                                sqlExecutionContext.setMemoryTracker(tracker);
+                                try (RecordCursor cursor = f.getRawCursor()) {
+                                    Assert.assertTrue(cursor.hasNext());
+                                    Assert.assertTrue(tracker.getUsed() > 0);
+                                } finally {
+                                    sqlExecutionContext.setMemoryTracker(previous);
+                                }
+                                Assert.assertEquals(0, tracker.getUsed());
+                                Assert.assertEquals(hook.buildOpens, hook.buildCloses);
+                                f.assertResults(sql);
                             }
-                            // INT keys fail later, while the build copies rows.
-                            Assert.assertEquals(isSymbolKey, isInTranslator);
-                        } finally {
-                            sqlExecutionContext.setMemoryTracker(previous);
                         }
-                        Assert.assertEquals(1, hook.buildOpens);
-                        Assert.assertEquals(1, hook.buildCloses);
-                        Assert.assertEquals(0, tracker.getUsed());
-                        Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                        tracker.setLimit(0);
-                        sqlExecutionContext.setMemoryTracker(tracker);
-                        try (RecordCursor cursor = f.getRawCursor()) {
-                            Assert.assertTrue(cursor.hasNext());
-                        } finally {
-                            sqlExecutionContext.setMemoryTracker(previous);
-                        }
-                        Assert.assertEquals(0, tracker.getUsed());
-                        f.assertResults(sql);
                     }
                 }
             } finally {
@@ -609,6 +642,79 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                         }
                     }
                 }
+            } finally {
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(previousBreaker);
+                sqlExecutionContext.setMemoryTracker(previousTracker);
+            }
+        });
+    }
+
+    @Test
+    public void testBuildCancellationDuringLargeKeyTranslationAndReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            // A symbol capacity for the key count keeps each keyOf() lookup short.
+            createTables(isSymbolKey ? "symbol capacity 524288" : "int");
+            // With SYMBOL keys, the 300,000 distinct build keys fill a translation cache of two MiB chunks.
+            // The probe holds every key text, so the build keeps every translated row.
+            final int keyCount = 300_000;
+            execute("insert into p select " + key("x::int") + ", ('c'||(x%64))::symbol, x*0.5 from long_sequence(" + keyCount + ")");
+            execute("insert into r select " + key("x::int") + ", timestamp_sequence('2021-03-01', 1_000_000), 1.0, 2.0 from long_sequence(" + keyCount + ")");
+            // createTables() inserted five build rows.
+            final int buildRows = keyCount + 5;
+            frameRows = 65_536;
+            SqlExecutionCircuitBreaker previousBreaker = sqlExecutionContext.getCircuitBreaker();
+            MemoryTracker previousTracker = sqlExecutionContext.getMemoryTracker();
+            String sql = AGGREGATES + OUTER;
+            Hook hook = new Hook();
+            hook.instrumentBuild = true;
+            try (
+                    LimitedMemoryTracker tracker = new LimitedMemoryTracker(0);
+                    Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)
+            ) {
+                BuildCheckBreaker counting = new BuildCheckBreaker(previousBreaker, Long.MAX_VALUE);
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(counting);
+                sqlExecutionContext.setMemoryTracker(tracker);
+                try (RecordCursor ignored = f.getRawCursor()) {
+                    Assert.assertEquals(buildRows + 1, hook.buildReads);
+                } finally {
+                    ((SqlExecutionContextImpl) sqlExecutionContext).with(previousBreaker);
+                    sqlExecutionContext.setMemoryTracker(previousTracker);
+                }
+                // Checks follow the build cursor's frames, the build phases and MiB of cache and
+                // build memory, not the translated keys.
+                Assert.assertTrue("build checks must not scale with " + keyCount + " keys: " + counting.checks,
+                        counting.checks > 0 && counting.checks < 128);
+                int cacheCancellations = 0;
+                int rowCancellations = 0;
+                for (long failAt = 1; failAt <= counting.checks; failAt++) {
+                    BuildCheckBreaker breaker = new BuildCheckBreaker(previousBreaker, failAt);
+                    ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                    sqlExecutionContext.setMemoryTracker(tracker);
+                    try (RecordCursor ignored = f.getRawCursor()) {
+                        Assert.fail("expected cancellation during build at " + failAt);
+                    } catch (CairoException ex) {
+                        Assert.assertTrue(ex.isCancellation());
+                        for (StackTraceElement frame : ex.getStackTrace()) {
+                            if (frame.getClassName().endsWith("SymbolKeyTranslator")) {
+                                cacheCancellations++;
+                                break;
+                            }
+                        }
+                    } finally {
+                        ((SqlExecutionContextImpl) sqlExecutionContext).with(previousBreaker);
+                        sqlExecutionContext.setMemoryTracker(previousTracker);
+                    }
+                    if (hook.buildReads > 0 && hook.buildReads <= buildRows) {
+                        rowCancellations++;
+                    }
+                    Assert.assertEquals(hook.buildOpens, hook.buildCloses);
+                    Assert.assertEquals(0, tracker.getUsed());
+                    Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                }
+                Assert.assertEquals(isSymbolKey ? 2 : 0, cacheCancellations);
+                // Frame boundaries and key table growth cancel while the build reads and translates rows.
+                Assert.assertTrue("expected cancellations between build rows: " + rowCancellations, rowCancellations > 1);
+                f.assertResults(sql);
             } finally {
                 ((SqlExecutionContextImpl) sqlExecutionContext).with(previousBreaker);
                 sqlExecutionContext.setMemoryTracker(previousTracker);
@@ -1661,8 +1767,12 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     }
 
     private void createTables() throws Exception {
-        execute("create table r (plant_id " + keyType() + ", reading_ts timestamp, energy_kwh double, irradiance_wm2 double) timestamp(reading_ts) partition by month");
-        execute("create table p (plant_id " + keyType() + ", country symbol, installed_kwp double)");
+        createTables(keyType());
+    }
+
+    private void createTables(String keyType) throws Exception {
+        execute("create table r (plant_id " + keyType + ", reading_ts timestamp, energy_kwh double, irradiance_wm2 double) timestamp(reading_ts) partition by month");
+        execute("create table p (plant_id " + keyType + ", country symbol, installed_kwp double)");
         execute("insert into r values (" + key("1") + ", '2020-01-01', 10, 100), (" + key("3") + ", '2020-01-02', 30, 300), "
                 + "(" + key("1") + ", '2020-01-03', 20, 200), (" + key("2") + ", '2020-02-01', 40, null), (null, '2021-01-01', 50, 500)");
         execute("insert into p values (" + key("1") + ", 'ES', 5), (" + key("1") + ", 'ES', 7), (" + key("1") + ", 'IT', null), (" + key("2") + ", null, null), (null, 'ES', 11)");
