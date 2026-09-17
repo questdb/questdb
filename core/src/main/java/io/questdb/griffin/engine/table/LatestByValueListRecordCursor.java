@@ -244,7 +244,20 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
                 if (filter != null) {
                     findRestrictedWithFilter();
                 } else {
-                    findRestrictedNoFilter();
+                    final StaticSymbolTable symbolTable = frameCursor.getSymbolTable(columnIndex);
+                    final int symbolCount = symbolTable.getSymbolCount();
+                    final boolean hasNull = symbolTable.containsNullValue();
+                    final boolean hasIncludedNull = includedSymbolKeys.contains(SymbolTable.VALUE_IS_NULL);
+                    // The factory resolves and deduplicates keys against this cursor's symbol table.
+                    // keyOf(NULL) can return a key even when the table has no NULL, so count it separately.
+                    final boolean hasAllKeys = excludedSymbolKeys.size() == 0
+                            && includedSymbolKeys.size() - (hasIncludedNull ? 1 : 0) == symbolCount
+                            && (!hasNull || hasIncludedNull);
+                    if (hasAllKeys) {
+                        findAllNoFilter(symbolCount + (hasNull ? 1 : 0));
+                    } else {
+                        findRestrictedNoFilter();
+                    }
                 }
             }
         } else if (restrictedByExcludedValues) {
