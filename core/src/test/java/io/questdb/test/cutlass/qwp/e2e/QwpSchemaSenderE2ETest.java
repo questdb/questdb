@@ -266,6 +266,61 @@ public class QwpSchemaSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testStaleLongArrayRejectionRefreshesChangedTargetBeforeNextRow() throws Exception {
+        execute("""
+                CREATE TABLE schema_sender_long_array
+                (value UUID, marker VARCHAR, failed_b VARCHAR, ts TIMESTAMP)
+                TIMESTAMP(ts) PARTITION BY DAY WAL""");
+
+        runInContext(port -> {
+            try (Sender sender = connectWs(
+                    port,
+                    0,
+                    0,
+                    TimeUnit.MILLISECONDS.toNanos(Integer.MAX_VALUE - 1L)
+            )) {
+                sender.table("schema_sender_long_array")
+                        .stringColumn("value", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+                        .stringColumn("marker", "A")
+                        .atNow();
+
+                execute("ALTER TABLE schema_sender_long_array DROP COLUMN value");
+                execute("ALTER TABLE schema_sender_long_array ADD COLUMN value VARCHAR");
+
+                // longArray() has no schema-mode wire form, so it always rejects the
+                // value. The rejection still buys one refresh, which adopts the new
+                // VARCHAR target and reports the change instead of the local reason.
+                LineSenderSchemaException changed = Assert.assertThrows(
+                        LineSenderSchemaException.class,
+                        () -> sender.stringColumn("marker", "B")
+                                .stringColumn("failed_b", "must-be-rolled-back")
+                                .longArray("value", new long[]{1L, 2L})
+                );
+                Assert.assertEquals(LineSenderSchemaException.Reason.SCHEMA_CHANGED, changed.getReason());
+
+                // The refresh from B installs VARCHAR for C without another table().
+                sender.stringColumn("value", "not-a-uuid")
+                        .stringColumn("marker", "C")
+                        .atNow();
+
+                long fsn = sender.flushAndGetSequence();
+                Assert.assertTrue(fsn >= 0);
+                Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT marker, value, failed_b FROM schema_sender_long_array ORDER BY marker")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            marker\tvalue\tfailed_b
+                            A\taaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\t
+                            C\tnot-a-uuid\t
+                            """);
+        });
+    }
+
+    @Test
     public void testUnrelatedSchemaChangeKeepsInvalidUuidReason() throws Exception {
         execute("create table schema_sender_unrelated "
                 + "(id uuid, marker varchar, failed_b varchar, ts timestamp) "
