@@ -587,6 +587,76 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotNullColumnAutoBounds() throws Exception {
+        // One-arg sparkline must auto-compute bounds from the data even when
+        // the column is NOT NULL: whether the bounds are overridden depends on
+        // the bound arguments being supplied, not on column nullability.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE NOT NULL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, '2024-01-01T00:00:00.000000Z'),
+                    (2.0, '2024-01-01T01:00:00.000000Z'),
+                    (3.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            // auto min=1, auto max=3, range=2:
+            // (1-1)/2*7 = 0 -> \u2581, (2-1)/2*7 = 3.5 -> idx 3 -> \u2584, (3-1)/2*7 = 7 -> \u2588
+            assertQuery("SELECT sparkline(val) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sparkline
+                            ▁▄█
+                            """);
+        });
+    }
+
+    @Test
+    public void testNotNullColumnExplicitBounds() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE NOT NULL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (25.0, '2024-01-01T00:00:00.000000Z'),
+                    (50.0, '2024-01-01T01:00:00.000000Z'),
+                    (75.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            // supplied bounds min=0, max=100 stay honored for NOT NULL columns
+            assertQuery("SELECT sparkline(val, 0.0, 100.0, 3) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sparkline
+                            ▂▄▆
+                            """);
+        });
+    }
+
+    @Test
+    public void testNotNullColumnExplicitMinAutoMax() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE NOT NULL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (5.0, '2024-01-01T00:00:00.000000Z'),
+                    (8.0, '2024-01-01T01:00:00.000000Z'),
+                    (12.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            // user min=0, auto max=12, range=12: 5 -> idx 2, 8 -> idx 4, 12 -> idx 7
+            assertQuery("SELECT sparkline(val, 0.0, NULL, 3) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sparkline
+                            ▃▅█
+                            """);
+        });
+    }
+
+    @Test
     public void testFactoryReuse() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");

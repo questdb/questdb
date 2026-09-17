@@ -192,7 +192,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
             final long value = arg.getDecimal64(record);
-            if (!Decimal64.isNull(value)) {
+            if (isArgNotNull || !Decimal64.isNull(value)) {
                 mapValue.putLong(valueIndex, 1);
             } else {
                 mapValue.putLong(valueIndex, 0);
@@ -202,7 +202,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             final long value = arg.getDecimal64(record);
-            if (!Decimal64.isNull(value)) {
+            if (isArgNotNull || !Decimal64.isNull(value)) {
                 mapValue.addLong(valueIndex, 1);
             }
         }

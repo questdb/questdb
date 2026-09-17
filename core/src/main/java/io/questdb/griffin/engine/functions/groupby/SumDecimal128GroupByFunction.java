@@ -65,12 +65,14 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
     @Override
     public void computeFirst(MapValue mapValue, io.questdb.cairo.sql.Record record, long rowId) {
         arg.getDecimal128(record, decimal128B);
-        if (isArgNotNull || !decimal128B.isNull()) {
+        final boolean hasValue = isArgNotNull || !decimal128B.isNull();
+        if (hasValue) {
             mapValue.putDecimal128(valueIndex + 1, decimal128B);
         } else {
             mapValue.putDecimal128Null(valueIndex + 1);
         }
         mapValue.putBool(valueIndex + 2, false);
+        mapValue.putBool(valueIndex + 3, hasValue);
     }
 
     @Override
@@ -79,10 +81,11 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
         if (isArgNotNull || !decimal128A.isNull()) {
             try {
                 if (!mapValue.getBool(valueIndex + 2)) {
-                    mapValue.getDecimal128(valueIndex + 1, decimal128B);
-                    if (!isArgNotNull && decimal128B.isNull()) {
+                    if (!mapValue.getBool(valueIndex + 3)) {
                         mapValue.putDecimal128(valueIndex + 1, decimal128A);
+                        mapValue.putBool(valueIndex + 3, true);
                     } else {
+                        mapValue.getDecimal128(valueIndex + 1, decimal128B);
                         try {
                             decimal128B.uncheckedAdd(decimal128A);
                             mapValue.putDecimal128(valueIndex + 1, decimal128B);
@@ -115,17 +118,19 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
         this.overflow = rec.getBool(valueIndex + 2);
         if (overflow) {
             rec.getDecimal256(valueIndex, sink);
+        } else if (!rec.getBool(valueIndex + 3)) {
+            // no input value has been aggregated: SUM over zero rows is NULL
+            // regardless of the input column's nullability. The accumulator's
+            // bit pattern cannot decide this, since a NOT NULL column's
+            // reclassified sentinel is a legal value that may equal it.
+            sink.ofRawNull();
         } else {
             rec.getDecimal128(valueIndex + 1, decimal128A);
-            if (!isArgNotNull && decimal128A.isNull()) {
-                sink.ofRawNull();
-            } else {
-                long hh = decimal128A.getHigh() < 0 ? -1 : 0;
-                long hl = decimal128A.getHigh() < 0 ? -1 : 0;
-                long lh = decimal128A.getHigh();
-                long ll = decimal128A.getLow();
-                sink.ofRaw(hh, hl, lh, ll);
-            }
+            long hh = decimal128A.getHigh() < 0 ? -1 : 0;
+            long hl = decimal128A.getHigh() < 0 ? -1 : 0;
+            long lh = decimal128A.getHigh();
+            long ll = decimal128A.getLow();
+            sink.ofRaw(hh, hl, lh, ll);
         }
     }
 
@@ -149,6 +154,10 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DECIMAL256);
         columnTypes.add(ColumnType.DECIMAL128);
+        // overflow: the accumulator has been promoted to decimal256
+        columnTypes.add(ColumnType.BOOLEAN);
+        // has-value: at least one input value has been aggregated; tracks
+        // the empty-aggregate state independently of accumulator bit patterns
         columnTypes.add(ColumnType.BOOLEAN);
     }
 
@@ -167,13 +176,16 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
         boolean srcOverflow = srcValue.getBool(valueIndex + 2);
         boolean destOverflow = destValue.getBool(valueIndex + 2);
 
+        // an aggregate that has absorbed no value cannot have overflown, so
+        // the has-value flag fully decides emptiness in every branch below
+        boolean srcHasValue = srcValue.getBool(valueIndex + 3);
+        boolean destHasValue = destValue.getBool(valueIndex + 3);
+        destValue.putBool(valueIndex + 3, srcHasValue || destHasValue);
+
         if (!srcOverflow && !destOverflow) {
             srcValue.getDecimal128(valueIndex + 1, decimal128B);
             destValue.getDecimal128(valueIndex + 1, decimal128A);
-            final boolean srcNull = !isArgNotNull && decimal128B.isNull();
-            final boolean destNull = !isArgNotNull && decimal128A.isNull();
-            if (!destNull && !srcNull) {
-                // both not null
+            if (destHasValue && srcHasValue) {
                 try {
                     decimal128A.uncheckedAdd(decimal128B);
                     destValue.putDecimal128(valueIndex + 1, decimal128A);
@@ -184,29 +196,26 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
                     destValue.putDecimal256(valueIndex, decimal256A);
                     destValue.putBool(valueIndex + 2, true);
                 }
-            } else if (destNull) {
+            } else if (srcHasValue) {
                 // put src value in
                 destValue.putDecimal128(valueIndex + 1, decimal128B);
             }
         } else if (srcOverflow && !destOverflow) {
-            // src overflown, therefore it could not be null (null does not overflow)
+            // src has overflown, therefore it has a value
             srcValue.getDecimal256(valueIndex, decimal256B);
             destValue.getDecimal128(valueIndex + 1, decimal128A);
 
-            boolean destNull = !isArgNotNull && decimal128A.isNull();
-            if (!destNull) {
+            if (destHasValue) {
                 Decimal256.uncheckedAdd(decimal256B, decimal128A);
             }
             destValue.putDecimal256(valueIndex, decimal256B);
             destValue.putBool(valueIndex + 2, true);
         } else if (!srcOverflow) {
-            // dest overflown, it cannot be null
+            // dest has overflown, therefore it has a value
             srcValue.getDecimal128(valueIndex + 1, decimal128A);
             destValue.getDecimal256(valueIndex, decimal256B);
-            boolean srcNull = !isArgNotNull && decimal128A.isNull();
 
-            if (!srcNull) {
-                // both not null
+            if (srcHasValue) {
                 Decimal256.uncheckedAdd(decimal256B, decimal128A);
                 destValue.putDecimal256(valueIndex, decimal256B);
             }
@@ -222,6 +231,8 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
     @Override
     public void setDecimal256(MapValue mapValue, Decimal256 value) {
         mapValue.putDecimal256(valueIndex, value);
+        mapValue.putBool(valueIndex + 2, true);
+        mapValue.putBool(valueIndex + 3, true);
     }
 
     @Override
@@ -229,6 +240,7 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
         mapValue.putDecimal256Null(valueIndex);
         mapValue.putDecimal128Null(valueIndex + 1);
         mapValue.putBool(valueIndex + 2, false);
+        mapValue.putBool(valueIndex + 3, false);
     }
 
     @Override

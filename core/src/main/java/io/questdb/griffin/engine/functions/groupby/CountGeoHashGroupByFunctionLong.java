@@ -61,7 +61,7 @@ public class CountGeoHashGroupByFunctionLong extends AbstractCountGroupByFunctio
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final long value = arg.getGeoLong(record);
-        if (value != GeoHashes.NULL) {
+        if (isArgNotNull || value != GeoHashes.NULL) {
             mapValue.putLong(valueIndex, 1);
         } else {
             mapValue.putLong(valueIndex, 0);
@@ -88,7 +88,7 @@ public class CountGeoHashGroupByFunctionLong extends AbstractCountGroupByFunctio
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final long value = Unsafe.getLong(argAddr + (rowIndex << 3));
-                if (value != GeoHashes.NULL) {
+                if (isArgNotNull || value != GeoHashes.NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
                 }
@@ -98,7 +98,7 @@ public class CountGeoHashGroupByFunctionLong extends AbstractCountGroupByFunctio
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final long value = arg.getGeoLong(record);
-                if (value != GeoHashes.NULL) {
+                if (isArgNotNull || value != GeoHashes.NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
                 }
@@ -109,7 +109,7 @@ public class CountGeoHashGroupByFunctionLong extends AbstractCountGroupByFunctio
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final long value = arg.getGeoLong(record);
-        if (value != GeoHashes.NULL) {
+        if (isArgNotNull || value != GeoHashes.NULL) {
             mapValue.addLong(valueIndex, 1);
         }
     }

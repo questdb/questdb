@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -213,6 +214,172 @@ public class NotNullAlterTableTest extends AbstractCairoTest {
                             1\t2024-01-01T00:00:00.000000Z
                             -2147483648\t2024-01-02T00:00:00.000000Z
                             3\t2024-01-03T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnSetNotNullCountsSentinelRowsDecimalUuidLong256() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (g SYMBOL, u UUID, l LONG256, d DECIMAL(18,0))");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('a', NULL, NULL, NULL),
+                        ('a', '11111111-1111-1111-1111-111111111111', 0x01, 1),
+                        ('b', NULL, NULL, NULL)
+                    """);
+
+            // nullable control: genuine NULLs are excluded
+            assertQuery("SELECT count(u) cu, count(l) cl, count(d) cd, count() n FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            cu\tcl\tcd\tn
+                            1\t1\t1\t3
+                            """);
+
+            execute("ALTER TABLE t ALTER COLUMN u SET NOT NULL");
+            execute("ALTER TABLE t ALTER COLUMN l SET NOT NULL");
+            execute("ALTER TABLE t ALTER COLUMN d SET NOT NULL");
+
+            // reclassified sentinels are data: count(v) equals the row count
+            assertQuery("SELECT count(u) cu, count(l) cl, count(d) cd, count() n FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            cu\tcl\tcd\tn
+                            3\t3\t3\t3
+                            """);
+            assertQuery("SELECT g, count(u) cu, count(l) cl, count(d) cd FROM t ORDER BY g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\tcu\tcl\tcd
+                            a\t2\t2\t2
+                            b\t1\t1\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnSetNotNullCountsSentinelRowsGeoHashAllWidths() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (g SYMBOL, g1 GEOHASH(1c), g2 GEOHASH(2c), g4 GEOHASH(4c), g8 GEOHASH(8c))");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('a', NULL, NULL, NULL, NULL),
+                        ('a', ##11111, ##1111111111, ##11111111111111111111, ##1111111111111111111111111111111111111111),
+                        ('b', NULL, NULL, NULL, NULL)
+                    """);
+
+            // nullable control: genuine NULLs are excluded
+            assertQuery("SELECT count(g1) c1, count(g2) c2, count(g4) c4, count(g8) c8, count() n FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            c1\tc2\tc4\tc8\tn
+                            1\t1\t1\t1\t3
+                            """);
+
+            execute("ALTER TABLE t ALTER COLUMN g1 SET NOT NULL");
+            execute("ALTER TABLE t ALTER COLUMN g2 SET NOT NULL");
+            execute("ALTER TABLE t ALTER COLUMN g4 SET NOT NULL");
+            execute("ALTER TABLE t ALTER COLUMN g8 SET NOT NULL");
+
+            // reclassified sentinels are data: count(v) equals count() for
+            // every geohash storage width (byte, short, int, long)
+            assertQuery("SELECT count(g1) c1, count(g2) c2, count(g4) c4, count(g8) c8, count() n FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            c1\tc2\tc4\tc8\tn
+                            3\t3\t3\t3\t3
+                            """);
+            assertQuery("SELECT g, count(g1) c1, count(g2) c2, count(g4) c4, count(g8) c8 FROM t ORDER BY g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\tc1\tc2\tc4\tc8
+                            a\t2\t2\t2\t2
+                            b\t1\t1\t1\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnSetNotNullCountsSentinelRowsIPv4() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (g SYMBOL, v IPV4)");
+            execute("INSERT INTO t VALUES ('a', NULL), ('a', '1.2.3.4'), ('b', NULL)");
+
+            // nullable control: genuine NULLs are excluded
+            assertQuery("SELECT count(v) c, count() n FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            c\tn
+                            1\t3
+                            """);
+
+            execute("ALTER TABLE t ALTER COLUMN v SET NOT NULL");
+
+            // the reclassified 0.0.0.0 sentinel is data now
+            assertQuery("SELECT count(v) c, count() n FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            c\tn
+                            3\t3
+                            """);
+            assertQuery("SELECT g, count(v) c FROM t ORDER BY g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\tc
+                            a\t2
+                            b\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnSetNotNullCountsSentinelRowsParallel() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 2);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 2);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (g SYMBOL, v IPV4, h GEOHASH(1c), ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('a', NULL, NULL, '2024-01-01'),
+                        ('a', '1.2.3.4', ##11111, '2024-01-02'),
+                        ('a', NULL, NULL, '2024-01-03'),
+                        ('b', NULL, NULL, '2024-01-04'),
+                        ('b', '5.6.7.8', ##00001, '2024-01-05')
+                    """);
+            execute("ALTER TABLE t ALTER COLUMN v SET NOT NULL");
+            execute("ALTER TABLE t ALTER COLUMN h SET NOT NULL");
+
+            assertQuery("SELECT count(v) cv, count(h) ch, count() n FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            cv\tch\tn
+                            5\t5\t5
+                            """);
+            assertQuery("SELECT g, count(v) cv, count(h) ch FROM t ORDER BY g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\tcv\tch
+                            a\t3\t3
+                            b\t2\t2
                             """);
         });
     }

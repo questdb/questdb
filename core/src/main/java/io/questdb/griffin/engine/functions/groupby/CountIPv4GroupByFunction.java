@@ -63,7 +63,7 @@ public class CountIPv4GroupByFunction extends AbstractCountGroupByFunction {
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final int value = arg.getIPv4(record);
-        if (value != Numbers.IPv4_NULL) {
+        if (isArgNotNull || value != Numbers.IPv4_NULL) {
             mapValue.putLong(valueIndex, 1);
         } else {
             mapValue.putLong(valueIndex, 0);
@@ -90,7 +90,7 @@ public class CountIPv4GroupByFunction extends AbstractCountGroupByFunction {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final int value = Unsafe.getInt(argAddr + (rowIndex << 2));
-                if (value != Numbers.IPv4_NULL) {
+                if (isArgNotNull || value != Numbers.IPv4_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
                 }
@@ -100,7 +100,7 @@ public class CountIPv4GroupByFunction extends AbstractCountGroupByFunction {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final int value = arg.getIPv4(record);
-                if (value != Numbers.IPv4_NULL) {
+                if (isArgNotNull || value != Numbers.IPv4_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
                 }
@@ -111,7 +111,7 @@ public class CountIPv4GroupByFunction extends AbstractCountGroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final int value = arg.getIPv4(record);
-        if (value != Numbers.IPv4_NULL) {
+        if (isArgNotNull || value != Numbers.IPv4_NULL) {
             mapValue.addLong(valueIndex, 1);
         }
     }

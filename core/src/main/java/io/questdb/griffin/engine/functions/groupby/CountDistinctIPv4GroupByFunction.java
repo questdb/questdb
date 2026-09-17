@@ -47,10 +47,12 @@ public class CountDistinctIPv4GroupByFunction extends AbstractCountDistinctIntGr
         if (value != Numbers.IPv4_NULL) {
             mapValue.putLong(valueIndex, 1);
             mapValue.putLong(valueIndex + 1, value);
+            mapValue.putBool(valueIndex + 2, false);
             cardinality++;
         } else {
             mapValue.putLong(valueIndex, 0);
             mapValue.putLong(valueIndex + 1, 0);
+            mapValue.putBool(valueIndex + 2, false);
         }
     }
 
