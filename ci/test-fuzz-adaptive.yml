@@ -80,17 +80,19 @@ parameters:
       - nightly
       - provision
       - smoke
-  # Points per reference sweep; 40 is the harness default.
-  # Raise only from a measured per-point rate printed by a previous run's TIMING block.
+  # Points per reference sweep. Raised from 40 once the battery stopped spending its window
+  # on dimensions the modelled Java suite already covers: measured at ~4.8 s per reference
+  # boundary, 80 points costs ~7 minutes and the window has room. Raise further only from a
+  # measured per-point rate in a previous run's TIMING block.
   - name: refPoints
     type: number
-    default: 40
+    default: 80
   # The product arm pays 11-14 s per point (recovery pass + replay server) against ~2-7 s
   # for the reference arm, so it runs at far fewer points. Build 270631 measured 22.8 s per
   # point on the CI agent, under a concurrent soak.
   - name: productPoints
     type: number
-    default: 12
+    default: 24
   # Points per MATRIX cell. The matrix is breadth, not depth: one cell per dimension of the
   # harness's coverage table, at few points each, after the three core sweeps have run at
   # full depth. 0 disables the matrix and restores the pre-matrix battery exactly.
@@ -1026,6 +1028,24 @@ stages:
               fi
               rc=0
 
+              # NOTHING IN THIS HARNESS IS RANDOM, so a nightly job has to be made to explore
+              # on purpose. The workload writes v = id * 2654435761 with no seed -- the
+              # identity oracle depends on that -- and the crash points are a fixed
+              # arithmetic sequence from a fixed floor at 10% of the recording. Run the same
+              # configuration every night with the same offset and you re-run one experiment
+              # and file the result as coverage.
+              #
+              # QDB_SWEEP_OFFSET, below, shifts the start within one stride. Driven by the
+              # build id it moves every run, so night N samples a different residue class and
+              # the union over `stride` nights is every boundary in the span. Measured on a
+              # 4808-boundary recording at 10 points: five fixed-offset nights sample 11
+              # distinct boundaries, five build-id nights sample 55.
+              #
+              # The other half of the exploration is already there and is not ours to steer:
+              # the recording differs run to run because flush timing does (4808, 4988 and
+              # 3933 boundaries across three consecutive builds), and run-flush-sweep.sh
+              # densifies around any failure it finds, re-verifying f-2, f-1 and f+1.
+
               # Cells that reproduce an OPEN, RECORDED product defect. They run every night
               # -- the code under them is worth testing and the finding is worth re-measuring
               # -- but their failure is expected and does not fail the job, or the battery is
@@ -1057,10 +1077,18 @@ stages:
 
               # THE CELL TABLE.  name|arm|mode|window_us|points|extra env
               #
+              # Two claims, their controls, and nothing else. An earlier revision ran a cell
+              # per dimension of the harness's coverage table -- profiles, sync/nosync, DDL,
+              # sibling tables, lazy gap, rebase. Those are covered by the modelled Java
+              # crash suite and they were spending window that the claims this branch makes
+              # should be spending. They are deleted here, not disabled: the harness still
+              # takes every one of those knobs, and `bash run-flush-sweep.sh` with the
+              # matching QDB_* variable runs any of them by hand when a question needs it.
+              #
               # Order is the budget policy. run_phase refuses a phase that cannot finish
               # before the pre-nightly deadline and records it as skipped, so trimming always
-              # falls on the TAIL of this list. The list is therefore ordered by what the PR
-              # is about, not by tidiness.
+              # falls on the TAIL of this list: each claim's central cell comes first, its
+              # control next, and the curve extras last.
               #
               # THE CLAIM UNDER TEST, in the order the cells establish it:
               #
@@ -1071,7 +1099,8 @@ stages:
               #      survived and loss is confined to (Wm, C]. One window size proves the
               #      rule holds; it does not prove the bound TRACKS W, which is the actual
               #      product claim. Three sizes -- 5 ms, 50 ms, 200 ms -- make a curve, and a
-              #      bound that ignores W shows up as the same loss at every size.
+              #      bound that ignores W shows up as the same loss at every size. The two
+              #      extra sizes are last because the 50 ms cell is the one with history.
               #
               #   3. The same bar over the wire, server alone.  Arm qwp: the server tracks
               #      and recovers, the client contributes nothing. This is the control that
@@ -1090,50 +1119,32 @@ stages:
               # dimension of the harness's coverage table (tools/durability/vm/README.md),
               # which claims 17 of 17 and until recently had 3 of 17 running here.
               #
-              # Profile cells run at W=0 on purpose. The zero-loss bar is the sharper oracle:
-              # a column-type or index fault shows up as loss, and at W=0 any loss at all is
-              # a failure, where at W>0 it must first escape the RPO window. The flag cells
-              # run at W=50000, because what they vary interacts with the window.
+              # The mat-view pair sits between the claims and the curve extras: it is the one
+              # cell here that is not part of either claim, kept because the code under it is
+              # worth a nightly crash and its finding is worth re-measuring.
               #
-              # sync and nosync sit LAST, and are therefore the first thing the deadline
-              # takes. Adaptive commit is what this branch changes; the other two modes are
-              # regression ballast here, not the subject.
-              #
-              # QDB_JUNIT_SUITE_SUFFIX on the flag cells is not decoration. The harness names
-              # a suite durability.<arm>.<mode>.W<window>.<profile>, and every flag cell below
-              # shares those four fields with the core W=50000 sweep -- so without a suffix
-              # they publish as one suite, mergeTestResults folds them together, and their
-              # flush-N cases collide. The suffix is what keeps six experiments from arriving
-              # as one.
+              # QDB_JUNIT_SUITE_SUFFIX is not decoration. The harness names a suite
+              # durability.<arm>.<mode>.W<window>.<profile>, and the mat-view cell shares all
+              # four fields with the W=50000 sweep above it -- so without a suffix they
+              # publish as one suite, mergeTestResults folds them together, and their flush-N
+              # cases collide.
               CELLS="
-              sweep-reference-W0|reference|adaptive|0|$REF|
               sweep-reference-W50000|reference|adaptive|50000|$REF|
-              sweep-reference-W5000|reference|adaptive|5000|$REF_W|
-              sweep-reference-W200000|reference|adaptive|200000|$REF_W|
-              sweep-qwp-W50000|qwp|adaptive|50000|$PROD|
+              sweep-reference-W0|reference|adaptive|0|$REF|
               sweep-qwp-sf-W50000|qwp-sf|adaptive|50000|$PROD|
+              sweep-qwp-W50000|qwp|adaptive|50000|$PROD|
               sweep-product-W50000|product|adaptive|50000|$PROD|
               "
               if [ "$MTX" -gt 0 ]; then
                 CELLS="$CELLS
               matrix-mat-view|reference|adaptive|50000|$MTX|QDB_MAT_VIEW=true QDB_JUNIT_SUITE_SUFFIX=matview
               matrix-mat-view-control|reference|sync|0|$MTX|QDB_MAT_VIEW=true QDB_JUNIT_SUITE_SUFFIX=matview
-              matrix-profile-none|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=none
-              matrix-profile-posting|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=posting
-              matrix-profile-covering|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=covering
-              matrix-profile-varchar|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=varchar
-              matrix-profile-array|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=array
-              matrix-profile-wide|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=wide
-              matrix-profile-o3|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=o3
-              matrix-lazy-gap|reference|adaptive|50000|$MTX|QDB_EPOCH_MS=-1 QDB_JUNIT_SUITE_SUFFIX=lazygap
-              matrix-ddl-under-load|reference|adaptive|50000|$MTX|QDB_DDL_EVERY_ROWS=50000 QDB_JUNIT_SUITE_SUFFIX=ddl
-              matrix-sibling-table|reference|adaptive|50000|$MTX|QDB_SIBLING_TABLE=true QDB_JUNIT_SUITE_SUFFIX=sibling
-              matrix-recover-as-nosync|reference|adaptive|50000|$MTX|QDB_RECOVER_AS=nosync QDB_JUNIT_SUITE_SUFFIX=recoveras
-              matrix-rebase-wal|reference|adaptive|50000|$MTX|QDB_REBASE_AT_ROWS=100000 QDB_JUNIT_SUITE_SUFFIX=rebase
-              matrix-mode-sync|reference|sync|0|$MTX|
-              matrix-mode-nosync|reference|nosync|0|$MTX|
               "
               fi
+              CELLS="$CELLS
+              sweep-reference-W5000|reference|adaptive|5000|$REF_W|
+              sweep-reference-W200000|reference|adaptive|200000|$REF_W|
+              "
 
               while IFS='|' read -r name arm mode win pts extra; do
                 name=$(echo "$name" | tr -d '[:space:]')
@@ -1161,7 +1172,7 @@ stages:
                 # for env, and quoting would pass the whole string as one argument.
                 # shellcheck disable=SC2086
                 run_phase "$name" "$need" \
-                  env QDB_ARM="$arm" QDB_SWEEP_POINTS="$pts" \
+                  env QDB_ARM="$arm" QDB_SWEEP_POINTS="$pts" QDB_SWEEP_OFFSET="$(Build.BuildId)" \
                       QDB_JUNIT_XML="$(DURABILITY_RESULTS)/${name}.xml" $extra \
                       bash run-flush-sweep.sh "$mode" "$win"
                 cell_rc=$?

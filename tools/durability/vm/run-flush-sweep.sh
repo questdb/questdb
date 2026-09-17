@@ -300,7 +300,22 @@ else
     else
         stride=$(( span / MAX_POINTS ))
         [ "$stride" -lt 1 ] && stride=1
-        points=$(seq "$floor" "$stride" "$nflush")
+        # QDB_SWEEP_OFFSET shifts the start within one stride, so repeated runs of the same
+        # configuration sample DIFFERENT boundaries.
+        #
+        # This matters more than it looks. Nothing in this harness is random: the workload
+        # writes v = id * 2654435761 with no seed (the identity oracle depends on it), and
+        # the points below are a fixed arithmetic sequence from a fixed 10% floor. A nightly
+        # job with a fixed offset therefore re-runs one experiment every night and calls the
+        # result coverage. With the offset driven by something that changes per run -- CI
+        # passes the build id -- night N samples a different residue class mod stride, and
+        # the union over `stride` nights is every boundary in the span.
+        #
+        # Unset or 0 reproduces the previous selection exactly, which is what the controls
+        # and any bisect of an old result need.
+        off=$(( ${QDB_SWEEP_OFFSET:-0} % stride ))
+        [ "$off" -lt 0 ] && off=$(( -off ))
+        points=$(seq $(( floor + off )) "$stride" "$nflush")
     fi
 fi
 echo "  sweep mode=$SWEEP_MODE over $(echo "$points" | wc -w) boundaries: $(echo $points | cut -c1-100)..."

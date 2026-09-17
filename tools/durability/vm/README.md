@@ -34,6 +34,7 @@ revert the ones issued after it, so without a reset boundary N+1 inherits bounda
 |---|---|---|
 | `QDB_REPLAY_RESET` | `blkdiscard` | reset the data device before every replay; `none` disables it |
 | `QDB_JUNIT_SUITE_SUFFIX` | unset | appended to the JUnit suite name. The name is `durability.<arm>.<mode>.W<window>.<profile>`, so two sweeps differing only by a flag (`QDB_SIBLING_TABLE`, `QDB_DDL_EVERY_ROWS`, …) report as the same suite and their `flush-N` cases collide. Set it whenever you vary something the name does not carry |
+| `QDB_SWEEP_OFFSET` | `0` | shifts the stride start within one stride, so repeated runs of the same configuration sample different boundaries. Nothing here is random -- the workload is seedless by design (the identity oracle needs `v = id * 2654435761`) and the points are a fixed sequence from a fixed 10% floor -- so a scheduled job that does not vary this re-runs one experiment nightly. CI passes the build id. `0` reproduces the previous selection exactly |
 | `QDB_VM_DATA_DISCARD` | `ignore` | `unmap` on the REPLAY boot only. The recording boot must not have it, or a discard issued by the workload becomes a DISCARD entry in the log and changes what was recorded |
 
 **The trap, if you touch this.** Under QEMU's default `discard=ignore` the guest still
