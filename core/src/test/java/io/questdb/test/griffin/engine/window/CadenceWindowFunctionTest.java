@@ -120,8 +120,7 @@ public class CadenceWindowFunctionTest extends AbstractCairoTest {
         // compilation, not execution.
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, v double) timestamp(ts)");
-            try {
-                select("select ts, cadence(0) over (order by ts) from t");
+            try (RecordCursorFactory ignored = select("select ts, cadence(0) over (order by ts) from t")) {
                 Assert.fail("expected compilation to fail for an out-of-range constant stride");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "stride must be at least 1");
@@ -147,8 +146,7 @@ public class CadenceWindowFunctionTest extends AbstractCairoTest {
             BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
             bindVariableService.clear();
             bindVariableService.setStr(0, "abc");
-            try {
-                select("select ts, cadence($1) over (order by ts) from t");
+            try (RecordCursorFactory ignored = select("select ts, cadence($1) over (order by ts) from t")) {
                 Assert.fail("expected compilation to fail for a non-numeric bind-variable stride");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "integer expected for stride");
@@ -212,8 +210,7 @@ public class CadenceWindowFunctionTest extends AbstractCairoTest {
                     bindVariables.clear();
                     bindVariables.setStr(0, "abc");
                     final String query = "select cadence(" + stride + ", $1) over (order by ts) from t";
-                    try {
-                        compiler.compile(query, sqlExecutionContext);
+                    try (RecordCursorFactory ignored = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
                         Assert.fail("expected STRING seed rejection for stride " + stride);
                     } catch (SqlException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "integer or NULL expected for seed");
@@ -237,8 +234,7 @@ public class CadenceWindowFunctionTest extends AbstractCairoTest {
                 try (RecordCursorFactory factory = compiler.compile(
                         "select cadence(3, $1) over (order by ts) from t",
                         sqlExecutionContext).getRecordCursorFactory()) {
-                    try {
-                        factory.getCursor(sqlExecutionContext);
+                    try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
                         Assert.fail("expected unset seed rejection for stride 3");
                     } catch (SqlException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "seed must be set");

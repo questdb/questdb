@@ -78,6 +78,12 @@ class BucketSelectWindowFunction extends BaseWindowFunction implements Reopenabl
     private static final int SPARSE_SELECTION_DENSITY_SHIFT = 6;
     private final SubsampleAlgorithm algorithm;
     private final int functionPosition;
+    // Loop-invariant lane flag: integral value columns (INT/LONG/SHORT/BYTE) buffer the raw
+    // long - exact over the full 64-bit range, where narrowing to double collapses values
+    // beyond 2^53 - while floating-point columns (FLOAT/DOUBLE) buffer the double.
+    // preparePass2 hands the flag to algorithm.select so comparisons run in the matching
+    // domain; see SubsampleAlgorithm for the dual-lane entry layout.
+    private final boolean hasIntegralValues;
     private final long maxRows;
     private final String name;
     // Per-traversal-row null bitset built in pass1 (1 bit/row, appended in traversal order).
@@ -93,6 +99,9 @@ class BucketSelectWindowFunction extends BaseWindowFunction implements Reopenabl
     private final int targetPosition;
     private final Function tsArg;
     private final Function valueArg;
+    // Resolved once at construction (valueArg's type never changes across rows), used by
+    // the lane readers below for the per-type value read and null-sentinel mapping.
+    private final short valueTag;
     private long buffer;
     private long bufferCapacity; // in entries
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -124,15 +133,6 @@ class BucketSelectWindowFunction extends BaseWindowFunction implements Reopenabl
     private long rowCount;       // running ALL-row counter during pass1 (null + non-null); number of bits in nullBits; drives the SUBSAMPLE row cap
     private long selIdx;         // monotonic cursor into `selected` during pass2
     private long target;         // resolved in init() from targetArg for the current execution
-    // Resolved once at construction (valueArg's type never changes across rows), used by
-    // the lane readers below for the per-type value read and null-sentinel mapping.
-    private final short valueTag;
-    // Loop-invariant lane flag: integral value columns (INT/LONG/SHORT/BYTE) buffer the raw
-    // long - exact over the full 64-bit range, where narrowing to double collapses values
-    // beyond 2^53 - while floating-point columns (FLOAT/DOUBLE) buffer the double.
-    // preparePass2 hands the flag to algorithm.select so comparisons run in the matching
-    // domain; see SubsampleAlgorithm for the dual-lane entry layout.
-    private final boolean hasIntegralValues;
 
     BucketSelectWindowFunction(
             Function tsArg,

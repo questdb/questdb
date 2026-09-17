@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.window;
 
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -190,8 +191,7 @@ public class UniformWindowFunctionTest extends AbstractCairoTest {
         // compilation, not execution.
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, v double) timestamp(ts)");
-            try {
-                select("select ts, uniform(0) over (order by ts) from t");
+            try (RecordCursorFactory ignored = select("select ts, uniform(0) over (order by ts) from t")) {
                 Assert.fail("expected compilation to fail for an out-of-range constant target");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "target points must be at least 2");
@@ -217,8 +217,7 @@ public class UniformWindowFunctionTest extends AbstractCairoTest {
             BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
             bindVariableService.clear();
             bindVariableService.setStr(0, "abc");
-            try {
-                select("select ts, uniform($1) over (order by ts) from t");
+            try (RecordCursorFactory ignored = select("select ts, uniform($1) over (order by ts) from t")) {
                 Assert.fail("expected compilation to fail for a non-numeric bind-variable target");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "integer expected for target point count");

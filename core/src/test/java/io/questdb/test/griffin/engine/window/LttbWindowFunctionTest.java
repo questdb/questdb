@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
@@ -508,8 +509,7 @@ public class LttbWindowFunctionTest extends AbstractCairoTest {
         // compilation, not execution.
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, v double) timestamp(ts)");
-            try {
-                select("select ts, v, lttb(ts, v, 1) over (order by ts) keep from t");
+            try (RecordCursorFactory ignored = select("select ts, v, lttb(ts, v, 1) over (order by ts) keep from t")) {
                 Assert.fail("expected compilation to fail for an out-of-range constant target");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "target points must be at least 2");
