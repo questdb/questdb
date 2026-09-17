@@ -97,16 +97,12 @@ parameters:
   - name: matrixPoints
     type: number
     default: 10
-  # Dimension 15 (mat-view) reproduces an OPEN product defect, documented in
-  # tools/durability/vm/README.md: after a crash the base correctly discards at-risk txns,
-  # the view keeps aggregates derived from them and still reports `valid`. The README calls
-  # it permanent -- incremental refresh only moves forward from a watermark already above
-  # the base. Running it nightly would paint the battery red every night for a defect
-  # already known and recorded, and a permanently red job is one nobody reads. Turn this on
-  # when the fix lands, or by hand to re-measure the finding.
-  - name: includeOpenFindings
+  # Treat the cells listed in KNOWN_DEFECTS (see the sweeps step) as expected failures:
+  # they run, they publish their verdicts, and their failure does not fail the job. Set
+  # this false to make them count, which is what a run verifying a fix wants.
+  - name: tolerateKnownDefects
     type: boolean
-    default: false
+    default: true
   # Manual escape hatch: a run queued by hand at 10:00 would otherwise refuse, its
   # pre-nightly deadline being in the past. Never set on the schedule.
   - name: ignoreWindow
@@ -1030,41 +1026,98 @@ stages:
               fi
               rc=0
 
+              # Cells that reproduce an OPEN, RECORDED product defect. They run every night
+              # -- the code under them is worth testing and the finding is worth re-measuring
+              # -- but their failure is expected and does not fail the job, or the battery is
+              # red every night for something already known and nobody reads it again.
+              #
+              # matrix-mat-view is dimension 15, documented in tools/durability/vm/README.md:
+              # after a crash the base correctly discards the txns the RPO window permits it
+              # to lose, while the view keeps aggregates derived from those same txns and
+              # still reports view_status=valid. The README argues it is permanent --
+              # incremental refresh only moves forward from a watermark already above the
+              # base, and the invalidation path is gated on a TRUNCATE barrier that a crash
+              # rollback is not.
+              #
+              # matrix-mat-view-control is the other half of that finding and is NOT expected
+              # to fail: at mode=sync, W=0, Wm==C, there is no window for the view to lead
+              # and the defect does not appear. If the control ever fails, the defect is not
+              # what the README says it is.
+              #
+              # An expected failure that starts PASSING fails the run. Either the defect is
+              # fixed -- remove the cell from this list -- or the cell stopped exercising it,
+              # and a known defect that silently stops reproducing is how a test quietly
+              # becomes decoration.
+              KNOWN_DEFECTS="matrix-mat-view"
+
+              # Half depth for the extra window sizes: the bar they test is the same one the
+              # W=50000 cell tests at full depth, and what they add is the second and third
+              # point on the curve, not more samples of one point.
+              REF_W=$(( REF / 2 )); [ "$REF_W" -lt 4 ] && REF_W=4
+
               # THE CELL TABLE.  name|arm|mode|window_us|points|extra env
               #
               # Order is the budget policy. run_phase refuses a phase that cannot finish
-              # before the pre-nightly deadline and records it as skipped, so trimming
-              # always falls on the TAIL of this list. The three core sweeps therefore come
-              # first: they are the depth measurement and the one comparison with history.
-              # Everything after them is breadth -- one cell per dimension of the harness's
-              # coverage table (tools/durability/vm/README.md), which claims 17 of 17 and
-              # until now had 3 of 17 running here.
+              # before the pre-nightly deadline and records it as skipped, so trimming always
+              # falls on the TAIL of this list. The list is therefore ordered by what the PR
+              # is about, not by tidiness.
               #
-              # Profile cells run at W=0 on purpose. The zero-loss bar (F >= C) is the
-              # sharper oracle: a column-type or index bug shows up as loss, and at W=0 any
-              # loss at all is a failure, where at W>0 it must first escape the RPO window.
-              # The flag cells run at W=50000, because what they vary interacts with the
-              # window rather than with the column layout.
+              # THE CLAIM UNDER TEST, in the order the cells establish it:
               #
-              # Dimension 2 (bitmap), 5 (multi-partition, the workload partitions by DAY),
-              # 6 (W=0 vs W>0) and 7's adaptive leg are covered by the core sweeps, so they
-              # are not repeated here.
+              #   1. W=0: nothing acked is ever lost.  Verdict DURABLE (F >= C). This is the
+              #      control for 2 -- if it fails, the window is not what caused the loss.
+              #
+              #   2. W>0: loss is confined to the window.  Verdict RPO_OK: every ACKED txn
+              #      survived and loss is confined to (Wm, C]. One window size proves the
+              #      rule holds; it does not prove the bound TRACKS W, which is the actual
+              #      product claim. Three sizes -- 5 ms, 50 ms, 200 ms -- make a curve, and a
+              #      bound that ignores W shows up as the same loss at every size.
+              #
+              #   3. The same bar over the wire, server alone.  Arm qwp: the server tracks
+              #      and recovers, the client contributes nothing. This is the control that
+              #      isolates 4 -- without it, "no loss" in 4 cannot be attributed to the
+              #      client rather than to the server having dropped nothing.
+              #
+              #   4. The client closes the window.  Arm qwp-sf: the client requests the LOCAL
+              #      durable-ack tier and holds un-acked rows in a store-and-forward buffer
+              #      ON THE CRASHED DEVICE, then replays after recovery. QDB_SF_REPLAY=compare
+              #      verifies each boundary TWICE -- server alone, then after the replay --
+              #      and reports the delta, so "lost=0" cannot be read as "nothing was at
+              #      risk here". Arm product is this same claim on the shipped tarball,
+              #      launched as a named JPMS module by the real questdb.sh.
+              #
+              # Everything from the matrix block down is breadth: one cell per remaining
+              # dimension of the harness's coverage table (tools/durability/vm/README.md),
+              # which claims 17 of 17 and until recently had 3 of 17 running here.
+              #
+              # Profile cells run at W=0 on purpose. The zero-loss bar is the sharper oracle:
+              # a column-type or index fault shows up as loss, and at W=0 any loss at all is
+              # a failure, where at W>0 it must first escape the RPO window. The flag cells
+              # run at W=50000, because what they vary interacts with the window.
+              #
+              # sync and nosync sit LAST, and are therefore the first thing the deadline
+              # takes. Adaptive commit is what this branch changes; the other two modes are
+              # regression ballast here, not the subject.
               #
               # QDB_JUNIT_SUITE_SUFFIX on the flag cells is not decoration. The harness names
               # a suite durability.<arm>.<mode>.W<window>.<profile>, and every flag cell below
               # shares those four fields with the core W=50000 sweep -- so without a suffix
               # they publish as one suite, mergeTestResults folds them together, and their
-              # flush-N cases collide. The suffix is what keeps six different experiments from
-              # arriving as one.
+              # flush-N cases collide. The suffix is what keeps six experiments from arriving
+              # as one.
               CELLS="
               sweep-reference-W0|reference|adaptive|0|$REF|
               sweep-reference-W50000|reference|adaptive|50000|$REF|
+              sweep-reference-W5000|reference|adaptive|5000|$REF_W|
+              sweep-reference-W200000|reference|adaptive|200000|$REF_W|
+              sweep-qwp-W50000|qwp|adaptive|50000|$PROD|
+              sweep-qwp-sf-W50000|qwp-sf|adaptive|50000|$PROD|
               sweep-product-W50000|product|adaptive|50000|$PROD|
               "
               if [ "$MTX" -gt 0 ]; then
                 CELLS="$CELLS
-              matrix-arm-qwp|qwp|adaptive|50000|$MTX|
-              matrix-arm-qwp-sf|qwp-sf|adaptive|50000|$MTX|
+              matrix-mat-view|reference|adaptive|50000|$MTX|QDB_MAT_VIEW=true QDB_JUNIT_SUITE_SUFFIX=matview
+              matrix-mat-view-control|reference|sync|0|$MTX|QDB_MAT_VIEW=true QDB_JUNIT_SUITE_SUFFIX=matview
               matrix-profile-none|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=none
               matrix-profile-posting|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=posting
               matrix-profile-covering|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=covering
@@ -1072,20 +1125,14 @@ stages:
               matrix-profile-array|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=array
               matrix-profile-wide|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=wide
               matrix-profile-o3|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=o3
-              matrix-mode-sync|reference|sync|0|$MTX|
-              matrix-mode-nosync|reference|nosync|0|$MTX|
               matrix-lazy-gap|reference|adaptive|50000|$MTX|QDB_EPOCH_MS=-1 QDB_JUNIT_SUITE_SUFFIX=lazygap
               matrix-ddl-under-load|reference|adaptive|50000|$MTX|QDB_DDL_EVERY_ROWS=50000 QDB_JUNIT_SUITE_SUFFIX=ddl
               matrix-sibling-table|reference|adaptive|50000|$MTX|QDB_SIBLING_TABLE=true QDB_JUNIT_SUITE_SUFFIX=sibling
               matrix-recover-as-nosync|reference|adaptive|50000|$MTX|QDB_RECOVER_AS=nosync QDB_JUNIT_SUITE_SUFFIX=recoveras
               matrix-rebase-wal|reference|adaptive|50000|$MTX|QDB_REBASE_AT_ROWS=100000 QDB_JUNIT_SUITE_SUFFIX=rebase
+              matrix-mode-sync|reference|sync|0|$MTX|
+              matrix-mode-nosync|reference|nosync|0|$MTX|
               "
-                # Dimension 15. Off by default; see the includeOpenFindings parameter.
-                if [ "${{ parameters.includeOpenFindings }}" = "True" ] || [ "${{ parameters.includeOpenFindings }}" = "true" ]; then
-                  CELLS="$CELLS
-              matrix-mat-view|reference|adaptive|50000|$MTX|QDB_MAT_VIEW=true QDB_JUNIT_SUITE_SUFFIX=matview
-              "
-                fi
               fi
 
               while IFS='|' read -r name arm mode win pts extra; do
@@ -1116,7 +1163,24 @@ stages:
                 run_phase "$name" "$need" \
                   env QDB_ARM="$arm" QDB_SWEEP_POINTS="$pts" \
                       QDB_JUNIT_XML="$(DURABILITY_RESULTS)/${name}.xml" $extra \
-                      bash run-flush-sweep.sh "$mode" "$win" || rc=1
+                      bash run-flush-sweep.sh "$mode" "$win"
+                cell_rc=$?
+
+                known=false
+                case " $KNOWN_DEFECTS " in *" $name "*) known=true ;; esac
+                if [ "$known" = true ] \
+                   && { [ "${{ parameters.tolerateKnownDefects }}" = "True" ] || [ "${{ parameters.tolerateKnownDefects }}" = "true" ]; }; then
+                  if [ $cell_rc -ne 0 ]; then
+                    echo "##vso[task.logissue type=warning]$name failed as expected: it reproduces an open finding recorded in tools/durability/vm/README.md. Its verdicts are published; it does not fail this run."
+                  # run_phase returns 0 for a skip and for a deadline cut as well as for a
+                  # pass, so "it passed" has to come from the timing record, not the code.
+                  elif grep -q "^$name .* rc=0$" "$(Agent.TempDirectory)/durability-timing.txt" 2>/dev/null; then
+                    echo "##vso[task.logissue type=error]$name PASSED, and it is listed as a known defect that must fail. Either the defect is fixed -- take it out of KNOWN_DEFECTS in ci/test-fuzz-adaptive.yml -- or the cell has stopped exercising it."
+                    rc=1
+                  fi
+                elif [ $cell_rc -ne 0 ]; then
+                  rc=1
+                fi
               done <<CELLS_EOF
               $CELLS
               CELLS_EOF
