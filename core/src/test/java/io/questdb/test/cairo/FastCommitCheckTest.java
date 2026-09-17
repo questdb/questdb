@@ -24,11 +24,13 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.FastCommitCheck;
 import io.questdb.cairo.ProcFs;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.HashMap;
@@ -337,17 +339,200 @@ public class FastCommitCheckTest {
         Assert.assertEquals("Apple Inc.\n", ProcFs.read(ff, "/sys/class/dmi/id/sys_vendor", 4096));
     }
 
+    // -----------------------------------------------------------------------
+    // logAdvisory(): the commit-mode gate and the message. A correct classify()
+    // is worthless if the advisory reaches the wrong operators.
+    // -----------------------------------------------------------------------
+
+    @Test
+    public void testAdvisoryAppliesToIsTheGateBothCallSitesTake() {
+        // checkAndReport takes this predicate for its cheap early-out and logAdvisory takes it for its own
+        // gate, so narrowing it narrows both; Bootstrap now holds no copy to narrow independently. The
+        // duplicated SYNC-only gate is what shipped the defect this suite exists to pin.
+        Assert.assertTrue(
+                "adaptive runs the durable-epoch cadence that drives the batched flush",
+                FastCommitCheck.advisoryAppliesTo(CommitMode.ADAPTIVE)
+        );
+        Assert.assertTrue(
+                "sync reaches the batched flush through the adaptive-exit reconciliation",
+                FastCommitCheck.advisoryAppliesTo(CommitMode.SYNC)
+        );
+        // NOSYNC and ASYNC reach the batched flush through that same exit reconciliation, but run no
+        // durable-epoch cadence; and NOSYNC is CommitMode.DEFAULT, so warning it would fire on every
+        // default install. Silence here is a deliberate signal-to-noise choice, not unreachability.
+        Assert.assertFalse(
+                "nosync is CommitMode.DEFAULT; the advisory is deliberately silent for it",
+                FastCommitCheck.advisoryAppliesTo(CommitMode.NOSYNC)
+        );
+        Assert.assertFalse(
+                "async is deliberately not warned",
+                FastCommitCheck.advisoryAppliesTo(CommitMode.ASYNC)
+        );
+        // Not configurable modes: UNSET is the _meta enrolment sentinel, UNKNOWN a rejected token.
+        Assert.assertFalse(FastCommitCheck.advisoryAppliesTo(CommitMode.UNSET));
+        Assert.assertFalse(FastCommitCheck.advisoryAppliesTo(CommitMode.UNKNOWN));
+    }
+
+    @Test
+    public void testAdvisoryLoggedForAdaptive() {
+        // ADAPTIVE is the mode that actually runs the batched flush: syncColumnsBatchedSync() is reached
+        // only from TableWriter.fsyncMaterializedState, whose cadence call sites are all gated on
+        // getEffectiveCommitMode() == ADAPTIVE. So an adaptive operator is the one who loses the
+        // optimization when fast_commit disables it, and the one the advisory exists for.
+        final DurabilityEnvironmentCheckTest.RecordingLog log = new DurabilityEnvironmentCheckTest.RecordingLog();
+        Assert.assertTrue(
+                "adaptive is the mode that loses the batched flush and must be told",
+                FastCommitCheck.logAdvisory(log, FastCommitCheck.FAST_COMMIT_ENABLED, CommitMode.ADAPTIVE, "/db")
+        );
+        Assert.assertEquals("expected advisory, not error", "[advisoryW]", log.levels.toString());
+    }
+
+    @Test
+    public void testAdvisoryLoggedForSyncBecauseOfTheAdaptiveExitPath() {
+        // SYNC must stay in the gate: a table left enrolled ADAPTIVE and reopened under
+        // cairo.commit.mode=sync reconciles out of adaptive and runs one batched flush
+        // (see FastCommitCheck.advisoryAppliesTo). Narrowing this gate to ADAPTIVE would
+        // silently drop that operator's signal.
+        final DurabilityEnvironmentCheckTest.RecordingLog log = new DurabilityEnvironmentCheckTest.RecordingLog();
+        Assert.assertTrue(
+                "the adaptive-exit reconciliation reaches the batched flush under sync",
+                FastCommitCheck.logAdvisory(log, FastCommitCheck.FAST_COMMIT_ENABLED, CommitMode.SYNC, "/db")
+        );
+        Assert.assertEquals("expected advisory, not error", "[advisoryW]", log.levels.toString());
+    }
+
+    @Test
+    public void testAdvisoryNamesTheAdaptiveEpochAndTheDbRoot() {
+        final DurabilityEnvironmentCheckTest.RecordingLog log = new DurabilityEnvironmentCheckTest.RecordingLog();
+        Assert.assertTrue(FastCommitCheck.logAdvisory(
+                log, FastCommitCheck.FAST_COMMIT_ENABLED, CommitMode.ADAPTIVE, "/var/lib/questdb/db"));
+        final String text = log.text();
+        assertContains(text, "fast_commit");
+        // What was disabled belongs to the ADAPTIVE DURABLE EPOCH, not to ordinary sync commits. A
+        // rewording that drops this reintroduces the misattribution the old SYNC-only gate encoded.
+        assertContains(text, "adaptive durable epoch");
+        assertContains(text, "DISABLED");
+        // Which root is affected is the one thing the operator cannot infer.
+        assertContains(text, "[dbRoot=/var/lib/questdb/db]");
+    }
+
+    @Test
+    public void testAdvisoryNotLoggedForModesWithNoEpochCadence() {
+        // These modes can still touch the batched flush once per table, through the same adaptive-exit
+        // reconciliation that keeps SYNC in the gate. They are excluded because they run no durable-epoch
+        // cadence and NOSYNC is CommitMode.DEFAULT, so the advisory would be noise on every default install.
+        for (int mode : new int[]{CommitMode.NOSYNC, CommitMode.ASYNC}) {
+            final DurabilityEnvironmentCheckTest.RecordingLog log = new DurabilityEnvironmentCheckTest.RecordingLog();
+            Assert.assertFalse(
+                    "commit mode " + CommitMode.toString(mode) + " runs no durable-epoch cadence and is deliberately not warned",
+                    FastCommitCheck.logAdvisory(log, FastCommitCheck.FAST_COMMIT_ENABLED, mode, "/db")
+            );
+            Assert.assertEquals("", log.text());
+        }
+    }
+
+    @Test
+    public void testAdvisoryNotLoggedWhenFastCommitIsNotEnabled() {
+        for (int mode : new int[]{CommitMode.SYNC, CommitMode.ADAPTIVE}) {
+            for (int result : new int[]{FastCommitCheck.UNKNOWN, FastCommitCheck.FAST_COMMIT_NOT_DETECTED}) {
+                final DurabilityEnvironmentCheckTest.RecordingLog log = new DurabilityEnvironmentCheckTest.RecordingLog();
+                Assert.assertFalse(
+                        "nothing was disabled, so there is nothing to warn about",
+                        FastCommitCheck.logAdvisory(log, result, mode, "/db")
+                );
+                Assert.assertEquals("", log.text());
+            }
+        }
+    }
+
+    @Test
+    public void testCheckAndReportDoesNotReadProcForModesThatNeverReport() {
+        // The early-out is what keeps /proc out of a NOSYNC or ASYNC start, so it is asserted by COUNTING
+        // opens rather than by reading the log: a gate applied after classifyDbRoot would still log nothing
+        // and would still look correct from the log alone, while having paid for the reads.
+        for (int mode : new int[]{CommitMode.NOSYNC, CommitMode.ASYNC}) {
+            final ProcFsFacade ff = fastCommitProcFs();
+            final DurabilityEnvironmentCheckTest.RecordingLog log = new DurabilityEnvironmentCheckTest.RecordingLog();
+            Assert.assertFalse(
+                    "commit mode " + CommitMode.toString(mode) + " is outside the advisory's gate",
+                    FastCommitCheck.checkAndReport(log, ff, "/data/qdb", mode)
+            );
+            Assert.assertEquals(
+                    "the gate must run BEFORE classifyDbRoot touches /proc",
+                    0, ff.openCount
+            );
+            Assert.assertEquals("", log.text());
+        }
+    }
+
+    @Test
+    public void testCheckAndReportReadsProcAndLogsForReportingModes() {
+        // classifyDbRoot early-returns UNKNOWN off Linux, so only there can an injected facade observe the
+        // /proc reads at all. The skip-/proc half above needs no such gate and runs everywhere.
+        Assume.assumeTrue("classifyDbRoot reads /proc on Linux only", Os.isLinux());
+        for (int mode : new int[]{CommitMode.SYNC, CommitMode.ADAPTIVE}) {
+            final ProcFsFacade ff = fastCommitProcFs();
+            final DurabilityEnvironmentCheckTest.RecordingLog log = new DurabilityEnvironmentCheckTest.RecordingLog();
+            Assert.assertTrue(
+                    "commit mode " + CommitMode.toString(mode) + " must be told the batched flush was disabled",
+                    FastCommitCheck.checkAndReport(log, ff, "/data/qdb", mode)
+            );
+            Assert.assertTrue("classifyDbRoot must have read /proc", ff.openCount > 0);
+            Assert.assertEquals("expected advisory, not error", "[advisoryW]", log.levels.toString());
+            assertContains(log.text(), "fast_commit");
+        }
+    }
+
+    private static void assertContains(String haystack, String needle) {
+        if (!haystack.contains(needle)) {
+            Assert.fail("expected to find '" + needle + "' in: " + haystack);
+        }
+    }
+
+    /**
+     * A fake {@code /proc} describing an ext4 db root mount whose device HAS fast_commit, so a reporting
+     * commit mode reaches the advisory and a non-reporting one has something it could have read.
+     */
+    private static ProcFsFacade fastCommitProcFs() {
+        final ProcFsFacade ff = new ProcFsFacade();
+        ff.files.put("/proc/mounts", "/dev/sda1 / ext4 rw,relatime 0 0\n/dev/sdb1 /data ext4 rw,relatime 0 0\n");
+        ff.procEntries.add("/proc/fs/ext4/sdb1");
+        ff.files.put("/proc/fs/ext4/sdb1/options", OPTIONS_WITH_FC);
+        return ff;
+    }
+
     /**
      * Minimal FilesFacade that reproduces pseudo-file semantics: {@code length()} lies, {@code read()} tells
-     * the truth.
+     * the truth. It serves either one content for every path (the single-argument constructor) or a fake
+     * {@code /proc} tree ({@link #files} plus {@link #procEntries}), and counts opens so a test can assert
+     * that a commit mode which never reports never read {@code /proc} in the first place.
      */
     private static final class ProcFsFacade extends FilesFacadeImpl {
-        private final byte[] bytes;
+        final Map<String, String> files = new HashMap<>();
+        final Set<String> procEntries = new HashSet<>();
+        int openCount;
         long statSize;
+        private final byte[] defaultBytes;
+        private byte[] pending;
+
+        ProcFsFacade() {
+            this(null);
+        }
 
         ProcFsFacade(String content) {
-            this.bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            this.defaultBytes = content == null ? null : content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
             this.statSize = 0; // procfs
+        }
+
+        @Override
+        public boolean close(long fd) {
+            pending = null;
+            return true;
+        }
+
+        @Override
+        public boolean exists(io.questdb.std.str.LPSZ path) {
+            return procEntries.contains(pathOf(path));
         }
 
         @Override
@@ -357,24 +542,33 @@ public class FastCommitCheckTest {
 
         @Override
         public long openRONoCache(io.questdb.std.str.LPSZ name) {
-            return 4242; // any non-negative sentinel; this facade never touches a real fd
-        }
-
-        @Override
-        public boolean close(long fd) {
-            return true;
+            openCount++;
+            // NOT name.toString(): an LPSZ renders as its identity hash, so string comparison silently
+            // never matches and the whole fake goes quiet.
+            final String content = files.get(pathOf(name));
+            pending = content != null ? content.getBytes(java.nio.charset.StandardCharsets.UTF_8) : defaultBytes;
+            return pending == null ? -1 : 4242; // any non-negative sentinel; this facade never touches a real fd
         }
 
         @Override
         public long read(long fd, long address, long len, long offset) {
-            if (offset >= bytes.length) {
+            if (pending == null || offset >= pending.length) {
                 return 0;
             }
-            final long n = Math.min(len, bytes.length - offset);
+            final long n = Math.min(len, pending.length - offset);
             for (long i = 0; i < n; i++) {
-                io.questdb.std.Unsafe.getUnsafe().putByte(address + i, bytes[(int) (offset + i)]);
+                io.questdb.std.Unsafe.getUnsafe().putByte(address + i, pending[(int) (offset + i)]);
             }
             return n;
+        }
+
+        private static String pathOf(io.questdb.std.str.LPSZ name) {
+            final int n = name.size();
+            final StringBuilder sb = new StringBuilder(n);
+            for (int i = 0; i < n; i++) {
+                sb.append((char) (name.byteAt(i) & 0xFF));
+            }
+            return sb.toString();
         }
     }
 }

@@ -661,22 +661,12 @@ public class Bootstrap {
     }
 
     private void verifyFastCommit(CairoConfiguration cairoConfig) {
-        if (cairoConfig.getCommitMode() != CommitMode.SYNC) {
-            return;
-        }
         final CharSequence dbRoot = cairoConfig.getDbRoot();
         if (dbRoot == null) {
             return;
         }
         try {
-            final int result = FastCommitCheck.classifyDbRoot(cairoConfig.getFilesFacade(), dbRoot);
-            if (result == FastCommitCheck.FAST_COMMIT_ENABLED) {
-                log.advisoryW().$("WARNING: db root filesystem has ext4 fast_commit enabled")
-                        .$(": under per-inode journaling the batched SYNC flush optimization's within-page durability is NOT guaranteed")
-                        .$(" -- the batched column flush has been DISABLED and cairo.commit.mode=sync falls back to per-file fsync")
-                        .$(" (slower, but durable everywhere)")
-                        .$(" [dbRoot=").$(dbRoot).$(']').$();
-            }
+            FastCommitCheck.checkAndReport(log, cairoConfig.getFilesFacade(), dbRoot, cairoConfig.getCommitMode());
         } catch (Throwable t) {
             // Detection must never break startup.
             log.debug().$("fast_commit verify failed [reason=").$(t.getMessage()).$(']').$();
@@ -689,31 +679,11 @@ public class Bootstrap {
      * operator can change.
      */
     private void verifyDurabilityEnvironment(Path path, CairoConfiguration cairoConfig) {
-        final int commitMode = cairoConfig.getCommitMode();
-        if (commitMode != CommitMode.SYNC && commitMode != CommitMode.ADAPTIVE) {
-            return;
-        }
         final CharSequence dbRoot = cairoConfig.getDbRoot();
         if (dbRoot == null) {
             return;
         }
-        // On macOS the decision needs the db root's filesystem NAME, which getFileSystemStatus writes into
-        // the path buffer (the same call verifyFileSystem above uses for its SUPPORTED/UNSUPPORTED line).
-        String fsName = null;
-        if (Os.isOSX()) {
-            path.of(dbRoot);
-            if (Files.exists(path.$())) {
-                // A zero return means statfs failed and the buffer was NOT written, so path still holds the
-                // db root. Using it would emit "fs=/var/lib/questdb/db" and raise a false durability alarm
-                // naming a path as a filesystem.
-                if (Files.getFileSystemStatus(path.$()) != 0) {
-                    path.seekZ();
-                    fsName = path.toString();
-                }
-            }
-        }
-        final int flags = DurabilityEnvironmentCheck.probe(cairoConfig.getFilesFacade(), fsName);
-        DurabilityEnvironmentCheck.logAdvisories(log, flags, commitMode, dbRoot, fsName);
+        DurabilityEnvironmentCheck.checkAndReport(log, cairoConfig.getFilesFacade(), path, dbRoot, cairoConfig.getCommitMode());
     }
 
     private void verifyWriteBarriers(CairoConfiguration cairoConfig) {

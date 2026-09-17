@@ -38,8 +38,11 @@ import io.questdb.std.str.Utf8s;
  * Detects whether the ext4 filesystem backing the QuestDB database root has the
  * {@code fast_commit} feature enabled.
  *
- * <p>Why this matters: the Linux SYNC-mode <em>batched</em> column-flush optimization
- * (see {@code TableWriter.syncColumns}) makes a within-page commit durable with only
+ * <p>Why this matters: the Linux <em>batched</em> column-flush optimization reserved for the
+ * adaptive durable epoch (see {@code TableWriter.fsyncMaterializedState}, gated by
+ * {@link CairoConfiguration#isAdaptiveEpochColumnSyncBatched()}; ordinary SYNC/ASYNC apply uses
+ * the per-file {@code msync} baseline instead — {@code MS_SYNC} for SYNC, {@code MS_ASYNC} for
+ * ASYNC) makes a within-page write durable with only
  * {@code msync(MS_ASYNC)} + {@code sync_file_range(WAIT_AFTER)} per column (the column
  * bytes reach the device cache) and a single {@code fdatasync} of the {@code _cv} file as
  * the one device-cache flush. That is durable ONLY when the {@code _cv} fsync also
@@ -49,7 +52,8 @@ import io.questdb.std.str.Utf8s;
  * within-page column bytes are never journaled and revert on power loss. This dependency
  * is proven by {@code BatchedFlushSharedJournalDependencyTest}. When fast_commit is
  * detected we therefore DISABLE the batched path and fall back to the proven per-file
- * {@code msync(MS_SYNC)} baseline (slower, but durable everywhere).
+ * {@code msync(MS_SYNC)} baseline plus one filesystem-wide {@code syncfs} (slower, but
+ * durable everywhere).
  *
  * <h2>The detectable signal (and its reliability)</h2>
  * {@code fast_commit} is an ext4 <em>superblock</em> incompat feature, NOT a
@@ -78,8 +82,9 @@ import io.questdb.std.str.Utf8s;
  * {@code /proc/fs/ext4} visibility, or when the device name cannot be resolved to a proc
  * entry. UNKNOWN is treated as "not detected": the batched optimization stays ON (the
  * operator override property is the reliable safety valve when detection cannot tell). The
- * fallback this drives is the EXISTING proven per-file {@code msync(MS_SYNC)} path, so an
- * over-eager positive only loses the optimization (safe), never durability.
+ * fallback this drives is the EXISTING proven per-file {@code msync(MS_SYNC)} path plus one
+ * filesystem-wide {@code syncfs}, so an over-eager positive only loses the optimization
+ * (safe), never durability.
  *
  * <p>This class is Linux-only. On all other platforms {@link #classifyDbRoot} returns
  * {@link #UNKNOWN} and never throws. The core parsing ({@link #classify}) is pure / IO-free
@@ -109,6 +114,44 @@ public final class FastCommitCheck {
     private static final int PROC_OPTIONS_MAX_BYTES = 64 * 1024;
 
     private FastCommitCheck() {
+    }
+
+    /**
+     * The one commit-mode gate the startup advisory takes. {@link #logAdvisory} applies it to decide
+     * whether to emit, and {@link #checkAndReport} applies it as a cheap early-out before
+     * {@link #classifyDbRoot} touches {@code /proc}, so the two sites cannot drift apart.
+     * <p>
+     * ADAPTIVE reaches the batched flush through the durable-epoch cadence; SYNC reaches it once per
+     * table when tables still enrolled ADAPTIVE reconcile out of it on restart
+     * ({@code TableWriter.reconcileAdaptiveExit}). NOSYNC and ASYNC reach it that same one-off way but
+     * stay silent on purpose: NOSYNC is {@link CommitMode#DEFAULT}, so warning them would fire on
+     * nearly every install, almost none of which ever enrolled a table in adaptive.
+     *
+     * @param commitMode the configured commit mode, a {@link CommitMode} constant
+     * @return {@code true} if the advisory applies to this commit mode
+     */
+    public static boolean advisoryAppliesTo(int commitMode) {
+        return commitMode == CommitMode.SYNC || commitMode == CommitMode.ADAPTIVE;
+    }
+
+    /**
+     * The whole startup step in one call: apply {@link #advisoryAppliesTo}, then {@link #classifyDbRoot},
+     * then {@link #logAdvisory}. The caller keeps no commit-mode predicate of its own, so nothing can
+     * narrow away from the gate the advisory itself takes. The early-out matters beyond tidiness:
+     * {@link #classifyDbRoot} reads {@code /proc}, which modes that will never report must not pay for.
+     *
+     * @param log        destination log
+     * @param ff         FilesFacade used for native file IO
+     * @param dbRoot     absolute path of the database root directory
+     * @param commitMode the configured commit mode, a {@link CommitMode} constant
+     * @return {@code true} if the advisory was logged
+     */
+    public static boolean checkAndReport(Log log, FilesFacade ff, CharSequence dbRoot, int commitMode) {
+        if (!advisoryAppliesTo(commitMode)) {
+            return false;
+        }
+        final int result = classifyDbRoot(ff, dbRoot);
+        return logAdvisory(log, result, commitMode, dbRoot);
     }
 
     /**
@@ -193,6 +236,31 @@ public final class FastCommitCheck {
             LOG.debug().$("fast_commit check failed [reason=").$(t.getMessage()).$(']').$();
             return UNKNOWN;
         }
+    }
+
+    /**
+     * Emit the startup advisory when the DB root's ext4 {@code fast_commit} has disabled the batched
+     * column flush. {@link #advisoryAppliesTo} decides which operators hear it.
+     *
+     * @param log        destination log
+     * @param result     a {@link #classifyDbRoot} / {@link #classify} result
+     * @param commitMode the configured commit mode, a {@link CommitMode} constant
+     * @param dbRoot     absolute path of the database root directory
+     * @return {@code true} if the advisory was logged
+     */
+    public static boolean logAdvisory(Log log, int result, int commitMode, CharSequence dbRoot) {
+        if (!advisoryAppliesTo(commitMode)) {
+            return false;
+        }
+        if (result != FAST_COMMIT_ENABLED) {
+            return false;
+        }
+        log.advisoryW().$("WARNING: db root filesystem has ext4 fast_commit enabled")
+                .$(": under per-inode journaling the batched column flush's within-page durability is NOT guaranteed")
+                .$(" -- the batched flush reserved for the adaptive durable epoch has been DISABLED and that epoch falls back to per-file msync(MS_SYNC) plus one filesystem-wide syncfs")
+                .$(" (slower, but durable everywhere; ordinary cairo.commit.mode=sync/async commits already flush per file and are unaffected)")
+                .$(" [dbRoot=").$(dbRoot).$(']').$();
+        return true;
     }
 
     // -----------------------------------------------------------------------

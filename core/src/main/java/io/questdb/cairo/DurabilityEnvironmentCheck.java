@@ -100,6 +100,60 @@ public final class DurabilityEnvironmentCheck {
     }
 
     /**
+     * The one commit-mode gate the durability advisories take. {@link #logAdvisories} applies it to decide
+     * whether to emit, and {@link #checkAndReport} applies it as an early-out before the probe runs, so the
+     * two sites cannot drift apart.
+     * <p>
+     * SYNC and ADAPTIVE both promise power-loss durability, and every condition this class detects
+     * contradicts that promise. NOSYNC/ASYNC promise nothing, so there is nothing to contradict.
+     *
+     * @param commitMode the configured commit mode, a {@link CommitMode} constant
+     * @return {@code true} if the advisories apply to this commit mode
+     */
+    public static boolean advisoryAppliesTo(int commitMode) {
+        return commitMode == CommitMode.SYNC || commitMode == CommitMode.ADAPTIVE;
+    }
+
+    /**
+     * The whole startup step in one call: apply {@link #advisoryAppliesTo}, resolve the macOS filesystem
+     * name the decision needs, then {@link #probe} and {@link #logAdvisories}. The caller keeps no
+     * commit-mode predicate of its own, so there is nothing left that can narrow away from the predicate
+     * the advisories themselves take.
+     * <p>
+     * The early-out runs before the filesystem-name resolution, so a mode that will never report pays for
+     * no {@code statfs}.
+     *
+     * @param log        destination log
+     * @param ff         files facade
+     * @param path       scratch path buffer, overwritten by the macOS filesystem-name resolution
+     * @param dbRoot     absolute path of the database root directory
+     * @param commitMode the configured commit mode, a {@link CommitMode} constant
+     * @return true if anything was logged
+     */
+    public static boolean checkAndReport(Log log, FilesFacade ff, Path path, CharSequence dbRoot, int commitMode) {
+        if (!advisoryAppliesTo(commitMode)) {
+            return false;
+        }
+        // On macOS the decision needs the db root's filesystem NAME, which getFileSystemStatus writes into
+        // the path buffer (the same call Bootstrap.verifyFileSystem uses for its SUPPORTED/UNSUPPORTED line).
+        String fsName = null;
+        if (Os.isOSX()) {
+            path.of(dbRoot);
+            if (Files.exists(path.$())) {
+                // A zero return means statfs failed and the buffer was NOT written, so path still holds the
+                // db root. Using it would emit "fs=/var/lib/questdb/db" and raise a false durability alarm
+                // naming a path as a filesystem.
+                if (Files.getFileSystemStatus(path.$()) != 0) {
+                    path.seekZ();
+                    fsName = path.toString();
+                }
+            }
+        }
+        final int flags = probe(ff, fsName);
+        return logAdvisories(log, flags, commitMode, dbRoot, fsName);
+    }
+
+    /**
      * Pure decision table. Any argument may be {@code null} / empty, meaning "could not be read", which
      * never contributes a flag.
      *
@@ -187,7 +241,7 @@ public final class DurabilityEnvironmentCheck {
             CharSequence fsName
     ) {
         // NOSYNC/ASYNC make no power-loss promise, so there is nothing to contradict.
-        if (commitMode != CommitMode.SYNC && commitMode != CommitMode.ADAPTIVE) {
+        if (!advisoryAppliesTo(commitMode)) {
             return false;
         }
         final String mode = CommitMode.toString(commitMode);

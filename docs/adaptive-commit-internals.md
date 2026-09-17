@@ -282,8 +282,10 @@ commit00():
 device flush on `CommitMode.appliesColumnSync(commitMode)`, which is **true only for SYNC
 and ASYNC**:
 
-- **SYNC** → `syncColumnsBatchedSync()` (Linux: KICK `msync(MS_ASYNC)` → DRAIN
-  `sync_file_range` → one `syncfs`).
+- **SYNC** → per‑file sync (data before aux) + symbol `sync(false)` — `syncColumns0(false)`, the
+  proven‑durable per‑file `msync(MS_SYNC)` baseline. The batched KICK/DRAIN/`syncfs` pipeline
+  (`syncColumnsBatchedSync()`) is reserved for the adaptive durable epoch
+  (`fsyncMaterializedState`); no ordinary commit reaches it.
 - **ASYNC** → per‑file async sync (data before aux) + symbol `sync(async)`.
 - **NOSYNC and ADAPTIVE** → **skipped** — this is the lazy apply. `ADAPTIVE` additionally
   sets `applyLazyColumns` (`configureColumn`) so even routine append‑page‑release `msync`s
@@ -436,7 +438,7 @@ flowchart TD
     CM{"effective commit mode"}
     CM -->|NOSYNC| N["WAL: nothing<br/>apply: nothing<br/>epoch: never"]
     CM -->|ASYNC| AS["WAL: msync async<br/>apply: msync async<br/>epoch: never"]
-    CM -->|SYNC| S["WAL: msync sync<br/>apply: msync→sync_file_range→syncfs<br/>epoch: never"]
+    CM -->|SYNC| S["WAL: msync sync<br/>apply: msync sync<br/>epoch: never"]
     CM -->|ADAPTIVE| AD{"W = 0 ?"}
     AD -->|W=0| A0["WAL: msync + fdatasync NOW (data→events→seq)<br/>localDurableSeqTxn ↑ on commit thread"]
     AD -->|"W&gt;0"| AW["private WAL fdatasync before seq; sequencer BATCHED ≤ W<br/>localDurableSeqTxn ↑ after batch flush (RPO ≤ W)"]
@@ -451,7 +453,7 @@ skipped). Every column reads the table's **effective** mode.
 |---|---|---|---|---|---|---|---|
 | **NOSYNC** | — | — | — | — | — | — | never |
 | **ASYNC** | msync⊘ | msync⊘ | msync⊘ | msync⊘ | msync⊘ | msync⊘ | never |
-| **SYNC** | msync! | msync! | msync! | msync!→syncfs | msync! | msync! | never |
+| **SYNC** | msync! | msync! | msync! | msync! | msync! | msync! | never |
 | **ADAPTIVE W=0** | msync!+**fdatasync** | msync!+**fdatasync** | msync!+**fdatasync** | — (lazy) | — (lazy) | — (lazy) | interval OR row‑cap |
 | **ADAPTIVE W>0** | msync⊘ + **fdatasync before seq** | msync⊘ + **fdatasync before seq** | msync⊘; fdatasync deferred ≤W | — (lazy) | — (lazy) | — (lazy) | interval OR row‑cap |
 

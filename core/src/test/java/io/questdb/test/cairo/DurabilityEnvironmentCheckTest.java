@@ -29,9 +29,12 @@ import io.questdb.cairo.DurabilityEnvironmentCheck;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Os;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.lifecycle.fakes.CapturingLog;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 /**
@@ -194,6 +197,48 @@ public class DurabilityEnvironmentCheckTest {
     // ---------------------------------------------------------------------
 
     @Test
+    public void testCheckAndReportDoesNotProbeForModesThatPromiseNothing() {
+        // The gate is asserted by COUNTING probe reads, not by reading the log: a gate applied after the
+        // probe would still log nothing and would still look correct from the log alone, while having paid
+        // for the /sys scan (and, on macOS, for a statfs of the db root).
+        for (int mode : new int[]{CommitMode.NOSYNC, CommitMode.ASYNC}) {
+            final SysFsFacade ff = new SysFsFacade("Apple Inc.\n");
+            ff.devices.put("vda", "write through\n");
+            final RecordingLog log = new RecordingLog();
+            try (Path path = new Path()) {
+                Assert.assertFalse(
+                        "commit mode " + CommitMode.toString(mode) + " promises no durability",
+                        DurabilityEnvironmentCheck.checkAndReport(log, ff, path, "/db", mode)
+                );
+            }
+            Assert.assertEquals("the gate must run BEFORE the probe reads /sys", 0, ff.openCount);
+            Assert.assertEquals("the gate must run BEFORE the probe scans /sys/block", 0, ff.findFirstCount);
+            Assert.assertEquals("", log.text());
+        }
+    }
+
+    @Test
+    public void testCheckAndReportProbesAndLogsForModesThatPromiseDurability() {
+        // probe() gates on the platform, so only on Linux can an injected facade observe the /sys reads.
+        // The skip-the-probe half above needs no such gate and runs everywhere.
+        Assume.assumeTrue("probe() reads /sys on Linux only", Os.isLinux());
+        for (int mode : new int[]{CommitMode.SYNC, CommitMode.ADAPTIVE}) {
+            final SysFsFacade ff = new SysFsFacade("Apple Inc.\n");
+            ff.devices.put("vda", "write back\n");
+            final RecordingLog log = new RecordingLog();
+            try (Path path = new Path()) {
+                Assert.assertTrue(
+                        "commit mode " + CommitMode.toString(mode) + " promises durability the host cannot deliver",
+                        DurabilityEnvironmentCheck.checkAndReport(log, ff, path, "/db", mode)
+                );
+            }
+            Assert.assertTrue("the probe must have read /sys", ff.openCount > 0);
+            assertContains(log.text(), "Apple Virtualization");
+            Assert.assertEquals("expected advisory, not error", "[advisoryW]", log.levels.toString());
+        }
+    }
+
+    @Test
     public void testProbeGuestFindsWriteThroughOnASecondDevice() {
         // The scan must not stop at the first device: the tweak is applied by hand, often to the data disk.
         final SysFsFacade ff = new SysFsFacade("QEMU\n");
@@ -232,6 +277,8 @@ public class DurabilityEnvironmentCheckTest {
      */
     private static final class SysFsFacade extends FilesFacadeImpl {
         final java.util.LinkedHashMap<String, String> devices = new java.util.LinkedHashMap<>();
+        int findFirstCount;
+        int openCount;
         private final String dmiSysVendor;
         private java.util.Iterator<String> listing;
         private String current;
@@ -255,6 +302,7 @@ public class DurabilityEnvironmentCheckTest {
 
         @Override
         public long findFirst(io.questdb.std.str.LPSZ path) {
+            findFirstCount++;
             if (!"/sys/block".equals(unixPath(path))) {
                 return 0;
             }
@@ -280,6 +328,7 @@ public class DurabilityEnvironmentCheckTest {
 
         @Override
         public long openRONoCache(io.questdb.std.str.LPSZ name) {
+            openCount++;
             // NOT name.toString(): an LPSZ renders as its identity hash, so string comparison silently
             // never matches and the whole fake goes quiet.
             final String path = unixPath(name);
@@ -375,7 +424,7 @@ public class DurabilityEnvironmentCheckTest {
      * never drained. Level matters as much as text here -- only the operator-fixable condition may be an
      * error, and asserting that is the point.
      */
-    private static final class RecordingLog implements Log {
+    static final class RecordingLog implements Log {
         final java.util.List<String> levels = new java.util.ArrayList<>();
         private final CapturingLog.CapturingRecord record;
         private final StringSink sink = new StringSink();

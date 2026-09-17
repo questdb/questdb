@@ -88,17 +88,25 @@ public class CommitModeBenchmark {
     public int rowsPerCommit;
 
     /**
-     * Total data columns (excluding the designated timestamp). The flush-batching optimization replaces
-     * N per-file device flushes with ~2 per commit, so the SYNC win is expected to GROW with this value.
+     * Total data columns (excluding the designated timestamp). Ordinary SYNC apply is a per-file
+     * msync(MS_SYNC) walk over every column ({@code TableWriter.syncColumns0}), so the number of device
+     * flushes per commit - and the SYNC cost - is expected to GROW with this value. The flush-batching
+     * optimization is not on this path; see {@link #batched}.
      * The schema is: ts + (columnCount - 2) long columns + 1 varchar + 1 symbol.
      */
     @Param({"5", "25", "100"})
     public int columnCount;
 
     /**
-     * Toggle for the batched-column-sync optimisation (syncfs on Linux).
-     * true  = syncfs-batched path (single whole-FS flush per commit, durable on real block device)
-     * false = per-file msync(MS_SYNC) baseline (N individual device flushes per commit)
+     * Toggle for the batched-column-sync optimisation (syncfs on Linux), wired to
+     * {@code isAdaptiveEpochColumnSyncBatched()} below.
+     * true  = syncfs-batched path (single whole-FS flush per epoch flush, durable on real block device)
+     * false = per-file msync(MS_SYNC) baseline (N individual device flushes per epoch flush)
+     * <p>
+     * That property is consulted only by {@code TableWriter.fsyncMaterializedState()}, the adaptive
+     * durable-epoch flush. It does not affect the ordinary-commit path this benchmark measures
+     * (NOSYNC/ASYNC/SYNC on a {@code bypass wal} table, which never runs a durable epoch), so both
+     * values exercise the same code here.
      */
     @Param({"true", "false"})
     public String batched;
