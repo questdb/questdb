@@ -29,6 +29,8 @@ import io.questdb.client.Sender;
 import io.questdb.client.SenderError;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
+import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.cutlass.qwp.AbstractQwpBootstrapTest;
 import io.questdb.test.tools.TestUtils;
@@ -211,8 +213,17 @@ public class QwpWebSocketBinaryMessageTest extends AbstractQwpBootstrapTest {
         });
     }
 
+    /**
+     * A payload without the QWP magic must never be dispatched on its flags byte.
+     * The byte at {@code HEADER_OFFSET_FLAGS} (5) of this ILP-like payload is
+     * {@code 'o'} (0x6f), which sets both FLAG_SCHEMA (0x02) and FLAG_CONTROL
+     * (0x20). Reading flags before validating the magic closes the connection with
+     * "schema and control flags cannot be combined". Correct dispatch sends the
+     * payload through normal data-frame validation, returns a parse NACK, and keeps
+     * the connection open for an orderly close.
+     */
     @Test
-    public void testWebSocketConnectAndSendBinaryMessage() throws Exception {
+    public void testNonQwpPayloadWithFlagBitsSetReceivesParseNack() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startFragmented(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
@@ -221,8 +232,11 @@ public class QwpWebSocketBinaryMessageTest extends AbstractQwpBootstrapTest {
                 URI uri = new URI("ws://localhost:" + httpPort + "/write/v4");
 
                 CountDownLatch openLatch = new CountDownLatch(1);
-                AtomicBoolean opened = new AtomicBoolean(false);
+                CountDownLatch responseLatch = new CountDownLatch(1);
+                CountDownLatch closeLatch = new CountDownLatch(1);
                 AtomicReference<Throwable> error = new AtomicReference<>();
+                AtomicInteger responseStatus = new AtomicInteger(-1);
+                AtomicInteger closeCode = new AtomicInteger(-1);
 
                 HttpClient client = HttpClient.newBuilder()
                         .connectTimeout(Duration.ofSeconds(5))
@@ -231,7 +245,21 @@ public class QwpWebSocketBinaryMessageTest extends AbstractQwpBootstrapTest {
                 WebSocket.Listener listener = new WebSocket.Listener() {
                     @Override
                     public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last) {
+                        if (responseStatus.get() == -1 && data.hasRemaining()) {
+                            responseStatus.compareAndSet(-1, data.get() & 0xff);
+                        }
+                        if (last) {
+                            responseLatch.countDown();
+                        }
                         webSocket.request(1);
+                        return CompletableFuture.completedFuture(null);
+                    }
+
+                    @Override
+                    public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
+                        closeCode.set(statusCode);
+                        responseLatch.countDown();
+                        closeLatch.countDown();
                         return CompletableFuture.completedFuture(null);
                     }
 
@@ -239,11 +267,12 @@ public class QwpWebSocketBinaryMessageTest extends AbstractQwpBootstrapTest {
                     public void onError(WebSocket webSocket, Throwable err) {
                         error.set(err);
                         openLatch.countDown();
+                        responseLatch.countDown();
+                        closeLatch.countDown();
                     }
 
                     @Override
                     public void onOpen(WebSocket webSocket) {
-                        opened.set(true);
                         openLatch.countDown();
                         webSocket.request(1);
                     }
@@ -255,23 +284,26 @@ public class QwpWebSocketBinaryMessageTest extends AbstractQwpBootstrapTest {
                         .get(10, TimeUnit.SECONDS);
 
                 Assert.assertTrue("WebSocket should open", openLatch.await(5, TimeUnit.SECONDS));
-                Assert.assertTrue("WebSocket should be opened", opened.get());
                 Assert.assertNull("No error should occur", error.get());
 
-                // Send a binary message (ILP-like data)
                 String ilpLine = "cpu,host=server01 usage=95.5 1234567890\n";
                 byte[] data = ilpLine.getBytes(StandardCharsets.UTF_8);
-                ByteBuffer buffer = ByteBuffer.wrap(data);
+                int flagMask = QwpConstants.FLAG_SCHEMA | QwpConstants.FLAG_CONTROL;
+                Assert.assertEquals(flagMask, data[QwpConstants.HEADER_OFFSET_FLAGS] & flagMask);
 
-                CompletableFuture<WebSocket> sendFuture = webSocket.sendBinary(buffer, true);
-                sendFuture.get(5, TimeUnit.SECONDS);
+                webSocket.sendBinary(ByteBuffer.wrap(data), true).get(5, TimeUnit.SECONDS);
+                Assert.assertTrue("server did not answer the malformed data frame",
+                        responseLatch.await(5, TimeUnit.SECONDS));
+                Assert.assertNull("No transport error should occur", error.get());
+                Assert.assertEquals("server must NACK through the data path, not close on schema flags",
+                        WebSocketResponse.STATUS_PARSE_ERROR & 0xff, responseStatus.get());
+                Assert.assertEquals("server must keep the connection open after the parse NACK",
+                        -1, closeCode.get());
 
-                // Give the server time to process
-                Thread.sleep(100);
-
-                // Close the connection
-                webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "test complete")
-                        .get(5, TimeUnit.SECONDS);
+                webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "test complete").get(5, TimeUnit.SECONDS);
+                Assert.assertTrue("server did not complete the close handshake",
+                        closeLatch.await(5, TimeUnit.SECONDS));
+                Assert.assertEquals(WebSocket.NORMAL_CLOSURE, closeCode.get());
             }
         });
     }

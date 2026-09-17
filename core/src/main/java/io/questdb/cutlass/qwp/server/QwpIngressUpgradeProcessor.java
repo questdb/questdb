@@ -2069,7 +2069,20 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     rejectFragmentedFrame(context, state, opcode);
                     return;
                 }
-                byte qwpFlags = length > QwpConstants.HEADER_OFFSET_FLAGS
+                // Only a frame that carries the QWP magic may be dispatched on its
+                // flags byte. Without the magic check any binary payload whose sixth
+                // byte happens to have 0x02 or 0x20 set is closed as a schema
+                // protocol violation -- an ILP line such as "cpu,host=..." carries
+                // 'o' (0x6f) there and sets both. Non-QWP payloads must instead reach
+                // handleBinaryMessage(), which applies normal data-frame validation
+                // and returns a parse NACK without closing the connection.
+                // The magic gate must not also demand a whole header: a control
+                // frame truncated to its first six bytes still has to reach
+                // handleSchemaControl() and be rejected as malformed, rather than
+                // fall through to the data path and collect an ACK.
+                final boolean isQwpFrame = length >= Integer.BYTES
+                        && Unsafe.getInt(payload + QwpConstants.HEADER_OFFSET_MAGIC) == QwpConstants.MAGIC_MESSAGE;
+                final byte qwpFlags = isQwpFrame && length > QwpConstants.HEADER_OFFSET_FLAGS
                         ? Unsafe.getByte(payload + QwpConstants.HEADER_OFFSET_FLAGS)
                         : 0;
                 if ((qwpFlags & QwpConstants.FLAG_SCHEMA) != 0
