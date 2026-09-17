@@ -123,6 +123,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private int errorPosition;
     private long executeStartNanos;
     private boolean explain = false;
+    private long clientWaitAccumNanos;
+    // -1 when not parked; doubles as the isParked flag.
+    private long clientWaitStartNanos = -1;
     private boolean noMeta = false;
     // Operation is stored here to be retried
     private Operation operation;
@@ -209,6 +212,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         containsSecret = false;
         errorMessage.clear();
         updateRecords = 0;
+        clientWaitAccumNanos = 0;
+        clientWaitStartNanos = -1;
     }
 
     public void clearFactory() {
@@ -365,6 +370,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.sendChunk(true);
     }
 
+    public void resumeExecutionTimer() {
+        if (clientWaitStartNanos != -1) {
+            clientWaitAccumNanos += nanosecondClock.getTicks() - clientWaitStartNanos;
+            clientWaitStartNanos = -1;
+        }
+        if (cursor != null) {
+            cursor.resumeTimer();
+        }
+    }
+
     public void setCompilerNanos(long compilerNanos) {
         this.compilerNanos = compilerNanos;
     }
@@ -399,6 +414,17 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void startExecutionTimer() {
         this.executeStartNanos = nanosecondClock.getTicks();
+        clientWaitAccumNanos = 0;
+        clientWaitStartNanos = -1;
+    }
+
+    public void suspendExecutionTimer() {
+        if (clientWaitStartNanos == -1) {
+            clientWaitStartNanos = nanosecondClock.getTicks();
+        }
+        if (cursor != null) {
+            cursor.suspendTimer();
+        }
     }
 
     public void storeConfirmation() {
@@ -1284,7 +1310,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                         .putAsciiQuoted("authentication").putAscii(':').put(httpConnectionContext.getAuthenticationNanos()).putAscii(',')
                         .putAsciiQuoted("compiler").putAscii(':').put(compilerNanos).putAscii(',')
                         .putAsciiQuoted("execute").putAscii(':').put(nanosecondClock.getTicks() - executeStartNanos).putAscii(',')
-                        .putAsciiQuoted("count").putAscii(':').put(recordCountNanos)
+                        .putAsciiQuoted("count").putAscii(':').put(recordCountNanos).putAscii(',')
+                        .putAsciiQuoted("clientWait").putAscii(':').put(clientWaitAccumNanos)
                         .putAscii('}');
             }
             if (explain) {

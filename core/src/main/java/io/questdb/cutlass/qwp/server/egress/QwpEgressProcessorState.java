@@ -508,6 +508,33 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingCreditSuspended = false;
     }
 
+    /**
+     * Forwards a consumer-resume notification to the retained streaming cursor.
+     * Deferred QWP sends flush before callers invoke this method, so query progress
+     * excludes only completed client/network wait intervals from active time.
+     */
+    public void resumeStreamingTimer() {
+        if (streamingCursor != null) {
+            streamingCursor.resumeTimer();
+        }
+        if (streamingPageFrameCursor != null) {
+            streamingPageFrameCursor.resumeTimer();
+        }
+    }
+
+    /**
+     * Forwards a consumer-suspension notification to the retained streaming cursor.
+     * Both cursor kinds are retained by this state across credit and socket parks.
+     */
+    public void suspendStreamingTimer() {
+        if (streamingCursor != null) {
+            streamingCursor.suspendTimer();
+        }
+        if (streamingPageFrameCursor != null) {
+            streamingPageFrameCursor.suspendTimer();
+        }
+    }
+
     @Override
     public void close() {
         clear();

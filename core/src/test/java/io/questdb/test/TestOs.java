@@ -119,7 +119,7 @@ public class TestOs {
                 }
 
                 try (InputStream is = Files.newInputStream(rustLibPath)) {
-                    Os.loadLib(rustLibPath.toString(), is);
+                    Os.loadLib(rustLibPath.getFileName().toString(), is);
                 } catch (IOException e) {
                     throw new RuntimeException(e);
                 }
