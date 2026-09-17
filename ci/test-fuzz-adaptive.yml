@@ -117,33 +117,32 @@ schedules:
       include:
         - nw_adaptive_commit
     always: true
-  # THE DURABILITY CRON IS COMMENTED OUT UNTIL THE BATTERY HAS RUN BY HAND. Nothing has
-  # measured this agent yet: the golden image does not exist on it, and whether its
-  # containers can use /dev/kvm at all is unanswered. A schedule that goes live before
-  # those are settled spends the one clean gap in the day failing, nightly, on a pool that
-  # the 01:00 nightly shares.
+  # The durability battery. Live since build 270631, which ran the whole battery green on
+  # this agent: controls t06/t07/t10 passed, then all three arms returned verdicts
+  # (reference W=0 11/11 DURABLE, reference W=50000 11/11 RPO_OK, product W=50000 4/4
+  # RPO_OK). Before that, three manual runs settled the infrastructure in turn -- KVM in an
+  # unprivileged container, the persistent golden image, and the client's native library.
   #
-  # Run it manually first, from the Run dialog, ticking forceDurability:
-  #     1. durabilityMode=provision, ignoreWindow=true   build the image, accept it with t01
-  #     2. durabilityMode=smoke,     ignoreWindow=true   controls + the per-point rate HERE
-  #     3. durabilityMode=nightly,   ignoreWindow=true   the real battery, off-schedule
-  # Set refPoints/productPoints from run 2's measured rate rather than from the defaults,
-  # which were measured on a developer box. Then uncomment the cron below.
+  # 23:00 UTC is the one clean gap in the day: the soaks run even hours 02:00-22:00 and the
+  # nightly runs at 01:00, so nothing else is scheduled against this window. The cron may
+  # still queue behind a long 22:00 soak; ADO starts the job when the agent frees, and an
+  # early start simply buys sweep points. What protects the 01:00 nightly is
+  # DURABILITY_DEADLINE_UTC in the job below, not this cron. If the nightly cron moves,
+  # move that deadline with it.
   #
-  # 23:00 UTC is the gap between the last soak and the nightly, and the cron may queue
-  # before the 22:00 soak finishes: ADO starts the job when the agent frees, and an early
-  # start buys sweep points. What protects the 01:00 nightly is DURABILITY_DEADLINE_UTC in
-  # the job below, not this cron. If the nightly cron moves, move that deadline with it.
+  # RunContinuousSoak's condition excludes this cron by name. Keep that exclusion: without
+  # it the 23:00 slot starts a 65-minute soak as well, on a one-agent pool.
   #
-  # RunContinuousSoak's condition already excludes this cron by name. Leave that exclusion
-  # in place while the cron is commented out -- it is a no-op until the cron exists, and
-  # restoring it later is the step everyone forgets.
-  # - cron: "0 23 * * *"
-  #   displayName: Run durability sweep
-  #   branches:
-  #     include:
-  #       - nw_adaptive_commit
-  #   always: true
+  # Point counts still come from the parameter defaults, which were measured on a developer
+  # box. Build 270631 measured this agent at ~4.8 s per reference boundary and ~22.8 s per
+  # product boundary, but under a concurrent soak, so those are upper bounds and are not yet
+  # the basis for the defaults.
+  - cron: "0 23 * * *"
+    displayName: Run durability sweep
+    branches:
+      include:
+        - nw_adaptive_commit
+    always: true
 
 variables:
   QDB_LOG_W_FILE_LOCATION: "$(Build.BinariesDirectory)/tests.log"
