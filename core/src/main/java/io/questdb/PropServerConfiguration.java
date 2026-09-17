@@ -948,7 +948,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             );
         }
         this.metrics = metricsEnabled || metricsPersistEnabled
-                ? new Metrics(true, new MetricsRegistryImpl())
+                ? new Metrics(true, metricsEnabled, new MetricsRegistryImpl())
                 : Metrics.DISABLED;
         this.logSqlQueryProgressExe = getBoolean(properties, env, PropertyKey.LOG_SQL_QUERY_PROGRESS_EXE, true);
         this.logLevelVerbose = getBoolean(properties, env, PropertyKey.LOG_LEVEL_VERBOSE, false);

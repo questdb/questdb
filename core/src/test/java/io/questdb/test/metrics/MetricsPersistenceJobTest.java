@@ -24,6 +24,7 @@
 
 package io.questdb.test.metrics;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -185,6 +186,57 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
                             test_virtual
                             2
                             2
+                            """);
+        });
+    }
+
+    @Test
+    public void testClearsRemovedVirtualMetricOnRefresh() throws Exception {
+        assertMemoryLeak(() -> {
+            final Target target = engine.getMetrics().getRegistry().newVirtualGauge("test_removed_virtual", () -> 42);
+            final MetricsConfiguration configuration = new MetricsConfiguration() {
+                @Override
+                public long getPersistIntervalMicros() {
+                    return 0;
+                }
+
+                @Override
+                public long getPersistVirtualIntervalMicros() {
+                    return 0;
+                }
+
+                @Override
+                public boolean isEnabled() {
+                    return true;
+                }
+
+                @Override
+                public boolean isPersistEnabled() {
+                    return true;
+                }
+
+                @Override
+                public boolean isPersistParquetEnabled() {
+                    return false;
+                }
+            };
+
+            try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration)) {
+                try {
+                    job.runSerially();
+                    engine.getMetrics().getRegistry().removeTarget(target);
+                    job.runSerially();
+                } finally {
+                    engine.getMetrics().getRegistry().removeTarget(target);
+                }
+            }
+
+            assertQuery("SELECT test_removed_virtual IS NULL missing FROM \"sys.metrics\"")
+                    .expectSize()
+                    .returns("""
+                            missing
+                            false
+                            true
                             """);
         });
     }
@@ -413,6 +465,44 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
                 Assert.assertFalse(job.isEnabled());
                 Assert.assertFalse(job.runSerially());
             }
+        });
+    }
+
+    @Test
+    public void testRetriesAfterTransientCairoException() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger snapshots = new AtomicInteger();
+            final Target target = new Target() {
+                @Override
+                public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
+                }
+
+                @Override
+                public void snapshot(MetricSnapshotVisitor visitor) {
+                    if (snapshots.incrementAndGet() == 1) {
+                        throw CairoException.critical(28).put("transient metrics persistence failure");
+                    }
+                    visitor.visitLong("transient_metric", MetricType.LONG_GAUGE, 42);
+                }
+            };
+
+            try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration(null, false, 0))) {
+                job.runSerially();
+                engine.getMetrics().getRegistry().addTarget(target);
+                try {
+                    job.runSerially();
+                    Assert.assertTrue(job.isEnabled());
+                    job.runSerially();
+                } finally {
+                    engine.getMetrics().getRegistry().removeTarget(target);
+                }
+            }
+
+            assertQuery("SELECT transient_metric FROM \"sys.metrics\" WHERE transient_metric IS NOT NULL")
+                    .returns("""
+                            transient_metric
+                            42
+                            """);
         });
     }
 

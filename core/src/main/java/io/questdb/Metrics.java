@@ -68,9 +68,15 @@ public class Metrics implements Target, Mutable {
     private final WalMetrics walMetrics;
     private final WorkerMetrics workerMetrics;
     private boolean enabled;
+    private boolean scrapeEnabled;
 
     public Metrics(boolean enabled, MetricsRegistry metricsRegistry) {
+        this(enabled, enabled, metricsRegistry);
+    }
+
+    public Metrics(boolean enabled, boolean scrapeEnabled, MetricsRegistry metricsRegistry) {
         this.enabled = enabled;
+        this.scrapeEnabled = scrapeEnabled;
         this.gcMetrics = new GCMetrics();
         this.jsonQueryMetrics = new JsonQueryMetrics(metricsRegistry);
         this.httpMetrics = new HttpMetrics(metricsRegistry);
@@ -101,10 +107,12 @@ public class Metrics implements Target, Mutable {
         workerMetrics.clear();
         httpMetrics.clear();
         enabled = true;
+        scrapeEnabled = true;
     }
 
     public void disable() {
         enabled = false;
+        scrapeEnabled = false;
     }
 
     public FiberMetrics fiberMetrics() {
@@ -125,6 +133,10 @@ public class Metrics implements Target, Mutable {
 
     public boolean isEnabled() {
         return enabled;
+    }
+
+    public boolean isScrapeEnabled() {
+        return scrapeEnabled;
     }
 
     public JsonQueryMetrics jsonQueryMetrics() {

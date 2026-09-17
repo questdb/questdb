@@ -431,6 +431,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
         Assert.assertFalse(configuration.getMetricsConfiguration().isPersistEnabled());
+        Assert.assertFalse(configuration.getMetrics().isScrapeEnabled());
         Assert.assertEquals(1_000_000, configuration.getMetricsConfiguration().getPersistIntervalMicros());
         Assert.assertEquals(60_000_000, configuration.getMetricsConfiguration().getPersistVirtualIntervalMicros());
         Assert.assertTrue(configuration.getMetricsConfiguration().isPersistParquetEnabled());
@@ -2060,6 +2061,7 @@ public class PropServerConfigurationTest {
         final PropServerConfiguration configuration = newPropServerConfiguration(properties);
         Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
         Assert.assertTrue(configuration.getMetrics().isEnabled());
+        Assert.assertFalse(configuration.getMetrics().isScrapeEnabled());
         Assert.assertTrue(configuration.getMetricsConfiguration().isPersistEnabled());
         Assert.assertFalse(configuration.getMetricsConfiguration().isPersistParquetEnabled());
         Assert.assertEquals(2_000_000, configuration.getMetricsConfiguration().getPersistIntervalMicros());
@@ -2323,6 +2325,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1.5, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
 
             Assert.assertTrue(configuration.getMetricsConfiguration().isEnabled());
+            Assert.assertTrue(configuration.getMetrics().isScrapeEnabled());
 
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
             Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());

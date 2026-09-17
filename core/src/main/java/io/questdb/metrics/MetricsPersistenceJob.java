@@ -26,6 +26,7 @@ package io.questdb.metrics;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
@@ -189,14 +190,14 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
             return false;
         }
 
+        final long now = clock.getTicks();
+        if (now < nextSampleMicros) {
+            return false;
+        }
         try {
             if (!isInitialized) {
                 initialize(engine);
                 isInitialized = true;
-            }
-            final long now = clock.getTicks();
-            if (now < nextSampleMicros) {
-                return false;
             }
             if (now <= lastTimestamp) {
                 nextSampleMicros = lastTimestamp + configuration.getPersistIntervalMicros();
@@ -204,6 +205,8 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
             }
             sample(now);
             nextSampleMicros = now + configuration.getPersistIntervalMicros();
+        } catch (CairoException th) {
+            retry(th, now);
         } catch (Throwable th) {
             disable(th);
         }
@@ -481,7 +484,9 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
             LOG.info().$("recreating incompatible sys.metrics table").$();
             dropTable(compiler, context);
             createTable(compiler, context);
-        } else {
+        } else if (!engine.isReadOnlyMode()) {
+            // CREATE already applies the configured TTL. On an Enterprise replica, ALTER would use
+            // the client-facing TableWriterAPI path and be rejected before the internal metrics writer opens.
             setTtl(compiler, context);
         }
     }
@@ -523,6 +528,24 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
         }
     }
 
+    private void retry(CairoException th, long now) {
+        final TableWriter writerToClose = writer;
+        writer = null;
+        Misc.free(writerToClose, th);
+        columns.clear();
+        nameToIndex.clear();
+        doubleValues = null;
+        isInitialized = false;
+        isSeen = null;
+        isVirtualMetricsEnabled = false;
+        lastDay = Long.MIN_VALUE;
+        lastTimestamp = Long.MIN_VALUE;
+        longValues = null;
+        nextSampleMicros = now + configuration.getPersistIntervalMicros();
+        nextVirtualSampleMicros = Long.MIN_VALUE;
+        LOG.error().$("metrics persistence failed, will retry [error=").$((Throwable) th).$(']').$();
+    }
+
     private void sample(long timestamp) throws Exception {
         Arrays.fill(isSeen, false);
         isVirtualMetricsEnabled = timestamp >= nextVirtualSampleMicros;
@@ -536,6 +559,9 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
         try {
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final MetricColumn column = columns.getQuick(i);
+                if (isVirtualMetricsEnabled && column.isVirtual && !isSeen[i]) {
+                    column.hasValue = false;
+                }
                 if (isSeen[i] || column.isVirtual && column.hasValue) {
                     if (column.isDouble) {
                         row.putDouble(column.columnIndex, doubleValues[i]);
@@ -553,7 +579,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
         lastTimestamp = timestamp;
 
         final long day = Micros.floorDD(timestamp);
-        if (configuration.isPersistParquetEnabled() && day >= lastDay && day != lastDay) {
+        if (configuration.isPersistParquetEnabled() && day > lastDay) {
             convertPreviousPartitions(day);
         }
         if (day > lastDay) {
