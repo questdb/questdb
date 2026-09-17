@@ -244,7 +244,9 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
 
     @Override
     public boolean followedOrderByAdvice() {
-        return base.followedOrderByAdvice();
+        // A fused SUBSAMPLE replaces a filter, which forms an order-advice boundary. The base
+        // may have followed an inner query's advice (e.g. ts DESC), not the post-sampling sort.
+        return !rowSelecting && base.followedOrderByAdvice();
     }
 
     public ObjList<WindowFunction> getAllWindowFunctions() {

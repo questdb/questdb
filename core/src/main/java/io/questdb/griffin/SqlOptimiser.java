@@ -11298,6 +11298,124 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
+     * Carries source columns needed by the final ORDER BY across SUBSAMPLE's projection boundary.
+     * Leave output aliases and ordinal keys for the normal ORDER BY rewrite. For other literals,
+     * let the normal SELECT rewrite resolve the original reference (including join ambiguity and
+     * table qualification), then order by its private alias above the keep filter. Do not move
+     * expression evaluation or sorting below SUBSAMPLE, or widen an aggregation's grouping keys.
+     */
+    private IQueryModel addSubsampleOrderColumns(
+            IQueryModel model,
+            IQueryModel nested,
+            CharSequence keepAlias,
+            CharSequence timestampAlias
+    ) throws SqlException {
+        if (model.getOrderBy().size() == 0 && nested.getOrderBy().size() == 0) {
+            return null;
+        }
+        final CharSequence sourceTimestamp = findVisibleSubsampleTimestamp(nested);
+        final SubsampleNameScope scope = resetSubsampleNameScope(0);
+        reserveSubsampleProjectionNames(model.getBottomUpColumns(), nested, null);
+        scope.reservedAliases.add(keepAlias);
+        final IQueryModel orderColumns = queryModelPool.next();
+        rewriteSubsampleOrderReferences(model.getOrderBy(), model, orderColumns, scope, sourceTimestamp, timestampAlias);
+        rewriteSubsampleOrderReferences(nested.getOrderBy(), model, orderColumns, scope, sourceTimestamp, timestampAlias);
+        return orderColumns;
+    }
+
+    private void addSubsampleOrderColumnReferences(IQueryModel model, IQueryModel orderColumns) throws SqlException {
+        if (orderColumns != null) {
+            final ObjList<QueryColumn> columns = orderColumns.getBottomUpColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final QueryColumn source = columns.getQuick(i);
+                final QueryColumn ref = nextColumn(source.getAlias(), false, source.getAst().position);
+                ref.setGenerated(true);
+                model.addBottomUpColumn(ref);
+            }
+        }
+    }
+
+    private void rewriteSubsampleOrderReferences(
+            ObjList<ExpressionNode> orderBy,
+            IQueryModel model,
+            IQueryModel orderColumns,
+            SubsampleNameScope scope,
+            CharSequence sourceTimestamp,
+            CharSequence timestampAlias
+    ) throws SqlException {
+        for (int i = 0, n = orderBy.size(); i < n; i++) {
+            // A declaration or another expression may share the original AST.
+            final ExpressionNode root = ExpressionNode.deepClone(expressionNodePool, orderBy.getQuick(i));
+            orderBy.setQuick(i, root);
+            sqlNodeStack.clear();
+            sqlNodeStack.push(root);
+            while (!sqlNodeStack.isEmpty()) {
+                final ExpressionNode node = sqlNodeStack.pop();
+                if (node.type == LITERAL) {
+                    // rewriteOrderByPosition interprets integer tokens against the original output.
+                    if (node == root && Numbers.parseIntQuiet(node.token) != Numbers.INT_NULL) {
+                        continue;
+                    }
+                    boolean isOutputAlias = false;
+                    if (Chars.indexOfLastUnquoted(node.token, '.') == -1) {
+                        for (int j = 0, z = scope.exportedNames.size(); j < z; j++) {
+                            if (Chars.equalsIgnoreCase(scope.exportedNames.getQuick(j), node.token)) {
+                                isOutputAlias = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!isOutputAlias) {
+                        // Reuse the exposed designated timestamp instead of sorting a hidden copy:
+                        // dropping that copy would also drop the result's timestamp designation.
+                        // An unqualified source name is only unambiguous without join branches.
+                        final IQueryModel fromModel = model.getNestedModel();
+                        if (timestampAlias != null && sourceTimestamp != null
+                                && (fromModel.getJoinModels().size() == 1 || Chars.indexOfLastUnquoted(node.token, '.') > -1)
+                                && isDesignatedTimestampReference(node.token, sourceTimestamp, fromModel)) {
+                            node.token = timestampAlias;
+                            continue;
+                        }
+                        CharSequence alias = orderColumns.getColumnNameToAliasMap().get(node.token);
+                        if (alias == null) {
+                            alias = SqlUtil.createColumnAlias(
+                                    characterStore,
+                                    "__order_subsample",
+                                    -1,
+                                    scope.reservedAliases,
+                                    scope.aliasSequenceMap,
+                                    false
+                            );
+                            scope.reservedAliases.add(alias);
+                            final QueryColumn column = queryColumnPool.next().of(
+                                    alias, ExpressionNode.deepClone(expressionNodePool, node), false
+                            );
+                            // Helpers must not become legal SUBSAMPLE value arguments or wildcard outputs.
+                            column.setGenerated(true);
+                            orderColumns.addBottomUpColumn(column);
+                            model.addBottomUpColumn(column);
+                        }
+                        node.token = alias;
+                    }
+                } else if (node.type != ExpressionNode.QUERY) {
+                    if (node.paramCount < 3) {
+                        if (node.lhs != null) {
+                            sqlNodeStack.push(node.lhs);
+                        }
+                        if (node.rhs != null) {
+                            sqlNodeStack.push(node.rhs);
+                        }
+                    } else {
+                        for (int j = 0; j < node.paramCount; j++) {
+                            sqlNodeStack.push(node.args.getQuick(j));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Method-agnostic tail shared by all SUBSAMPLE desugarings: wraps the pre-built keep-flag window call
      * ({@code windowCall}) in an {@code OVER (ORDER BY ts)} window column, filters on it, and re-projects
      * the original columns. The caller is responsible only for building {@code windowCall}; everything
@@ -11350,6 +11468,8 @@ public class SqlOptimiser implements Mutable {
         // so projected aliases, casts, expressions, aggregate outputs, and join disambiguation are the
         // values seen by both validation and execution.
         final boolean aggregation = isAggregationContext(model, nested);
+        final int projectedColumnCount = model.getBottomUpColumns().size();
+        final IQueryModel orderColumns = aggregation ? null : addSubsampleOrderColumns(model, nested, keepAlias, windowTsToken);
         final IQueryModel windowModel = queryModelPool.next();
         windowModel.setSelectModelType(IQueryModel.SELECT_MODEL_CHOOSE);
         windowModel.setNestedModel(wrapInSubQuery(model));
@@ -11364,10 +11484,11 @@ public class SqlOptimiser implements Mutable {
             // output, and the keep flag stays excluded from every wildcard expansion below.
             SqlUtil.addSelectStar(windowModel, queryColumnPool, expressionNodePool);
         } else {
-            for (int i = 0, n = projectedCols.size(); i < n; i++) {
+            for (int i = 0; i < projectedColumnCount; i++) {
                 windowModel.addBottomUpColumn(nextColumn(projectedCols.getQuick(i).getAlias()));
             }
         }
+        addSubsampleOrderColumnReferences(windowModel, orderColumns);
         // Explicit-projection aggregation rewriting requires the artificial-star filter to see the
         // keep flag while column maps are rebuilt; the explicit outer enumeration below drops it
         // again, so it cannot surface. A real wildcard above the keep window and
@@ -11396,6 +11517,7 @@ public class SqlOptimiser implements Mutable {
         final IQueryModel filterModel = queryModelPool.next();
         filterModel.setSelectModelType(IQueryModel.SELECT_MODEL_CHOOSE);
         SqlUtil.addSelectStar(filterModel, queryColumnPool, expressionNodePool);
+        addSubsampleOrderColumnReferences(filterModel, orderColumns);
         filterModel.setNestedModel(keepFilterWrap);
         filterModel.setNestedModelIsSubQuery(true);
         filterModel.setModelPosition(model.getModelPosition());
@@ -11410,11 +11532,8 @@ public class SqlOptimiser implements Mutable {
         if (wildcardProjection) {
             SqlUtil.addSelectStar(outerModel, queryColumnPool, expressionNodePool);
         } else {
-            for (int i = 0, n = innerCols.size(); i < n; i++) {
-                final QueryColumn qc = innerCols.getQuick(i);
-                if (!Chars.equalsIgnoreCase(qc.getAlias(), keepAlias)) {
-                    outerModel.addBottomUpColumn(nextColumn(qc.getAlias()));
-                }
+            for (int i = 0; i < projectedColumnCount; i++) {
+                outerModel.addBottomUpColumn(nextColumn(innerCols.getQuick(i).getAlias()));
             }
         }
         if (!aggregation && timestamp != null) {
