@@ -65,6 +65,20 @@ public class LogCapture {
         Assert.assertFalse("Message '" + regex + "' was logged more than once", matcher.find());
     }
 
+    /**
+     * Returns how many times {@code regex} matches the captured log. A test that pins the absence of
+     * log flooding needs the count: {@link #assertLoggedRE(String)} and {@link #assertOnlyOnce(String)}
+     * cannot tell "logged twice" from "logged once per query".
+     */
+    public int countLoggedRE(String regex) {
+        final Matcher matcher = Pattern.compile(regex).matcher(sink.toString());
+        int count = 0;
+        while (matcher.find()) {
+            count++;
+        }
+        return count;
+    }
+
     @TestOnly
     public void setClockForTest(LongSupplier clockMillis) {
         this.clockMillis = clockMillis;

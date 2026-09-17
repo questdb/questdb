@@ -273,10 +273,15 @@ public class ViewCompilerJob implements Job, QuietCloseable {
 
             // A view flipping to invalid is an outage for everything that reads it, and this is the
             // only line that records it -- compileView's catch blocks route the exception straight to
-            // invalidate() without logging it. Log it at ERROR so an operator watching for ERROR (e.g.
-            // across an upgrade) sees it instead of having to poll view_status. The valid transition
-            // stays at INFO.
-            final LogRecord log = invalid ? LOG.error() : LOG.info();
+            // invalidate() without logging it. Log the flip at ERROR so an operator watching for ERROR
+            // (e.g. across an upgrade) sees it instead of having to poll view_status.
+            //
+            // Only the flip. This method also runs on RE-assertion of an already-invalid state, and
+            // that is not a rare event: SqlCompilerImpl.compileExecutionModel enqueues a recompile from
+            // its catch-all, so every failed query that merely names a broken view lands here again.
+            // Promoting those too turned one broken view polled at 1 Hz into ~86k ERROR lines a day.
+            // isInvalid() is read before updateState below, so it still describes the prior state.
+            final LogRecord log = invalid && !viewState.isInvalid() ? LOG.error() : LOG.info();
             log.$("updating view state [view=").$safe(viewToken.getTableName())
                     .$(", invalid=").$(invalid)
                     .$(", reason=").$safe(invalidationReason)
