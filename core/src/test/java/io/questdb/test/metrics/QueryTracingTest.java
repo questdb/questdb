@@ -102,92 +102,100 @@ public class QueryTracingTest extends AbstractCairoTest {
 
     @Test
     public void testQueryTracingConvertsClosedPartitionsToParquet() throws Exception {
-        final long currentHour = Micros.floorHH(engine.getConfiguration().getMicrosecondClock().getTicks());
-        final long firstHour = currentHour - 2 * Micros.HOUR_MICROS;
-        engine.execute(
-                "CREATE TABLE '" + TABLE_NAME + "' (" +
-                        COLUMN_TS + " TIMESTAMP, " +
-                        COLUMN_QUERY_TEXT + " VARCHAR, " +
-                        COLUMN_EXECUTION_MICROS + " LONG, " +
-                        COLUMN_PRINCIPAL + " VARCHAR, " +
-                        COLUMN_QUERY_START + " TIMESTAMP" +
-                        ") TIMESTAMP(" + COLUMN_TS + ") PARTITION BY HOUR TTL 1 DAY BYPASS WAL"
-        );
-        engine.execute(
-                "INSERT INTO '" + TABLE_NAME + "' VALUES " +
-                        "(cast(" + firstHour + " as timestamp), 'select 1', 1, 'admin', cast(" + firstHour + " as timestamp)), " +
-                        "(cast(" + (firstHour + Micros.HOUR_MICROS) + " as timestamp), 'select 2', 1, 'admin', cast(" + (firstHour + Micros.HOUR_MICROS) + " as timestamp))"
-        );
+        assertMemoryLeak(() -> {
+            final long currentHour = Micros.floorHH(engine.getConfiguration().getMicrosecondClock().getTicks());
+            final long firstHour = currentHour - 2 * Micros.HOUR_MICROS;
+            engine.execute(
+                    "CREATE TABLE '" + TABLE_NAME + "' (" +
+                            COLUMN_TS + " TIMESTAMP, " +
+                            COLUMN_QUERY_TEXT + " VARCHAR, " +
+                            COLUMN_EXECUTION_MICROS + " LONG, " +
+                            COLUMN_PRINCIPAL + " VARCHAR, " +
+                            COLUMN_QUERY_START + " TIMESTAMP" +
+                            ") TIMESTAMP(" + COLUMN_TS + ") PARTITION BY HOUR TTL 1 DAY BYPASS WAL"
+            );
+            engine.execute(
+                    "INSERT INTO '" + TABLE_NAME + "' VALUES " +
+                            "(cast(" + firstHour + " as timestamp), 'select 1', 1, 'admin', cast(" + firstHour + " as timestamp)), " +
+                            "(cast(" + (firstHour + Micros.HOUR_MICROS) + " as timestamp), 'select 2', 1, 'admin', cast(" + (firstHour + Micros.HOUR_MICROS) + " as timestamp))"
+            );
 
-        try (QueryTracingJob job = new QueryTracingJob(engine)) {
-            enqueueTrace(currentHour, "select 3");
-            job.run();
-            enqueueTrace(firstHour + Micros.HOUR_MICROS - 1, "late select");
-            job.run();
-        }
+            try (QueryTracingJob job = new QueryTracingJob(engine)) {
+                enqueueTrace(currentHour, "select 3");
+                job.run();
+                enqueueTrace(firstHour + Micros.HOUR_MICROS - 1, "late select");
+                job.run();
+            }
 
-        final TableToken tableToken = engine.verifyTableName(TABLE_NAME);
-        try (TableReader reader = engine.getReader(tableToken)) {
-            Assert.assertEquals(3, reader.getPartitionCount());
-            Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormat(0));
-            Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormat(1));
-            Assert.assertEquals(PartitionFormat.NATIVE, reader.getPartitionFormat(2));
-        }
+            final TableToken tableToken = engine.verifyTableName(TABLE_NAME);
+            try (TableReader reader = engine.getReader(tableToken)) {
+                Assert.assertEquals(3, reader.getPartitionCount());
+                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormat(0));
+                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormat(1));
+                Assert.assertEquals(PartitionFormat.NATIVE, reader.getPartitionFormat(2));
+            }
 
-        assertQuery("select query_text from " + TABLE_NAME)
-                .expectSize()
-                .returns(
-                        "query_text\n" +
-                                "select 1\n" +
-                                "select 2\n" +
-                                "select 3\n" +
-                                "late select\n"
-                );
-        assertQuery(
-                "select count() from " + TABLE_NAME +
-                        " where query_text = 'late select'" +
-                        " and query_start = cast(" + (firstHour + Micros.HOUR_MICROS - 1) + " as timestamp)" +
-                        " and ts > query_start"
-        ).noRandomAccess().expectSize().returns("count\n1\n");
+            assertQuery("select query_text from " + TABLE_NAME)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(
+                            "query_text\n" +
+                                    "select 1\n" +
+                                    "select 2\n" +
+                                    "select 3\n" +
+                                    "late select\n"
+                    );
+            assertQuery(
+                    "select count() from " + TABLE_NAME +
+                            " where query_text = 'late select'" +
+                            " and query_start = cast(" + (firstHour + Micros.HOUR_MICROS - 1) + " as timestamp)" +
+                            " and ts > query_start"
+            ).noRandomAccess().expectSize().noLeakCheck().returns("count\n1\n");
+        });
     }
 
     @Test
     public void testQueryTracingMigratesExistingTable() throws Exception {
-        engine.execute(
-                "CREATE TABLE '" + TABLE_NAME + "' (" +
-                        COLUMN_TS + " TIMESTAMP, " +
-                        COLUMN_QUERY_TEXT + " VARCHAR, " +
-                        COLUMN_EXECUTION_MICROS + " LONG, " +
-                        COLUMN_PRINCIPAL + " VARCHAR" +
-                        ") TIMESTAMP(" + COLUMN_TS + ") PARTITION BY HOUR TTL 1 DAY BYPASS WAL"
-        );
+        assertMemoryLeak(() -> {
+            engine.execute(
+                    "CREATE TABLE '" + TABLE_NAME + "' (" +
+                            COLUMN_TS + " TIMESTAMP, " +
+                            COLUMN_QUERY_TEXT + " VARCHAR, " +
+                            COLUMN_EXECUTION_MICROS + " LONG, " +
+                            COLUMN_PRINCIPAL + " VARCHAR" +
+                            ") TIMESTAMP(" + COLUMN_TS + ") PARTITION BY HOUR TTL 1 DAY BYPASS WAL"
+            );
 
-        try (QueryTracingJob ignored = new QueryTracingJob(engine)) {
-            // Opening the job upgrades the existing table while it owns the writer.
-        }
+            try (QueryTracingJob ignored = new QueryTracingJob(engine)) {
+                // Opening the job upgrades the existing table while it owns the writer.
+            }
 
-        assertQuery("select \"column\", type from table_columns('" + TABLE_NAME + "') where \"column\" = '" + COLUMN_QUERY_START + "'")
-                .noRandomAccess()
-                .returns("column\ttype\n" + COLUMN_QUERY_START + "\tTIMESTAMP\n");
+            assertQuery("select \"column\", type from table_columns('" + TABLE_NAME + "') where \"column\" = '" + COLUMN_QUERY_START + "'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("column\ttype\n" + COLUMN_QUERY_START + "\tTIMESTAMP\n");
+        });
     }
 
     @Test
     public void testQueryTracingProcessesTtlChange() throws Exception {
-        try (
-                QueryTracingJob job = new QueryTracingJob(engine);
-                SqlCompiler compiler = engine.getSqlCompiler()
-        ) {
-            final CompiledQuery query = compiler.compile("alter table " + TABLE_NAME + " set ttl 2 hours", sqlExecutionContext);
-            try (OperationFuture future = query.execute(new SCSequence())) {
-                Assert.assertEquals(OperationFuture.QUERY_NO_RESPONSE, future.await(0));
-                job.run();
-                future.await();
+        assertMemoryLeak(() -> {
+            try (
+                    QueryTracingJob job = new QueryTracingJob(engine);
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                final CompiledQuery query = compiler.compile("alter table " + TABLE_NAME + " set ttl 2 hours", sqlExecutionContext);
+                try (OperationFuture future = query.execute(new SCSequence())) {
+                    Assert.assertEquals(OperationFuture.QUERY_NO_RESPONSE, future.await(0));
+                    job.run();
+                    future.await();
+                }
             }
-        }
 
-        final TableToken tableToken = engine.verifyTableName(TABLE_NAME);
-        try (TableReader reader = engine.getReader(tableToken)) {
-            Assert.assertEquals(2, reader.getMetadata().getTtlHoursOrMonths());
-        }
+            final TableToken tableToken = engine.verifyTableName(TABLE_NAME);
+            try (TableReader reader = engine.getReader(tableToken)) {
+                Assert.assertEquals(2, reader.getMetadata().getTtlHoursOrMonths());
+            }
+        });
     }
 }
