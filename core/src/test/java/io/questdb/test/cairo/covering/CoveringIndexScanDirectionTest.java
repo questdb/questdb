@@ -289,7 +289,7 @@ public class CoveringIndexScanDirectionTest extends AbstractCoveringIndexQueryTe
                         "the multi-key control refused the opt-out, so the two refusals above prove"
                                 + " nothing -- tryDisableTimestampOrdering() is answering false to"
                                 + " everything",
-                        covering.tryDisableTimestampOrdering(false, null)
+                        covering.tryDisableTimestampOrdering(false, null, 1)
                 );
             }
         });
@@ -326,7 +326,7 @@ public class CoveringIndexScanDirectionTest extends AbstractCoveringIndexQueryTe
             final CoveringIndexRecordCursorFactory covering =
                     findBase(top, CoveringIndexRecordCursorFactory.class);
             Assert.assertNotNull("no covering scan under " + top.getClass().getSimpleName(), covering);
-            Assert.assertFalse(message, covering.tryDisableTimestampOrdering(false, null));
+            Assert.assertFalse(message, covering.tryDisableTimestampOrdering(false, null, 1));
         }
     }
 

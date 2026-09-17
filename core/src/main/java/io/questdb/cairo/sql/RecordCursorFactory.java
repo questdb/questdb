@@ -290,10 +290,22 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * ordered runs -- a covering scan grouped by its own index column, where every group
      * draws from one key's ascending posting list. The filter is shared scratch state:
      * read it during the call, never retain it.
+     * <p>
+     * {@code framePassesPerFrame} is how many separate passes the consumer makes over EACH page
+     * frame it is handed -- 1 for a consumer that reads a frame once and updates every aggregate
+     * as it goes, N for one that dispatches N independent passes over the same frame. It is a
+     * structural property of the consumer, readable off its own dispatch loop, and it is passed
+     * because it is the base's per-frame cost MULTIPLIER: a base that trades fewer rows per frame
+     * for more frames pays this consumer's per-frame cost once per pass, so the density at which
+     * that trade stops paying scales with it. A consumer that does not know may pass 1, which is
+     * the value that makes a base most willing to accept -- so a base must not treat it as a
+     * safety input. It is a performance hint and nothing else; no correctness property may rest
+     * on it.
      */
     default boolean tryDisableTimestampOrdering(
             boolean hasOrderSensitiveAggregates,
-            @Nullable ListColumnFilter groupByKeyColumns
+            @Nullable ListColumnFilter groupByKeyColumns,
+            int framePassesPerFrame
     ) {
         return false;
     }

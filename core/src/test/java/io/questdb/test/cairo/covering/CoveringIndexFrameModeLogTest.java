@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.covering;
 
+import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.test.tools.LogCapture;
 import org.junit.After;
 import org.junit.Before;
@@ -45,10 +46,22 @@ import org.junit.Test;
  * numbers are the whole point: {@code rowsPerPair} against {@code crossover} is why the density
  * gate decided what it decided, and a record that named the mode without them would leave a user
  * exactly where they started.
+ * <p>
+ * The {@code crossover} the record carries is per-CONSUMER, not a global constant: it is
+ * {@code PER_KEY_MIN_ROWS_PER_PAIR_BASE} times the passes the consumer makes over each frame.
+ * {@link #QUERY} carries two aggregate values on the vectorized group by, which dispatches one
+ * task per (frame, aggregate) pair, so the number these arms expect is {@code base x 2}. It is
+ * DERIVED here rather than written out, so that moving the base moves this expectation with it
+ * instead of turning these two arms red for a retune they should not care about -- while a change
+ * to the DERIVATION, which they should care about, still fails them.
  */
 public class CoveringIndexFrameModeLogTest extends AbstractCoveringIndexQueryTest {
 
     private static final int KEYS = 4;
+    // avg(value) and count(): two vector aggregate functions, hence two passes per frame.
+    private static final int QUERY_FRAME_PASSES = 2;
+    private static final int CROSSOVER =
+            CoveringIndexRecordCursorFactory.getPerKeyMinRowsPerPairBaseForTesting() * QUERY_FRAME_PASSES;
     private static final String QUERY =
             "SELECT param_id, avg(value) a, count() c FROM telemetry" +
                     " WHERE param_id IN ('SFID','HOTMIC','KCAS','CALT') ORDER BY param_id";
@@ -75,13 +88,14 @@ public class CoveringIndexFrameModeLogTest extends AbstractCoveringIndexQueryTes
     public void testDenseOpenLogsPerKeyWithTheNumbersBehindIt() throws Exception {
         assertMemoryLeak(() -> {
             createTelemetryTable();
-            // 40 partitions x 4 keys x 1000 rows per pair: 3.9x the crossover.
+            // 40 partitions x 4 keys x 1000 rows per pair, against a crossover of base x 2.
             insertUniformBlock(40, 1000);
             printSql(QUERY, sink);
             capture.drain();
             capture.assertLoggedRE(
                     "covering scan frame mode \\[table=telemetry, mode=per-key, reason=density, keys=4, "
-                            + "partitionsUpper=40, framesUpper=\\d+, frameCeiling=\\d+, rowsPerPair=1000, crossover=256]"
+                            + "partitionsUpper=40, framesUpper=\\d+, frameCeiling=\\d+, rowsPerPair=1000, crossover="
+                            + CROSSOVER + "]"
             );
         });
     }
@@ -96,7 +110,8 @@ public class CoveringIndexFrameModeLogTest extends AbstractCoveringIndexQueryTes
             capture.drain();
             capture.assertLoggedRE(
                     "covering scan frame mode \\[table=telemetry, mode=merged, reason=density, keys=4, "
-                            + "partitionsUpper=40, framesUpper=\\d+, frameCeiling=\\d+, rowsPerPair=5, crossover=256]"
+                            + "partitionsUpper=40, framesUpper=\\d+, frameCeiling=\\d+, rowsPerPair=5, crossover="
+                            + CROSSOVER + "]"
             );
         });
     }

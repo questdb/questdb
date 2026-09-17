@@ -132,36 +132,65 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // a tuned constant, so it carries no test override.
     static final int MAX_PER_KEY_PAGE_FRAMES = Rows.MAX_SAFE_PARTITION_INDEX;
     // The density below which per-key mode is a pessimisation, in rows per
-    // (key, partition-frame) pair.
+    // (key, partition-frame) pair, PER PASS THE CONSUMER MAKES OVER EACH FRAME.
     //
     // Per-key costs a FIXED cost per frame, independent of how many rows the frame carries, and
     // emits one frame per non-empty pair, so its win is entirely a function of how many rows
-    // each pair holds. That fixed cost measures 3.9-5.3 us per (key, partition) frame on a
-    // 32-core box -- NOT the 1.2-1.8 us this comment claimed until the crossover was swept
-    // directly -- and the crossover is proportional to it.
+    // each pair holds. The crossover is that fixed cost divided by the per-row saving:
     //
-    // Swept with the mode DRIVEN through setMinRowsPerKeyPartitionForTesting rather than
+    //     rowsPerPair* = fixedFrameCost / perRowSaving
+    //
+    // and the numerator belongs to the CONSUMER, not to this scan. That is why this is a base
+    // rather than the whole answer. The vectorized Rosti group by publishes one task per
+    // (frame, aggregate) pair -- see the nested `for (frameIndex) for (vafIndex)` dispatch in
+    // griffin/engine/groupby/vect/GroupByRecordCursorFactory.buildRosti() -- so its per-frame
+    // cost is proportional to the number of aggregate VALUES. The async group bys publish one
+    // task per frame and update every aggregate in a single row-wise pass, so theirs is not.
+    // Aggregate count still adds per-ROW cost there, but per-row cost is paid by BOTH modes and
+    // cancels out of the ratio above. So the crossover moves ~4x between a one-aggregate and a
+    // four-aggregate vectorized group by, and does not move at all between the same two on the
+    // async sites. A single constant cannot be right for both.
+    //
+    // Hence: effectivePerKeyMinRowsPerPair() = this x the consumer's declared passes per frame,
+    // which tryDisableTimestampOrdering() is told and this factory remembers.
+    //
+    // MEASURED, with the mode DRIVEN through setMinRowsPerKeyPartitionForTesting rather than
     // inferred from the data, both arms over the same bytes in the same engine, each block
-    // checked against the mode counters and bookended by re-running the first arm: the crossover
-    // sits at 168-246 rows per pair (geometric mean 197, least-squares fit on time-vs-rows
-    // 156-324) and is remarkably flat -- it moves less than 1.5x across K = 4..512,
-    // P = 16..512 and worker counts 2, 8 and 31. At the 32 this constant used to hold, per-key
-    // measured 3.2-5.2x SLOWER than the merge, and 8-12x slower at 8 rows per pair: the exact
-    // inversion the gate exists to prevent, admitted by the gate itself.
+    // checked against the mode counters and bookended by re-running the first arm, over all
+    // THREE offer sites and at one and four aggregates (K=16xP=128 and K=4xP=512, 8 workers,
+    // host load 24-30, best-of-15 after 5 warm-ups). Crossover, in rows per pair:
     //
-    // 256 is the smallest power of two at or above EVERY measured crossover, and the over-shoot
-    // is deliberate because the error is asymmetric. Below the crossover per-key loses up to
-    // 12x; the band this declines but could have won (168-256) wins at most 1.44x, measured.
-    // Above the constant the win is large and grows: 1.7-3.1x at 1024 rows per pair, 4.2x at
-    // 400,000.
+    //     vectorized, 4 aggregates   330 - 350      (4 passes -> this x 4 = 256)
+    //     vectorized, 1 aggregate     75 -  90      (1 pass  -> this x 1 =  64)
+    //     async keyed, 4 aggregates   40 -  66      (1 pass)
+    //     async keyed, 1 aggregate   <32 -  80      (1 pass)
+    //     async not-keyed             36 -  58      (1 pass)
+    //
+    // Divided by the pass count, every one of those lands in 32-90, which is the claim this
+    // constant rests on: the pass count is what the crossover actually scales with, and once it
+    // is divided out a single base fits all five shapes. 64 is the largest power of two at or
+    // below every measured crossover per pass. The residual error is bounded and stated: the
+    // band a shape loses in is the gap between 64 x passes and that shape's own crossover, and
+    // the worst measured case is a one-aggregate query at 64-90 rows per pair, where per-key
+    // runs up to 1.31x SLOWER. Above the constant the win is large and grows: 2.2-4.4x at
+    // 192-384 rows per pair on four of the five shapes.
+    //
+    // The previous single value of 256 was this base x 4 with the x4 hidden: it was swept on a
+    // four-aggregate vectorized group by, the only shape for which it is right. On the other
+    // four it declined per-key where per-key measured 2.2-3.4x FASTER, including on this PR's
+    // own headline max() benchmark. 32, the value before that, is this base divided by 2 and was
+    // wrong in the other direction on every shape.
     //
     // Unlike MAX_PER_KEY_PAGE_FRAMES this IS a tuned constant: getting it wrong costs speed,
     // never correctness. That is exactly why it carries a test override and the ceiling does
     // not, and why the two are separate gates rather than one predicate -- a correctness
-    // invariant must not be able to move when someone retunes a benchmark number.
+    // invariant must not be able to move when someone retunes a benchmark number. It is also
+    // why framePassesPerFrame may be a hint: a consumer that under-states it only makes this
+    // scan more willing to accept, which costs speed and nothing else.
     //
-    // CoveringIndexPerKeyCrossoverPerfTest is the sweep, and re-runs on demand.
-    static final int PER_KEY_MIN_ROWS_PER_PAIR = 256;
+    // CoveringIndexPerKeyCrossoverPerfTest is the sweep, parameterised over the consumer shape,
+    // and re-runs on demand.
+    static final int PER_KEY_MIN_ROWS_PER_PAIR_BASE = 64;
     // Test-only crossover override; -1 means "use HEAP_MERGE_MIN_KEYS".
     @TestOnly
     static int heapMergeMinKeysOverride = -1;
@@ -176,9 +205,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     static volatile long mergedModeOpensForTesting;
     @TestOnly
     static volatile long perKeyModeOpensForTesting;
-    // Test-only crossover override; -1 means "use PER_KEY_MIN_ROWS_PER_PAIR", 0 means "admit any
-    // density", which is how a test that is about the CEILING switches the heuristic out of the
-    // way. There is deliberately no equivalent for the ceiling.
+    // Test-only crossover override, as an ABSOLUTE rows-per-pair value: it replaces the whole of
+    // effectivePerKeyMinRowsPerPair(), pass count included, so a test that forces a mode gets the
+    // mode it asked for whatever consumer it happens to be driving. -1 means "derive it", 0 means
+    // "admit any density", which is how a test that is about the CEILING switches the heuristic
+    // out of the way. There is deliberately no equivalent for the ceiling.
     @TestOnly
     static int perKeyMinRowsPerPairOverride = -1;
     // The density estimate's probe budget, and the cap on how much of it may be spent on the
@@ -255,6 +286,17 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // parameter, passed true at all five sites; it is gone because a knob nobody turns states
     // a contract the code does not actually rely on.
     private boolean unorderedFramesPermitted;
+    // How many passes the consumer that took the ordering opt-out makes over each page frame --
+    // its per-frame cost multiplier, and therefore this scan's crossover multiplier. See
+    // PER_KEY_MIN_ROWS_PER_PAIR_BASE.
+    //
+    // Written only by tryDisableTimestampOrdering(), beside unorderedFramesPermitted, and read
+    // only from effectivePerKeyMinRowsPerPair(). That pairing is what makes it safe to hold on
+    // the factory: the value is a property of the CONSUMER, which is fixed for the life of a
+    // compiled plan, unlike the density, which is a property of the DATA and so must be re-read
+    // per open. Born 1, and only ever read on a path that unorderedFramesPermitted already
+    // gates, so the born value is reachable only as the neutral multiplier.
+    private int framePassesPerFrame = 1;
 
     public CoveringIndexRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -369,12 +411,23 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     /**
-     * The effective per-key density crossover: the test override when set, otherwise
-     * {@link #PER_KEY_MIN_ROWS_PER_PAIR}. Zero admits any density, which switches the
-     * performance heuristic off without touching the correctness ceiling.
+     * The effective per-key density crossover for THIS factory's consumer: the test override when
+     * set, otherwise {@link #PER_KEY_MIN_ROWS_PER_PAIR_BASE} scaled by the passes that consumer
+     * makes over each frame. Zero admits any density, which switches the performance heuristic
+     * off without touching the correctness ceiling.
+     * <p>
+     * An instance method, not a static one, because the crossover is a function of the consumer
+     * and a covering scan has exactly one: whoever took the ordering opt-out. Saturating on the
+     * multiply, so a consumer reporting an absurd pass count declines per-key rather than
+     * wrapping negative and admitting everything -- the safe direction for a performance hint
+     * that arrives from outside.
      */
-    static int effectivePerKeyMinRowsPerPair() {
-        return perKeyMinRowsPerPairOverride >= 0 ? perKeyMinRowsPerPairOverride : PER_KEY_MIN_ROWS_PER_PAIR;
+    int effectivePerKeyMinRowsPerPair() {
+        if (perKeyMinRowsPerPairOverride >= 0) {
+            return perKeyMinRowsPerPairOverride;
+        }
+        final long scaled = (long) PER_KEY_MIN_ROWS_PER_PAIR_BASE * framePassesPerFrame;
+        return scaled > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) scaled;
     }
 
     /**
@@ -451,6 +504,22 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         return perKeyModeOpensForTesting;
     }
 
+    /**
+     * Test-only read of {@link #PER_KEY_MIN_ROWS_PER_PAIR_BASE}, which is package-private in
+     * {@code io.questdb.griffin.engine.table} and so unreadable from the test package.
+     * <p>
+     * It exists so the density fixtures can be STATED as multiples of the shipped base instead of
+     * duplicating its value. A test that hard-codes the number instead is not pinned to it: it
+     * silently stops meaning what its javadoc says the moment the base moves, which is exactly
+     * what happened to the fixtures in this package when the crossover last changed. Multiply by
+     * the passes the test's own query makes over each frame to get the crossover that query
+     * actually faces -- see {@code effectivePerKeyMinRowsPerPair()}.
+     */
+    @TestOnly
+    public static int getPerKeyMinRowsPerPairBaseForTesting() {
+        return PER_KEY_MIN_ROWS_PER_PAIR_BASE;
+    }
+
     @TestOnly
     public static void resetModeSelectionsForTesting() {
         perKeyModeOpensForTesting = 0;
@@ -470,7 +539,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     /**
      * Test-only hook that moves the per-key density crossover (see
-     * {@link #PER_KEY_MIN_ROWS_PER_PAIR}). Pass {@code 0} to admit any density -- what a test
+     * {@link #PER_KEY_MIN_ROWS_PER_PAIR_BASE} and the consumer's pass count). The value is
+     * ABSOLUTE: it replaces the derived crossover outright, pass count included, so a test that
+     * forces a mode does not have to know which consumer it is driving. Pass {@code 0} to admit
+     * any density -- what a test
      * about the frame-count CEILING wants, since a sparse ceiling-probing fixture would
      * otherwise be rejected by the heuristic and prove nothing about the bound. Pass
      * {@code -1} to clear the override.
@@ -932,7 +1004,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     @Override
     public boolean tryDisableTimestampOrdering(
             boolean hasOrderSensitiveAggregates,
-            @Nullable ListColumnFilter groupByKeyColumns
+            @Nullable ListColumnFilter groupByKeyColumns,
+            int framePassesPerFrame
     ) {
         // Per-key mode lives ONLY on the page-frame path, so a factory that produces no page
         // frames cannot run it and must not be granted it. Today that means a factory carrying a
@@ -968,6 +1041,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // in getPageFrameCursor(): the sizes that make per-key mode legal (a frame count that
         // stays inside the row-id encoding) and worthwhile are not knowable here, and a value
         // read here would in any case be a compile-time snapshot baked into a cached plan.
+        //
+        // The pass count is the exception, and deliberately so: it describes the CONSUMER, which
+        // is the one thing about this decision that a cached plan may safely bake in, because it
+        // is fixed for the life of that plan. The density is not, which is why it is not kept
+        // here. Clamped at 1 rather than trusted: this is a performance hint from another
+        // factory, and the clamp is what keeps a nonsensical value from turning the density gate
+        // off altogether. See PER_KEY_MIN_ROWS_PER_PAIR_BASE.
+        this.framePassesPerFrame = Math.max(1, framePassesPerFrame);
         unorderedFramesPermitted = true;
         return true;
     }

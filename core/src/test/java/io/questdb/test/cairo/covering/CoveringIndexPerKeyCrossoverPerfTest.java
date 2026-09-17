@@ -26,9 +26,11 @@ package io.questdb.test.cairo.covering;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
@@ -61,6 +63,16 @@ import static org.junit.Assert.assertTrue;
  * <p>
  * Driving the gate rather than the data means both arms read the SAME bytes in the SAME engine,
  * on one build. No cross-build comparison, so no build-to-build drift to argue about.
+ * <p>
+ * <b>Why the CONSUMER is an axis.</b> The crossover is {@code fixedFrameCost / perRowSaving}, and
+ * the numerator belongs to the consumer, not to the covering scan: the vectorized Rosti group by
+ * publishes one task per (frame, aggregate) pair, so its per-frame cost is proportional to the
+ * number of aggregate VALUES, while the async group bys publish one task per frame and evaluate
+ * every aggregate in a single row-wise pass. So the crossover is ~4x higher for a four-aggregate
+ * vectorized group by than for the same query with one aggregate, and the async sites -- two of
+ * the three offer sites -- sit at the low end whatever the aggregate count. A sweep that pins the
+ * query measures one corner of that and reports it as a constant. {@link Shape} is that axis, and
+ * it defaults to all five reachable shapes.
  */
 public class CoveringIndexPerKeyCrossoverPerfTest extends AbstractCoveringIndexQueryTest {
 
@@ -72,6 +84,51 @@ public class CoveringIndexPerKeyCrossoverPerfTest extends AbstractCoveringIndexQ
     private static final int FORCE_PER_KEY = 1;
     private static final Log LOG = LogFactory.getLog(CoveringIndexPerKeyCrossoverPerfTest.class);
     private static final String TAG = "#XOVER#";
+
+    /**
+     * The consumer shapes that can reach per-key mode, and the axis the first sweep held fixed.
+     * <p>
+     * There are THREE offer sites, not one: the vectorized Rosti group by calls
+     * {@code tryDisableTimestampOrdering} directly from {@code SqlCodeGenerator}, and the two
+     * {@code offerUnorderedScan} calls serve the async keyed and async not-keyed group bys. The
+     * first sweep measured only the first, with four aggregates -- which is why the constant it
+     * produced is wrong for the other four shapes. These five cover all three sites at one and at
+     * four aggregate values.
+     * <p>
+     * An aggregate over a plain column vectorizes; wrapping the argument in an expression
+     * ({@code v * 2.0}) does not, and routes to the async group by instead. Dropping the key
+     * routes to the not-keyed async group by. Each shape therefore names the operator it intends
+     * to exercise, and {@link #measureShape} ASSERTS that operator appears in the plan -- which is
+     * a plan fact, and so is the one thing {@code EXPLAIN} may legitimately be read for here. The
+     * covering MODE is still read only from the log record and the counters.
+     */
+    private enum Shape {
+        // Four vector aggregates on the vectorized Rosti group by: the shape, and the ONLY shape,
+        // the first crossover sweep measured.
+        VEC4("SELECT k, count() c, sum(v) s, min(v) mn, max(v) mx FROM t WHERE k IN (%s) ORDER BY k", "GroupBy vectorized: true", 4),
+        // The same consumer and the same data with ONE aggregate value. This is the shape of this
+        // PR's own headline benchmark (max() over a covered column).
+        VEC1("SELECT k, sum(v) s FROM t WHERE k IN (%s) ORDER BY k", "GroupBy vectorized: true", 1),
+        // Async keyed group by -- offerUnorderedScan site 2 -- at four and at one aggregate.
+        ASYNC4("SELECT k, count() c, sum(v * 2.0) s, min(v * 2.0) mn, max(v * 2.0) mx FROM t WHERE k IN (%s) ORDER BY k", "Async Group By", 4),
+        ASYNC1("SELECT k, sum(v * 2.0) s FROM t WHERE k IN (%s) ORDER BY k", "Async Group By", 1),
+        // Async NOT-keyed group by -- offerUnorderedScan site 1.
+        ASYNCN("SELECT sum(v * 2.0) s FROM t WHERE k IN (%s)", "Async Group By", 1);
+
+        final int aggregates;
+        final String operator;
+        final String sql;
+
+        Shape(String sql, String operator, int aggregates) {
+            this.sql = sql;
+            this.operator = operator;
+            this.aggregates = aggregates;
+        }
+
+        String sql(String keyInList) {
+            return String.format(sql, keyInList);
+        }
+    }
 
     /**
      * Result lines go to {@code -Dcovering.crossover.out} when set, because the engine's own log
@@ -114,11 +171,17 @@ public class CoveringIndexPerKeyCrossoverPerfTest extends AbstractCoveringIndexQ
         // checked on more than one of each.
         final int[][] configs = parsePairs(System.getProperty("covering.crossover.configs", "4x512,16x128,64x32"));
         final String[] rowsPerPair = System.getProperty("covering.crossover.rpp", "8,16,32,64,128,256,512,1024").split(",");
+        // All five by default: the crossover moves ~4x along this axis, so a sweep that pins it
+        // measures one point and reports it as a constant. That is exactly how 256 was produced.
+        final String[] shapes = System.getProperty("covering.crossover.queries", "VEC4,VEC1,ASYNC4,ASYNC1,ASYNCN").split(",");
 
         emit(TAG + " sweep=density workers=" + workers + " warmup=" + warmup + " iters=" + iters);
-        for (int[] cfg : configs) {
-            for (String r : rowsPerPair) {
-                measureShape(cfg[0], cfg[1], Integer.parseInt(r.trim()), workers, warmup, iters);
+        for (String s : shapes) {
+            final Shape shape = Shape.valueOf(s.trim());
+            for (int[] cfg : configs) {
+                for (String r : rowsPerPair) {
+                    measureShape(cfg[0], cfg[1], Integer.parseInt(r.trim()), workers, warmup, iters, shape);
+                }
             }
         }
     }
@@ -141,17 +204,38 @@ public class CoveringIndexPerKeyCrossoverPerfTest extends AbstractCoveringIndexQ
 
         emit(TAG + " sweep=partitions workers=" + workers + " warmup=" + warmup + " iters=" + iters);
         for (int[] s : shapes) {
-            measureShape(4, s[0], s[1], workers, warmup, iters);
+            measureShape(4, s[0], s[1], workers, warmup, iters, Shape.VEC4);
         }
     }
 
+    /**
+     * Consumes every numeric column of every row, so no aggregate is dead code whatever shape the
+     * query has. Column-count-agnostic on purpose: the shapes below carry between one and five
+     * columns, and a drain hard-coded to one of them would silently stop reading the others --
+     * which would make a shape look fast because it was measuring less work, not less overhead.
+     */
     private static long drain(RecordCursorFactory factory, SqlExecutionContextImpl ctx) throws Exception {
         long guard = 0;
         try (RecordCursor cursor = factory.getCursor(ctx)) {
+            final RecordMetadata meta = factory.getMetadata();
+            final int columnCount = meta.getColumnCount();
             final Record rec = cursor.getRecord();
             while (cursor.hasNext()) {
-                // k, count(), sum(v), min(v), max(v) -- summed so nothing is dead code.
-                guard += rec.getLong(1) + (long) rec.getDouble(2) + (long) rec.getDouble(3) + (long) rec.getDouble(4);
+                for (int i = 0; i < columnCount; i++) {
+                    switch (ColumnType.tagOf(meta.getColumnType(i))) {
+                        case ColumnType.LONG:
+                            guard += rec.getLong(i);
+                            break;
+                        case ColumnType.INT:
+                            guard += rec.getInt(i);
+                            break;
+                        case ColumnType.DOUBLE:
+                            guard += (long) rec.getDouble(i);
+                            break;
+                        default:
+                            break; // the SYMBOL key column: not a value, and not worth decoding here
+                    }
+                }
             }
         }
         return guard;
@@ -196,10 +280,10 @@ public class CoveringIndexPerKeyCrossoverPerfTest extends AbstractCoveringIndexQ
         }
     }
 
-    private void measureShape(int keys, int partitions, int rowsPerPair, int workers, int warmup, int iters) throws Exception {
+    private void measureShape(int keys, int partitions, int rowsPerPair, int workers, int warmup, int iters, Shape shape) throws Exception {
         final long rows = (long) keys * partitions * rowsPerPair;
         final String in = keyInList(keys);
-        final String query = "SELECT k, count() c, sum(v) s, min(v) mn, max(v) mx FROM t WHERE k IN (" + in + ") ORDER BY k";
+        final String query = shape.sql(in);
 
         buildTable(keys, partitions, rowsPerPair);
 
@@ -216,6 +300,15 @@ public class CoveringIndexPerKeyCrossoverPerfTest extends AbstractCoveringIndexQ
             TestUtils.printSql(node.compiler, node.ctx, "EXPLAIN " + query, plan);
             final String p = plan.toString();
             assertTrue("scan must be the covering index, plan was:\n" + p, p.contains("CoveringIndex on: k"));
+            // WHICH CONSUMER is a plan fact, so the plan is the right place to read it -- unlike
+            // the covering MODE, which the plan states only as a permission. Asserted because the
+            // whole point of this axis is that the consumer differs between shapes: a shape that
+            // silently vectorized when it meant to go async would re-measure VEC under an ASYNC
+            // label and reproduce the original coverage gap with more columns in the table.
+            assertTrue(
+                    "shape " + shape + " must run on operator '" + shape.operator + "', plan was:\n" + p,
+                    p.contains(shape.operator)
+            );
 
             // 2. Confirm each arm from the per-execution mode log, not from the plan.
             confirmModeLog(node, query, FORCE_PER_KEY, "per-key", keys, rowsPerPair);
@@ -250,16 +343,16 @@ public class CoveringIndexPerKeyCrossoverPerfTest extends AbstractCoveringIndexQ
         final long mergedBest = min(b);
         final double drift = 100.0 * Math.abs(min(a1) - min(a2)) / Math.min(min(a1), min(a2));
         emit(String.format(
-                "%s shape keys=%d partitions=%d rowsPerPair=%d rows=%d | perKey1_min=%.3fms perKey1_med=%.3fms "
+                "%s shape=%s aggs=%d keys=%d partitions=%d rowsPerPair=%d rows=%d | perKey1_min=%.3fms perKey1_med=%.3fms "
                         + "merged_min=%.3fms merged_med=%.3fms perKey2_min=%.3fms perKey2_med=%.3fms "
                         + "| drift=%.1f%% ratio=%.3f resultRows=%d",
-                TAG, keys, partitions, rowsPerPair, rows,
+                TAG, shape, shape.aggregates, keys, partitions, rowsPerPair, rows,
                 min(a1) / 1e6, median(a1) / 1e6,
                 mergedBest / 1e6, median(b) / 1e6,
                 min(a2) / 1e6, median(a2) / 1e6,
                 drift, (double) mergedBest / perKeyBest, countLines(perKeyDigest)
         ));
-        emit(TAG + " plan keys=" + keys + " partitions=" + partitions + " rowsPerPair=" + rowsPerPair
+        emit(TAG + " plan shape=" + shape + " keys=" + keys + " partitions=" + partitions + " rowsPerPair=" + rowsPerPair
                 + " loadavg=" + loadAvg() + " | " + planLine(plan.toString()));
     }
 

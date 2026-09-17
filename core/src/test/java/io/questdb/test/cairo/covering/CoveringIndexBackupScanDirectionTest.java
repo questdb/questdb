@@ -114,7 +114,7 @@ public class CoveringIndexBackupScanDirectionTest extends AbstractCairoTest {
                                 + " page-frame path, so it has granted a permission for a mode it can"
                                 + " never run -- and will then advertise SCAN_DIRECTION_OTHER and print"
                                 + " \"frames: per-key (unordered)\" for it.",
-                        covering.tryDisableTimestampOrdering(false, null)
+                        covering.tryDisableTimestampOrdering(false, null, 1)
                 );
                 // The refusal has to leave the declarations alone, not merely return false: a
                 // guard placed after the field write would return false and still have granted it.
@@ -147,7 +147,7 @@ public class CoveringIndexBackupScanDirectionTest extends AbstractCairoTest {
                         "the backup-free multi-key control refused the opt-out too, so the refusal"
                                 + " above proves nothing -- tryDisableTimestampOrdering() is answering"
                                 + " false to everything",
-                        covering.tryDisableTimestampOrdering(false, null)
+                        covering.tryDisableTimestampOrdering(false, null, 1)
                 );
                 planSink.of(covering, sqlExecutionContext);
                 Assert.assertTrue(

@@ -10177,7 +10177,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             }
                         }
                         try {
-                            factory.tryDisableTimestampOrdering(orderSensitive, null);
+                            // One pass over each frame PER AGGREGATE: buildRosti() dispatches
+                            // `for (frameIndex) for (vafIndex)`, publishing an independent task
+                            // per (frame, aggregate) pair. So this consumer's per-frame cost --
+                            // and hence the density at which a base trading rows-per-frame for
+                            // frame count stops paying -- scales with the aggregate count. That
+                            // is the number the base wants, and this is the only site that knows
+                            // it. See RecordCursorFactory#tryDisableTimestampOrdering.
+                            factory.tryDisableTimestampOrdering(orderSensitive, null, tempVaf.size());
                         } catch (Throwable e) {
                             Misc.freeObjList(tempVaf);
                             throw e;
@@ -11981,7 +11988,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 break;
             }
         }
-        return base.tryDisableTimestampOrdering(orderSensitive, groupByKeyColumns);
+        // ONE pass per frame, whatever the aggregate count. Both async group bys take a frame as
+        // a single task and walk its rows once, updating every aggregate per row through
+        // GroupByFunctionsUpdater (see AsyncGroupByRecordCursorFactory.aggregateFiltered/
+        // aggregateSharded). Aggregate count therefore adds per-ROW cost, which both of the
+        // base's modes pay alike and which cancels out of its crossover, and no per-frame cost at
+        // all. Contrast the vectorized site, which dispatches one task per (frame, aggregate).
+        // Measured: the crossover does not move between one and four aggregates here, and moves
+        // ~4x there.
+        return base.tryDisableTimestampOrdering(orderSensitive, groupByKeyColumns, 1);
     }
 
     private RecordCursorFactory generateTableQuery0(
