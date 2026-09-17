@@ -5050,6 +5050,24 @@ public class SqlOptimiser implements Mutable {
         return owner != null && Chars.equalsIgnoreCase(owner.token, token, lo, hi);
     }
 
+    private static boolean isSubsampleKeepFilter(IQueryModel model) {
+        if (model.getSelectModelType() != IQueryModel.SELECT_MODEL_NONE) {
+            return false;
+        }
+        final ExpressionNode where = model.getWhereClause();
+        if (where == null || where.type != LITERAL) {
+            return false;
+        }
+        final IQueryModel windowModel = model.getNestedModel();
+        if (windowModel == null || windowModel.getSelectModelType() != IQueryModel.SELECT_MODEL_WINDOW) {
+            return false;
+        }
+        // Resolve the actual internal flag, not its spelling: user columns can have the same name,
+        // and desugarSubsample escapes the helper alias when the completed projection collides.
+        final QueryColumn column = windowModel.getAliasToColumnMap().get(where.token);
+        return column instanceof WindowExpression window && window.isSubsampleKeepFlag();
+    }
+
     private static boolean isSubsamplePassThroughProjection(IQueryModel model) {
         if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_NONE) {
             return true;
@@ -6596,6 +6614,9 @@ public class SqlOptimiser implements Mutable {
                             || nested.getLatestBy().size() > 0
                             || nested.getLimitLo() != null
                             || nested.getLimitHi() != null
+                            // Preserve the lone internal keep predicate for row-selecting fusion.
+                            // Outer predicates filter the selected rows at the parent instead.
+                            || isSubsampleKeepFilter(nested)
                             || hasSubsampleInChain(parent)
                             || (nested.getSampleBy() != null && !canPushToSampleBy(nested, literalCollectorANames))
                     ) {

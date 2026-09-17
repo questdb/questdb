@@ -67,7 +67,9 @@ import java.util.concurrent.TimeUnit;
 /**
  * End-to-end benchmark for the sole, window-only SUBSAMPLE execution path.
  * Ascending input exercises the identity-order fused selector; descending input
- * exercises traversal-ordinal mapping back to incoming row order.
+ * exercises traversal-ordinal mapping back to incoming row order. The composition variants add an
+ * always-true outer predicate, with and without a LIMIT pushdown barrier, to measure whether query
+ * composition preserves keep-filter fusion. All three variants return the same selected rows.
  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
@@ -82,6 +84,9 @@ public class SubsampleWindowBenchmark {
 
     @Param({"0.5"})
     public double compdev;
+
+    @Param({"direct", "outerWhere", "outerWhereWithLimit"})
+    public String composition;
 
     @Param({"true"})
     public boolean hasCircuitBreaker;
@@ -268,7 +273,14 @@ public class SubsampleWindowBenchmark {
             case "sdt" -> "sdt(value, " + compdev + ')';
             default -> throw new IllegalArgumentException("unknown method: " + method);
         };
-        return "SELECT ts, value FROM " + input + " SUBSAMPLE " + clause;
+        final String sample = "SELECT ts, value FROM " + input + " SUBSAMPLE " + clause;
+        // The seeded waveform stays above this bound. LIMIT rows cannot truncate the selection.
+        return switch (composition) {
+            case "direct" -> sample;
+            case "outerWhere" -> "SELECT * FROM (" + sample + ") WHERE value > -1000.0";
+            case "outerWhereWithLimit" -> "SELECT * FROM (" + sample + " LIMIT " + rows + ") WHERE value > -1000.0";
+            default -> throw new IllegalArgumentException("unknown composition: " + composition);
+        };
     }
 
     private void seedTable() throws SqlException {
