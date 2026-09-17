@@ -615,6 +615,34 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * The compile is unconditional: a plan cached in the view state is not proof that the SQL still
      * compiles, because the cached plan predates the base-table DDL that broke it. A full refresh
      * rebuilds the view from every base partition, so one extra compile in front of it is negligible.
+     * <p>
+     * Three things this deliberately does not do.
+     * <p>
+     * It catches {@link SqlException} only, and not
+     * {@link io.questdb.cairo.sql.TableReferenceOutOfDateException} the way {@link #insertAsSelect}'s
+     * retry loop does. That loop's TRODE catch spans cursor execution, which this has none of; for the
+     * compile itself a base-table TRODE cannot arise. {@code SqlOptimiser.enumerateColumns} stamps the
+     * model with the metadata version of the reader it enumerated from, and
+     * {@link MatViewRefreshSqlExecutionContext#getReader} hands out the one fixed, detached base
+     * reader, so the version code generation re-checks is the version it was taken from. A TRODE from
+     * some other table the view joins is retried and, if persistent, converted to {@code SqlException}
+     * by {@code SqlCompilerImpl.generateSelectWithRetries}.
+     * <p>
+     * It does not spare retriable errors (a pooled reader for a joined table, Cairo OOM), which reach
+     * the caller's catch and invalidate. That is what happened before this method existed too, and
+     * nothing is destroyed here, so retrying would be better than invalidating -- but the only backoff
+     * channel, {@link #tryScheduleRetry}, re-drives an INCREMENTAL refresh, which is not the operation
+     * the operator asked for, and {@code fullRefresh} has no {@code isRefreshDue} gate, so a
+     * re-enqueued FULL is redelivered immediately and self-feeds the same drain loop that just failed.
+     * Fixing it needs a full-refresh retry channel that can honour a backoff deadline.
+     * <p>
+     * It covers compile failures only. {@code truncateSoft} publishes a sequencer transaction
+     * immediately, so {@code walWriter.rollback()} cannot undo it: any failure between the truncate and
+     * the rebuild -- a runtime error in the cursor, a retriable error, a commit refusal -- still leaves
+     * the view empty. Closing that needs the destroy to become part of the rebuild transaction (a
+     * full-domain REPLACE_RANGE first commit) rather than an ordering change. The compile failure is
+     * the one worth separating out because it is terminal: the SQL cannot be made to run on this
+     * binary at all, so re-issuing the refresh cannot bring the rows back.
      *
      * @return true when the view SQL compiles, false when it does not, in which case the view has been
      * invalidated and the caller must abandon the refresh without truncating

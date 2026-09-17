@@ -67,6 +67,7 @@ import io.questdb.mp.Queue;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
@@ -3737,6 +3738,139 @@ public class MatViewTest extends AbstractCairoTest {
             capture.drain();
             capture.assertLoggedRE(" I .*MatViewStateStoreImpl materialized view state not found, request dropped "
                     + "\\[view=missing_view~1, op=full_refresh\\]");
+        });
+    }
+
+    @Test
+    public void testFullRefreshSurvivesBaseDdlBeforeThePreFlightCompile() throws Exception {
+        // A base DDL landing between the full refresh fixing its base-table reader snapshot and the
+        // pre-flight compile. The question this pins is whether the pre-flight's SqlException-only
+        // catch can be bypassed by a TableReferenceOutOfDateException, which would route past
+        // compileViewQueryForFullRefresh to the outer catch and invalidate the view.
+        //
+        // It cannot, and the reason is structural rather than lucky: SqlOptimiser enumerates a
+        // table's columns from executionContext.getReader(token) and stamps that reader's metadata
+        // version onto the model (SqlOptimiser.enumerateColumns), and
+        // MatViewRefreshSqlExecutionContext.getReader returns the FIXED base reader. Code generation
+        // then re-checks that same version against that same reader, so the versions always agree.
+        // The refresh therefore runs entirely against the snapshot it fixed, and the DDL is a no-op
+        // for it.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+            execute("insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01');");
+            drainQueues();
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+            final AtomicBoolean fired = new AtomicBoolean();
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                // Fires after the base reader snapshot is fixed and before the pre-flight compile.
+                // ADD COLUMN, not DROP: it bumps the base metadata version without breaking the view
+                // SQL, which is the shape that would surface a version mismatch if one existed.
+                job.setOnBaseReaderSnapshotForTesting(() -> {
+                    if (fired.compareAndSet(false, true)) {
+                        try {
+                            execute("alter table base_price add column extra int");
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                        drainWalQueue();
+                    }
+                });
+                engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+                drainMatViewQueue(job);
+                drainWalQueue();
+            }
+            Assert.assertTrue("the base DDL must land before the pre-flight compile", fired.get());
+
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            price_1h\tvalid\t
+                            """);
+            assertQuery("price_1h order by sym")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.32\t2024-09-10T12:00:00.000000Z
+                            """));
+        });
+    }
+
+    @Test
+    public void testFullRefreshSurvivesBreakingBaseDdlAfterTheTruncate() throws Exception {
+        // The narrow window the pre-flight leaves open: it compiles, the truncate publishes, and only
+        // then does a breaking base DDL land, so insertAsSelect's own recompile is the one that runs
+        // against the changed base table. If that recompile could fail, the rows would already be
+        // gone -- the very failure the pre-flight exists to prevent.
+        //
+        // It cannot fail, for the same reason as the sibling test above: both compiles enumerate the
+        // base table's columns from the one fixed, detached reader, so neither sees the dropped
+        // column. The rebuild completes from the snapshot and the rows survive; the DDL's own
+        // invalidation then marks the view invalid, which is correct -- the view is stale, not empty.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+            execute("insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01');");
+            drainQueues();
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(viewState);
+            final AtomicBoolean fired = new AtomicBoolean();
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                // Drop the plan the last successful refresh parked. Without this the rebuild reuses it
+                // and never reaches the compile at all, so the test would pass vacuously. A cold plan
+                // cache is the ordinary state after a restart, or after any refresh that consumed the
+                // parked plan and failed. The seam runs on the refresh thread under the view latch,
+                // which is what acquireRecordFactory asserts.
+                job.setOnBaseReaderSnapshotForTesting(() -> Misc.free(viewState.acquireRecordFactory()));
+                // Fires after fencedTruncateSoft, before findRefreshIntervals and insertAsSelect.
+                job.setOnHoldingLockForTesting(() -> {
+                    if (fired.compareAndSet(false, true)) {
+                        try {
+                            execute("alter table base_price drop column price");
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                        drainWalQueue();
+                    }
+                });
+                engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+                drainMatViewQueue(job);
+                drainWalQueue();
+            }
+            Assert.assertTrue("the breaking base DDL must land after the truncate", fired.get());
+
+            // The rows the truncate destroyed were rebuilt from the fixed snapshot ...
+            assertQuery("price_1h order by sym")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.32\t2024-09-10T12:00:00.000000Z
+                            """));
+            // ... and the concurrent DDL is reported as what it is.
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            price_1h\tinvalid\tdrop column operation
+                            """);
         });
     }
 
