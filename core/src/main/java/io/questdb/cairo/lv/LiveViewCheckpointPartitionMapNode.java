@@ -27,6 +27,7 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.vm.api.MemoryA;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 
@@ -63,7 +64,10 @@ final class LiveViewCheckpointPartitionMapNode {
      * once per live key, so a fresh key, scalar and reference array per decoded
      * entry would charge the whole live domain to every publication. Reset per
      * decode, and owned by this node alone: what leaves it does so through
-     * {@link #copyEntryTo}, which copies into the caller's own flyweight.
+     * {@link #copyEntryTo}, which copies into the caller's own flyweight. The
+     * pools keep every array they lend while an operation runs, and
+     * {@link #trimDecodePools()} drops what an idle node may not keep once the
+     * reader ends the operation.
      */
     private final LiveViewCheckpointByteArrayPool decodedBytes = new LiveViewCheckpointByteArrayPool();
     private final LiveViewCheckpointPageRefPool decodedChildRefs = new LiveViewCheckpointPageRefPool();
@@ -262,6 +266,24 @@ final class LiveViewCheckpointPartitionMapNode {
         return index < count && keyEqualsAt(index, arena, mutationIndex) ? index : -1;
     }
 
+    /**
+     * @return image bytes of every key and scalar array this node's decode pool keeps,
+     * headers excluded, counted by walking the pool
+     */
+    @TestOnly
+    long getRetainedDecodedBytesForTest() {
+        return decodedBytes.countRetainedBytesForTest();
+    }
+
+    /**
+     * @return state page references of every reference array this node's decode pool
+     * keeps, counted by walking the pool
+     */
+    @TestOnly
+    long getRetainedDecodedStatePageRefCountForTest() {
+        return decodedStateRefs.countRetainedRefsForTest();
+    }
+
     boolean isLeaf() {
         return leaf;
     }
@@ -410,6 +432,24 @@ final class LiveViewCheckpointPartitionMapNode {
         }
         count = split;
         right.count = rightCount;
+    }
+
+    /**
+     * Ends an operation for the decode pools: a byte pool that keeps more than
+     * {@link LiveViewCheckpointPartitionMapReader#MAX_NODE_RETAINED_BYTES} image bytes, or
+     * a reference pool that keeps more than
+     * {@link LiveViewCheckpointPartitionMapReader#MAX_NODE_RETAINED_STATE_PAGE_REFS}
+     * references, drops every array it holds, and a pool within its limit keeps them all.
+     * The arrays this node's entries point at stay intact, since dropping an array only
+     * stops the pool lending it again.
+     */
+    void trimDecodePools() {
+        if (decodedBytes.getRetainedBytes() > LiveViewCheckpointPartitionMapReader.MAX_NODE_RETAINED_BYTES) {
+            decodedBytes.clear();
+        }
+        if (decodedStateRefs.getRetainedRefCount() > LiveViewCheckpointPartitionMapReader.MAX_NODE_RETAINED_STATE_PAGE_REFS) {
+            decodedStateRefs.clear();
+        }
     }
 
     void writeTo(LiveViewCheckpointMetaSegmentWriter writer, LiveViewCheckpointPageRef out) {

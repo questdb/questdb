@@ -76,7 +76,10 @@ package io.questdb.cairo.lv;
  * build that does implement the version simply never reaches it. A pending upgrade
  * rebuild is re-derived the same way, until the rebuild retires the older directory.
  * A rebuild block is re-derived by the restart's own recovery: the view restores from its timeline
- * if it can, and otherwise meets the same rebuild and the same refusal. A deferral
+ * if it can, and otherwise meets the same rebuild and asks the guard again. The guard reads the
+ * base as the restart finds it, so the refusal repeats unless what it reads of the backlog changed:
+ * a purge sweep took base WAL it reads (see below), a DEDUP change landed on the base behind the
+ * backlog, or a dedup history it could not read reads again. A deferral
  * lives only as long as the process: a restart recovers through its own restore and
  * rebuild, which wait for the apply in place rather than defer.
  * <p>
@@ -124,7 +127,13 @@ package io.questdb.cairo.lv;
  * to a build that reads the format; it is not a state to rest in. A rebuild block
  * pays the same price for the same reason: the restart that could have restored
  * it from its timeline instead meets the missing WAL, and the rebuild it falls
- * back to meets the same refusal.
+ * back to meets the same refusal - unless the sweep took a backlog commit that
+ * may have lowered the view's output legitimately, on a base
+ * {@link LiveViewRebuildRestatementGuard} names as able to hide one. The guard then
+ * stands down the checks such a commit could confound - every check over a
+ * materialized view, only the row shortfall over a filtering view's base, where the
+ * history floor and the lost partition check still refuse - and a rebuild no
+ * remaining check refuses follows the base table.
  */
 public final class LiveViewCheckpointRecoveryPhase {
     /**

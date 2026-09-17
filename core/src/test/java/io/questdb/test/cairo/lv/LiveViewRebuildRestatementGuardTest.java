@@ -36,6 +36,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointRestoreRoute;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRebuildRestatementGuard;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.Files;
@@ -77,10 +78,13 @@ import java.util.concurrent.atomic.AtomicInteger;
  * still in the view. That case is here too, because it is the refusal the restore removes;
  * the restore itself is {@link LiveViewRuntimeRestoreTest}'s subject.
  * <p>
- * The two checks are witnessed apart. Dropping the OLDEST day moves the base's earliest row
+ * The checks are witnessed apart. Dropping the OLDEST day moves the base's earliest row
  * above the view's, which the history floor sees before the rebuild reads a row. Dropping a
  * MIDDLE day leaves the base's earliest row where it was, so only the scan's row count can
- * see it. {@link LiveViewRebuildRestatementGuard#getVerdict()} names which one fired.
+ * see it. Where a backlog that may hold a dedup replacement stands that count down, the lost
+ * partition check sees a dropped day wherever it sits, including an oldest day the history
+ * floor misses because the base keeps an older row the view does not.
+ * {@link LiveViewRebuildRestatementGuard#getVerdict()} names which one fired.
  * <p>
  * The pass cases matter as much: a rebuild over a base that still holds every row has to go
  * ahead exactly as before, and so does one whose backlog legitimately removes a row - both
@@ -131,6 +135,85 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     private static final String DATA_SEGMENT_PATH_PART = LiveViewCheckpointLayout.DATA_DIR_NAME
             + Files.SEPARATOR
             + LiveViewCheckpointLayout.DATA_SEGMENT_PREFIX;
+    // What the filtering view the dedup-backlog cases create holds before and after the base
+    // replaces its first row with one the filter rejects, and the row a later commit appends.
+    private static final String FILTERED_APPEND = "INSERT INTO base (ts, sym, i) VALUES ('2026-01-01T00:10:00.000000Z', 'a', 1000)";
+    private static final String FILTERED_APPEND_OUTPUT = "2026-01-01T00:10:00.000000Z\ta\t1000\t2400.0\n";
+    // A commit that reaches the frontier of a view holding FILTERED_TWO_DAY_ROWS, with a row the
+    // filter rejects. Over a base without dedup it only adds a row.
+    private static final String FILTERED_FRONTIER_COMMIT = "INSERT INTO base (ts, sym, i) VALUES ('2026-01-02T00:05:00.000000Z', 'a', -1)";
+    // The same for a view holding FILTERED_LATER_DAYS_ROWS.
+    private static final String FILTERED_LATER_DAYS_FRONTIER_COMMIT = "INSERT INTO base (ts, sym, i) VALUES ('2026-01-03T00:05:00.000000Z', 'a', -1)";
+    // The evidence a lost partition refusal reads once a view holding FILTERED_LATER_DAYS_ROWS
+    // outlives its base's second day.
+    private static final String FILTERED_LATER_DAYS_LOST_DAY_EVIDENCE = "the view holds a row at 2026-01-02T00:01:00.000000Z "
+            + "but the base table holds no partition between 2026-01-02T00:00:00.000000Z and 2026-01-03T00:00:00.000000Z";
+    // What the filtering view holds over rows on the second and third day, while its base also
+    // holds an older row on the first day that the view does not: a base that loses the second
+    // day then still has a row earlier than the view's first, and the history floor is blind to
+    // the loss.
+    private static final String FILTERED_LATER_DAYS_ROWS = """
+            ts\tsym\ti\tv
+            2026-01-02T00:01:00.000000Z\ta\t297\t297.0
+            2026-01-03T00:05:00.000000Z\ta\t500\t500.0
+            2026-01-03T00:09:00.000000Z\ta\t900\t1400.0
+            """;
+    private static final String FILTERED_LATER_DAYS_ROWS_INSERT = """
+            INSERT INTO base (ts, sym, i) VALUES
+                ('2026-01-02T00:01:00.000000Z', 'a', 297),
+                ('2026-01-03T00:05:00.000000Z', 'a', 500),
+                ('2026-01-03T00:09:00.000000Z', 'a', 900)""";
+    // The evidence a history floor reads once a view holding FILTERED_TWO_DAY_ROWS outlives its
+    // base's first day.
+    private static final String FILTERED_LOST_DAY_EVIDENCE = "the view holds rows from 2026-01-01T00:01:00.000000Z "
+            + "but the base table's earliest row is at 2026-01-02T00:05:00.000000Z";
+    private static final String FILTERED_REPLACED_ROWS = """
+            ts\tsym\ti\tv
+            2026-01-01T00:05:00.000000Z\ta\t500\t500.0
+            2026-01-01T00:09:00.000000Z\ta\t900\t1400.0
+            """;
+    private static final String FILTERED_REPLACEMENT = "INSERT INTO base (ts, sym, i) VALUES ('2026-01-01T00:01:00.000000Z', 'a', -108)";
+    private static final String FILTERED_ROWS = """
+            ts\tsym\ti\tv
+            2026-01-01T00:01:00.000000Z\ta\t297\t297.0
+            2026-01-01T00:05:00.000000Z\ta\t500\t797.0
+            2026-01-01T00:09:00.000000Z\ta\t900\t1697.0
+            """;
+    private static final String FILTERED_ROWS_INSERT = """
+            INSERT INTO base (ts, sym, i) VALUES
+                ('2026-01-01T00:01:00.000000Z', 'a', 297),
+                ('2026-01-01T00:05:00.000000Z', 'a', 500),
+                ('2026-01-01T00:09:00.000000Z', 'a', 900)""";
+    // The evidence a lost partition refusal reads once a view holding FILTERED_THREE_DAY_ROWS
+    // outlives its base's middle day.
+    private static final String FILTERED_THREE_DAY_LOST_DAY_EVIDENCE = "the view holds a row at 2026-01-02T00:05:00.000000Z "
+            + "but the base table holds no partition between 2026-01-02T00:00:00.000000Z and 2026-01-03T00:00:00.000000Z";
+    // The same view over one row a day for three days, so a base that loses the middle day still
+    // holds the view's first row, and only the row shortfall sees the loss.
+    private static final String FILTERED_THREE_DAY_ROWS = """
+            ts\tsym\ti\tv
+            2026-01-01T00:01:00.000000Z\ta\t297\t297.0
+            2026-01-02T00:05:00.000000Z\ta\t500\t500.0
+            2026-01-03T00:09:00.000000Z\ta\t900\t900.0
+            """;
+    private static final String FILTERED_THREE_DAY_ROWS_INSERT = """
+            INSERT INTO base (ts, sym, i) VALUES
+                ('2026-01-01T00:01:00.000000Z', 'a', 297),
+                ('2026-01-02T00:05:00.000000Z', 'a', 500),
+                ('2026-01-03T00:09:00.000000Z', 'a', 900)""";
+    // The same view over rows spanning two days, so a base that loses its first day holds no row
+    // as early as the view's first.
+    private static final String FILTERED_TWO_DAY_ROWS = """
+            ts\tsym\ti\tv
+            2026-01-01T00:01:00.000000Z\ta\t297\t297.0
+            2026-01-02T00:05:00.000000Z\ta\t500\t500.0
+            2026-01-02T00:09:00.000000Z\ta\t900\t1400.0
+            """;
+    private static final String FILTERED_TWO_DAY_ROWS_INSERT = """
+            INSERT INTO base (ts, sym, i) VALUES
+                ('2026-01-01T00:01:00.000000Z', 'a', 297),
+                ('2026-01-02T00:05:00.000000Z', 'a', 500),
+                ('2026-01-02T00:09:00.000000Z', 'a', 900)""";
     // Commits made after the fixture's six rows, in the order the cases below make them, and the
     // view row each one produces on top of ALL_ROWS. They extend day three, so acct-1 and acct-2
     // keep accumulating from 16.0 and 32.0.
@@ -146,6 +229,10 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             "2026-01-03T10:20:00.000000Z\tacct-1\t336.0\t3\n",
             "2026-01-03T10:30:00.000000Z\tacct-2\t672.0\t3\n"
     };
+    // The log line a rebuild writes when it stands the row shortfall down over a backlog that may
+    // hold a dedup replacement, and keeps the history floor and the lost partition check.
+    private static final String ROW_SHORTFALL_STAND_DOWN_LINE = "live view rebuild from the applied base checks only "
+            + "the restatement guard's history floor and base partitions";
     // The two running doors into the whole-view rebuild, as their recoveries name themselves in
     // the log lines and the operator reasons a deferral or a refusal publishes.
     private static final String DRIFT_CAUSE = "base table metadata change";
@@ -298,7 +385,7 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             drainWalQueue();
             final long processedBefore = instance("lv").getLastProcessedSeqTxn();
             shutdown();
-            removeBaseWal();
+            removeBaseWal("tx");
 
             final LiveViewRebuildRestatementGuard guard = restart();
 
@@ -1147,14 +1234,17 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             assertRebuiltFromAppliedBase("lv");
             Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
             Assert.assertEquals(
-                    "a backlog commit that can legitimately remove an output row must stand the guard down",
+                    "a backlog commit that can legitimately remove an output row must stand the row shortfall down",
                     LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE,
                     guard.getAbstention()
             );
-            // An unchecked rebuild over rows the view could lose says so, so a restatement found
-            // later has a line explaining why nothing stopped it.
+            // A rebuild that stands the row shortfall down over rows the view could lose says so,
+            // so a restatement found later has a line explaining why the row shortfall did not
+            // stop it. The history floor and the lost partition check held: the replacement left
+            // a base row at the view's first timestamp, in the partition it replaced a row of.
             capture.drain();
-            capture.assertLogged("live view rebuild from the applied base runs without the restatement guard");
+            capture.assertLogged(ROW_SHORTFALL_STAND_DOWN_LINE + " [view=lv, reason=backlog may remove rows]");
+            capture.assertNotLogged("live view rebuild from the applied base refused");
             assertQuery("SELECT ts, sym, i FROM lv")
                     .noLeakCheck()
                     .timestamp("ts")
@@ -1164,6 +1254,1022 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                             2026-01-01T00:05:00.000000Z\ta\t500
                             2026-01-01T00:09:00.000000Z\ta\t900
                             """);
+        });
+    }
+
+    @Test
+    public void testABacklogThatAddsAColumnAfterAFilteredCommitStillRefusesADayTtlEvicted() throws Exception {
+        // The wall clock moves past the base's rows, so TTL measures against the newest one. The
+        // backlog's commit reaches the frontier and pushes that newest row to day three, which
+        // evicts day one: the loss rides on the commit itself, not on a partition operation.
+        setCurrentMicros(ts("2026-01-05T00:00:00.000000Z"));
+        assertLostDayRebuildRefused(
+                "TTL 1 DAY WAL",
+                true,
+                false,
+                "INSERT INTO base (ts, sym, i) VALUES ('2026-01-02T00:05:00.000000Z', 'a', -1), ('2026-01-03T12:00:00.000000Z', 'a', -2)",
+                "ALTER TABLE base ADD COLUMN note INT"
+        );
+    }
+
+    @Test
+    public void testABacklogThatAddsAColumnAfterAFilteredCommitStillRefusesALostDay() throws Exception {
+        // The commit ran without dedup, so it only added a row the filter rejects. A schema change
+        // behind it that leaves dedup alone changes nothing about that, and the day the base lost
+        // is the restatement the guard refuses.
+        assertLostDayRebuildRefused(
+                "WAL",
+                true,
+                false,
+                "ALTER TABLE base DROP PARTITION LIST '2026-01-01'",
+                FILTERED_FRONTIER_COMMIT,
+                "ALTER TABLE base ADD COLUMN note INT"
+        );
+    }
+
+    @Test
+    public void testABacklogThatAddsAColumnAndDisablesDedupAfterARemovingReplacementIsNotRefused() throws Exception {
+        // A schema change that leaves dedup alone sits between the replacement and the DEDUP
+        // DISABLE. The walk looks past it to the change that did touch dedup.
+        assertDedupBacklogRebuildFollowsTheBase(
+                false,
+                "DEDUP UPSERT KEYS(ts, sym)",
+                FILTERED_REPLACEMENT,
+                "ALTER TABLE base ADD COLUMN note INT",
+                "ALTER TABLE base DEDUP DISABLE"
+        );
+    }
+
+    @Test
+    public void testABacklogThatChangesTheSchemaButNotDedupAfterAFilteredCommitStillRefusesALostDay() throws Exception {
+        // Every structural change a WAL table takes that is not a DEDUP change, in one backlog.
+        // None of them can switch dedup on or off: the designated timestamp, which every dedup
+        // key set holds, can be neither renamed, retyped nor dropped. RENAME TABLE is the one
+        // left out: renaming a view's base invalidates the view, so no rebuild follows it.
+        assertLostDayRebuildRefused(
+                "WAL",
+                true,
+                false,
+                "ALTER TABLE base DROP PARTITION LIST '2026-01-01'",
+                FILTERED_FRONTIER_COMMIT,
+                "ALTER TABLE base ADD COLUMN note INT",
+                "ALTER TABLE base RENAME COLUMN note TO memo",
+                "ALTER TABLE base ALTER COLUMN memo TYPE LONG",
+                "ALTER TABLE base DROP COLUMN memo"
+        );
+    }
+
+    @Test
+    public void testABacklogThatDisablesDedupAfterARemovingReplacementIsNotRefused() throws Exception {
+        // The replacement ran under dedup, and the DEDUP DISABLE behind it leaves the snapshot
+        // reporting a base without dedup keys. The snapshot's flag does not speak for a commit
+        // an earlier schema governed, so the rebuild still follows the base.
+        assertDedupBacklogRebuildFollowsTheBase(
+                false,
+                "DEDUP UPSERT KEYS(ts, sym)",
+                FILTERED_REPLACEMENT,
+                "ALTER TABLE base DEDUP DISABLE"
+        );
+    }
+
+    @Test
+    public void testABacklogThatDisablesDedupAheadOfAFilteredCommitAndAddsAColumnStillRefusesALostDay() throws Exception {
+        // The base deduplicated until the backlog's DEDUP DISABLE, and the commit came after it,
+        // so it ran without dedup as the snapshot says. The schema change behind the commit
+        // leaves that alone.
+        assertLostDayRebuildRefused(
+                "WAL DEDUP UPSERT KEYS(ts, sym)",
+                true,
+                false,
+                "ALTER TABLE base DROP PARTITION LIST '2026-01-01'",
+                "ALTER TABLE base DEDUP DISABLE",
+                FILTERED_FRONTIER_COMMIT,
+                "ALTER TABLE base ADD COLUMN note INT"
+        );
+    }
+
+    @Test
+    public void testABacklogThatDisablesDedupTheBaseNeverHadAfterAFilteredCommitStillRefusesALostDay() throws Exception {
+        // The base never deduplicated, so the DEDUP DISABLE changes nothing, but the sequencer
+        // cannot say so: its record reads the same as one that ended dedup under a replacement.
+        // The row shortfall stands down for that, and the history floor still sees the lost day.
+        // A replacement keeps a base row at the timestamp it replaced, so no commit the backlog
+        // may hold can move the base's earliest row past the view's.
+        assertLostDayRebuildRefused(
+                "WAL",
+                true,
+                false,
+                LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE,
+                "ALTER TABLE base DROP PARTITION LIST '2026-01-01'",
+                FILTERED_FRONTIER_COMMIT,
+                "ALTER TABLE base DEDUP DISABLE"
+        );
+    }
+
+    @Test
+    public void testABacklogThatEnablesDedupAheadOfARemovingReplacementIsNotRefused() throws Exception {
+        // The mirror: the view consumed commits over a base without dedup keys, and the backlog
+        // turns dedup on before the replacement. The snapshot deduplicates, as the replacement did.
+        assertDedupBacklogRebuildFollowsTheBase(
+                false,
+                "",
+                "ALTER TABLE base DEDUP ENABLE UPSERT KEYS(ts, sym)",
+                FILTERED_REPLACEMENT
+        );
+    }
+
+    @Test
+    public void testABacklogThatReplacesARangeAfterADedupReplacementIsNotRefused() throws Exception {
+        final TimelineOpenFault fault = new TimelineOpenFault();
+        assertMemoryLeak(fault, () -> {
+            // A dedup replacement the filter rejects stands only the row shortfall down, and the
+            // walk goes on past it. The REPLACE_RANGE commit behind it deletes the base's first
+            // day, which moves the base's earliest row past the view's, and incremental refresh
+            // would propagate that deletion. So it stands the whole guard down, and the rebuild
+            // follows the base rather than meeting the history floor. The commit goes through
+            // WalWriter directly, as LiveViewFuzzTest's REPLACE_RANGE operation does.
+            seedTwoDayView("WAL DEDUP UPSERT KEYS(ts, sym)", true, fault);
+            final long processedBefore = instance("lv").getLastProcessedSeqTxn();
+            execute(FILTERED_FRONTIER_COMMIT);
+            drainWalQueue();
+            try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("base"))) {
+                walWriter.commitWithParams(
+                        ts("2026-01-01T00:00:00.000000Z"),
+                        ts("2026-01-02T00:00:00.000000Z"),
+                        WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
+                );
+            }
+            drainWalQueue();
+            Assert.assertEquals("the view must not consume the backlog", processedBefore, instance("lv").getLastProcessedSeqTxn());
+            fault.disarm();
+            shutdown();
+
+            final LiveViewRebuildRestatementGuard guard = restart();
+
+            final LiveViewInstance instance = instance("lv");
+            Assert.assertFalse(
+                    "the rebuild must follow the base, not stop the view: " + instance.getCheckpointRecoveryReason(),
+                    instance.isCheckpointRecoveryBlocked()
+            );
+            assertRebuiltFromAppliedBase("lv");
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE, guard.getAbstention());
+            capture.drain();
+            capture.assertLogged("live view rebuild from the applied base runs without the restatement guard [view=lv, reason=backlog may remove rows]");
+            capture.assertNotLogged(ROW_SHORTFALL_STAND_DOWN_LINE);
+            final String rows = """
+                    ts\tsym\ti\tv
+                    2026-01-02T00:09:00.000000Z\ta\t900\t900.0
+                    """;
+            assertFilteredViewRows(rows);
+            assertLiveViewsReportsNoRecovery(instance);
+
+            shutdown();
+            restart();
+            Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+            assertFilteredViewRows(rows);
+        });
+    }
+
+    @Test
+    public void testABacklogThatReplacesARowAfterTheBaseLostADayOfRowsTheFilterRejectedIsNotRefused() throws Exception {
+        // The base loses a day the view holds no row of, then replaces a row the view holds with
+        // one the filter rejects. Neither is a loss of the view's rows: the day took only rows the
+        // filter rejected, and the replacement is what incremental refresh would propagate.
+        assertRejectedDayLossRebuildFollowsTheBase("");
+    }
+
+    @Test
+    public void testABacklogThatReplacesARowWhileTheViewsFrontierSitsOnAPartitionBoundaryIsNotRefused() throws Exception {
+        final TimelineOpenFault fault = new TimelineOpenFault();
+        assertMemoryLeak(fault, () -> {
+            // Every row the view holds sits at midnight, so its newest is exactly where the base's
+            // last partition begins. A replacement leaves a base row at the timestamp it replaced,
+            // so the base still holds a partition over every row the view holds, and the walk over
+            // the base's partitions has to cover the view's frontier rather than stop below it:
+            // the rebuild follows the base.
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            createFilteredView();
+            refreshIntoFilteredView("""
+                    INSERT INTO base (ts, sym, i) VALUES
+                        ('2026-01-01T00:00:00.000000Z', 'a', 297),
+                        ('2026-01-02T00:00:00.000000Z', 'a', 500),
+                        ('2026-01-03T00:00:00.000000Z', 'a', 900)""");
+            Assert.assertTrue("the view's timeline open must have failed", fault.getFailures() > 0);
+            // A day apart, every row leads its own window, so the sum is the row's own value.
+            assertFilteredViewRows("""
+                    ts\tsym\ti\tv
+                    2026-01-01T00:00:00.000000Z\ta\t297\t297.0
+                    2026-01-02T00:00:00.000000Z\ta\t500\t500.0
+                    2026-01-03T00:00:00.000000Z\ta\t900\t900.0
+                    """);
+            applyUnconsumedBacklog(
+                    "INSERT INTO base (ts, sym, i) VALUES ('2026-01-02T00:00:00.000000Z', 'a', -108)",
+                    "ALTER TABLE base DEDUP DISABLE"
+            );
+            // The base holds a partition over each of the view's three rows: the replacement kept
+            // the middle day, with the row that took the place of the one the view holds.
+            assertQuery("SELECT name, numRows FROM table_partitions('base')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tnumRows
+                            2026-01-01\t1
+                            2026-01-02\t1
+                            2026-01-03\t1
+                            """);
+            fault.disarm();
+            shutdown();
+
+            final LiveViewRebuildRestatementGuard guard = restart();
+
+            final LiveViewInstance instance = instance("lv");
+            Assert.assertFalse(
+                    "the rebuild must follow the base, not stop the view: " + instance.getCheckpointRecoveryReason(),
+                    instance.isCheckpointRecoveryBlocked()
+            );
+            assertRebuiltFromAppliedBase("lv");
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE, guard.getAbstention());
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_NONE, guard.getVerdict());
+            capture.drain();
+            // The stand-down the lost partition check runs behind: the walk this case pins over the
+            // base's partitions happens only under it.
+            capture.assertLogged(ROW_SHORTFALL_STAND_DOWN_LINE + " [view=lv, reason="
+                    + LiveViewRebuildRestatementGuard.abstentionName(LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE)
+                    + "]");
+            final String replacedRows = """
+                    ts\tsym\ti\tv
+                    2026-01-01T00:00:00.000000Z\ta\t297\t297.0
+                    2026-01-03T00:00:00.000000Z\ta\t900\t900.0
+                    """;
+            assertFilteredViewRows(replacedRows);
+            assertLiveViewsReportsNoRecovery(instance);
+
+            shutdown();
+            restart();
+            Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+            assertFilteredViewRows(replacedRows);
+
+            execute("INSERT INTO base (ts, sym, i) VALUES ('2026-01-03T00:05:00.000000Z', 'a', 1000)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertFilteredViewRows(replacedRows + "2026-01-03T00:05:00.000000Z\ta\t1000\t1900.0\n");
+            assertLiveViewsReportsNoRecovery(instance("lv"));
+        });
+    }
+
+    @Test
+    public void testABacklogThatReplacesTheBasesEarliestRowWithOneTheFilterRejectsIsNotRefused() throws Exception {
+        // The replacement takes the view's first row, the only row of the base's first day, out
+        // of the view, and the DEDUP DISABLE behind it leaves the guard unable to tell it from a
+        // plain commit. The history floor stays armed over it and must not mistake it for the
+        // day the base lost: the base still holds a row at that timestamp, the one that replaced
+        // it, so its earliest row does not move.
+        assertDedupBacklogRebuildOverRowsFollowsTheBase(
+                false,
+                "DEDUP UPSERT KEYS(ts, sym)",
+                FILTERED_TWO_DAY_ROWS_INSERT,
+                FILTERED_TWO_DAY_ROWS,
+                """
+                        ts\tsym\ti\tv
+                        2026-01-02T00:05:00.000000Z\ta\t500\t500.0
+                        2026-01-02T00:09:00.000000Z\ta\t900\t1400.0
+                        """,
+                "INSERT INTO base (ts, sym, i) VALUES ('2026-01-02T00:10:00.000000Z', 'a', 1000)",
+                "2026-01-02T00:10:00.000000Z\ta\t1000\t2400.0\n",
+                FILTERED_REPLACEMENT,
+                "ALTER TABLE base DEDUP DISABLE"
+        );
+    }
+
+    @Test
+    public void testABacklogThatTogglesDedupAheadOfAFilteredCommitStillRefusesALostDay() throws Exception {
+        // The DEDUP changes precede the backlog's only commit, which ran without dedup like the
+        // snapshot says. So the commit adds a row the filter rejects and removes nothing, and the
+        // day the base lost is still the restatement the guard refuses.
+        assertLostDayRebuildRefused(
+                "WAL",
+                true,
+                false,
+                "ALTER TABLE base DROP PARTITION LIST '2026-01-01'",
+                "ALTER TABLE base DEDUP ENABLE UPSERT KEYS(ts, sym)",
+                "ALTER TABLE base DEDUP DISABLE",
+                FILTERED_FRONTIER_COMMIT
+        );
+    }
+
+    @Test
+    public void testABacklogThatTogglesDedupAfterAFilteredCommitStillRefusesALostDay() throws Exception {
+        // The commit ran without dedup, and the DEDUP ENABLE and DISABLE behind it leave the
+        // sequencer's record unable to say so. The history floor still sees the lost day.
+        assertLostDayRebuildRefused(
+                "WAL",
+                true,
+                false,
+                LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE,
+                "ALTER TABLE base DROP PARTITION LIST '2026-01-01'",
+                FILTERED_FRONTIER_COMMIT,
+                "ALTER TABLE base DEDUP ENABLE UPSERT KEYS(ts, sym)",
+                "ALTER TABLE base DEDUP DISABLE"
+        );
+    }
+
+    @Test
+    public void testABacklogThatTogglesDedupAroundARemovingReplacementIsNotRefused() throws Exception {
+        // Neither end of the backlog deduplicates, only the replacement between them did.
+        assertDedupBacklogRebuildFollowsTheBase(
+                false,
+                "",
+                "ALTER TABLE base DEDUP ENABLE UPSERT KEYS(ts, sym)",
+                FILTERED_REPLACEMENT,
+                "ALTER TABLE base DEDUP DISABLE"
+        );
+    }
+
+    @Test
+    public void testADedupDisableAfterAFilteredCommitStillRefusesALostNewestDay() throws Exception {
+        final TimelineOpenFault fault = new TimelineOpenFault();
+        assertMemoryLeak(fault, () -> {
+            // The base loses the day that holds the view's frontier, which leaves its earliest row
+            // where it was, and the backlog's DEDUP change stands the row shortfall down. The
+            // view's last row now sits above every partition the base holds.
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            createFilteredView();
+            refreshIntoFilteredView(FILTERED_THREE_DAY_ROWS_INSERT);
+            Assert.assertTrue("the view's timeline open must have failed", fault.getFailures() > 0);
+            assertFilteredViewRows(FILTERED_THREE_DAY_ROWS);
+            applyUnconsumedBacklog(
+                    "ALTER TABLE base DROP PARTITION LIST '2026-01-03'",
+                    "INSERT INTO base (ts, sym, i) VALUES ('2026-01-02T00:07:00.000000Z', 'a', -1)",
+                    "ALTER TABLE base DEDUP DISABLE"
+            );
+            fault.disarm();
+            shutdown();
+
+            final LiveViewRebuildRestatementGuard guard = restart();
+
+            assertLostPartitionRefused(
+                    guard,
+                    "timeline is absent",
+                    LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE,
+                    "the view holds a row at 2026-01-03T00:09:00.000000Z but the base table holds no partition "
+                            + "between 2026-01-03T00:00:00.000000Z and 2026-01-04T00:00:00.000000Z",
+                    FILTERED_THREE_DAY_ROWS
+            );
+
+            shutdown();
+            restart();
+            assertRebuildBlocked(instance("lv"), "timeline is absent");
+            assertFilteredViewRows(FILTERED_THREE_DAY_ROWS);
+        });
+    }
+
+    @Test
+    public void testADedupDisableAfterAFilteredCommitStillRefusesALostNewestDayWhoseRowSitsOnItsBoundary() throws Exception {
+        final TimelineOpenFault fault = new TimelineOpenFault();
+        assertMemoryLeak(fault, () -> {
+            // The same loss, with the view's frontier exactly at the midnight the day the base lost
+            // begins. The range above the base's last partition starts where that row sits, so a
+            // refusal that stopped at the frontier rather than reaching it would let the row go.
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            createFilteredView();
+            refreshIntoFilteredView("""
+                    INSERT INTO base (ts, sym, i) VALUES
+                        ('2026-01-01T00:01:00.000000Z', 'a', 297),
+                        ('2026-01-02T00:05:00.000000Z', 'a', 500),
+                        ('2026-01-03T00:00:00.000000Z', 'a', 900)""");
+            Assert.assertTrue("the view's timeline open must have failed", fault.getFailures() > 0);
+            final String rows = """
+                    ts\tsym\ti\tv
+                    2026-01-01T00:01:00.000000Z\ta\t297\t297.0
+                    2026-01-02T00:05:00.000000Z\ta\t500\t500.0
+                    2026-01-03T00:00:00.000000Z\ta\t900\t900.0
+                    """;
+            assertFilteredViewRows(rows);
+            applyUnconsumedBacklog(
+                    "ALTER TABLE base DROP PARTITION LIST '2026-01-03'",
+                    "INSERT INTO base (ts, sym, i) VALUES ('2026-01-02T00:07:00.000000Z', 'a', -1)",
+                    "ALTER TABLE base DEDUP DISABLE"
+            );
+            fault.disarm();
+            shutdown();
+
+            final LiveViewRebuildRestatementGuard guard = restart();
+
+            assertLostPartitionRefused(
+                    guard,
+                    "timeline is absent",
+                    LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE,
+                    "the view holds a row at 2026-01-03T00:00:00.000000Z but the base table holds no partition "
+                            + "between 2026-01-03T00:00:00.000000Z and 2026-01-04T00:00:00.000000Z",
+                    rows
+            );
+
+            shutdown();
+            restart();
+            assertRebuildBlocked(instance("lv"), "timeline is absent");
+            assertFilteredViewRows(rows);
+        });
+    }
+
+    @Test
+    public void testADedupDisableAfterAFilteredCommitStillRefusesAnOldestDayLostAboveARowTheFilterRejects() throws Exception {
+        // The base loses the view's oldest day but keeps an older row the filter rejected, so its
+        // earliest row stays below the view's and the history floor cannot see the loss. The
+        // backlog's DEDUP change stands the row shortfall down.
+        assertLostOldestDayRebuildRefused(
+                "",
+                false,
+                "ALTER TABLE base DROP PARTITION LIST '2026-01-02'",
+                FILTERED_LATER_DAYS_FRONTIER_COMMIT,
+                "ALTER TABLE base DEDUP DISABLE"
+        );
+    }
+
+    @Test
+    public void testADedupDisableAfterAFilteredCommitStillRefusesAnOldestDayLostAboveTheStartFrom() throws Exception {
+        // The same, with the older base row one the view's START FROM leaves out.
+        assertLostOldestDayRebuildRefused(
+                "",
+                true,
+                "ALTER TABLE base DROP PARTITION LIST '2026-01-02'",
+                FILTERED_LATER_DAYS_FRONTIER_COMMIT,
+                "ALTER TABLE base DEDUP DISABLE"
+        );
+    }
+
+    @Test
+    public void testADedupToggleAfterAFilteredCommitStillRefusesADetachedOldestDay() throws Exception {
+        // A detached partition is as gone from the base as a dropped one.
+        assertLostOldestDayRebuildRefused(
+                "",
+                false,
+                "ALTER TABLE base DETACH PARTITION LIST '2026-01-02'",
+                FILTERED_LATER_DAYS_FRONTIER_COMMIT,
+                "ALTER TABLE base DEDUP ENABLE UPSERT KEYS(ts, sym)",
+                "ALTER TABLE base DEDUP DISABLE"
+        );
+    }
+
+    @Test
+    public void testADeduplicatingBacklogThatReachesTheFrontierStillRefusesALostDay() throws Exception {
+        // The commit replaces a row the view holds with one the filter rejects, and the base lost
+        // its first day. The row shortfall cannot tell the two apart, the history floor can: only
+        // the lost day moves the base's earliest row.
+        assertLostDayRebuildRefused(
+                "WAL DEDUP UPSERT KEYS(ts, sym)",
+                true,
+                false,
+                LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE,
+                "ALTER TABLE base DROP PARTITION LIST '2026-01-01'",
+                FILTERED_FRONTIER_COMMIT
+        );
+    }
+
+    @Test
+    public void testADeduplicatingBacklogThatReachesTheFrontierStillRefusesALostMiddleDay() throws Exception {
+        final TimelineOpenFault fault = new TimelineOpenFault();
+        assertMemoryLeak(fault, () -> {
+            // The commit may replace a row the view holds with one the filter rejects, so the row
+            // shortfall stands down, and the middle day the base lost leaves its earliest row
+            // where it was. The view's row from that day sits in no partition the base holds.
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            createFilteredView();
+            refreshIntoFilteredView(FILTERED_THREE_DAY_ROWS_INSERT);
+            Assert.assertTrue("the view's timeline open must have failed", fault.getFailures() > 0);
+            assertFilteredViewRows(FILTERED_THREE_DAY_ROWS);
+            applyUnconsumedBacklog(
+                    "ALTER TABLE base DROP PARTITION LIST '2026-01-02'",
+                    "INSERT INTO base (ts, sym, i) VALUES ('2026-01-03T00:05:00.000000Z', 'a', -1)"
+            );
+            fault.disarm();
+            shutdown();
+
+            final LiveViewRebuildRestatementGuard guard = restart();
+
+            assertLostPartitionRefused(
+                    guard,
+                    "timeline is absent",
+                    LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE,
+                    FILTERED_THREE_DAY_LOST_DAY_EVIDENCE,
+                    FILTERED_THREE_DAY_ROWS
+            );
+
+            shutdown();
+            restart();
+            assertRebuildBlocked(instance("lv"), "timeline is absent");
+            assertFilteredViewRows(FILTERED_THREE_DAY_ROWS);
+        });
+    }
+
+    @Test
+    public void testAFilteredCommitAboveTheFrontierKeepsTheRowShortfallBehindADedupChange() throws Exception {
+        final TimelineOpenFault fault = new TimelineOpenFault();
+        assertMemoryLeak(fault, () -> {
+            // The base loses the middle of the view's three days, which leaves its earliest row
+            // where it was: only the row shortfall sees that loss. The backlog's commit lies above
+            // the view's frontier, so a DEDUP change behind it cannot have taken a row out of the
+            // view, and the shortfall must still compare.
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            createFilteredView();
+            refreshIntoFilteredView(FILTERED_THREE_DAY_ROWS_INSERT);
+            Assert.assertTrue("the view's timeline open must have failed", fault.getFailures() > 0);
+            assertFilteredViewRows(FILTERED_THREE_DAY_ROWS);
+            applyUnconsumedBacklog(
+                    "ALTER TABLE base DROP PARTITION LIST '2026-01-02'",
+                    "INSERT INTO base (ts, sym, i) VALUES ('2026-01-03T00:10:00.000000Z', 'a', -1)",
+                    "ALTER TABLE base DEDUP DISABLE"
+            );
+            fault.disarm();
+            shutdown();
+
+            final LiveViewRebuildRestatementGuard guard = restart();
+
+            final LiveViewInstance instance = instance("lv");
+            assertRebuildBlocked(instance, "timeline is absent");
+            TestUtils.assertContains(
+                    instance.getCheckpointRecoveryReason(),
+                    "the rebuild reproduces 2 of the 3 rows the view holds up to 2026-01-03T00:09:00.000000Z"
+            );
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_NONE, guard.getAbstention());
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_ROW_SHORTFALL, guard.getVerdict());
+            capture.drain();
+            capture.assertNotLogged("live view rebuild from the applied base runs without the restatement guard");
+            capture.assertNotLogged(ROW_SHORTFALL_STAND_DOWN_LINE);
+            assertFilteredViewRows(FILTERED_THREE_DAY_ROWS);
+
+            shutdown();
+            restart();
+            assertRebuildBlocked(instance("lv"), "timeline is absent");
+            assertFilteredViewRows(FILTERED_THREE_DAY_ROWS);
+        });
+    }
+
+    @Test
+    public void testABaseDedupDisableAfterAFilteredCommitStillRefusesAnOldestDayLostAboveTheStartFromWithNoTimeline() throws Exception {
+        final TimelineOpenFault fault = new TimelineOpenFault();
+        assertMemoryLeak(fault, () -> {
+            // The running route: a view with no timeline walks past the loss of its oldest day, and
+            // the base keeps an older row the view's START FROM leaves out.
+            seedLaterDaysView("", true);
+            Assert.assertTrue("the view's timeline open must have failed", fault.getFailures() > 0);
+            execute("ALTER TABLE base DROP PARTITION LIST '2026-01-02'");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertFilteredViewRows(FILTERED_LATER_DAYS_ROWS);
+            fault.disarm();
+
+            // A commit that reaches the frontier, then the DEDUP DISABLE, which is itself the schema
+            // change the drain meets. With no timeline to restore from, it asks for the rebuild.
+            execute(FILTERED_LATER_DAYS_FRONTIER_COMMIT);
+            execute("ALTER TABLE base DEDUP DISABLE");
+            drainWalQueue();
+            final LiveViewRebuildRestatementGuard guard;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                guard = job.rebuildRestatementGuardForTest();
+            }
+
+            assertLostPartitionRefused(
+                    guard,
+                    DRIFT_CAUSE,
+                    LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE,
+                    FILTERED_LATER_DAYS_LOST_DAY_EVIDENCE,
+                    FILTERED_LATER_DAYS_ROWS
+            );
+            capture.assertLogged("live view cannot restore its runtime from the checkpoint timeline, rebuilding from the applied base "
+                    + "[view=lv, cause=base table metadata change, reason=timeline is absent]");
+        });
+    }
+
+    @Test
+    public void testABaseSchemaChangeAfterAFilteredCommitStillRefusesALostDayWithNoTimeline() throws Exception {
+        final TimelineOpenFault fault = new TimelineOpenFault();
+        assertMemoryLeak(fault, () -> {
+            // The running route: a view with no timeline walks past the loss of its base's first
+            // day and keeps that day's row.
+            seedTwoDayView("WAL", true, fault);
+            execute("ALTER TABLE base DROP PARTITION LIST '2026-01-01'");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertFilteredViewRows(FILTERED_TWO_DAY_ROWS);
+            fault.disarm();
+
+            // A commit that reaches the frontier, then a schema change the view survives. The
+            // drain meets the drift, and with no timeline to restore from, asks for the rebuild.
+            execute(FILTERED_FRONTIER_COMMIT);
+            execute("ALTER TABLE base ADD COLUMN note INT");
+            drainWalQueue();
+            final LiveViewRebuildRestatementGuard guard;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                guard = job.rebuildRestatementGuardForTest();
+            }
+
+            final LiveViewInstance instance = instance("lv");
+            assertRebuildBlocked(instance, DRIFT_CAUSE);
+            TestUtils.assertContains(instance.getCheckpointRecoveryReason(), FILTERED_LOST_DAY_EVIDENCE);
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_NONE, guard.getAbstention());
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR, guard.getVerdict());
+            assertFilteredViewRows(FILTERED_TWO_DAY_ROWS);
+            capture.drain();
+            capture.assertLogged("live view cannot restore its runtime from the checkpoint timeline, rebuilding from the applied base "
+                    + "[view=lv, cause=base table metadata change, reason=timeline is absent]");
+            capture.assertNotLogged("live view rebuild from the applied base runs without the restatement guard");
+        });
+    }
+
+    @Test
+    public void testALostCommitBehindADedupDisableAfterARemovingReplacementIsNotRefused() throws Exception {
+        final TimelineOpenFault fault = new TimelineOpenFault();
+        assertMemoryLeak(fault, () -> {
+            // The walk reads the replacement and the DEDUP DISABLE behind it, and goes on past
+            // them to a commit whose WAL is gone. That commit ran without dedup and adds a row the
+            // filter rejects, but the replacement the walk already read still stands the row
+            // shortfall down: a comparison would refuse the rebuild, on every restart.
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            createFilteredView();
+            refreshIntoFilteredView(FILTERED_ROWS_INSERT);
+            Assert.assertTrue("the view's timeline open must have failed", fault.getFailures() > 0);
+            applyUnconsumedBacklog(FILTERED_REPLACEMENT, "ALTER TABLE base DEDUP DISABLE");
+            final TableToken baseToken = engine.verifyTableName("base");
+            final long processedBefore = instance("lv").getLastProcessedSeqTxn();
+            try (WalWriter held = engine.getWalWriter(baseToken)) {
+                Assert.assertEquals("every earlier commit must sit in the first WAL", 1, held.getWalId());
+                execute("INSERT INTO base (ts, sym, i) VALUES ('2026-01-01T00:07:00.000000Z', 'a', -3)");
+            }
+            drainWalQueue();
+            Assert.assertEquals("the view must not consume the backlog", processedBefore, instance("lv").getLastProcessedSeqTxn());
+            fault.disarm();
+            shutdown();
+            final File secondWal = new File(
+                    new File(engine.getConfiguration().getDbRoot(), baseToken.getDirName()),
+                    WalUtils.WAL_NAME_BASE + 2
+            );
+            Assert.assertTrue("the insert must have taken a second WAL", secondWal.isDirectory());
+            try (Path p = new Path()) {
+                p.of(secondWal.getAbsolutePath());
+                Assert.assertTrue("could not remove " + secondWal, engine.getConfiguration().getFilesFacade().rmdir(p));
+            }
+
+            final LiveViewRebuildRestatementGuard guard = restart();
+
+            final LiveViewInstance instance = instance("lv");
+            Assert.assertFalse(
+                    "the rebuild must follow the base, not stop the view: " + instance.getCheckpointRecoveryReason(),
+                    instance.isCheckpointRecoveryBlocked()
+            );
+            assertRebuiltFromAppliedBase("lv");
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE, guard.getAbstention());
+            capture.drain();
+            capture.assertLogged("guardChecks=history floor and base partitions,");
+            capture.assertLogged(ROW_SHORTFALL_STAND_DOWN_LINE + " [view=lv, reason=backlog unreadable]");
+            assertFilteredViewRows(FILTERED_REPLACED_ROWS);
+            assertLiveViewsReportsNoRecovery(instance);
+
+            shutdown();
+            restart();
+            Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+            assertFilteredViewRows(FILTERED_REPLACED_ROWS);
+        });
+    }
+
+    @Test
+    public void testALostBaseWalRederiveOverABacklogThatDisablesDedupAfterARemovingReplacementIsNotRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            // The view restores from its timeline, and its drain meets the lost segment. The
+            // replacement's commit is exactly what the re-derive cannot read, and the DEDUP
+            // DISABLE after it is on the sequencer, which the loss left readable. That commit may
+            // have run under dedup, so the guard abstains and the re-derive follows the base.
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            createFilteredView();
+            refreshIntoFilteredView(FILTERED_ROWS_INSERT);
+            assertFilteredViewRows(FILTERED_ROWS);
+            execute(FILTERED_REPLACEMENT);
+            execute("ALTER TABLE base DEDUP DISABLE");
+            drainWalQueue();
+            shutdown();
+            removeBaseWal("base");
+
+            final LiveViewRebuildRestatementGuard guard = restart();
+
+            final LiveViewInstance instance = instance("lv");
+            Assert.assertFalse(
+                    "the re-derive must follow the base, not stop the view: " + instance.getCheckpointRecoveryReason(),
+                    instance.isCheckpointRecoveryBlocked()
+            );
+            Assert.assertFalse(instance.isInvalid());
+            capture.drain();
+            capture.assertLogged("live view re-derived from the applied base after base WAL loss");
+            capture.assertNotLogged("live view rebuild from the applied base refused");
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE, guard.getAbstention());
+            assertFilteredViewRows(FILTERED_REPLACED_ROWS);
+            assertLiveViewsReportsNoRecovery(instance);
+
+            execute(FILTERED_APPEND);
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertFilteredViewRows(FILTERED_REPLACED_ROWS + FILTERED_APPEND_OUTPUT);
+        });
+    }
+
+    @Test
+    public void testALostBaseWalBacklogOverADeduplicatingBaseStillRefusesALostDay() throws Exception {
+        // The same, with the backlog's commits unreadable: over a base that deduplicates, any of
+        // them may be a replacement, and none of them can move the base's earliest row.
+        assertLostDayRebuildRefused(
+                "WAL DEDUP UPSERT KEYS(ts, sym)",
+                true,
+                true,
+                LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE,
+                "ALTER TABLE base DROP PARTITION LIST '2026-01-01'",
+                FILTERED_FRONTIER_COMMIT
+        );
+    }
+
+    @Test
+    public void testALostBaseWalBacklogThatAddsAColumnAndDisablesDedupAfterARemovingReplacementIsNotRefused() throws Exception {
+        // The replacement's commit is what the rebuild cannot read. The sequencer still records
+        // what followed it, and the check looks past the schema change that leaves dedup alone to
+        // the DEDUP DISABLE that leaves the replacement's dedup unknown.
+        assertDedupBacklogRebuildFollowsTheBase(
+                true,
+                "DEDUP UPSERT KEYS(ts, sym)",
+                FILTERED_REPLACEMENT,
+                "ALTER TABLE base ADD COLUMN note INT",
+                "ALTER TABLE base DEDUP DISABLE"
+        );
+    }
+
+    @Test
+    public void testALostBaseWalBacklogThatDisablesDedupAfterAFilteredCommitStillRefusesALostDay() throws Exception {
+        // The base never deduplicated, and the rebuild cannot read the backlog's commits. The
+        // DEDUP DISABLE the sequencer records after them stands the row shortfall down, and the
+        // history floor still sees the lost day.
+        assertLostDayRebuildRefused(
+                "WAL",
+                true,
+                true,
+                LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE,
+                "ALTER TABLE base DROP PARTITION LIST '2026-01-01'",
+                FILTERED_FRONTIER_COMMIT,
+                "ALTER TABLE base DEDUP DISABLE"
+        );
+    }
+
+    @Test
+    public void testAPurgedBacklogBehindARefusalStaysRefusedAcrossASchemaChange() throws Exception {
+        // WalPurgeJob.runSerially is interval-gated off the millisecond clock, which this class
+        // freezes. Without this the sweep below silently does nothing.
+        setProperty(PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 0);
+        final TimelineOpenFault fault = new TimelineOpenFault();
+        assertMemoryLeak(fault, () -> {
+            // A filtering view over a base without dedup walks past the loss of the base's first
+            // day, and the restart that finds no timeline refuses the rebuild.
+            seedTwoDayView("WAL", true, fault);
+            execute("ALTER TABLE base DROP PARTITION LIST '2026-01-01'");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertFilteredViewRows(FILTERED_TWO_DAY_ROWS);
+            fault.disarm();
+            shutdown();
+            restart();
+            assertRebuildBlocked(instance("lv"), "timeline is absent");
+
+            // Ingestion goes on while the view is stopped, and a blocked view holds no WAL floor:
+            // the routine sweep takes every base WAL the restart closed. The sequencer keeps the
+            // record of each commit, not the commit.
+            execute("INSERT INTO base (ts, sym, i) VALUES ('2026-01-03T00:05:00.000000Z', 'a', 7)");
+            drainWalQueue();
+            engine.releaseInactive();
+            setCurrentMicros(currentMicros + 60_000_000L);
+            try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
+                purgeJob.drain(0);
+            }
+            Assert.assertEquals("the sweep must have taken the base's WAL", 0, countBaseWalDirs("base"));
+            // A schema change that leaves dedup alone, behind the commit the sweep took.
+            execute("ALTER TABLE base ADD COLUMN note INT");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            shutdown();
+
+            final LiveViewRebuildRestatementGuard guard = restart();
+
+            // The commit ran without dedup, as the base always has, so it cannot have taken a row
+            // out of the view. The guard compares and refuses again, as it did before the sweep.
+            final LiveViewInstance instance = instance("lv");
+            assertRebuildBlocked(instance, "timeline is absent");
+            TestUtils.assertContains(instance.getCheckpointRecoveryReason(), FILTERED_LOST_DAY_EVIDENCE);
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_NONE, guard.getAbstention());
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR, guard.getVerdict());
+            assertFilteredViewRows(FILTERED_TWO_DAY_ROWS);
+            capture.drain();
+            capture.assertLogged("live view could not read the rebuild's base backlog [view=lv, fromSeqTxn=2, toSeqTxn=4, guardChecks=history floor and row shortfall,");
+            capture.assertNotLogged("live view rebuild from the applied base runs without the restatement guard");
+
+            shutdown();
+            restart();
+            assertRebuildBlocked(instance("lv"), "timeline is absent");
+            assertFilteredViewRows(FILTERED_TWO_DAY_ROWS);
+        });
+    }
+
+    @Test
+    public void testAPurgedBacklogBehindARowShortfallRefusalStaysRefusedAcrossADedupDisable() throws Exception {
+        assertPurgedMiddleDayRefusalSurvivesADedupDisable("WAL");
+    }
+
+    @Test
+    public void testAPurgedBacklogOverADeduplicatingBaseStaysRefusedAcrossADedupDisable() throws Exception {
+        assertPurgedMiddleDayRefusalSurvivesADedupDisable("WAL DEDUP UPSERT KEYS(ts, sym)");
+    }
+
+    @Test
+    public void testARestartThatLostTheBaseWalBehindADedupDisableStillRefusesAnOldestDayLostAboveARowTheFilterRejects() throws Exception {
+        assertMemoryLeak(() -> {
+            // No fault: the view keeps its timeline and walks past the loss of its oldest day, and
+            // the base keeps an older row the filter rejected. A restore that captured the applied
+            // base and not its WAL leaves the timeline nothing to replay the backlog from, and the
+            // rebuild cannot read the backlog either. The sequencer still records its DEDUP DISABLE.
+            seedLaterDaysView("", false);
+            execute("ALTER TABLE base DROP PARTITION LIST '2026-01-02'");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertFilteredViewRows(FILTERED_LATER_DAYS_ROWS);
+            applyUnconsumedBacklog(FILTERED_LATER_DAYS_FRONTIER_COMMIT, "ALTER TABLE base DEDUP DISABLE");
+            shutdown();
+            removeBaseWal("base");
+
+            final LiveViewRebuildRestatementGuard guard = restart();
+
+            assertLostPartitionRefused(
+                    guard,
+                    "timeline restore failed",
+                    LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE,
+                    FILTERED_LATER_DAYS_LOST_DAY_EVIDENCE,
+                    FILTERED_LATER_DAYS_ROWS
+            );
+
+            shutdown();
+            restart();
+            assertRebuildBlocked(instance("lv"), "timeline restore failed");
+            assertFilteredViewRows(FILTERED_LATER_DAYS_ROWS);
+        });
+    }
+
+    @Test
+    public void testAViewPartitionedByMonthFollowsABaseThatLostADayOfRowsTheFilterRejected() throws Exception {
+        // The view's one partition spans the day the base lost, and holds no row inside it.
+        assertRejectedDayLossRebuildFollowsTheBase("PARTITION BY MONTH");
+    }
+
+    @Test
+    public void testAViewPartitionedByMonthRefusesADayItsBaseLostBehindADedupDisable() throws Exception {
+        // The view's one partition spans the day the base lost and the days around it, so only
+        // the rows inside that partition can say whether the view holds any of the lost day.
+        assertLostOldestDayRebuildRefused(
+                "PARTITION BY MONTH",
+                false,
+                "ALTER TABLE base DROP PARTITION LIST '2026-01-02'",
+                FILTERED_LATER_DAYS_FRONTIER_COMMIT,
+                "ALTER TABLE base DEDUP DISABLE"
+        );
+    }
+
+    @Test
+    public void testAnUnfilteredViewRefusesALostDayBehindAFrontierCommitThatDedupDisableFollows() throws Exception {
+        // A view without a filter loses no row to a replacement, whatever dedup did to it, so a
+        // DEDUP DISABLE behind a commit that reached the frontier is no reason to stand down.
+        assertLostDayRebuildRefused(
+                "WAL DEDUP UPSERT KEYS(ts, sym)",
+                false,
+                false,
+                "ALTER TABLE base DROP PARTITION LIST '2026-01-01'",
+                FILTERED_FRONTIER_COMMIT,
+                "ALTER TABLE base DEDUP DISABLE"
+        );
+    }
+
+    @Test
+    public void testAnUnfilteredViewRefusesALostDayBehindAnUnreadableCommitThatDedupDisableFollows() throws Exception {
+        // The same, with the backlog's commits unreadable: without a filter, a commit the rebuild
+        // cannot read still cannot take a row out of the view.
+        assertLostDayRebuildRefused(
+                "WAL DEDUP UPSERT KEYS(ts, sym)",
+                false,
+                true,
+                "ALTER TABLE base DROP PARTITION LIST '2026-01-01'",
+                FILTERED_FRONTIER_COMMIT,
+                "ALTER TABLE base DEDUP DISABLE"
+        );
+    }
+
+    @Test
+    public void testAnUnreadableBacklogBehindADedupDisableStillRefusesALostDay() throws Exception {
+        // The DEDUP DISABLE comes before the first commit the rebuild cannot read, and no commit
+        // ahead of it reached the frontier. So the unreadable commit ran without dedup, as the
+        // snapshot says, and only a DEDUP change after it could leave that in doubt.
+        assertLostDayRebuildRefused(
+                "WAL DEDUP UPSERT KEYS(ts, sym)",
+                true,
+                true,
+                "ALTER TABLE base DEDUP DISABLE",
+                FILTERED_FRONTIER_COMMIT,
+                "ALTER TABLE base DROP PARTITION LIST '2026-01-01'"
+        );
+    }
+
+    @Test
+    public void testAnUnreadableBacklogIgnoresDedupChangesTheSnapshotHasNotApplied() throws Exception {
+        final TimelineOpenFault fault = new TimelineOpenFault();
+        assertMemoryLeak(fault, () -> {
+            seedTwoDayView("WAL", true, fault);
+            applyUnconsumedBacklog("ALTER TABLE base DROP PARTITION LIST '2026-01-01'", FILTERED_FRONTIER_COMMIT);
+            // The base's apply stops, and DEDUP changes land on the sequencer past everything the
+            // rebuild's snapshot holds. The base applied the backlog's commits without dedup, and
+            // what the sequencer records after the snapshot has no say in that.
+            execute("ALTER TABLE base SUSPEND WAL");
+            applyUnconsumedBacklog("ALTER TABLE base DEDUP ENABLE UPSERT KEYS(ts, sym)", "ALTER TABLE base DEDUP DISABLE");
+            final TableToken baseToken = engine.verifyTableName("base");
+            Assert.assertEquals(
+                    "the DEDUP changes must stay unapplied",
+                    engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn() + 2,
+                    engine.getTableSequencerAPI().lastTxn(baseToken)
+            );
+            fault.disarm();
+
+            assertLostDayRebuildRefusedOnRestart(true, LiveViewRebuildRestatementGuard.ABSTAIN_NONE);
+        });
+    }
+
+    @Test
+    public void testAnUnreadableDedupHistoryRefusesUntilARestartCanReadIt() throws Exception {
+        final DedupHistoryOpenFault fault = new DedupHistoryOpenFault();
+        assertMemoryLeak(fault, () -> {
+            // The finding's backlog: a replacement under dedup, then DEDUP DISABLE. Whether the
+            // replacement ran under dedup is on the sequencer's record of that DEDUP DISABLE, and
+            // the restart cannot read it. With the history unknown, the guard compares, as it
+            // would over a base that never deduplicated, and a restart retries the question.
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            createFilteredView();
+            refreshIntoFilteredView(FILTERED_ROWS_INSERT);
+            Assert.assertTrue("the view's timeline open must have failed", fault.getFailures() > 0);
+            applyUnconsumedBacklog(FILTERED_REPLACEMENT, "ALTER TABLE base DEDUP DISABLE");
+            fault.disarm();
+            fault.armDedupHistory(engine.verifyTableName("base"));
+            shutdown();
+
+            LiveViewRebuildRestatementGuard guard = restart();
+
+            assertRebuildBlocked(instance("lv"), "timeline is absent");
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_NONE, guard.getAbstention());
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_ROW_SHORTFALL, guard.getVerdict());
+            assertFilteredViewRows(FILTERED_ROWS);
+            Assert.assertTrue("the restart must have tried to read the dedup history", fault.getDedupHistoryFailures() > 0);
+            capture.drain();
+            capture.assertLogged("live view could not read a base schema change, the rebuild guard compares [view=lv");
+            capture.assertNotLogged("live view rebuild from the applied base runs without the restatement guard");
+
+            // The history reads again, and the next restart finds the replacement ran under dedup.
+            fault.disarmDedupHistory();
+            shutdown();
+
+            guard = restart();
+
+            final LiveViewInstance instance = instance("lv");
+            Assert.assertFalse(
+                    "the rebuild must follow the base, not stop the view: " + instance.getCheckpointRecoveryReason(),
+                    instance.isCheckpointRecoveryBlocked()
+            );
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE, guard.getAbstention());
+            assertFilteredViewRows(FILTERED_REPLACED_ROWS);
+            assertLiveViewsReportsNoRecovery(instance);
+
+            execute(FILTERED_APPEND);
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertFilteredViewRows(FILTERED_REPLACED_ROWS + FILTERED_APPEND_OUTPUT);
         });
     }
 
@@ -1217,6 +2323,50 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     @Test
+    public void testGuardLostPartitionRefusesOnlyWhatWasRecordedSinceArming() {
+        final LiveViewRebuildRestatementGuard guard = new LiveViewRebuildRestatementGuard();
+        final long viewMin = ts("2026-01-01T09:00:00.000000Z");
+        final long viewMax = ts("2026-01-03T09:00:00.000000Z");
+        final long lostRow = ts("2026-01-02T09:00:00.000000Z");
+        final long lostPartitionLo = ts("2026-01-02T00:00:00.000000Z");
+        final long lostPartitionHi = ts("2026-01-03T00:00:00.000000Z");
+        final int[] abstentions = {
+                LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE,
+                LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE
+        };
+        for (int abstention : abstentions) {
+            // Stood down to the history floor and the lost partition check over a floor that
+            // holds: nothing is lost until a row is recorded.
+            guard.arm(3, viewMin, viewMax, 3, viewMin);
+            guard.disarmRowShortfall(abstention);
+            Assert.assertFalse(guard.isBasePartitionLost());
+            guard.observeLostPartition(lostRow, lostPartitionLo, lostPartitionHi);
+            Assert.assertTrue(guard.isBasePartitionLost());
+            Assert.assertFalse(guard.isHistoryFloorBreached());
+            Assert.assertFalse(guard.isRowShortfall());
+            guard.refuse(LiveViewRebuildRestatementGuard.VERDICT_LOST_PARTITION);
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_LOST_PARTITION, guard.getVerdict());
+            final StringSink sink = new StringSink();
+            guard.appendEvidence(sink, MicrosTimestampDriver.INSTANCE);
+            TestUtils.assertEquals(
+                    "the view holds a row at 2026-01-02T09:00:00.000000Z but the base table holds no partition "
+                            + "between 2026-01-02T00:00:00.000000Z and 2026-01-03T00:00:00.000000Z",
+                    sink
+            );
+
+            // The next rebuild's arming forgets the row and the verdict, and so does a full
+            // stand-down.
+            guard.arm(3, viewMin, viewMax, 3, viewMin);
+            Assert.assertFalse(guard.isBasePartitionLost());
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_NONE, guard.getVerdict());
+            guard.disarmRowShortfall(abstention);
+            guard.observeLostPartition(lostRow, lostPartitionLo, lostPartitionHi);
+            guard.disarm(abstention);
+            Assert.assertFalse(guard.isBasePartitionLost());
+        }
+    }
+
+    @Test
     public void testGuardRowShortfallCountsOnlyRowsAtOrBelowTheFrontier() {
         final LiveViewRebuildRestatementGuard guard = new LiveViewRebuildRestatementGuard();
         final long viewMax = ts("2026-01-03T09:00:00.000000Z");
@@ -1236,6 +2386,43 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
 
         guard.observe(viewMax);
         Assert.assertFalse("a recompute that reproduces every row is no shortfall", guard.isRowShortfall());
+    }
+
+    @Test
+    public void testGuardRowShortfallDisarmKeepsTheHistoryFloor() {
+        final LiveViewRebuildRestatementGuard guard = new LiveViewRebuildRestatementGuard();
+        final long viewMin = ts("2026-01-01T09:00:00.000000Z");
+        final long viewMax = ts("2026-01-03T09:00:00.000000Z");
+        final int[] abstentions = {
+                LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE,
+                LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE
+        };
+        for (int abstention : abstentions) {
+            // Armed over evidence both checks would refuse, then stood down over a backlog that
+            // may hold a dedup replacement: the recompute's count no longer counts, and the
+            // history floor still refuses.
+            guard.arm(10, viewMin, viewMax, 4, viewMin + 1);
+            guard.disarmRowShortfall(abstention);
+            guard.observe(viewMin);
+            Assert.assertEquals(abstention, guard.getAbstention());
+            Assert.assertEquals(0, guard.getReproducedRows());
+            Assert.assertFalse(guard.isRowShortfall());
+            Assert.assertTrue(guard.isHistoryFloorBreached());
+            guard.refuse(LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR);
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR, guard.getVerdict());
+            final StringSink sink = new StringSink();
+            guard.appendEvidence(sink, MicrosTimestampDriver.INSTANCE);
+            TestUtils.assertEquals(
+                    "the view holds rows from 2026-01-01T09:00:00.000000Z but the base table's earliest row is at 2026-01-01T09:00:00.000001Z",
+                    sink
+            );
+
+            // A replacement at the view's earliest timestamp leaves the base's earliest row there.
+            guard.arm(10, viewMin, viewMax, 4, viewMin);
+            guard.disarmRowShortfall(abstention);
+            Assert.assertFalse(guard.isHistoryFloorBreached());
+            Assert.assertFalse(guard.isRowShortfall());
+        }
     }
 
     /**
@@ -1288,6 +2475,275 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     /**
+     * Applies each of {@code backlog} to the base, one apply at a time, without refreshing the
+     * view.
+     */
+    private void applyUnconsumedBacklog(String... backlog) throws Exception {
+        final long processedBefore = instance("lv").getLastProcessedSeqTxn();
+        for (String statement : backlog) {
+            execute(statement);
+            drainWalQueue();
+        }
+        Assert.assertEquals("the view must not consume the backlog", processedBefore, instance("lv").getLastProcessedSeqTxn());
+    }
+
+    /**
+     * Refreshes three positive rows into a view filtering {@code i > 0} while every open of its
+     * {@code _timeline} fails, so the view's table holds their output and no checkpoint describes
+     * it. Then applies {@code backlog} to the base without refreshing the view - a replacement of
+     * the first row with one the filter rejects, around DEDUP changes - and restarts, first
+     * removing the base's WAL when {@code isBaseWalLost}. The restart finds no timeline and
+     * rebuilds from the applied base, which legitimately holds one output row fewer: the rebuild
+     * must follow the base, a second restart must keep it, and a later commit must still reach
+     * the view.
+     */
+    private void assertDedupBacklogRebuildFollowsTheBase(
+            boolean isBaseWalLost,
+            String dedupClause,
+            String... backlog
+    ) throws Exception {
+        assertDedupBacklogRebuildOverRowsFollowsTheBase(
+                isBaseWalLost,
+                dedupClause,
+                FILTERED_ROWS_INSERT,
+                FILTERED_ROWS,
+                FILTERED_REPLACED_ROWS,
+                FILTERED_APPEND,
+                FILTERED_APPEND_OUTPUT,
+                backlog
+        );
+    }
+
+    /**
+     * The same, over the rows {@code rowsInsert} commits, which the view holds as {@code rows}
+     * and a rebuild that follows the base holds as {@code replacedRows}. {@code append} is the
+     * later commit that must still reach the view, as {@code appendOutput}.
+     */
+    private void assertDedupBacklogRebuildOverRowsFollowsTheBase(
+            boolean isBaseWalLost,
+            String dedupClause,
+            String rowsInsert,
+            String rows,
+            String replacedRows,
+            String append,
+            String appendOutput,
+            String... backlog
+    ) throws Exception {
+        final TimelineOpenFault fault = new TimelineOpenFault();
+        assertMemoryLeak(fault, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL " + dedupClause);
+            createFilteredView();
+            refreshIntoFilteredView(rowsInsert);
+            Assert.assertTrue("the view's timeline open must have failed", fault.getFailures() > 0);
+            assertFilteredViewRows(rows);
+            applyUnconsumedBacklog(backlog);
+            fault.disarm();
+            shutdown();
+            if (isBaseWalLost) {
+                removeBaseWal("base");
+            }
+
+            final LiveViewRebuildRestatementGuard guard = restart();
+
+            final LiveViewInstance instance = instance("lv");
+            Assert.assertFalse(
+                    "the rebuild must follow the base, not stop the view: " + instance.getCheckpointRecoveryReason(),
+                    instance.isCheckpointRecoveryBlocked()
+            );
+            assertRebuiltFromAppliedBase("lv");
+            Assert.assertEquals(
+                    "a replacement that ran under dedup can legitimately remove an output row",
+                    isBaseWalLost
+                            ? LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE
+                            : LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE,
+                    guard.getAbstention()
+            );
+            assertFilteredViewRows(replacedRows);
+            assertLiveViewsReportsNoRecovery(instance);
+
+            shutdown();
+            restart();
+            Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+            assertFilteredViewRows(replacedRows);
+            assertLiveViewsReportsNoRecovery(instance("lv"));
+
+            execute(append);
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertFilteredViewRows(replacedRows + appendOutput);
+            assertLiveViewsReportsNoRecovery(instance("lv"));
+        });
+    }
+
+    private void assertFilteredViewRows(String expected) throws Exception {
+        assertQuery("SELECT ts, sym, i, v FROM lv")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns(expected);
+    }
+
+    /**
+     * Seeds {@link #FILTERED_TWO_DAY_ROWS} into a view over a base created with
+     * {@code tableOptions}, filtering {@code i > 0} when {@code isFiltered}, while every open of
+     * its {@code _timeline} fails. Then applies {@code backlog} to the base without refreshing
+     * the view - a loss of the base's first day among it, and the base's WAL with it when
+     * {@code isBaseWalLost} - and restarts. See {@link #assertLostDayRebuildRefusedOnRestart}.
+     */
+    private void assertLostDayRebuildRefused(
+            String tableOptions,
+            boolean isFiltered,
+            boolean isBaseWalLost,
+            String... backlog
+    ) throws Exception {
+        assertLostDayRebuildRefused(
+                tableOptions,
+                isFiltered,
+                isBaseWalLost,
+                LiveViewRebuildRestatementGuard.ABSTAIN_NONE,
+                backlog
+        );
+    }
+
+    /**
+     * The same, for a guard that compares with {@code abstention} in force: either
+     * {@link LiveViewRebuildRestatementGuard#ABSTAIN_NONE}, both checks, or the row shortfall's
+     * stand-down over a backlog that may hold a dedup replacement, which keeps the history floor.
+     */
+    private void assertLostDayRebuildRefused(
+            String tableOptions,
+            boolean isFiltered,
+            boolean isBaseWalLost,
+            int abstention,
+            String... backlog
+    ) throws Exception {
+        final TimelineOpenFault fault = new TimelineOpenFault();
+        assertMemoryLeak(fault, () -> {
+            seedTwoDayView(tableOptions, isFiltered, fault);
+            applyUnconsumedBacklog(backlog);
+            fault.disarm();
+            assertLostDayRebuildRefusedOnRestart(isBaseWalLost, abstention);
+        });
+    }
+
+    /**
+     * Restarts a view that holds {@link #FILTERED_TWO_DAY_ROWS} and no timeline over a base that
+     * lost its first day, first removing the base's WAL when {@code isBaseWalLost}. The restart
+     * rebuilds from the applied base, whose history floor sees the lost day, so the guard must
+     * refuse, on that restart and the next, and keep every row. {@code abstention} is what the
+     * guard compares with: {@link LiveViewRebuildRestatementGuard#ABSTAIN_NONE} when no backlog
+     * commit can have taken a row out of the view, and otherwise the row shortfall's stand-down,
+     * which leaves the history floor to refuse.
+     */
+    private void assertLostDayRebuildRefusedOnRestart(boolean isBaseWalLost, int abstention) throws Exception {
+        shutdown();
+        if (isBaseWalLost) {
+            removeBaseWal("base");
+        }
+
+        final LiveViewRebuildRestatementGuard guard = restart();
+
+        final LiveViewInstance instance = instance("lv");
+        assertRebuildBlocked(instance, "timeline is absent");
+        TestUtils.assertContains(instance.getCheckpointRecoveryReason(), FILTERED_LOST_DAY_EVIDENCE);
+        Assert.assertEquals(abstention, guard.getAbstention());
+        Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR, guard.getVerdict());
+        capture.drain();
+        capture.assertNotLogged("live view rebuild from the applied base runs without the restatement guard");
+        if (abstention == LiveViewRebuildRestatementGuard.ABSTAIN_NONE) {
+            capture.assertNotLogged(ROW_SHORTFALL_STAND_DOWN_LINE);
+        } else {
+            capture.assertLogged(ROW_SHORTFALL_STAND_DOWN_LINE + " [view=lv, reason="
+                    + LiveViewRebuildRestatementGuard.abstentionName(abstention) + "]");
+        }
+        if (isBaseWalLost) {
+            capture.assertLogged(abstention == LiveViewRebuildRestatementGuard.ABSTAIN_NONE
+                    ? "guardChecks=history floor and row shortfall,"
+                    : "guardChecks=history floor and base partitions,");
+        } else {
+            capture.assertNotLogged("live view could not read the rebuild's base backlog");
+        }
+        assertFilteredViewRows(FILTERED_TWO_DAY_ROWS);
+
+        shutdown();
+        restart();
+        assertRebuildBlocked(instance("lv"), "timeline is absent");
+        assertFilteredViewRows(FILTERED_TWO_DAY_ROWS);
+    }
+
+    /**
+     * Seeds {@link #FILTERED_LATER_DAYS_ROWS} into a view created with {@code viewPartitionBy}
+     * while every open of its {@code _timeline} fails, over a base without dedup keys that also
+     * holds an older row the view does not - see {@link #seedLaterDaysView}. Then applies
+     * {@code backlog} to the base without refreshing the view - a loss of the base's second day
+     * and a DEDUP change behind a commit that reaches the frontier among it - and restarts. The
+     * history floor cannot see the lost day and the DEDUP change stands the row shortfall down,
+     * so the refusal has to come from the base partition the view's oldest row lost, on that
+     * restart and the next.
+     */
+    private void assertLostOldestDayRebuildRefused(
+            String viewPartitionBy,
+            boolean isOlderRowBelowStartFrom,
+            String... backlog
+    ) throws Exception {
+        final TimelineOpenFault fault = new TimelineOpenFault();
+        assertMemoryLeak(fault, () -> {
+            seedLaterDaysView(viewPartitionBy, isOlderRowBelowStartFrom);
+            Assert.assertTrue("the view's timeline open must have failed", fault.getFailures() > 0);
+            applyUnconsumedBacklog(backlog);
+            fault.disarm();
+            shutdown();
+
+            final LiveViewRebuildRestatementGuard guard = restart();
+
+            assertLostPartitionRefused(
+                    guard,
+                    "timeline is absent",
+                    LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE,
+                    FILTERED_LATER_DAYS_LOST_DAY_EVIDENCE,
+                    FILTERED_LATER_DAYS_ROWS
+            );
+            capture.assertNotLogged("live view could not read the rebuild's base backlog");
+
+            shutdown();
+            restart();
+            assertRebuildBlocked(instance("lv"), "timeline is absent");
+            assertFilteredViewRows(FILTERED_LATER_DAYS_ROWS);
+        });
+    }
+
+    /**
+     * Asserts the refusal a whole-view rebuild meets when the view holds a row in a base partition
+     * that no longer exists, behind a backlog that stood the row shortfall down with
+     * {@code abstention}: a stopped view whose reason names the route {@code cause} and the
+     * {@code evidence}, no rebuild that ran without the guard, and every one of {@code rows} kept.
+     */
+    private void assertLostPartitionRefused(
+            LiveViewRebuildRestatementGuard guard,
+            String cause,
+            int abstention,
+            String evidence,
+            String rows
+    ) throws Exception {
+        final LiveViewInstance instance = instance("lv");
+        assertRebuildBlocked(instance, cause);
+        TestUtils.assertContains(instance.getCheckpointRecoveryReason(), evidence);
+        Assert.assertEquals(abstention, guard.getAbstention());
+        Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_LOST_PARTITION, guard.getVerdict());
+        capture.drain();
+        capture.assertLogged(ROW_SHORTFALL_STAND_DOWN_LINE + " [view=lv, reason="
+                + LiveViewRebuildRestatementGuard.abstentionName(abstention) + "]");
+        capture.assertNotLogged("live view rebuild from the applied base runs without the restatement guard");
+        if (abstention == LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE) {
+            capture.assertLogged("guardChecks=history floor and base partitions,");
+        }
+        assertFilteredViewRows(rows);
+    }
+
+    /**
      * Asserts a view whose deferred rebuild ran, or whose recovery otherwise finished, reports no
      * recovery at all: both recovery columns NULL beside an {@code active} status.
      */
@@ -1320,6 +2776,70 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                         view_status\tcheckpoint_recovery_phase\treason_mirrored
                         invalid\trebuild_blocked\ttrue
                         """);
+    }
+
+    /**
+     * Refreshes {@link #FILTERED_THREE_DAY_ROWS} into a view with no timeline over a base created
+     * with {@code tableOptions}, which then loses the middle day behind a commit above the view's
+     * frontier, and restarts: the rebuild's row shortfall refuses. A blocked view holds no WAL
+     * floor, so the routine sweep takes the base's WAL behind the refusal, and a DEDUP DISABLE
+     * lands on the base after the commits the sweep took. The restart that follows cannot read
+     * those commits, and the DEDUP DISABLE leaves it unable to say they ran without dedup, so the
+     * row shortfall stands down. The day the base lost must still refuse, on that restart and the
+     * next, and every row must stay.
+     */
+    private void assertPurgedMiddleDayRefusalSurvivesADedupDisable(String tableOptions) throws Exception {
+        // WalPurgeJob.runSerially is interval-gated off the millisecond clock, which this class
+        // freezes. Without this the sweep below silently does nothing.
+        setProperty(PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 0);
+        final TimelineOpenFault fault = new TimelineOpenFault();
+        assertMemoryLeak(fault, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) TIMESTAMP(ts) PARTITION BY DAY " + tableOptions);
+            createFilteredView();
+            refreshIntoFilteredView(FILTERED_THREE_DAY_ROWS_INSERT);
+            Assert.assertTrue("the view's timeline open must have failed", fault.getFailures() > 0);
+            assertFilteredViewRows(FILTERED_THREE_DAY_ROWS);
+            applyUnconsumedBacklog(
+                    "ALTER TABLE base DROP PARTITION LIST '2026-01-02'",
+                    "INSERT INTO base (ts, sym, i) VALUES ('2026-01-04T00:05:00.000000Z', 'a', 7)"
+            );
+            fault.disarm();
+            shutdown();
+            restart();
+            assertRebuildBlocked(instance("lv"), "timeline is absent");
+            TestUtils.assertContains(
+                    instance("lv").getCheckpointRecoveryReason(),
+                    "the rebuild reproduces 2 of the 3 rows the view holds up to 2026-01-03T00:09:00.000000Z"
+            );
+
+            engine.releaseInactive();
+            setCurrentMicros(currentMicros + 60_000_000L);
+            try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
+                purgeJob.drain(0);
+            }
+            Assert.assertEquals("the sweep must have taken the base's WAL", 0, countBaseWalDirs("base"));
+            execute("ALTER TABLE base DEDUP DISABLE");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            shutdown();
+
+            final LiveViewRebuildRestatementGuard guard = restart();
+
+            assertLostPartitionRefused(
+                    guard,
+                    "timeline is absent",
+                    LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE,
+                    FILTERED_THREE_DAY_LOST_DAY_EVIDENCE,
+                    FILTERED_THREE_DAY_ROWS
+            );
+
+            shutdown();
+            restart();
+            assertRebuildBlocked(instance("lv"), "timeline is absent");
+            assertFilteredViewRows(FILTERED_THREE_DAY_ROWS);
+        });
     }
 
     /**
@@ -1381,12 +2901,110 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                         + (baseApplied + 1) + "\t0\n");
     }
 
+    /**
+     * Refreshes rows on three days into a view created with {@code viewPartitionBy} while every
+     * open of its {@code _timeline} fails, over a deduplicating base whose middle day holds only a
+     * row the filter rejects. Then the base loses that day, replaces a row the view holds with one
+     * the filter rejects, and disables dedup, all without refreshing the view, and the view
+     * restarts. The base holds no partition for the middle day, but the view holds no row of it:
+     * the rebuild must follow the base, a second restart must keep it, and a later commit must
+     * still reach the view.
+     */
+    private void assertRejectedDayLossRebuildFollowsTheBase(String viewPartitionBy) throws Exception {
+        final TimelineOpenFault fault = new TimelineOpenFault();
+        assertMemoryLeak(fault, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            createBaseView(viewPartitionBy + " START FROM BEGINNING", true);
+            refreshIntoFilteredView("""
+                    INSERT INTO base (ts, sym, i) VALUES
+                        ('2026-01-01T00:01:00.000000Z', 'a', 297),
+                        ('2026-01-02T00:05:00.000000Z', 'a', -5),
+                        ('2026-01-03T00:05:00.000000Z', 'a', 500),
+                        ('2026-01-03T00:09:00.000000Z', 'a', 900)""");
+            Assert.assertTrue("the view's timeline open must have failed", fault.getFailures() > 0);
+            assertFilteredViewRows("""
+                    ts\tsym\ti\tv
+                    2026-01-01T00:01:00.000000Z\ta\t297\t297.0
+                    2026-01-03T00:05:00.000000Z\ta\t500\t500.0
+                    2026-01-03T00:09:00.000000Z\ta\t900\t1400.0
+                    """);
+            applyUnconsumedBacklog(
+                    "ALTER TABLE base DROP PARTITION LIST '2026-01-02'",
+                    "INSERT INTO base (ts, sym, i) VALUES ('2026-01-03T00:05:00.000000Z', 'a', -108)",
+                    "ALTER TABLE base DEDUP DISABLE"
+            );
+            fault.disarm();
+            shutdown();
+
+            final LiveViewRebuildRestatementGuard guard = restart();
+
+            final LiveViewInstance instance = instance("lv");
+            Assert.assertFalse(
+                    "the rebuild must follow the base, not stop the view: " + instance.getCheckpointRecoveryReason(),
+                    instance.isCheckpointRecoveryBlocked()
+            );
+            assertRebuiltFromAppliedBase("lv");
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE, guard.getAbstention());
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_NONE, guard.getVerdict());
+            final String replacedRows = """
+                    ts\tsym\ti\tv
+                    2026-01-01T00:01:00.000000Z\ta\t297\t297.0
+                    2026-01-03T00:09:00.000000Z\ta\t900\t900.0
+                    """;
+            assertFilteredViewRows(replacedRows);
+            assertLiveViewsReportsNoRecovery(instance);
+
+            shutdown();
+            restart();
+            Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+            assertFilteredViewRows(replacedRows);
+
+            execute("INSERT INTO base (ts, sym, i) VALUES ('2026-01-03T00:10:00.000000Z', 'a', 1000)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertFilteredViewRows(replacedRows + "2026-01-03T00:10:00.000000Z\ta\t1000\t1900.0\n");
+            assertLiveViewsReportsNoRecovery(instance("lv"));
+        });
+    }
+
     private void assertViewRows(String expected) throws Exception {
         assertQuery(VIEW_ROWS_QUERY)
                 .noLeakCheck()
                 .timestamp("created_at")
                 .expectSize()
                 .returns(expected);
+    }
+
+    /**
+     * A view over {@code base} with a bounded RANGE sum, filtering {@code i > 0} when
+     * {@code isFiltered}.
+     */
+    private void createBaseView(boolean isFiltered) throws Exception {
+        createBaseView("START FROM BEGINNING", isFiltered);
+    }
+
+    /**
+     * The same, created with {@code viewOptions} - the clauses between FLUSH EVERY and AS.
+     */
+    private void createBaseView(String viewOptions, boolean isFiltered) throws Exception {
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms " + viewOptions + " AS\n" + """
+                SELECT ts, sym, i,
+                       sum(i) OVER (
+                           PARTITION BY sym ORDER BY ts
+                           RANGE BETWEEN '9' MINUTE PRECEDING AND CURRENT ROW
+                       ) AS v
+                FROM base""" + (isFiltered ? " WHERE i > 0" : ""));
+    }
+
+    /**
+     * A view over {@code base} whose filter the cases' replacement row fails, with a bounded
+     * RANGE sum the replacement changes for the rows after it.
+     */
+    private void createFilteredView() throws Exception {
+        createBaseView(true);
     }
 
     private void createView() throws Exception {
@@ -1568,11 +3186,25 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     /**
+     * Seeds the view {@link #createFilteredView()} created, then commits {@code insert} to its
+     * base and refreshes the view over it.
+     */
+    private void refreshIntoFilteredView(String insert) throws Exception {
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveSeedToCompletion(job, "lv");
+            execute(insert);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        }
+        assertNoRefreshFaults("lv");
+    }
+
+    /**
      * Removes every WAL directory of the base table, which is what a restore that captured the
      * applied table and not its WAL leaves behind.
      */
-    private void removeBaseWal() {
-        final TableToken baseToken = engine.verifyTableName("tx");
+    private void removeBaseWal(String baseTableName) {
+        final TableToken baseToken = engine.verifyTableName(baseTableName);
         final File baseDir = new File(engine.getConfiguration().getDbRoot(), baseToken.getDirName());
         final File[] walDirs = baseDir.listFiles(f -> f.isDirectory() && f.getName().startsWith(WalUtils.WAL_NAME_BASE));
         Assert.assertNotNull(walDirs);
@@ -1592,6 +3224,14 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     private void removeTimeline() {
         final File timeline = new File(checkpointsRootByDirName(), LiveViewCheckpointLayout.TIMELINE_FILE_NAME);
         Assert.assertTrue("the fixture must have published a timeline to remove", timeline.delete());
+    }
+
+    private int countBaseWalDirs(String baseTableName) {
+        final TableToken baseToken = engine.verifyTableName(baseTableName);
+        final File baseDir = new File(engine.getConfiguration().getDbRoot(), baseToken.getDirName());
+        final File[] walDirs = baseDir.listFiles(f -> f.isDirectory() && f.getName().startsWith(WalUtils.WAL_NAME_BASE));
+        Assert.assertNotNull(walDirs);
+        return walDirs.length;
     }
 
     private File checkpointsRootByDirName() {
@@ -1691,6 +3331,49 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     /**
+     * Creates a base without dedup keys and a view over it filtering {@code i > 0}, partitioned by
+     * {@code viewPartitionBy}, and refreshes {@link #FILTERED_LATER_DAYS_ROWS} into the view. The
+     * base also holds a row on the first day the view does not: one the filter rejects, or, when
+     * {@code isOlderRowBelowStartFrom}, one the base held before the view was created with a START
+     * FROM past it. Either way the base's earliest row sits below the view's.
+     */
+    private void seedLaterDaysView(String viewPartitionBy, boolean isOlderRowBelowStartFrom) throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        if (isOlderRowBelowStartFrom) {
+            execute("INSERT INTO base (ts, sym, i) VALUES ('2026-01-01T00:01:00.000000Z', 'a', 50)");
+            drainWalQueue();
+            createBaseView(viewPartitionBy + " START FROM '2026-01-02T00:00:00.000000Z'", true);
+            refreshIntoFilteredView(FILTERED_LATER_DAYS_ROWS_INSERT);
+        } else {
+            createBaseView(viewPartitionBy + " START FROM BEGINNING", true);
+            refreshIntoFilteredView(FILTERED_LATER_DAYS_ROWS_INSERT + ",\n    ('2026-01-01T00:01:00.000000Z', 'a', -5)");
+        }
+        assertFilteredViewRows(FILTERED_LATER_DAYS_ROWS);
+        assertQuery("SELECT min(ts), count() FROM base")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        min\tcount
+                        2026-01-01T00:01:00.000000Z\t4
+                        """);
+    }
+
+    /**
+     * Creates the base with {@code tableOptions} and the view over it, filtering {@code i > 0}
+     * when {@code isFiltered}, and refreshes {@link #FILTERED_TWO_DAY_ROWS} into the view while
+     * {@code fault} fails every open of its {@code _timeline}: the view's table holds their output
+     * and no checkpoint describes it.
+     */
+    private void seedTwoDayView(String tableOptions, boolean isFiltered, TimelineOpenFault fault) throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) TIMESTAMP(ts) PARTITION BY DAY " + tableOptions);
+        createBaseView(isFiltered);
+        refreshIntoFilteredView(FILTERED_TWO_DAY_ROWS_INSERT);
+        Assert.assertTrue("the view's timeline open must have failed", fault.getFailures() > 0);
+        assertFilteredViewRows(FILTERED_TWO_DAY_ROWS);
+    }
+
+    /**
      * Rebuilds the view registry from disk and drives the first refresh turns, which is where a
      * restart runs its recovery. Returns what the last whole-view rebuild's guard found.
      */
@@ -1763,6 +3446,55 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     /**
+     * A {@link TimelineOpenFault} that can also fail every read-only open of one table's
+     * sequencer metadata change index, {@code _txnlog.meta.i}. Nothing else opens that file
+     * read-only once the base has applied its backlog: the change log is what records which
+     * structural change a sequencer entry made, so the fault leaves a rebuild unable to tell
+     * whether one changed dedup.
+     */
+    private static final class DedupHistoryOpenFault extends TimelineOpenFault {
+        private final AtomicInteger dedupHistoryFailures = new AtomicInteger();
+        private volatile String dedupHistoryDirName;
+
+        @Override
+        public long openRO(LPSZ name) {
+            if (isDedupHistory(name)) {
+                dedupHistoryFailures.incrementAndGet();
+                return -1;
+            }
+            return super.openRO(name);
+        }
+
+        @Override
+        public long openRONoCache(LPSZ name) {
+            if (isDedupHistory(name)) {
+                dedupHistoryFailures.incrementAndGet();
+                return -1;
+            }
+            return super.openRONoCache(name);
+        }
+
+        private boolean isDedupHistory(LPSZ name) {
+            final String dirName = dedupHistoryDirName;
+            return dirName != null
+                    && Utf8s.containsAscii(name, Files.SEPARATOR + dirName + Files.SEPARATOR)
+                    && Utf8s.endsWithAscii(name, WalUtils.TXNLOG_FILE_NAME_META_INX);
+        }
+
+        void armDedupHistory(TableToken tableToken) {
+            dedupHistoryDirName = tableToken.getDirName();
+        }
+
+        void disarmDedupHistory() {
+            dedupHistoryDirName = null;
+        }
+
+        int getDedupHistoryFailures() {
+            return dedupHistoryFailures.get();
+        }
+    }
+
+    /**
      * Fails the next open of a checkpoint data segment the view stages, after running the armed
      * action. A repair's replay opens its temporary segment when it freezes the first root it
      * re-versions: after the capture and the descriptor, and ahead of the replacement commit. No
@@ -1791,6 +3523,33 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
 
         boolean hasFired() {
             return hasFired.get();
+        }
+    }
+
+    /**
+     * Fails every open of a live view's {@code _timeline} until disarmed. A seal that cannot open
+     * the timeline leaves the output it follows durable and undescribed: the next restart finds no
+     * timeline and rebuilds the view from its base.
+     */
+    private static class TimelineOpenFault extends TestFilesFacadeImpl {
+        private final AtomicInteger failures = new AtomicInteger();
+        private final AtomicBoolean isArmed = new AtomicBoolean(true);
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            if (isArmed.get() && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)) {
+                failures.incrementAndGet();
+                return -1;
+            }
+            return super.openRW(name, opts);
+        }
+
+        void disarm() {
+            isArmed.set(false);
+        }
+
+        int getFailures() {
+            return failures.get();
         }
     }
 }

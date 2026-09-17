@@ -199,7 +199,7 @@ final class LiveViewCheckpointMetadata {
     /**
      * Reads {@code length} bytes into an array {@code pool} lends for the caller's
      * current epoch, so a re-read of the same shape reuses the image the previous
-     * one filled instead of allocating another.
+     * one filled instead of allocating another, until the pool's owner clears it.
      */
     static byte[] readBytes(
             LiveViewCheckpointMetaSegmentReader reader,

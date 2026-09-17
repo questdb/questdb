@@ -41,6 +41,31 @@ import java.io.Closeable;
 public class LiveViewCheckpointPartitionMapReader implements Closeable {
 
     /**
+     * Key and scalar image bytes the decode pool of one node may keep once
+     * {@link #detach()} ends an operation; a pool holding more drops every array.
+     * <p>
+     * While an operation runs, a pool keeps every array it lends: for every width, the
+     * most arrays of that width a single page needed. A seal probes the previous root
+     * in the order it walks its own keys rather than in key order, so it decodes a
+     * different leaf on nearly every lookup, and the pool settles at the union of every
+     * leaf's widths, which is more than any one page needs. A limit that applied within
+     * the operation would make every decode past it allocate, so the pool only answers
+     * to this limit when the operation ends: a view whose union exceeds it allocates
+     * that union once per operation rather than on every decode.
+     * <p>
+     * The readers of a refresh worker live as long as the worker, so this, and not the
+     * widths of the views the worker served before, bounds what an idle node keeps. A
+     * seal over 32,768 keys of 32 to 512 characters pools about 8 MiB in one node.
+     */
+    public static final long MAX_NODE_RETAINED_BYTES = 16_777_216;
+    /**
+     * State page references the decode pool of one node may keep once {@link #detach()}
+     * ends an operation, about 15 MiB with their array slots. A ring view over 1,024 keys
+     * whose chunk counts spread from 1 to 256 pools about 214,000 references in one node.
+     * {@link #MAX_NODE_RETAINED_BYTES} describes the policy.
+     */
+    public static final long MAX_NODE_RETAINED_STATE_PAGE_REFS = 262_144;
+    /**
      * Levels the memo covers. Every tree a production capacity builds is far
      * shallower, but the writer accepts capacities as low as two, where a split
      * hands one child to the left node and an ascending build grows a level per
@@ -109,7 +134,9 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
     /**
      * Unmaps every cached metadata segment while keeping the readers themselves,
      * so a reader that outlives one restore holds no mapping into files a later
-     * retire, repair or compaction deletes.
+     * retire, repair or compaction deletes. An owner that outlives its operations
+     * calls this when each one ends, so it also trims the decode pools of every node
+     * and the width caches of the scratch entry to what an idle reader may keep.
      */
     public void detach() {
         for (int i = 0; i < SEGMENT_CACHE_SIZE; i++) {
@@ -120,6 +147,15 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
         }
         segmentClock = 0;
         clearNodeCache();
+        deepNode.trimDecodePools();
+        navNode.trimDecodePools();
+        for (int i = 0, n = nodeCache.size(); i < n; i++) {
+            nodeCache.getQuick(i).trimDecodePools();
+        }
+        for (int i = 0, n = nodePool.size(); i < n; i++) {
+            nodePool.getQuick(i).trimDecodePools();
+        }
+        scratchEntry.trimWidthCaches();
     }
 
     public boolean find(
@@ -213,6 +249,64 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
     @TestOnly
     public long getDecodedPageCount() {
         return decodedPageCount;
+    }
+
+    /**
+     * @return image bytes of the largest single key or scalar pool this reader keeps for
+     * reuse, headers excluded: the decode pool of one node, or the key or the scalar width
+     * cache of its scratch entry
+     */
+    @TestOnly
+    public long getLargestRetainedBufferBytesForTest() {
+        long bytes = Math.max(
+                Math.max(deepNode.getRetainedDecodedBytesForTest(), navNode.getRetainedDecodedBytesForTest()),
+                scratchEntry.getLargestRetainedBufferBytesForTest()
+        );
+        for (int i = 0, n = nodeCache.size(); i < n; i++) {
+            bytes = Math.max(bytes, nodeCache.getQuick(i).getRetainedDecodedBytesForTest());
+        }
+        for (int i = 0, n = nodePool.size(); i < n; i++) {
+            bytes = Math.max(bytes, nodePool.getQuick(i).getRetainedDecodedBytesForTest());
+        }
+        return bytes;
+    }
+
+    /**
+     * @return image bytes of every key and scalar array this reader keeps for reuse,
+     * headers excluded: the decode pools of every node it owns and the width caches of
+     * its scratch entry
+     */
+    @TestOnly
+    public long getRetainedBufferBytesForTest() {
+        long bytes = deepNode.getRetainedDecodedBytesForTest()
+                + navNode.getRetainedDecodedBytesForTest()
+                + scratchEntry.getRetainedBufferBytesForTest();
+        for (int i = 0, n = nodeCache.size(); i < n; i++) {
+            bytes += nodeCache.getQuick(i).getRetainedDecodedBytesForTest();
+        }
+        for (int i = 0, n = nodePool.size(); i < n; i++) {
+            bytes += nodePool.getQuick(i).getRetainedDecodedBytesForTest();
+        }
+        return bytes;
+    }
+
+    /**
+     * @return state page references of every reference array this reader keeps for
+     * reuse: the decode pools of every node it owns and the reference cache of its
+     * scratch entry
+     */
+    @TestOnly
+    public long getRetainedStatePageRefCountForTest() {
+        long refs = deepNode.getRetainedDecodedStatePageRefCountForTest()
+                + navNode.getRetainedDecodedStatePageRefCountForTest()
+                + scratchEntry.getRetainedStatePageRefCountForTest();
+        for (int i = 0, n = nodeCache.size(); i < n; i++) {
+            refs += nodeCache.getQuick(i).getRetainedDecodedStatePageRefCountForTest();
+        }
+        for (int i = 0, n = nodePool.size(); i < n; i++) {
+            refs += nodePool.getQuick(i).getRetainedDecodedStatePageRefCountForTest();
+        }
+        return refs;
     }
 
     public void iterateAll(@NotNull LiveViewCheckpointPageRef rootRef, @NotNull Visitor visitor) {

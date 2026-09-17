@@ -26,6 +26,7 @@ package io.questdb.cairo.lv;
 
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Epoch-scoped high-water pool of exact-width state-reference arrays. One decode
@@ -35,12 +36,52 @@ import io.questdb.std.ObjList;
  * <p>
  * A borrowed array - and every reference inside it - stays valid until the next
  * {@link #reset()}. Callers that must outlive that copy the values out.
+ * <p>
+ * The pool never shrinks by itself. An owner that outlives the operations it serves
+ * reads {@link #getRetainedRefCount()} once an operation ends and calls {@link #clear()}
+ * when the pool keeps more than the owner is willing to park.
  */
 final class LiveViewCheckpointStateRefArrayPool {
 
     static final LiveViewCheckpointStatePageRef[] EMPTY = new LiveViewCheckpointStatePageRef[0];
     private final IntObjHashMap<WidthPool> poolsByWidth = new IntObjHashMap<>();
     private int epoch;
+    private long retainedRefCount;
+
+    /**
+     * Drops every pooled array, so the next borrows allocate afresh. Arrays borrowed
+     * earlier stay valid for whoever still holds them: the pool only stops lending them.
+     */
+    void clear() {
+        poolsByWidth.clear();
+        retainedRefCount = 0;
+    }
+
+    /**
+     * @return the references of every array this pool holds, counted by walking its
+     * widths rather than read from the count the pool keeps for itself
+     */
+    @TestOnly
+    long countRetainedRefsForTest() {
+        long refs = 0;
+        final Object[] widthPools = poolsByWidth.getValues();
+        for (int i = 0, n = widthPools.length; i < n; i++) {
+            final WidthPool pool = (WidthPool) widthPools[i];
+            if (pool != null) {
+                for (int j = 0, m = pool.arrays.size(); j < m; j++) {
+                    refs += pool.arrays.getQuick(j).length;
+                }
+            }
+        }
+        return refs;
+    }
+
+    /**
+     * @return the references of every array this pool holds across every width, used or not
+     */
+    long getRetainedRefCount() {
+        return retainedRefCount;
+    }
 
     LiveViewCheckpointStatePageRef[] next(int width) {
         if (width == 0) {
@@ -62,6 +103,7 @@ final class LiveViewCheckpointStateRefArrayPool {
             }
             pool.arrays.add(value);
             pool.cursor++;
+            retainedRefCount += width;
             return value;
         }
         return pool.arrays.getQuick(pool.cursor++);

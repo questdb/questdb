@@ -49,8 +49,8 @@ import org.jetbrains.annotations.NotNull;
  * view has published and restarts accumulations the view had carried forward - a restatement,
  * and a silent one.
  *
- * <h2>The two checks</h2>
- * Both rest on two properties every live view has: its output's designated timestamp is the
+ * <h2>The checks</h2>
+ * They rest on two properties every live view has: its output's designated timestamp is the
  * base's designated timestamp column, passed through unchanged, and every base row its filter
  * admits produces exactly one output row.
  * <ul>
@@ -66,10 +66,17 @@ import org.jetbrains.annotations.NotNull;
  *     replacement would delete and not put back. This is the check that sees a partition
  *     dropped or detached from the middle of the view's range, which leaves the base's
  *     earliest row where it was.</li>
+ *     <li><b>Lost partition</b>, before the rebuild touches anything, and only where the row
+ *     shortfall stands down (see below): the view holds a row in a range of timestamps no
+ *     partition of the pinned base snapshot covers. The base partition that held the row's
+ *     source is gone, so the recompute cannot emit it. It reads the base's partition list off
+ *     its transaction file and asks the view's table about each range between those partitions
+ *     that the view's rows span, opening a partition of the view's table only where the range
+ *     cuts through it.</li>
  * </ul>
  *
- * <h2>When it compares nothing</h2>
- * Both checks read the view's table as the output of the base transactions the view has
+ * <h2>When it compares less, or nothing</h2>
+ * The checks read the view's table as the output of the base transactions the view has
  * consumed, while the rebuild runs at a pinned snapshot that may hold more. The snapshot never
  * holds less: a view draining raw base WAL flushes ahead of the base's own apply, so the rebuild
  * waits for the apply to reach the highest transaction whose output the view's table may hold
@@ -88,14 +95,30 @@ import org.jetbrains.annotations.NotNull;
  *     <li>a backlog transaction can legitimately lower the output at or below the frontier,
  *     because incremental refresh propagates it and the rebuild restates nothing by following
  *     it: a REPLACE_RANGE commit whose delete band reaches the frontier (a materialized-view
- *     base), a materialized view's TRUNCATE, or - for a view with a filter - a commit on a
- *     deduplicating base that reaches the frontier, whose replacement row may fail the filter
- *     the replaced row passed ({@link #ABSTAIN_BACKLOG_MAY_REMOVE});</li>
- *     <li>a backlog transaction cannot be read, which is what a lost base WAL segment leaves,
- *     and the base is one that can produce such a commit ({@link #ABSTAIN_BACKLOG_UNREADABLE}).
- *     A base that is neither a materialized view nor, for a filtering view, deduplicating has
- *     no such commit to hide, so an unreadable backlog does not stop the checks there.</li>
+ *     base) or a materialized view's TRUNCATE ({@link #ABSTAIN_BACKLOG_MAY_REMOVE});</li>
+ *     <li>a backlog transaction cannot be read, which is what a lost or purged base WAL segment
+ *     leaves, and the base is a materialized view, which can produce such a commit
+ *     ({@link #ABSTAIN_BACKLOG_UNREADABLE}).</li>
  * </ul>
+ * For a view with a filter, a third kind of commit lowers the output legitimately: one that
+ * reaches the frontier and that the base applied under dedup, whose replacement row may fail
+ * the filter the replaced row passed. The snapshot's dedup flag says whether the base applied a
+ * commit under dedup unless an {@code ALTER TABLE ... DEDUP ENABLE} or {@code DEDUP DISABLE}
+ * follows the commit, and no other schema change can switch dedup on or off. Such a backlog -
+ * a commit read, or an unreadable one over a base whose snapshot deduplicates or whose sequencer
+ * records a DEDUP change after it - stands down the row shortfall alone
+ * ({@link #disarmRowShortfall}, with the same two abstentions). The history floor still
+ * compares, and the lost partition check compares in the row shortfall's place: every dedup
+ * key set holds the designated timestamp, so a replacement leaves a base row at each timestamp
+ * it replaced, in the partition that held the row it replaced. No such commit can move the
+ * base's earliest row past a row the view holds, or take away the partition a row the view
+ * holds came from. A DEDUP ENABLE or DISABLE after a commit that ran without dedup reads the
+ * same on the sequencer as one after a replacement - the dedup state at a commit is not
+ * recoverable - so the row shortfall stands down behind it too, and a loss only the row
+ * shortfall sees goes unseen: a base partition lost and then re-created by later commits into
+ * its range. Any other base has no such commit to hide, so an unreadable backlog does not stop
+ * the checks there. Neither does a DEDUP change the sequencer's metadata change log cannot
+ * name: the checks compare, and a refusal that follows is one a restart retries.
  *
  * <h2>What it cannot see</h2>
  * The checks detect restatements; they do not prove there are none. Proving the negative would
@@ -108,6 +131,8 @@ import org.jetbrains.annotations.NotNull;
  *     accumulated values change and their count does not;</li>
  *     <li>a loss the backlog masks - base rows inserted at or below the frontier after the
  *     view's durable coordinate add to the recompute what the loss took from it;</li>
+ *     <li>a loss only the row shortfall sees, behind a backlog that stood it down: a base
+ *     partition lost and then re-created by later commits into its range;</li>
  *     <li>anything in a backlog the guard abstained over.</li>
  * </ul>
  * <p>
@@ -116,12 +141,15 @@ import org.jetbrains.annotations.NotNull;
  */
 public final class LiveViewRebuildRestatementGuard implements Mutable {
     /**
-     * A backlog transaction can legitimately lower the output at or below the frontier.
+     * A backlog transaction can legitimately lower the output at or below the frontier. When it
+     * is a dedup replacement, only the row shortfall stands down, and the history floor and the
+     * lost partition check still compare.
      */
     public static final int ABSTAIN_BACKLOG_MAY_REMOVE = 3;
     /**
      * A backlog transaction could not be read, and the base can produce one that lowers the
-     * output legitimately.
+     * output legitimately. When that one can only be a dedup replacement, only the row shortfall
+     * stands down, and the history floor and the lost partition check still compare.
      */
     public static final int ABSTAIN_BACKLOG_UNREADABLE = 4;
     /**
@@ -137,7 +165,8 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
      */
     public static final int ABSTAIN_FORMAT_UPGRADE = 5;
     /**
-     * The guard is armed and compares.
+     * The guard is armed and compares the history floor and the row shortfall. A guard that
+     * compares less reports the abstention that stood the rest down.
      */
     public static final int ABSTAIN_NONE = 0;
     /**
@@ -155,20 +184,38 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
      */
     public static final int BACKLOG_ADDITIVE = 0;
     /**
+     * Returned by the job's backlog walk: the only transactions in the backlog that can
+     * legitimately take an output row at or below the durable frontier away are dedup
+     * replacements a filter may reject, which leave a base row at every timestamp they replaced.
+     */
+    public static final int BACKLOG_MAY_DEDUP_REPLACE = 3;
+    /**
      * Returned by the job's backlog walk: a transaction in the backlog can legitimately remove
-     * or filter out an output row at or below the durable frontier.
+     * an output row at or below the durable frontier, and may move the base's earliest row.
      */
     public static final int BACKLOG_MAY_REMOVE = 1;
     /**
      * Returned by the job's backlog walk: a transaction in the backlog could not be read, and
-     * the base is one that can produce a transaction that removes output legitimately.
+     * the base is a materialized view, which can produce a transaction that removes output
+     * legitimately and moves the base's earliest row.
      */
     public static final int BACKLOG_UNREADABLE = 2;
+    /**
+     * Returned by the job's backlog walk: a transaction in the backlog could not be read, and
+     * the only transaction the base can produce that removes output legitimately is a dedup
+     * replacement a filter may reject.
+     */
+    public static final int BACKLOG_UNREADABLE_MAY_DEDUP_REPLACE = 4;
     /**
      * The view holds a row below the pinned base snapshot's earliest row, or holds rows while
      * the base holds none.
      */
     public static final int VERDICT_HISTORY_FLOOR = 1;
+    /**
+     * The view holds a row in a range of timestamps no partition of the pinned base snapshot
+     * covers, found where the row shortfall stood down.
+     */
+    public static final int VERDICT_LOST_PARTITION = 3;
     /**
      * The guard found nothing, either because it abstained or because the evidence it compared
      * agreed.
@@ -184,6 +231,10 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
     private long durableMaxTimestamp = Numbers.LONG_NULL;
     private long durableMinTimestamp = Numbers.LONG_NULL;
     private long durableRows;
+    private boolean isHistoryFloorArmed;
+    private long lostPartitionHi = Numbers.LONG_NULL;
+    private long lostPartitionLo = Numbers.LONG_NULL;
+    private long lostPartitionRowTimestamp = Numbers.LONG_NULL;
     private long reproducedRows;
     private int verdict = VERDICT_NONE;
 
@@ -227,12 +278,21 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
                         .put(" of the ").put(durableRows).put(" rows the view holds up to ");
                 driver.append(sink, durableMaxTimestamp);
             }
+            case VERDICT_LOST_PARTITION -> {
+                sink.put("the view holds a row at ");
+                driver.append(sink, lostPartitionRowTimestamp);
+                sink.put(" but the base table holds no partition between ");
+                driver.append(sink, lostPartitionLo);
+                sink.put(" and ");
+                driver.append(sink, lostPartitionHi);
+            }
             default -> sink.put("no restatement found");
         }
     }
 
     /**
-     * Arms the guard for one rebuild with the evidence both checks compare against.
+     * Arms the guard for one rebuild with the evidence the history floor and the row shortfall
+     * compare against.
      *
      * @param durableRows         rows the view's table holds
      * @param durableMinTimestamp the view table's earliest designated timestamp
@@ -252,6 +312,7 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
         assert durableRows > 0 : "a view with no rows has nothing for the guard to protect";
         clear();
         this.abstention = ABSTAIN_NONE;
+        this.isHistoryFloorArmed = true;
         this.durableRows = durableRows;
         this.durableMinTimestamp = durableMinTimestamp;
         this.durableMaxTimestamp = durableMaxTimestamp;
@@ -270,6 +331,10 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
         durableMaxTimestamp = Numbers.LONG_NULL;
         durableMinTimestamp = Numbers.LONG_NULL;
         durableRows = 0;
+        isHistoryFloorArmed = false;
+        lostPartitionHi = Numbers.LONG_NULL;
+        lostPartitionLo = Numbers.LONG_NULL;
+        lostPartitionRowTimestamp = Numbers.LONG_NULL;
         reproducedRows = 0;
         verdict = VERDICT_NONE;
     }
@@ -286,7 +351,24 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
     }
 
     /**
-     * @return why the last rebuild compared nothing, or {@link #ABSTAIN_NONE} when it compared
+     * Stands the row shortfall down for the rebuild the guard is armed for, and records why. The
+     * history floor keeps comparing, and the lost partition check compares in the row shortfall's
+     * place ({@link #observeLostPartition}): this is for a backlog whose only legitimate removals
+     * are dedup replacements, which leave the base's earliest row and every base partition where
+     * they were.
+     *
+     * @param abstention {@link #ABSTAIN_BACKLOG_MAY_REMOVE} or {@link #ABSTAIN_BACKLOG_UNREADABLE}
+     */
+    public void disarmRowShortfall(int abstention) {
+        assert this.abstention == ABSTAIN_NONE && isHistoryFloorArmed : "the guard must be armed";
+        assert abstention == ABSTAIN_BACKLOG_MAY_REMOVE || abstention == ABSTAIN_BACKLOG_UNREADABLE;
+        this.abstention = abstention;
+    }
+
+    /**
+     * @return why the last rebuild compared nothing, or stood the row shortfall down and compared
+     * the history floor and the lost partition check in its place, or {@link #ABSTAIN_NONE} when it
+     * compared the history floor and the row shortfall
      */
     public int getAbstention() {
         return abstention;
@@ -321,16 +403,28 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
     }
 
     /**
+     * The lost partition check, over what {@link #observeLostPartition} recorded. Ask it where
+     * the history floor is asked, and after it.
+     *
+     * @return true when the view holds a row in a range no partition of the pinned base snapshot
+     * covers
+     */
+    public boolean isBasePartitionLost() {
+        return isHistoryFloorArmed && lostPartitionRowTimestamp != Numbers.LONG_NULL;
+    }
+
+    /**
      * The check that needs no scan. Ask before the rebuild retires, wipes or replays anything,
      * so a refusal leaves the view exactly as the rebuild found it.
      *
-     * @return true when the view holds a row the pinned base snapshot has no history for
+     * @return true when the view holds a row below the pinned base snapshot's earliest row, or
+     * holds rows while the base holds none
      */
     public boolean isHistoryFloorBreached() {
         // An empty base holds no row at all, so every row the view keeps is below its floor.
         // The comparison is strict: a base row AT the view's earliest timestamp may be the one
         // that produced it.
-        return abstention == ABSTAIN_NONE && (baseRows == 0 || durableMinTimestamp < baseMinTimestamp);
+        return isHistoryFloorArmed && (baseRows == 0 || durableMinTimestamp < baseMinTimestamp);
     }
 
     /**
@@ -357,14 +451,37 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
     }
 
     /**
+     * Records a row the view's table holds in a range no partition of the pinned base snapshot
+     * covers, which {@link #isBasePartitionLost} then reports. The job looks for one only once
+     * {@link #disarmRowShortfall} has stood the row shortfall down.
+     *
+     * @param rowTimestamp the row's designated timestamp
+     * @param partitionLo  the start of the base partition the row belongs to, inclusive
+     * @param partitionHi  the end of that partition, exclusive
+     */
+    public void observeLostPartition(long rowTimestamp, long partitionLo, long partitionHi) {
+        assert isHistoryFloorArmed && abstention != ABSTAIN_NONE : "the row shortfall must have stood down";
+        assert rowTimestamp != Numbers.LONG_NULL && partitionLo <= rowTimestamp && rowTimestamp < partitionHi;
+        this.lostPartitionRowTimestamp = rowTimestamp;
+        this.lostPartitionLo = partitionLo;
+        this.lostPartitionHi = partitionHi;
+    }
+
+    /**
      * Records the check that refused the rebuild, which is what {@link #appendEvidence} then
      * explains. Recorded by the refusal rather than by the check, so a rebuild that failed for
      * any other reason part-way through its scan never reads as a shortfall.
      *
-     * @param verdict {@link #VERDICT_HISTORY_FLOOR} or {@link #VERDICT_ROW_SHORTFALL}
+     * @param verdict {@link #VERDICT_HISTORY_FLOOR}, {@link #VERDICT_LOST_PARTITION} or
+     *                {@link #VERDICT_ROW_SHORTFALL}
      */
     public void refuse(int verdict) {
-        assert verdict == VERDICT_HISTORY_FLOOR ? isHistoryFloorBreached() : verdict == VERDICT_ROW_SHORTFALL && isRowShortfall();
+        assert switch (verdict) {
+            case VERDICT_HISTORY_FLOOR -> isHistoryFloorBreached();
+            case VERDICT_LOST_PARTITION -> isBasePartitionLost();
+            case VERDICT_ROW_SHORTFALL -> isRowShortfall();
+            default -> false;
+        };
         this.verdict = verdict;
     }
 }

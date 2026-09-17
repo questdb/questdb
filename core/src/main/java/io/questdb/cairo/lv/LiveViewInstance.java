@@ -2244,7 +2244,16 @@ public class LiveViewInstance implements QuietCloseable {
      * {@code live_views()}, a released base WAL floor and the price that release
      * has. What differs is what clears it. Nothing in the superblock records this
      * block; a restart re-derives it by running the same recovery, which either
-     * restores from a timeline the refusal preserved or meets the same refusal.
+     * restores from a timeline the refusal preserved or asks the guard again over the
+     * base it finds. The refusal repeats unless what the guard reads of the backlog
+     * changed: a purge sweep took a backlog commit that may have lowered the view's
+     * output legitimately - the price of the released floor - a DEDUP change landed
+     * on the base behind the backlog, or a dedup history the guard could not read
+     * reads again. On a base {@link LiveViewRebuildRestatementGuard} names as able to
+     * hide such a commit, the guard then stands down the checks the commit could
+     * confound - every check over a materialized view, only the row shortfall over a
+     * filtering view's base, where the history floor and the lost partition check
+     * still refuse - and a rebuild no remaining check refuses follows the base table.
      */
     public void markCheckpointRebuildBlocked(@Nullable CharSequence reason) {
         markBlocked(LiveViewCheckpointRecoveryPhase.REBUILD_BLOCKED, reason);

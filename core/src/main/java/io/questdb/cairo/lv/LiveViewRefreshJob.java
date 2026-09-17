@@ -38,6 +38,7 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
@@ -71,6 +72,7 @@ import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.FunctionParser;
@@ -79,6 +81,7 @@ import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
+import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.window.LiveViewCheckpointFunctionCompiler;
@@ -9016,13 +9019,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // rows it derived from the removed history - that drops rows the view has
                 // published and restarts accumulations it carried forward. The guard decides
                 // whether it would, before anything moves: the history floor here, from
-                // metadata alone, and the row shortfall once the replay below has counted what
-                // it reproduces. A refusal throws, and the rebuild's caller stops the view. It
-                // runs in the prologue so a refusal unwinds through the prologue's cleanup and
-                // leaves the timeline, the runtime and the view's table as it found them.
+                // metadata alone, and the lost partition check where the row shortfall stands
+                // down, from metadata and a binary search of the view's table; and the row
+                // shortfall once the replay below has counted what it reproduces. A refusal
+                // throws, and the rebuild's caller stops the view. It runs in the prologue so a
+                // refusal unwinds through the prologue's cleanup and leaves the timeline, the
+                // runtime and the view's table as it found them.
                 armRebuildRestatementGuard(instance, reader, effectiveSeqTxn);
                 if (restatementGuard.isHistoryFloorBreached()) {
                     restatementGuard.refuse(LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR);
+                    throw LiveViewRebuildRefusedException.instance();
+                }
+                if (restatementGuard.isBasePartitionLost()) {
+                    restatementGuard.refuse(LiveViewRebuildRestatementGuard.VERDICT_LOST_PARTITION);
                     throw LiveViewRebuildRefusedException.instance();
                 }
             }
@@ -12550,8 +12559,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Arms {@link #restatementGuard} for one whole-view rebuild at the pinned snapshot
-     * {@code effectiveSeqTxn}, or records why it compares nothing. See
-     * {@link LiveViewRebuildRestatementGuard} for both checks and every abstention.
+     * {@code effectiveSeqTxn}, or records why it compares less - the history floor and the lost
+     * partition check in the row shortfall's place - or nothing. See
+     * {@link LiveViewRebuildRestatementGuard} for the checks and every abstention.
      * <p>
      * The snapshot stands at or above the view's own coordinate, {@link #rebuildSnapshotFloor}:
      * the pin waits for it, and the recoveries that may not block defer until the base has
@@ -12561,7 +12571,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * the table may or may not hold is classified either way.
      * <p>
      * The durable evidence comes off the view's table and the base evidence off the pinned
-     * reader, both from their transaction files: nothing here scans a row.
+     * reader, both from their transaction files: nothing here scans a row. The lost partition
+     * check, where it runs, reads the base's partition list the same way and binary-searches the
+     * view's table only inside the ranges between base partitions that its rows span.
      * <p>
      * A view carried over from an older checkpoint format stands the guard down ahead of every
      * other check, the configuration switch included: its rebuild is the upgrade, and refusing
@@ -12611,17 +12623,28 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 : "a whole-view rebuild pinned a snapshot behind the view [effectiveSeqTxn=" + effectiveSeqTxn
                 + ", floor=" + rebuildSnapshotFloor(instance) + ']';
         final long appliedWatermark = instance.getAppliedWatermark();
-        switch (classifyRebuildBacklog(instance, reader, appliedWatermark, effectiveSeqTxn, durableMaxTimestamp)) {
+        final int backlog = classifyRebuildBacklog(instance, reader, appliedWatermark, effectiveSeqTxn, durableMaxTimestamp);
+        // Armed to compare the history floor and the row shortfall, which an additive backlog
+        // leaves as they are and a backlog that may lower the output stands down in part or whole.
+        restatementGuard.arm(durableRows, durableMinTimestamp, durableMaxTimestamp, reader.size(), reader.getMinTimestamp());
+        switch (backlog) {
             case LiveViewRebuildRestatementGuard.BACKLOG_MAY_REMOVE ->
                     standDownRestatementGuard(instance, LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE);
             case LiveViewRebuildRestatementGuard.BACKLOG_UNREADABLE ->
                     standDownRestatementGuard(instance, LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE);
-            default -> restatementGuard.arm(
-                    durableRows,
+            case LiveViewRebuildRestatementGuard.BACKLOG_MAY_DEDUP_REPLACE -> standDownRestatementRowShortfall(
+                    instance,
+                    reader,
+                    LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE,
                     durableMinTimestamp,
-                    durableMaxTimestamp,
-                    reader.size(),
-                    reader.getMinTimestamp()
+                    durableMaxTimestamp
+            );
+            case LiveViewRebuildRestatementGuard.BACKLOG_UNREADABLE_MAY_DEDUP_REPLACE -> standDownRestatementRowShortfall(
+                    instance,
+                    reader,
+                    LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE,
+                    durableMinTimestamp,
+                    durableMaxTimestamp
             );
         }
     }
@@ -12667,17 +12690,53 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * for. UPDATE invalidates the view on the apply side and never reaches a rebuild, and a
      * structural entry ({@code walId <= 0}) changes the schema and removes no row.
      * <p>
+     * The first two can move the base's earliest row as well, so either stands the whole guard
+     * down ({@code BACKLOG_MAY_REMOVE}). The third cannot: every dedup key set holds the
+     * designated timestamp, so a replacement leaves a base row at each timestamp it replaced.
+     * It stands down only the row shortfall, which it would confound, keeps the history floor, and
+     * runs the lost partition check in the row shortfall's place: a replacement never takes away
+     * the base partition a row the view holds came from ({@code BACKLOG_MAY_DEDUP_REPLACE}). The
+     * walk therefore goes on past a possible replacement, so a later commit of either of the
+     * first two kinds still stands the whole guard down.
+     * <p>
      * The walk reads commit metadata only, off the WAL-E event files, as
      * {@link #computeApplyAheadBounds} does. A lost base WAL segment - which one of the
-     * rebuild's routes recovers from - leaves it unreadable, and that stops the checks only for
+     * rebuild's routes recovers from - leaves it unreadable, and that stops a check only for
      * a base that can produce one of the three kinds at all. REPLACE_RANGE reaches a table only
      * through a materialized view's refresh; a live view's own table, the only other one that
-     * takes it, cannot be a live view's base. The filter case needs a deduplicating base. Any
-     * other base's backlog can only add rows or remove them the frozen way, read or not.
+     * takes it, cannot be a live view's base. So an unreadable commit stands the whole guard down
+     * over a materialized view ({@code BACKLOG_UNREADABLE}), and only the row shortfall over a
+     * base whose unreadable commit may be a replacement the filter rejects
+     * ({@code BACKLOG_UNREADABLE_MAY_DEDUP_REPLACE}), which needs a base that deduplicated some
+     * commit of the backlog. Any other base's backlog can only add rows or remove them the frozen
+     * way, read or not.
      * <p>
-     * The dedup flag is the snapshot's. A backlog that disabled dedup after commits that used
-     * it reads as non-deduplicating; that costs a comparison where the guard should have
-     * abstained - a refusal a restart retries - never a restatement.
+     * The apply job deduplicated each commit under the dedup configuration in force when it
+     * applied that commit, and only two structural changes move that configuration:
+     * {@code ALTER TABLE ... DEDUP ENABLE} and {@code DEDUP DISABLE}. No other schema change can
+     * switch dedup on or off - dedup is on exactly while the designated timestamp is a key, and
+     * a WAL table's rename, retype and drop all refuse that column. So the snapshot's dedup flag
+     * speaks for every commit after the last DEDUP change at or below {@code toSeqTxn}. A filtered
+     * commit that reaches the frontier over a snapshot without dedup keys counts once a DEDUP
+     * change follows it within the backlog, and an unreadable commit counts once the sequencer
+     * records one after it, up to the snapshot. The sequencer's metadata change log names the
+     * change each structural entry made, and a lost or purged WAL segment leaves it readable, as
+     * it leaves the transaction log. An entry whose change cannot be read counts as no DEDUP
+     * change: the guard compares, and the refusal that may follow is one a restart retries.
+     * Counting every structural entry instead would let an ADD COLUMN after a commit stand the
+     * guard down over history the base has lost; reading the snapshot's flag for every commit
+     * would refuse the rebuild over a replacement that ran under dedup, on every restart, and
+     * stop a view that has lost nothing.
+     * <p>
+     * What stays imprecise is a DEDUP change after a commit that ran without dedup: a no-op
+     * {@code DEDUP DISABLE} on a base that never deduplicated, or an ENABLE and a DISABLE, reads
+     * on the sequencer exactly like the DISABLE that ended the dedup a replacement ran under. The
+     * change log records no dedup state before its first entry and ENABLE and DISABLE each set
+     * the state outright, so the state at the commit is not recoverable. Such a backlog stands the
+     * row shortfall down: the history floor and the lost partition check still refuse a rebuild
+     * over a base partition lost anywhere in the view's range, and what goes unseen is a loss
+     * neither can tell apart from a replacement, such as a partition lost and then re-created by
+     * later commits into its range.
      */
     private int classifyRebuildBacklog(
             LiveViewInstance instance,
@@ -12691,9 +12750,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         final TableToken baseToken = instance.getDefinition().getBaseTableToken();
         final boolean isMatViewBase = baseToken.isMatView();
-        final boolean isFilterFlippable = instance.getCompiledPlan().getFilter() != null
-                && hasDedupKeys(reader.getMetadata());
+        final boolean hasFilter = instance.getCompiledPlan().getFilter() != null;
+        final boolean isFilterFlippable = hasFilter && hasDedupKeys(reader.getMetadata());
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
+        // A filtered commit that reached the frontier while the snapshot reports no dedup keys:
+        // a later DEDUP change may have disabled the dedup that replaced a row under it.
+        boolean hasFilteredFrontierCommit = false;
+        // A commit the walk read may be a dedup replacement the filter rejects. The walk goes on
+        // past it, because a later commit that removes rows otherwise stands the whole guard down.
+        boolean isDedupReplacementPossible = false;
+        long walkedTxn = fromSeqTxn;
         try (
                 TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn);
                 // Every arm out of this walk closes the reader with the cursor - see the note
@@ -12705,8 +12771,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (txn > toSeqTxn) {
                     break;
                 }
+                walkedTxn = txn;
                 final int walId = txnCursor.getWalId();
                 if (walId <= 0) {
+                    if (hasFilteredFrontierCommit
+                            && !isDedupReplacementPossible
+                            && walId == WalUtils.METADATA_WALID
+                            && isDedupChange(instance, baseToken, txnCursor.getStructureVersion())) {
+                        isDedupReplacementPossible = true;
+                    }
                     continue;
                 }
                 walPath.of(engine.getConfiguration().getDbRoot())
@@ -12726,23 +12799,176 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (deleteLo != Numbers.LONG_NULL && deleteLo <= frontierTs) {
                     return LiveViewRebuildRestatementGuard.BACKLOG_MAY_REMOVE;
                 }
-                if (isFilterFlippable && dataInfo.getMinTimestamp() <= frontierTs) {
-                    return LiveViewRebuildRestatementGuard.BACKLOG_MAY_REMOVE;
+                if (hasFilter && dataInfo.getMinTimestamp() <= frontierTs) {
+                    if (isFilterFlippable) {
+                        isDedupReplacementPossible = true;
+                    } else {
+                        hasFilteredFrontierCommit = true;
+                    }
                 }
             }
         } catch (CairoException e) {
-            final boolean isLegitimateRemovalPossible = isMatViewBase || isFilterFlippable;
+            // The commit the walk failed on may reach the frontier, so a DEDUP change after it
+            // leaves the same doubt as one after a commit it read. On a materialized view it may
+            // be a REPLACE_RANGE or a TRUNCATE too.
+            final int backlog;
+            final String guardChecks;
+            if (isMatViewBase) {
+                backlog = LiveViewRebuildRestatementGuard.BACKLOG_UNREADABLE;
+                guardChecks = "none";
+            } else if (isDedupReplacementPossible
+                    || isFilterFlippable
+                    || (hasFilter && hasDedupChangeAfter(instance, baseToken, walkedTxn, toSeqTxn))) {
+                backlog = LiveViewRebuildRestatementGuard.BACKLOG_UNREADABLE_MAY_DEDUP_REPLACE;
+                guardChecks = "history floor and base partitions";
+            } else {
+                backlog = LiveViewRebuildRestatementGuard.BACKLOG_ADDITIVE;
+                guardChecks = "history floor and row shortfall";
+            }
             LOG.info().$("live view could not read the rebuild's base backlog [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", fromSeqTxn=").$(fromSeqTxn)
                     .$(", toSeqTxn=").$(toSeqTxn)
-                    .$(", guardAbstains=").$(isLegitimateRemovalPossible)
+                    .$(", guardChecks=").$(guardChecks)
                     .$(", error=").$safe(e.getFlyweightMessage()).I$();
-            return isLegitimateRemovalPossible
-                    ? LiveViewRebuildRestatementGuard.BACKLOG_UNREADABLE
-                    : LiveViewRebuildRestatementGuard.BACKLOG_ADDITIVE;
+            return backlog;
         }
-        return LiveViewRebuildRestatementGuard.BACKLOG_ADDITIVE;
+        return isDedupReplacementPossible
+                ? LiveViewRebuildRestatementGuard.BACKLOG_MAY_DEDUP_REPLACE
+                : LiveViewRebuildRestatementGuard.BACKLOG_ADDITIVE;
+    }
+
+    /**
+     * Whether the base's sequencer records a DEDUP change in {@code (fromSeqTxn, toSeqTxn]}. Reads
+     * the transaction log and, for each structural entry, the metadata change log, both of which
+     * a lost or purged base WAL segment leaves readable. A transaction log that cannot be read
+     * answers false, which keeps the comparison the guard ran before it asked; see
+     * {@link #isDedupChange} for a change that cannot be read.
+     */
+    private boolean hasDedupChangeAfter(LiveViewInstance instance, TableToken baseToken, long fromSeqTxn, long toSeqTxn) {
+        try (TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn)) {
+            while (txnCursor.hasNext() && txnCursor.getTxn() <= toSeqTxn) {
+                if (txnCursor.getWalId() == WalUtils.METADATA_WALID
+                        && isDedupChange(instance, baseToken, txnCursor.getStructureVersion())) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (CairoException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Whether the structural entry that moved the base to {@code structureVersion} changed its
+     * dedup configuration, which only {@code ALTER TABLE ... DEDUP ENABLE} and
+     * {@code DEDUP DISABLE} do. Reads the entry's record off the sequencer's metadata change log:
+     * the record the apply job applied, looked up the way it looks it up. A record that cannot be
+     * read answers false and logs why, so the guard compares; a refusal that follows is one a
+     * restart retries once the record reads again.
+     * <p>
+     * The change log is a per-thread cursor, like the transaction log cursor the caller may hold
+     * open, and this closes it before it returns.
+     */
+    private boolean isDedupChange(LiveViewInstance instance, TableToken baseToken, long structureVersion) {
+        CharSequence error = "no change log record";
+        try (TableMetadataChangeLog changeLog = engine.getTableSequencerAPI().getMetadataChangeLogSlow(baseToken, structureVersion - 1)) {
+            if (changeLog.hasNext()) {
+                if (changeLog.next() instanceof AlterOperation alterOp) {
+                    final short command = alterOp.getCommand();
+                    return command == AlterOperation.SET_DEDUP_ENABLE || command == AlterOperation.SET_DEDUP_DISABLE;
+                }
+                return false;
+            }
+        } catch (CairoException e) {
+            error = e.getFlyweightMessage();
+        }
+        LOG.info().$("live view could not read a base schema change, the rebuild guard compares [view=")
+                .$(instance.getDefinition().getViewName())
+                .$(", structureVersion=").$(structureVersion)
+                .$(", error=").$safe(error).I$();
+        return false;
+    }
+
+    /**
+     * Records in {@link #restatementGuard} the earliest row the view's table holds in a range of
+     * timestamps no partition of the pinned base snapshot covers, if it holds one: the lost
+     * partition check a rebuild runs in the row shortfall's place.
+     * <p>
+     * Every row the view holds came from a base row at the same timestamp, and that base row sat
+     * in the base partition for that timestamp. A dedup replacement leaves a base row at each
+     * timestamp it replaced, so it never takes a partition away. TTL, DROP and DETACH PARTITION
+     * and a table's TRUNCATE do, and each is a loss incremental refresh walks past. A
+     * REPLACE_RANGE commit can remove a partition legitimately, and stands the whole guard down
+     * when its delete band reaches the view's frontier; a band that does not reach it, or lies
+     * below the view's START FROM, removes no partition a row the view holds sits in. A partition
+     * that later commits re-created reads as present, which is the loss this check cannot see.
+     * <p>
+     * Walks the base's partition list from the partition that may hold the view's earliest row,
+     * up to the view's latest row. Each partition covers its logical partition's whole range, so
+     * the parts of a partition an out-of-order commit split cover it together. Each range
+     * between covered ranges that the view's rows span, and the range above the last covered
+     * one, is asked of the view's table: its partitions need not line up with the base's, so
+     * the answer comes from a binary search of its timestamps, not its partition list. The base
+     * side reads the pinned reader's partition list, which its transaction file holds.
+     */
+    private void observeLostBasePartition(
+            LiveViewInstance instance,
+            TableReader reader,
+            long durableMinTimestamp,
+            long durableMaxTimestamp
+    ) {
+        if (!PartitionBy.isPartitioned(reader.getPartitionedBy())) {
+            // A live view's base is a WAL table, which is always partitioned. An unpartitioned
+            // table covers every timestamp while it holds a row, and the history floor refuses
+            // one that holds none.
+            return;
+        }
+        final TxReader baseTxFile = reader.getTxFile();
+        final int partitionCount = reader.getPartitionCount();
+        try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+            // Where the view's rows stop being covered by the base partitions walked so far.
+            long uncoveredLo = durableMinTimestamp;
+            for (
+                    int p = firstPartitionReaching(baseTxFile, durableMinTimestamp);
+                    p < partitionCount && uncoveredLo <= durableMaxTimestamp;
+                    p++
+            ) {
+                if (reader.getPartitionRowCountFromMetadata(p) <= 0) {
+                    continue;
+                }
+                final long partitionTimestamp = reader.getPartitionTimestampByIndex(p);
+                final long coveredLo = baseTxFile.getPartitionFloor(partitionTimestamp);
+                if (coveredLo > uncoveredLo && observeLostBasePartitionRow(lvReader, baseTxFile, uncoveredLo, coveredLo)) {
+                    return;
+                }
+                uncoveredLo = Math.max(uncoveredLo, baseTxFile.getNextLogicalPartitionTimestamp(partitionTimestamp));
+            }
+            if (uncoveredLo <= durableMaxTimestamp) {
+                observeLostBasePartitionRow(lvReader, baseTxFile, uncoveredLo, Long.MAX_VALUE);
+            }
+        }
+    }
+
+    /**
+     * Looks up the view table's earliest row in {@code [lo, hi)}, a range no base partition
+     * covers, and records it in {@link #restatementGuard} with the base partition range it
+     * belongs to.
+     *
+     * @return true when the view's table holds a row in the range
+     */
+    private boolean observeLostBasePartitionRow(TableReader lvReader, TxReader baseTxFile, long lo, long hi) {
+        final long rowTimestamp = findFirstDurableRow(lvReader, lo, hi);
+        if (rowTimestamp == Numbers.LONG_NULL) {
+            return false;
+        }
+        final long partitionLo = baseTxFile.getPartitionFloor(rowTimestamp);
+        restatementGuard.observeLostPartition(
+                rowTimestamp,
+                partitionLo,
+                baseTxFile.getNextLogicalPartitionTimestamp(partitionLo)
+        );
+        return true;
     }
 
     /**
@@ -12779,6 +13005,31 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         LOG.info().$("live view rebuild from the applied base runs without the restatement guard [view=")
                 .$(instance.getDefinition().getViewName())
                 .$(", reason=").$(LiveViewRebuildRestatementGuard.abstentionName(abstention)).I$();
+    }
+
+    /**
+     * Stands the guard's row shortfall down for a rebuild whose backlog may hold a dedup
+     * replacement a filter rejects, says so, and runs the lost partition check in its place. The
+     * prologue then refuses the rebuild when the view holds a row below the base's earliest row
+     * or in a range no base partition covers. A rebuild neither check refuses runs without the
+     * row shortfall, so a view that turns out restated has this line to explain why nothing
+     * stopped it.
+     */
+    private void standDownRestatementRowShortfall(
+            LiveViewInstance instance,
+            TableReader reader,
+            int abstention,
+            long durableMinTimestamp,
+            long durableMaxTimestamp
+    ) {
+        restatementGuard.disarmRowShortfall(abstention);
+        LOG.info().$("live view rebuild from the applied base checks only the restatement guard's history floor and base partitions [view=")
+                .$(instance.getDefinition().getViewName())
+                .$(", reason=").$(LiveViewRebuildRestatementGuard.abstentionName(abstention)).I$();
+        if (!restatementGuard.isHistoryFloorBreached()) {
+            // The history floor refuses first, and needs no search of the view's table.
+            observeLostBasePartition(instance, reader, durableMinTimestamp, durableMaxTimestamp);
+        }
     }
 
 
@@ -13758,6 +14009,54 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 }
             }
         }
+    }
+
+    /**
+     * The designated timestamp of the earliest row the live-view table holds in
+     * {@code [lo, hi)}, or {@link Numbers#LONG_NULL} when it holds none there. Partition
+     * metadata rules out every partition the range cannot reach; each one it may reach is
+     * opened and binary-searched, and the walk stops at the first row at or above {@code lo}.
+     * <p>
+     * A partition that is not native cannot be searched through the reader's mapped columns.
+     * A live view's table holds none - ALTER TABLE refuses a live view - so such a partition
+     * answers as if it held a row at the start of the range it overlaps, which makes the lost
+     * partition check refuse rather than let a restatement through.
+     */
+    private static long findFirstDurableRow(TableReader reader, long lo, long hi) {
+        final int partitionCount = reader.getPartitionCount();
+        final int timestampIndex = reader.getMetadata().getTimestampIndex();
+        for (int p = firstPartitionReaching(reader.getTxFile(), lo); p < partitionCount; p++) {
+            final long partitionTimestamp = reader.getPartitionTimestampByIndex(p);
+            if (partitionTimestamp >= hi) {
+                break;
+            }
+            if (reader.getPartitionRowCountFromMetadata(p) <= 0 || reader.getPartitionMaxTimestampFromMetadata(p) < lo) {
+                continue;
+            }
+            if (reader.getPartitionFormatFromMetadata(p) != PartitionFormat.NATIVE) {
+                return Math.max(lo, partitionTimestamp);
+            }
+            final long size = reader.openPartition(p);
+            final MemoryCR tsCol = reader.getColumn(
+                    TableReader.getPrimaryColumnIndex(reader.getColumnBase(p), timestampIndex)
+            );
+            final long row = firstRowAtOrAbove(tsCol, size, lo);
+            if (row < size) {
+                final long timestamp = tsCol.getLong(row << 3);
+                return timestamp < hi ? timestamp : Numbers.LONG_NULL;
+            }
+        }
+        return Numbers.LONG_NULL;
+    }
+
+    /**
+     * The index of the first partition in {@code txFile}'s list whose rows can reach
+     * {@code timestamp}: the last one named at or below it, or the first partition when none is.
+     * Every partition before it holds rows below the next partition's name timestamp only.
+     */
+    private static int firstPartitionReaching(TxReader txFile, long timestamp) {
+        final int index = txFile.findAttachedPartitionIndexByLoTimestamp(timestamp);
+        return index > -1 ? index : Math.max(-index - 2, 0);
     }
 
     /**

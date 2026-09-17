@@ -122,6 +122,15 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * roughly 5.3 MiB.
      */
     public static final int MAX_RETAINED_PARTITION_MAP_OBJECTS = 4_096;
+    /**
+     * State page reference slots the exact-width reference arrays of compaction redirects
+     * may keep once a publication ends, about 15 MiB with their array slots. While a
+     * publication runs, the writer keeps one array for every reference count it
+     * redirects, so every later partition with that count reuses it; a publication that
+     * ends with more slots than this drops every array. Without the limit, the writer
+     * would keep one array for every reference count any view it compacted has ever had.
+     */
+    public static final long MAX_RETAINED_REDIRECT_STATE_PAGE_REFS = 262_144;
     public static final int RAW_CODEC = 0;
     /**
      * Throws where {@link #TEST_FAIL_AFTER_METADATA_PUBLISH} would, but only in
@@ -643,6 +652,15 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         return publicationShells.roots.getRedirectRefWidthLookupCountForTest();
     }
 
+    /**
+     * @return state page reference slots of every redirect reference array the writer
+     * keeps for reuse, counted by walking its width cache
+     */
+    @TestOnly
+    public long getRetainedRedirectStatePageRefCountForTest() {
+        return publicationShells.roots.getRetainedRedirectStatePageRefCountForTest();
+    }
+
     @TestOnly
     public int getRootBuilderVisitorShellIdentityForTest(int index) {
         switch (index) {
@@ -727,6 +745,32 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     @TestOnly
     public int getRetainedPartitionMapObjectCountForTest() {
         return partitionMapObjectPool.getRetainedObjectCount();
+    }
+
+    /**
+     * @return image bytes of the largest single key or scalar pool the two previous-boundary
+     * shells keep for reuse, headers excluded: one width cache of an entry, or one node
+     * decode pool or scratch entry width cache of a partition-map reader
+     */
+    @TestOnly
+    public long getLargestRetainedPreviousBoundaryBufferBytesForTest() {
+        return Math.max(
+                sealPreviousBoundary.getLargestRetainedBufferBytesForTest(),
+                keyDomainPreviousBoundary.getLargestRetainedBufferBytesForTest()
+        );
+    }
+
+    /**
+     * @return image bytes of every key and scalar array the two previous-boundary shells
+     * keep for reuse, headers excluded: the width caches of their entries and the node
+     * decode pools and scratch entries of their partition-map readers. The shells live as
+     * long as the writer, so this is what they retain from views the worker served
+     * before; the writer's other readers and caches are not part of it.
+     */
+    @TestOnly
+    public long getRetainedPreviousBoundaryBufferBytesForTest() {
+        return sealPreviousBoundary.getRetainedBufferBytesForTest()
+                + keyDomainPreviousBoundary.getRetainedBufferBytesForTest();
     }
 
     /**
@@ -5369,9 +5413,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
 
         /**
-         * Releases every mapping this turn opened while keeping the shells. Named
-         * {@code close} so the callers that borrow it can keep saying so, but it
-         * frees nothing the next turn would have to rebuild.
+         * Releases every mapping this turn opened while keeping the shells, and trims
+         * the width caches of both entries and of the partition reader to what a shell
+         * that outlives the views it served may keep. Named {@code close} so the callers
+         * that borrow it can keep saying so, but it frees nothing the next turn would
+         * have to rebuild.
          */
         @Override
         public void close() {
@@ -5381,9 +5427,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 }
                 dataReaderSegmentIds[i] = -1;
             }
+            entry.trimWidthCaches();
             functionRoot.detach();
             partitionReader.detach();
             segmentDirectory.detach();
+            windowEntry.trimWidthCaches();
             windowRoot.detach();
             functionDirectory = null;
             resolvedIdentity = null;
@@ -5399,6 +5447,21 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             Misc.free(segmentDirectory);
             Misc.free(windowRoot);
             Misc.free(checkpointsDir);
+        }
+
+        @TestOnly
+        private long getLargestRetainedBufferBytesForTest() {
+            return Math.max(
+                    Math.max(entry.getLargestRetainedBufferBytesForTest(), windowEntry.getLargestRetainedBufferBytesForTest()),
+                    partitionReader.getLargestRetainedBufferBytesForTest()
+            );
+        }
+
+        @TestOnly
+        private long getRetainedBufferBytesForTest() {
+            return entry.getRetainedBufferBytesForTest()
+                    + windowEntry.getRetainedBufferBytesForTest()
+                    + partitionReader.getRetainedBufferBytesForTest();
         }
 
         @Override
@@ -5895,6 +5958,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
          */
         private final LongList writtenMetaSegments = new LongList();
         private int redirectRefWidthLookupCountForTest;
+        // Reference slots of the arrays redirectRefBuffersByWidth holds.
+        private long retainedRedirectRefCount;
         /**
          * Entries the last {@link #redirectTimelineEntries} rewrote. The list they
          * sit in is a high-water pool, so this - not its size - is what the splice
@@ -5935,6 +6000,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
          */
         private void end() {
             try {
+                trimRedirectRefBuffers();
                 functionRootBuilder.detach();
                 windowRootBuilder.detach();
                 aggregateRootWriter.discard();
@@ -6141,12 +6207,39 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 refs[i] = new LiveViewCheckpointStatePageRef();
             }
             redirectRefBuffersByWidth.put(count, refs);
+            retainedRedirectRefCount += count;
             return refs;
+        }
+
+        /**
+         * Ends a publication for the redirect reference cache: a cache holding more than
+         * {@link #MAX_RETAINED_REDIRECT_STATE_PAGE_REFS} reference slots drops every array,
+         * and a cache within the limit keeps them all. The arena already holds a copy of
+         * every array a redirect put, so dropping an array only stops the cache handing it
+         * out again.
+         */
+        private void trimRedirectRefBuffers() {
+            if (retainedRedirectRefCount > MAX_RETAINED_REDIRECT_STATE_PAGE_REFS) {
+                redirectRefBuffersByWidth.clear();
+                retainedRedirectRefCount = 0;
+            }
         }
 
         @TestOnly
         private int getRedirectRefWidthLookupCountForTest() {
             return redirectRefWidthLookupCountForTest;
+        }
+
+        @TestOnly
+        private long getRetainedRedirectStatePageRefCountForTest() {
+            long count = 0;
+            final Object[] buffers = redirectRefBuffersByWidth.getValues();
+            for (int i = 0, n = buffers.length; i < n; i++) {
+                if (buffers[i] != null) {
+                    count += ((LiveViewCheckpointStatePageRef[]) buffers[i]).length;
+                }
+            }
+            return count;
         }
 
         private boolean isRedirectRefWidthLookupRecordedForTest() {

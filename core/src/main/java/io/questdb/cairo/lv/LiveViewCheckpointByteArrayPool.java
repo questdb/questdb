@@ -27,6 +27,7 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 
@@ -69,6 +70,25 @@ final class LiveViewCheckpointByteArrayPool {
         final byte[] out = next(source.length);
         System.arraycopy(source, 0, out, 0, source.length);
         return out;
+    }
+
+    /**
+     * @return the image bytes of every array this pool holds, counted by walking its
+     * widths rather than read from the count the pool keeps for itself
+     */
+    @TestOnly
+    long countRetainedBytesForTest() {
+        long bytes = 0;
+        final Object[] widthPools = poolsByWidth.getValues();
+        for (int i = 0, n = widthPools.length; i < n; i++) {
+            final WidthPool pool = (WidthPool) widthPools[i];
+            if (pool != null) {
+                for (int j = 0, m = pool.arrays.size(); j < m; j++) {
+                    bytes += pool.arrays.getQuick(j).length;
+                }
+            }
+        }
+        return bytes;
     }
 
     /**
