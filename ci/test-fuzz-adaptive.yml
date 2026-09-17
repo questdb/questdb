@@ -86,19 +86,19 @@ parameters:
   # measured per-point rate in a previous run's TIMING block.
   - name: refPoints
     type: number
-    default: 80
+    default: 60
   # The product arm pays 11-14 s per point (recovery pass + replay server) against ~2-7 s
   # for the reference arm, so it runs at far fewer points. Build 270631 measured 22.8 s per
   # point on the CI agent, under a concurrent soak.
   - name: productPoints
     type: number
-    default: 24
+    default: 20
   # Points per MATRIX cell. The matrix is breadth, not depth: one cell per dimension of the
   # harness's coverage table, at few points each, after the three core sweeps have run at
   # full depth. 0 disables the matrix and restores the pre-matrix battery exactly.
   - name: matrixPoints
     type: number
-    default: 10
+    default: 8
   # Treat the cells listed in KNOWN_DEFECTS (see the sweeps step) as expected failures:
   # they run, they publish their verdicts, and their failure does not fail the job. Set
   # this false to make them count, which is what a run verifying a fix wants.
@@ -1051,7 +1051,7 @@ stages:
               # -- but their failure is expected and does not fail the job, or the battery is
               # red every night for something already known and nobody reads it again.
               #
-              # matrix-mat-view is dimension 15, documented in tools/durability/vm/README.md:
+              # rewrite-mat-view is dimension 15, documented in tools/durability/vm/README.md:
               # after a crash the base correctly discards the txns the RPO window permits it
               # to lose, while the view keeps aggregates derived from those same txns and
               # still reports view_status=valid. The README argues it is permanent --
@@ -1059,7 +1059,7 @@ stages:
               # base, and the invalidation path is gated on a TRUNCATE barrier that a crash
               # rollback is not.
               #
-              # matrix-mat-view-control is the other half of that finding and is NOT expected
+              # rewrite-mat-view-control is the other half of that finding and is NOT expected
               # to fail: at mode=sync, W=0, Wm==C, there is no window for the view to lead
               # and the defect does not appear. If the control ever fails, the defect is not
               # what the README says it is.
@@ -1068,7 +1068,7 @@ stages:
               # fixed -- remove the cell from this list -- or the cell stopped exercising it,
               # and a known defect that silently stops reproducing is how a test quietly
               # becomes decoration.
-              KNOWN_DEFECTS="matrix-mat-view"
+              KNOWN_DEFECTS="rewrite-mat-view"
 
               # Half depth for the extra window sizes: the bar they test is the same one the
               # W=50000 cell tests at full depth, and what they add is the second and third
@@ -1134,16 +1134,73 @@ stages:
               sweep-qwp-sf-W50000|qwp-sf|adaptive|50000|$PROD|
               sweep-qwp-W50000|qwp|adaptive|50000|$PROD|
               sweep-product-W50000|product|adaptive|50000|$PROD|
-              "
-              if [ "$MTX" -gt 0 ]; then
-                CELLS="$CELLS
-              matrix-mat-view|reference|adaptive|50000|$MTX|QDB_MAT_VIEW=true QDB_JUNIT_SUITE_SUFFIX=matview
-              matrix-mat-view-control|reference|sync|0|$MTX|QDB_MAT_VIEW=true QDB_JUNIT_SUITE_SUFFIX=matview
-              "
-              fi
-              CELLS="$CELLS
               sweep-reference-W5000|reference|adaptive|5000|$REF_W|
               sweep-reference-W200000|reference|adaptive|200000|$REF_W|
+              "
+
+              # THE REWRITE BLOCK. Everything above ingests by appending to the tail of one
+              # plain table. That is the least demanding thing the storage engine does, and a
+              # battery that only does it certifies the easy path. Each cell below forces the
+              # engine to REWRITE files rather than extend them, which is where a power cut
+              # has something to tear:
+              #
+              #   o3          every 4th row lands below the running max timestamp, so each
+              #               commit engages the O3 MERGE path and rewrites partitions
+              #               instead of appending to them
+              #   bitmap      .k/.v index files, rewritten per commit
+              #   posting     posting-list index structures
+              #   covering    posting index carrying a copy of v
+              #   varchar     aux vector with per-row variable offsets -- the torn-aux-tail
+              #   array       same shape, length varying 0..9 per row
+              #   wide        twelve columns touched on every commit
+              #   ddl         addColumn mid-ingest. Adaptive CANNOT apply this lazily: it is a
+              #               one-shot metadata write with no epoch behind it, so it takes the
+              #               SYNC grade and its ordering against the data is load-bearing. A
+              #               cut between the column file appearing and the segment metadata
+              #               naming it leaves a segment that can never be applied
+              #   mat-view    mat views in EVERY refresh type over one base -- IMMEDIATE,
+              #               TIMER, MANUAL, PERIOD, DEFERRED -- so one crash exercises all
+              #               of their state files and watermarks
+              #   sibling     a second WAL table, so RecoveryCoordinator's per-table loop runs
+              #               more than once and both tables recover in a single pass
+              #   lazygap     no epoch interval: the widest possible gap between committed
+              #               and durable
+              #   recoveras   restart under a different global commit mode, so recovery must
+              #               decide from the durable enrolment record and not from the mode
+              #               it finds
+              #   rebase      REBASE WAL publish: hard-suspend, rebase, idle, so the swept
+              #               boundaries land after the registry rename
+              #
+              # The block is ROTATED by build id. Sized to fit, it runs whole; on a night
+              # that starts late the deadline trims the tail, and without rotation the same
+              # cells would be the ones dropped every time.
+              DIMS=""
+              if [ "$MTX" -gt 0 ]; then
+                DIMS="
+              rewrite-o3|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=o3
+              rewrite-mat-view|reference|adaptive|50000|$MTX|QDB_MAT_VIEW=true QDB_JUNIT_SUITE_SUFFIX=matview
+              rewrite-mat-view-control|reference|sync|0|$MTX|QDB_MAT_VIEW=true QDB_JUNIT_SUITE_SUFFIX=matview
+              rewrite-ddl-add-column|reference|adaptive|50000|$MTX|QDB_DDL_EVERY_ROWS=50000 QDB_JUNIT_SUITE_SUFFIX=ddl
+              rewrite-profile-varchar|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=varchar
+              rewrite-profile-array|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=array
+              rewrite-profile-wide|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=wide
+              rewrite-profile-posting|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=posting
+              rewrite-profile-covering|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=covering
+              rewrite-profile-none|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=none
+              rewrite-sibling-table|reference|adaptive|50000|$MTX|QDB_SIBLING_TABLE=true QDB_JUNIT_SUITE_SUFFIX=sibling
+              rewrite-lazy-gap|reference|adaptive|50000|$MTX|QDB_EPOCH_MS=-1 QDB_JUNIT_SUITE_SUFFIX=lazygap
+              rewrite-recover-as-nosync|reference|adaptive|50000|$MTX|QDB_RECOVER_AS=nosync QDB_JUNIT_SUITE_SUFFIX=recoveras
+              rewrite-rebase-wal|reference|adaptive|50000|$MTX|QDB_REBASE_AT_ROWS=100000 QDB_JUNIT_SUITE_SUFFIX=rebase
+              "
+                n=$(printf '%s\n' "$DIMS" | grep -c '|')
+                if [ "$n" -gt 0 ]; then
+                  DIMS=$(printf '%s\n' "$DIMS" | grep '|' \
+                         | awk -v s="$(( $(Build.BuildId) % n ))" \
+                               '{a[NR]=$0} END{for(i=0;i<NR;i++) print a[((i+s)%NR)+1]}')
+                fi
+              fi
+              CELLS="$CELLS
+              $DIMS
               "
 
               while IFS='|' read -r name arm mode win pts extra; do
