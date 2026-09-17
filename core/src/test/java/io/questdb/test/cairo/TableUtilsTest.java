@@ -235,6 +235,14 @@ public class TableUtilsTest extends AbstractTest {
         Assert.assertFalse(TableUtils.isUnsolicitedTableLock(TableUtils.WAL_2_TABLE_WRITE_REASON));
         Assert.assertFalse(TableUtils.isUnsolicitedTableLock(TableUtils.WAL_2_TABLE_RESUME_REASON));
         Assert.assertFalse(TableUtils.isUnsolicitedTableLock(getCommandName(CMD_STORAGE_POLICY)));
+        // ENT's RECONCILE TABLE apply/request paths hold the writer-pool slot directly via
+        // lockTableWriter(token, "reconcile-apply" / "reconcile-request") -- see
+        // com.questdb.cairo.reconcile.ReconcileApplyService and
+        // com.questdb.griffin.engine.cursors.ReconcileTableCursorFactory in questdb-ent. Neither
+        // reason is a client write, so ApplyWal2TableJob must not treat a busy slot held under
+        // either reason as an unsolicited lock (spurious CRITICAL log + republish).
+        Assert.assertFalse(TableUtils.isUnsolicitedTableLock("reconcile-apply"));
+        Assert.assertFalse(TableUtils.isUnsolicitedTableLock("reconcile-request"));
 
         // Any other reason IS unsolicited
         Assert.assertTrue(TableUtils.isUnsolicitedTableLock("ALTER TABLE"));

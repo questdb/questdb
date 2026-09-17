@@ -182,6 +182,10 @@ public abstract class AbstractAllowAllSecurityContext extends AbstractPrincipalA
     }
 
     @Override
+    public void authorizeReconcileTable(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeResumeWal(TableToken tableToken) {
     }
 

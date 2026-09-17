@@ -103,13 +103,12 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         operation.withContext(sqlExecutionContext);
         boolean isDone = false;
         final TableToken tableToken = operation.getTableToken();
-        // When a table is hard-suspended with write-denial on, it rejects WAL writes. Route eligible
+        // When a table is suspended in the write-denial flavour, it rejects WAL writes. Route eligible
         // non-structural changes through the force/WAL-bypass path (direct TableWriter) so maintenance
         // still works, mirroring FORCE DROP PARTITION. Structural changes stay denied (versioned only).
         final boolean forceWalBypass = operation.isForceWalBypass()
                 || (operation.isForceableWhenSuspended()
-                && engine.getConfiguration().isWalApplySuspendedWriteDenied()
-                && engine.isWalApplySuspended(tableToken));
+                && engine.isWalWriteSuspended(tableToken));
         try (TableWriterAPI writer = !forceWalBypass ? engine.getTableWriterAPI(tableToken, lockReason) : engine.getWriter(tableToken, FORCE_OPERATION_APPLY_REASON)) {
             // Both-trees pre-externalization fire-point: fire the role-switch mint observer here, before
             // applyFenced acquires the role-switch read lock. The post-fence preApplyObserver below

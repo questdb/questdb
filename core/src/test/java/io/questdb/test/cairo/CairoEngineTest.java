@@ -37,9 +37,15 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.pool.ex.EntryLockedException;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -55,6 +61,7 @@ import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -62,6 +69,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.cairo.TableUtils.TABLE_RESERVED;
@@ -315,6 +323,108 @@ public class CairoEngineTest extends AbstractCairoTest {
                     assertWriter(engine, y);
                     assertReader(engine, y);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testReconcileReadLockBlocksReadersMetadataAndQueries() throws Exception {
+        // The enterprise RECONCILE TABLE apply calls lockReconcileReads(token) while it swaps the
+        // table's files. From that point every getReader overload and getTableMetadata must refuse
+        // the dir with EntryLockedException -- which extends CairoException, so a racing SELECT
+        // surfaces it as an ordinary query error instead of opening a reader over half-swapped
+        // files. unlockReconcileReads restores full access.
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into x values (1, '2024-01-01T00:00:00Z')");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("x");
+
+            engine.lockReconcileReads(token);
+            try {
+                assertReconcileReadLocked(() -> engine.getReader("x"));
+                assertReconcileReadLocked(() -> engine.getReader(token));
+                assertReconcileReadLocked(() -> engine.getReader(token, null));
+                assertReconcileReadLocked(() -> engine.getReader(token, -1, null));
+                assertReconcileReadLocked(() -> engine.getTableMetadata(token));
+                assertReconcileReadLocked(() -> engine.getTableMetadata(token, -1));
+                // Sequencer metadata is the write-compile path (getMetadataForWrite -> getLegacyMetadata
+                // -> getSequencerMetadata for WAL tables); it must refuse the dir too, or an UPDATE /
+                // INSERT-SELECT / ALTER could open metadata over half-swapped sequencer files.
+                assertReconcileReadLocked(() -> engine.getSequencerMetadata(token));
+                assertReconcileReadLocked(() -> engine.getSequencerMetadata(token, -1));
+                assertReconcileReadLocked(() -> engine.getLegacyMetadata(token));
+                assertReconcileReadLocked(() -> engine.getLegacyMetadata(token, -1));
+
+                // A SELECT resolves through the same guarded entry points; the compiler catches the
+                // EntryLockedException during table resolution and surfaces it as a sensible
+                // "table is locked" error rather than opening a reader over half-swapped files.
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    try (RecordCursorFactory factory = compiler.compile("select * from x", sqlExecutionContext).getRecordCursorFactory();
+                         RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                        }
+                        Assert.fail("expected the SELECT to fail while the reconcile read lock is held");
+                    }
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table is locked");
+                }
+            } finally {
+                engine.unlockReconcileReads(token);
+            }
+
+            // Unlock restores full access: readers, metadata and the SELECT all work again.
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertEquals(1, reader.size());
+            }
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                Assert.assertEquals(2, metadata.getColumnCount());
+            }
+            Misc.freeIfCloseable(engine.getSequencerMetadata(token)); // sequencer metadata opens again too
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try (RecordCursorFactory factory = compiler.compile("select count() from x", sqlExecutionContext).getRecordCursorFactory();
+                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(1, cursor.getRecord().getLong(0));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGetReaderWithRepairSkipsRepairUnderReconcileLock() throws Exception {
+        // M3: getReaderWithRepair caught EntryLockedException in its generic `catch (CairoException)`
+        // and ran tryRepairTable -- which opens a TableWriter (bypassing the write-suspend gate) and
+        // logs a misleading "starting table repair" -- even though the table is only locked by an
+        // in-progress RECONCILE, not corrupt. It must now rethrow EntryLockedException directly so the
+        // sole caller (DatabaseCheckpointAgent) retries once the reconcile releases the lock.
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into x values (1, '2024-01-01T00:00:00Z')");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("x");
+
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            engine.lockReconcileReads(token);
+            try {
+                try {
+                    Misc.freeIfCloseable(engine.getReaderWithRepair(token));
+                    Assert.fail("expected EntryLockedException while the reconcile read lock is held");
+                } catch (EntryLockedException expected) {
+                    TestUtils.assertContains(expected.getFlyweightMessage(), "reconcile in progress");
+                }
+                // The console log writer is async, so drain the FIFO past any repair log by emitting
+                // and waiting for a unique sentinel before asserting the repair message is absent.
+                execute("create table m3_repair_log_drain_sentinel (a int)");
+                capture.waitFor("m3_repair_log_drain_sentinel");
+                Assert.assertFalse(
+                        "getReaderWithRepair must not run tryRepairTable for a transient reconcile lock",
+                        capture.captured().contains("starting table repair"));
+            } finally {
+                engine.unlockReconcileReads(token);
+                capture.stop();
             }
         });
     }
@@ -580,6 +690,17 @@ public class CairoEngineTest extends AbstractCairoTest {
                 Assert.assertTrue(engine.clear());
             }
         });
+    }
+
+    private static void assertReconcileReadLocked(Supplier<?> readerOrMetadata) {
+        try {
+            // On the bug path the call would hand back a reader/metadata over the locked dir; free
+            // it so the failure is a clean assertion rather than a masked resource leak.
+            Misc.freeIfCloseable(readerOrMetadata.get());
+            Assert.fail("expected EntryLockedException while the reconcile read lock is held");
+        } catch (EntryLockedException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "reconcile in progress");
+        }
     }
 
     private static void waitForTableStatus(int status) {

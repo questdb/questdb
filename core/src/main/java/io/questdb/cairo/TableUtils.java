@@ -1288,7 +1288,15 @@ public final class TableUtils {
         return lockReason != NO_LOCK_REASON
                 && !WAL_2_TABLE_WRITE_REASON.equals(lockReason)
                 && !WAL_2_TABLE_RESUME_REASON.equals(lockReason)
-                && !getCommandName(CMD_STORAGE_POLICY).equals(lockReason);
+                && !getCommandName(CMD_STORAGE_POLICY).equals(lockReason)
+                // ENT's RECONCILE TABLE apply/request paths hold the writer-pool slot directly via
+                // lockTableWriter(token, "reconcile-apply" / "reconcile-request") -- see
+                // com.questdb.cairo.reconcile.ReconcileApplyService and
+                // com.questdb.griffin.engine.cursors.ReconcileTableCursorFactory in questdb-ent.
+                // Neither reason is a client write, so a busy slot held under either must not be
+                // reported as an unsolicited lock (spurious CRITICAL log + WAL-txn republish).
+                && !"reconcile-apply".equals(lockReason)
+                && !"reconcile-request".equals(lockReason);
     }
 
     public static boolean isValidColumnName(CharSequence columnName, int fsFileNameLimit) {
