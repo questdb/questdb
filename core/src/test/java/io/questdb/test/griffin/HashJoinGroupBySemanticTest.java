@@ -59,6 +59,9 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
             + " ON r.id = p.id WHERE r.ts IN '2020-01-01'";
     // Aliases denote SQL sides, including RIGHT: r is always the SQL LHS.
     private static final String[] JOINS = {" join ", " left join ", " right join "};
+    // SYMBOL keys match by text. The tables give equal text different symbol keys, and each
+    // table has one key text that the other table's dictionary lacks.
+    private static final String[] KEYS = {"r.id=p.id", "r.s=p.s"};
     private static final String PROJECTED_R = "(select s2, d, id, s, l, i, t, f from a) r";
     private static final String PROJECTED_P = "(select f, i, s, t, id, l, d, s2 from b) p";
 
@@ -100,6 +103,9 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
             try (TableReader a = getReader("a"); TableReader b = getReader("b")) {
                 Assert.assertNotEquals(a.getSymbolMapReader(4).keyOf("shared"), b.getSymbolMapReader(4).keyOf("shared"));
                 Assert.assertNotEquals(a.getSymbolMapReader(4).keyOf("shared"), a.getSymbolMapReader(5).keyOf("shared"));
+                // Each build drops the key text that the other table's dictionary lacks.
+                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, a.getSymbolMapReader(4).keyOf("miss7"));
+                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, b.getSymbolMapReader(4).keyOf("miss9"));
             }
             try (SqlExecutionContextImpl context = context(engine, 4)) {
                 context.changePageFrameSizes(1, 2);
@@ -110,23 +116,28 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                         for (int threshold : new int[]{Integer.MAX_VALUE, 1}) {
                             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
                             for (String join : JOINS) {
-                                for (int keys = 0; keys < 4; keys++) {
-                                    for (int args = 1; args < 4; args++) {
-                                        String group = columns(keys, true);
-                                        assertDifferential("select " + (group.isEmpty() ? "" : group + ", ")
-                                                + aggregates(args, true) + from(join)
-                                                + (group.isEmpty() ? "" : " order by " + group), context, true);
+                                for (String on : KEYS) {
+                                    for (int keys = 0; keys < 4; keys++) {
+                                        for (int args = 1; args < 4; args++) {
+                                            String group = columns(keys, true);
+                                            assertDifferential("select " + (group.isEmpty() ? "" : group + ", ")
+                                                    + aggregates(args, true) + from(join, on)
+                                                    + (group.isEmpty() ? "" : " order by " + group), context, true);
+                                        }
+                                    }
+                                    // f is needed only by WHERE; s2 is needed only inside an argument.
+                                    String build = join.equals(" right join ") ? "r" : "p";
+                                    String probe = build.equals("r") ? "p" : "r";
+                                    // The narrower interval leaves probe dictionary entries without scanned rows.
+                                    for (String end : new String[]{"2020-01-04", "2020-01-02"}) {
+                                        String sql = "select r.s, p.s, count(r.s), count(p.s), "
+                                                + "sum(length(r.s2)::double), avg(length(p.s2)::double)" + from(join, on)
+                                                + " where (" + build + ".f='keep' or " + build + ".f is null)"
+                                                + " and " + probe + ".t >= '2020-01-01' and " + probe + ".t < '" + end + "'"
+                                                + " order by r.s,p.s";
+                                        assertDifferential(sql, context, true);
                                     }
                                 }
-                                // f is needed only by WHERE; s2 is needed only inside an argument.
-                                String build = join.equals(" right join ") ? "r" : "p";
-                                String probe = build.equals("r") ? "p" : "r";
-                                String sql = "select r.s, p.s, count(r.s), count(p.s), "
-                                        + "sum(length(r.s2)::double), avg(length(p.s2)::double)" + from(join)
-                                        + " where (" + build + ".f='keep' or " + build + ".f is null)"
-                                        + " and " + probe + ".t >= '2020-01-01' and " + probe + ".t < '2020-01-04'"
-                                        + " order by r.s,p.s";
-                                assertDifferential(sql, context, true);
                             }
                         }
                     }
@@ -146,40 +157,44 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                     for (int threshold : new int[]{Integer.MAX_VALUE, 1}) {
                         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
                         for (String join : JOINS) {
-                            for (boolean keyed : new boolean[]{false, true}) {
-                                storage("a", format);
-                                storage("b", format);
-                                bindVariableService.setStr(0, "shared");
-                                String sql = "select " + (keyed ? "r.s, p.s, r.s2, p.s2, " : "")
-                                        + aggregates(3, true) + ",sum(case when p.s=$1 then 1.0 else 0.0 end) selected" + from(join)
-                                        + (keyed ? " order by r.s,p.s,r.s2,p.s2" : "");
-                                try (RecordCursorFactory factory = engine.select(sql, context)) {
-                                    fused(factory);
-                                    for (int state = 0; state < 5; state++) {
-                                        if (state == 1) {
-                                            execute("insert into a values (1,4,40,4,'new','shared','keep','2020-01-04')");
-                                            execute("insert into b values (1,8,80,8,'new','different','keep','2020-01-04')");
-                                            bindVariableService.setStr(0, "new");
-                                        } else if (state == 2) {
-                                            execute("truncate table a");
-                                            execute("truncate table b");
-                                            execute("insert into a values (1,1,1,1,null,null,null,'2020-01-01')");
-                                            execute("insert into b values (1,1,1,1,null,null,null,'2020-01-01')");
-                                        } else if (state == 3) {
-                                            execute("truncate table a");
-                                            execute("truncate table b");
-                                        } else if (state == 4) {
-                                            insertRows("a", false);
-                                            insertRows("b", true);
-                                            bindVariableService.setStr(0, "shared");
-                                        }
-                                        if (state != 3) {
-                                            storage("a", format);
-                                            storage("b", format);
-                                        }
-                                        assertAgainstBaseline(sql, factory, context);
-                                        if (keyed) {
-                                            assertSymbolClones(factory, context);
+                            for (String on : KEYS) {
+                                for (boolean keyed : new boolean[]{false, true}) {
+                                    storage("a", format);
+                                    storage("b", format);
+                                    bindVariableService.setStr(0, "shared");
+                                    String sql = "select " + (keyed ? "r.s, p.s, r.s2, p.s2, " : "")
+                                            + aggregates(3, true) + ",sum(case when p.s=$1 then 1.0 else 0.0 end) selected" + from(join, on)
+                                            + (keyed ? " order by r.s,p.s,r.s2,p.s2" : "");
+                                    try (RecordCursorFactory factory = engine.select(sql, context)) {
+                                        fused(factory);
+                                        // SYMBOL keys translate through each execution's dictionaries: new text on
+                                        // both sides, dictionaries with only nulls, empty tables, and reassigned keys.
+                                        for (int state = 0; state < 5; state++) {
+                                            if (state == 1) {
+                                                execute("insert into a values (1,4,40,4,'new','shared','keep','2020-01-04')");
+                                                execute("insert into b values (1,8,80,8,'new','different','keep','2020-01-04')");
+                                                bindVariableService.setStr(0, "new");
+                                            } else if (state == 2) {
+                                                execute("truncate table a");
+                                                execute("truncate table b");
+                                                execute("insert into a values (1,1,1,1,null,null,null,'2020-01-01')");
+                                                execute("insert into b values (1,1,1,1,null,null,null,'2020-01-01')");
+                                            } else if (state == 3) {
+                                                execute("truncate table a");
+                                                execute("truncate table b");
+                                            } else if (state == 4) {
+                                                insertRows("a", false);
+                                                insertRows("b", true);
+                                                bindVariableService.setStr(0, "shared");
+                                            }
+                                            if (state != 3) {
+                                                storage("a", format);
+                                                storage("b", format);
+                                            }
+                                            assertAgainstBaseline(sql, factory, context);
+                                            if (keyed) {
+                                                assertSymbolClones(factory, context);
+                                            }
                                         }
                                     }
                                 }
@@ -195,28 +210,37 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
     public void testJoinKeyAndPayloadTopsAcrossStoragePairs() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 2);
-            createTables(true);
             try (SqlExecutionContextImpl context = context(engine, 4)) {
                 context.changePageFrameSizes(1, 2);
-                for (int left = 0; left < 3; left++) {
-                    storage("a", left);
-                    for (int right = 0; right < 3; right++) {
-                        storage("b", right);
-                        for (int threshold : new int[]{Integer.MAX_VALUE, 1}) {
-                            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
-                            for (String join : JOINS) {
-                                String build = join.equals(" right join ") ? "r" : "p";
-                                for (String filter : new String[]{"", " where " + build + ".f is null",
-                                        " and " + build + ".f='keep'", " where " + build + ".d>1000"}) {
-                                    for (boolean keyed : new boolean[]{false, true}) {
-                                        String group = "r.id,p.id,r.s,p.s,r.i,p.l";
-                                        assertDifferential("select " + (keyed ? group + ", " : "") + aggregates(3, false)
-                                                + from(join) + filter + (keyed ? " order by " + group : ""), context, true);
+                // Bit 1 gives a column tops, bit 2 gives b column tops. Rows above a top read null keys,
+                // which match null keys on the other side, including translated SYMBOL keys.
+                for (int tops = 1; tops < 4; tops++) {
+                    createTables((tops & 1) != 0, (tops & 2) != 0);
+                    for (int left = 0; left < 3; left++) {
+                        storage("a", left);
+                        for (int right = 0; right < 3; right++) {
+                            storage("b", right);
+                            // The merge path does not depend on which side has tops.
+                            for (int threshold : tops == 3 ? new int[]{Integer.MAX_VALUE, 1} : new int[]{Integer.MAX_VALUE}) {
+                                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
+                                for (String join : JOINS) {
+                                    String build = join.equals(" right join ") ? "r" : "p";
+                                    for (String on : KEYS) {
+                                        for (String filter : new String[]{"", " where " + build + ".f is null",
+                                                " and " + build + ".f='keep'", " where " + build + ".d>1000"}) {
+                                            for (boolean keyed : new boolean[]{false, true}) {
+                                                String group = "r.id,p.id,r.s,p.s,r.i,p.l";
+                                                assertDifferential("select " + (keyed ? group + ", " : "") + aggregates(3, false)
+                                                        + from(join, on) + filter + (keyed ? " order by " + group : ""), context, true);
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
+                    execute("drop table a");
+                    execute("drop table b");
                 }
             }
         });
@@ -226,34 +250,56 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
     public void testExtremeKeysNullsAndRejectedRealMatches() throws Exception {
         assertMemoryLeak(() -> {
             createTables(false);
-            for (int state = 0; state < 7; state++) {
+            for (int state = 0; state < 12; state++) {
                 execute("truncate table a");
                 execute("truncate table b");
-                if (state != 1 && state != 3) {
+                if (state != 1 && state != 3 && state != 9) {
                     insertRows("a", false);
                 }
-                if (state != 2 && state != 3) {
+                if (state != 2 && state != 3 && state != 10) {
                     insertRows("b", true);
                 }
-                if (state == 4) {
-                    execute("update a set i=null,l=null,d=null,s=null,s2=null");
-                    execute("update b set i=null,l=null,d=null,s=null,s2=null");
-                } else if (state == 5) {
-                    execute("update b set id=999");
-                } else if (state == 6) {
-                    execute("update a set id=1");
-                    execute("update b set id=1");
+                switch (state) {
+                    case 4 -> {
+                        execute("update a set i=null,l=null,d=null,s=null,s2=null");
+                        execute("update b set i=null,l=null,d=null,s=null,s2=null");
+                    }
+                    case 5 -> execute("update b set id=999");
+                    case 6 -> {
+                        execute("update a set id=1");
+                        execute("update b set id=1");
+                    }
+                    // The SYMBOL key counterparts of states 5 and 6: text that a's dictionary lacks, so
+                    // the build drops every non-null row, and one key text for every row.
+                    case 7 -> execute("update b set s='b-only' where s is not null");
+                    case 8 -> {
+                        execute("update a set s='shared'");
+                        execute("update b set s='shared'");
+                    }
+                    // TRUNCATE resets the dictionary, so the key column of the table without rows from
+                    // insertRows() never holds text: every non-null key on the other side misses.
+                    case 9 -> execute("insert into a (id,i,l,d,t) values (1,1,10,0.5,'2020-01-01'),(null,2,20,2,'2020-01-02')");
+                    case 10 -> execute("insert into b (id,i,l,d,t) values (1,1,10,0.5,'2020-01-01'),(null,2,20,2,'2020-01-02')");
+                    // The dictionary keeps every key text, but only null keys have rows.
+                    case 11 -> {
+                        execute("truncate table a keep symbol maps");
+                        execute("insert into a (id,i,l,d,t) values (1,1,10,0.5,'2020-01-01'),(null,2,20,2,'2020-01-02')");
+                    }
+                    default -> {
+                    }
                 }
                 try (SqlExecutionContextImpl context = context(engine, 4)) {
                     context.changePageFrameSizes(1, 2);
                     for (String join : JOINS) {
                         String build = join.equals(" right join ") ? "r" : "p";
-                        for (String filter : new String[]{"", " where " + build + ".d is null",
-                                " where " + build + ".d>1000", " and " + build + ".d>1000",
-                                " where " + build + ".s is null or " + build + ".s='absent'"}) {
-                            assertDifferential("select " + aggregates(3, false) + from(join) + filter, context, true);
-                            assertDifferential("select r.id,p.id,r.s,p.s," + aggregates(3, false) + from(join)
-                                    + filter + " order by r.id,p.id,r.s,p.s", context, true);
+                        for (String on : KEYS) {
+                            for (String filter : new String[]{"", " where " + build + ".d is null",
+                                    " where " + build + ".d>1000", " and " + build + ".d>1000",
+                                    " where " + build + ".s is null or " + build + ".s='absent'"}) {
+                                assertDifferential("select " + aggregates(3, false) + from(join, on) + filter, context, true);
+                                assertDifferential("select r.id,p.id,r.s,p.s," + aggregates(3, false) + from(join, on)
+                                        + filter + " order by r.id,p.id,r.s,p.s", context, true);
+                            }
                         }
                     }
                 }
@@ -292,12 +338,53 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                     try (SqlExecutionContextImpl context = context(engine, workers)) {
                         context.changePageFrameSizes(1, 1 + rnd.nextInt(5));
                         for (String join : JOINS) {
-                            for (int keys = 0; keys < 4; keys++) {
-                                String group = columns(keys, true);
-                                assertDifferential("select " + (group.isEmpty() ? "" : group + ", ")
-                                        + aggregates(1 + rnd.nextInt(3), true) + from(join)
-                                        + (group.isEmpty() ? "" : " order by " + group), context, true);
+                            // Random texts leave some SYMBOL keys in one table only.
+                            for (String on : KEYS) {
+                                for (int keys = 0; keys < 4; keys++) {
+                                    String group = columns(keys, true);
+                                    assertDifferential("select " + (group.isEmpty() ? "" : group + ", ")
+                                            + aggregates(1 + rnd.nextInt(3), true) + from(join, on)
+                                            + (group.isEmpty() ? "" : " order by " + group), context, true);
+                                }
                             }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolKeySelfJoinsAndBuildSymbolPredicates() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables(false);
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                context.changePageFrameSizes(1, 2);
+                for (String join : JOINS) {
+                    // Both inputs read one dictionary through separate cursors, and the build still translates.
+                    for (String table : new String[]{"a", "b"}) {
+                        String from = " from " + table + " r" + join + table + " p on r.s=p.s";
+                        assertDifferential("select " + aggregates(3, true) + from, context, true);
+                        assertDifferential("select r.s,p.s2," + aggregates(3, true) + from + " order by r.s,p.s2", context, true);
+                        assertDifferential("select r.s,p.s2,count(*) from " + table + " r" + join + table
+                                + " p on r.s=p.s2 order by r.s,p.s2", context, true);
+                    }
+                    // Joined metadata keeps the build input's static symbol tables, so predicates on build
+                    // SYMBOL columns resolve their constants through the build dictionary at init.
+                    String build = join.equals(" right join ") ? "r" : "p";
+                    for (String on : KEYS) {
+                        for (String predicate : new String[]{
+                                build + ".s='shared'", build + ".s in ('shared','other')", build + ".s is null",
+                                build + ".s is not null", build + ".s!='shared'", build + ".s='absent'",
+                                build + ".s not in ('shared','absent')", build + ".s2='shared'"}) {
+                            String from = from(join, on) + " where " + predicate;
+                            // An INNER join pushes the predicate into the build input; outer joins filter joined pairs.
+                            try (RecordCursorFactory factory = engine.select("select count(*)" + from, context)) {
+                                String plan = plan(factory, context);
+                                Assert.assertEquals(plan, !join.equals(JOINS[0]), plan.contains("postJoinFilter:"));
+                            }
+                            assertDifferential("select " + aggregates(3, true) + from, context, true);
+                            assertDifferential("select r.s,p.s," + aggregates(3, true) + from + " order by r.s,p.s", context, true);
                         }
                     }
                 }
@@ -323,26 +410,38 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                     // PostgreSQL-style ::float means DOUBLE (SqlParser.rewritePgCast),
                     // unlike a FLOAT table column. Check the compiled allowlist boundary.
                     assertDifferential("select sum(r.d::float)" + from(join), context, true);
-                    for (String on : new String[]{"r.id=p.id and r.i=p.i", "r.id+1=p.id", "r.l=p.l", "r.d=p.d", "r.t=p.t"}) {
+                    for (String on : new String[]{"r.id=p.id and r.i=p.i", "r.id+1=p.id", "r.l=p.l", "r.d=p.d", "r.t=p.t",
+                            "r.s=p.s and r.id=p.id", "r.s=p.s and r.s2=p.s2"}) {
                         assertDifferential("select count(*) from " + PROJECTED_R + join + PROJECTED_P + " on " + on, context, false);
                     }
-                    // SYMBOL keys match by text through reordered projections.
-                    assertDifferential("select count(*) from " + PROJECTED_R + join + PROJECTED_P + " on r.s=p.s", context, true);
+                    // SYMBOL keys match by text through reordered projections, also across different
+                    // SYMBOL columns, whose dictionaries assign their own keys.
+                    for (String on : new String[]{"r.s=p.s", "r.s=p.s2", "r.s2=p.s"}) {
+                        assertDifferential("select count(*) from " + PROJECTED_R + join + PROJECTED_P + " on " + on, context, true);
+                        assertDifferential("select r.s,p.s,r.s2,p.s2,count(*)" + from(join, on) + " order by r.s,p.s,r.s2,p.s2", context, true);
+                    }
                     for (String barrier : new String[]{"select distinct r.s from ", "select r.s from "}) {
                         String inner = barrier + PROJECTED_R + join + PROJECTED_P + " on r.id=p.id"
                                 + (barrier.contains("distinct") ? "" : " limit 2");
                         assertDifferential("select s,count(*) from (" + inner + ") order by s", context, false);
                     }
                 }
-                execute("alter table a add column v float");
-                execute("alter table b add column v float");
-                execute("update a set v=1");
-                execute("update b set v=2");
+                for (String table : new String[]{"a", "b"}) {
+                    execute("alter table " + table + " add column v float");
+                    execute("alter table " + table + " add column str string");
+                    execute("alter table " + table + " add column vc varchar");
+                    execute("update " + table + " set v=" + (table.equals("a") ? 1 : 2) + ", str=s, vc=s");
+                }
                 for (String join : JOINS) {
                     for (String side : new String[]{"r", "p"}) {
                         assertDifferential("select sum(" + side + ".v) from a r" + join + "b p on r.id=p.id", context, false);
                         assertDifferential("select r.s,p.s,sum(" + side + ".v) from a r" + join
                                 + "b p on r.id=p.id order by r.s,p.s", context, false);
+                    }
+                    // SYMBOL keys against text keys with the same values keep the ordinary plan.
+                    for (String on : new String[]{"r.s=p.str", "r.str=p.s", "r.s=p.vc", "r.vc=p.s"}) {
+                        assertDifferential("select r.s,p.s,count(*),sum(r.d),sum(p.d) from a r" + join + "b p on " + on
+                                + " order by r.s,p.s", context, false);
                     }
                 }
                 assertDifferential("select count(*) from a r full join b p on r.id=p.id", context, false);
@@ -763,8 +862,13 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
     }
 
     private void createTables(boolean tops) throws Exception {
+        createTables(tops, tops);
+    }
+
+    // A table with tops gets two rows before every other column exists.
+    private void createTables(boolean isTopsA, boolean isTopsB) throws Exception {
         for (String table : new String[]{"a", "b"}) {
-            if (tops) {
+            if (table.equals("a") ? isTopsA : isTopsB) {
                 execute("create table " + table + " (t timestamp) timestamp(t) partition by day");
                 execute("insert into " + table + " values ('2019-12-31'),('2020-01-01')");
                 String[] names = {"id", "i", "l", "d", "s", "s2", "f"};
@@ -780,7 +884,11 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
     }
 
     private static String from(String join) {
-        return " from " + PROJECTED_R + join + PROJECTED_P + " on r.id=p.id";
+        return from(join, KEYS[0]);
+    }
+
+    private static String from(String join, String on) {
+        return " from " + PROJECTED_R + join + PROJECTED_P + " on " + on;
     }
 
     private void insertRows(String table, boolean reverse) throws Exception {
@@ -794,7 +902,7 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                 + "(-2147483647,-1,-10,-0.5,'negative','other','keep','2020-01-02T02'),"
                 + "(2147483647,4,40,4,'maximum',null,'drop','2020-01-03'),"
                 + "(null,null,null,null,null,'null-key',null,'2020-01-03T01'),"
-                + "(" + (reverse ? 7 : 9) + ",8,80,8,'miss',null,'keep','2020-01-03T02')");
+                + "(" + (reverse ? 7 : 9) + ",8,80,8,'miss" + (reverse ? 7 : 9) + "',null,'keep','2020-01-03T02')");
     }
 
     private static String nestedValue(@Nullable Function variable, String value) {

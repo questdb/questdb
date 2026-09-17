@@ -61,20 +61,29 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
     public void testHighCardinalitySymbolPredicatesAndReuse() throws Exception {
         assertMemoryLeak(() -> {
             for (String table : new String[]{"r", "p"}) {
-                execute("create table " + table + " as (select x::int id, ('s'||x)::symbol s, ('s'||x)::symbol s2, "
-                        + "('2020-01-01T00:00:'||lpad((x%60)::string,2,'0'))::symbol dt, 1.0 d from long_sequence(8192))");
+                // p inserts in reverse order, so equal SYMBOL text has different keys in r and p.
+                String x = table.equals("r") ? "x" : "(8193-x)";
+                execute("create table " + table + " as (select " + x + "::int id, ('s'||" + x + ")::symbol s, ('s'||" + x + ")::symbol s2, "
+                        + "('2020-01-01T00:00:'||lpad((" + x + "%60)::string,2,'0'))::symbol dt, 1.0 d from long_sequence(8192))");
+            }
+            try (TableReader r = getReader("r"); TableReader p = getReader("p")) {
+                Assert.assertNotEquals(r.getSymbolMapReader(1).keyOf("s1"), p.getSymbolMapReader(1).keyOf("s1"));
             }
             try (SqlExecutionContextImpl context = context(engine, 4)) {
                 context.changePageFrameSizes(32, 32);
                 for (int threshold : new int[]{1, Integer.MAX_VALUE}) {
                     setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
-                    for (String predicate : new String[]{
-                            "r.s like 's%'", "r.s ilike '%S%'", "r.s like 's____'", "r.s ~ '^s[1-8]+'",
-                            "r.s = r.s2", "r.dt = '2020-01-01T00:00:01'::timestamp", "r.s = p.s",
-                            "p.s like 's%'", "p.s ~ '^s[1-8]+'"}) {
-                        String from = " from r left join p on r.id=p.id and p.s like 's%' and p.s=p.s2 where " + predicate;
-                        assertDifferential("select r.s, count(*), sum(p.d)" + from + " order by r.s", context, !predicate.equals("r.s = p.s"));
-                        assertDifferential("select count(*), sum(p.d)" + from, context, !predicate.equals("r.s = p.s"));
+                    // Every build row translates a distinct SYMBOL key, and threshold 1 forces the sharded merge.
+                    for (String key : new String[]{"id", "s"}) {
+                        for (String predicate : new String[]{
+                                "r.s like 's%'", "r.s ilike '%S%'", "r.s like 's____'", "r.s ~ '^s[1-8]+'",
+                                "r.s = r.s2", "r.dt = '2020-01-01T00:00:01'::timestamp", "r.s = p.s",
+                                "p.s like 's%'", "p.s ~ '^s[1-8]+'"}) {
+                            String from = " from r left join p on r." + key + "=p." + key
+                                    + " and p.s like 's%' and p.s=p.s2 where " + predicate;
+                            assertDifferential("select r.s, count(*), sum(p.d)" + from + " order by r.s", context, !predicate.equals("r.s = p.s"));
+                            assertDifferential("select count(*), sum(p.d)" + from, context, !predicate.equals("r.s = p.s"));
+                        }
                     }
                 }
                 assertDifferential("select min(r.d) from r join p on r.id=p.id where r.s like 's%'", context, false);
@@ -87,8 +96,9 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Fixed seeds make the generated SQL and data reproducible independently of test order.
             Rnd rnd = new Rnd(130, 9);
-            execute("create table r (id int, g int, d double, s symbol)");
-            execute("create table p (id int, g int, d double, s symbol)");
+            // k holds the text of id, so the SYMBOL key joins the same rows as the INT key does.
+            execute("create table r (id int, g int, d double, s symbol, k symbol)");
+            execute("create table p (id int, g int, d double, s symbol, k symbol)");
             for (int scenario = 0; scenario < 24; scenario++) {
                 execute("truncate table r");
                 execute("truncate table p");
@@ -113,9 +123,11 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                                 default -> " where " + probe + ".g >= 0 and " + build + ".d < 4";
                             };
                             String group = scenario % 2 == 0 ? "r.g, p.s" : "r.id, p.g, r.s";
-                            String from = JOINS[j] + on + where;
-                            assertDifferential("select " + AGGREGATES + from, context, true);
-                            assertDifferential("select " + group + ", " + AGGREGATES + from + " order by " + group, context, true);
+                            for (String key : new String[]{"r.id=p.id", "r.k=p.k"}) {
+                                String from = JOINS[j].replace("r.id=p.id", key) + on + where;
+                                assertDifferential("select " + AGGREGATES + from, context, true);
+                                assertDifferential("select " + group + ", " + AGGREGATES + from + " order by " + group, context, true);
+                            }
                         }
                     }
                 }
@@ -452,15 +464,15 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                 sql.append(',');
             }
             sql.append('(');
-            if (rnd.nextInt(7) == 0) {
-                sql.append("null");
-            } else {
-                int key = scenario % 3 == 0 && rnd.nextBoolean() ? 0 : rnd.nextInt(domain) - domain / 2;
-                sql.append(key);
+            String key = "null";
+            if (rnd.nextInt(7) != 0) {
+                key = Integer.toString(scenario % 3 == 0 && rnd.nextBoolean() ? 0 : rnd.nextInt(domain) - domain / 2);
             }
+            sql.append(key);
             sql.append(',').append(rnd.nextInt(scenario % 2 == 0 ? 3 : 80)).append(',');
             sql.append(rnd.nextInt(5) == 0 ? "null" : Double.toString((rnd.nextInt(65) - 32) * 0.25));
-            sql.append(',').append(rnd.nextInt(5) == 0 ? "null" : "'s" + rnd.nextInt(4) + "'").append(')');
+            sql.append(',').append(rnd.nextInt(5) == 0 ? "null" : "'s" + rnd.nextInt(4) + "'");
+            sql.append(',').append(key.equals("null") ? "null" : "'" + key + "'").append(')');
         }
         execute(sql.toString());
     }
