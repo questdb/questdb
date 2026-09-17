@@ -315,7 +315,12 @@ failed_points=""
 # success-path cleanup does not delete the report a green run produced.
 JUNIT_XML="${QDB_JUNIT_XML:-$OUTDIR/junit.xml}"
 mkdir -p "$(dirname "$JUNIT_XML")"
-junit_begin "$JUNIT_XML" "durability.$ARM.$MODE.W$WINDOW.$PROFILE"
+# The suite name is the identity a CI dashboard groups and trends by, and arm/mode/W/profile
+# does not always distinguish a run: two sweeps that differ only by QDB_SIBLING_TABLE or
+# QDB_DDL_EVERY_ROWS produce the same four fields, so their cases merge into one suite and the
+# per-case names (flush-N) can collide outright. A caller that varies something not in the name
+# passes QDB_JUNIT_SUITE_SUFFIX to keep the suites apart. Unset, the name is unchanged.
+junit_begin "$JUNIT_XML" "durability.$ARM.$MODE.W$WINDOW.$PROFILE${QDB_JUNIT_SUITE_SUFFIX:+.$QDB_JUNIT_SUITE_SUFFIX}"
 JUNIT_CLASS="durability.$ARM.$MODE.W$WINDOW.$PROFILE"
 # The run's identity, in the machine-readable report: a dashboard has to say which build a trend
 # belongs to, and the classname carries only four of these facts. Set from the values this script

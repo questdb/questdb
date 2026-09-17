@@ -86,10 +86,27 @@ parameters:
     type: number
     default: 40
   # The product arm pays 11-14 s per point (recovery pass + replay server) against ~2-7 s
-  # for the reference arm, so it runs at far fewer points.
+  # for the reference arm, so it runs at far fewer points. Build 270631 measured 22.8 s per
+  # point on the CI agent, under a concurrent soak.
   - name: productPoints
     type: number
     default: 12
+  # Points per MATRIX cell. The matrix is breadth, not depth: one cell per dimension of the
+  # harness's coverage table, at few points each, after the three core sweeps have run at
+  # full depth. 0 disables the matrix and restores the pre-matrix battery exactly.
+  - name: matrixPoints
+    type: number
+    default: 10
+  # Dimension 15 (mat-view) reproduces an OPEN product defect, documented in
+  # tools/durability/vm/README.md: after a crash the base correctly discards at-risk txns,
+  # the view keeps aggregates derived from them and still reports `valid`. The README calls
+  # it permanent -- incremental refresh only moves forward from a watermark already above
+  # the base. Running it nightly would paint the battery red every night for a defect
+  # already known and recorded, and a permanently red job is one nobody reads. Turn this on
+  # when the fix lands, or by hand to re-measure the finding.
+  - name: includeOpenFindings
+    type: boolean
+    default: false
   # Manual escape hatch: a run queued by hand at 10:00 would otherwise refuse, its
   # pre-nightly deadline being in the past. Never set on the schedule.
   - name: ignoreWindow
@@ -1006,24 +1023,103 @@ stages:
               mkdir -p "$(DURABILITY_RESULTS)"
               REF=${{ parameters.refPoints }}
               PROD=${{ parameters.productPoints }}
+              MTX=${{ parameters.matrixPoints }}
               if [ "${{ parameters.durabilityMode }}" = "smoke" ]; then
-                REF=10; PROD=3
-                echo "smoke mode: refPoints=$REF productPoints=$PROD — this run MEASURES, it does not certify"
+                REF=10; PROD=3; [ "$MTX" -gt 4 ] && MTX=4
+                echo "smoke mode: refPoints=$REF productPoints=$PROD matrixPoints=$MTX — this run MEASURES, it does not certify"
               fi
               rc=0
-              need_ref=$(( 4 + (REF * 7 + 59) / 60 ))
-              need_prod=$(( 4 + (PROD * 15 + 59) / 60 ))
 
-              run_phase "sweep-reference-W0"     "$need_ref" \
-                env QDB_SWEEP_POINTS="$REF"  QDB_JUNIT_XML="$(DURABILITY_RESULTS)/ref-w0.xml" \
-                    bash run-flush-sweep.sh adaptive 0 || rc=1
-              run_phase "sweep-reference-W50000" "$need_ref" \
-                env QDB_SWEEP_POINTS="$REF"  QDB_JUNIT_XML="$(DURABILITY_RESULTS)/ref-w50000.xml" \
-                    bash run-flush-sweep.sh adaptive 50000 || rc=1
-              # The tier the product arm needs exists only on the adaptive path.
-              run_phase "sweep-product-W50000"   "$need_prod" \
-                env QDB_ARM=product QDB_SWEEP_POINTS="$PROD" QDB_JUNIT_XML="$(DURABILITY_RESULTS)/product-w50000.xml" \
-                    bash run-flush-sweep.sh adaptive 50000 || rc=1
+              # THE CELL TABLE.  name|arm|mode|window_us|points|extra env
+              #
+              # Order is the budget policy. run_phase refuses a phase that cannot finish
+              # before the pre-nightly deadline and records it as skipped, so trimming
+              # always falls on the TAIL of this list. The three core sweeps therefore come
+              # first: they are the depth measurement and the one comparison with history.
+              # Everything after them is breadth -- one cell per dimension of the harness's
+              # coverage table (tools/durability/vm/README.md), which claims 17 of 17 and
+              # until now had 3 of 17 running here.
+              #
+              # Profile cells run at W=0 on purpose. The zero-loss bar (F >= C) is the
+              # sharper oracle: a column-type or index bug shows up as loss, and at W=0 any
+              # loss at all is a failure, where at W>0 it must first escape the RPO window.
+              # The flag cells run at W=50000, because what they vary interacts with the
+              # window rather than with the column layout.
+              #
+              # Dimension 2 (bitmap), 5 (multi-partition, the workload partitions by DAY),
+              # 6 (W=0 vs W>0) and 7's adaptive leg are covered by the core sweeps, so they
+              # are not repeated here.
+              #
+              # QDB_JUNIT_SUITE_SUFFIX on the flag cells is not decoration. The harness names
+              # a suite durability.<arm>.<mode>.W<window>.<profile>, and every flag cell below
+              # shares those four fields with the core W=50000 sweep -- so without a suffix
+              # they publish as one suite, mergeTestResults folds them together, and their
+              # flush-N cases collide. The suffix is what keeps six different experiments from
+              # arriving as one.
+              CELLS="
+              sweep-reference-W0|reference|adaptive|0|$REF|
+              sweep-reference-W50000|reference|adaptive|50000|$REF|
+              sweep-product-W50000|product|adaptive|50000|$PROD|
+              "
+              if [ "$MTX" -gt 0 ]; then
+                CELLS="$CELLS
+              matrix-arm-qwp|qwp|adaptive|50000|$MTX|
+              matrix-arm-qwp-sf|qwp-sf|adaptive|50000|$MTX|
+              matrix-profile-none|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=none
+              matrix-profile-posting|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=posting
+              matrix-profile-covering|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=covering
+              matrix-profile-varchar|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=varchar
+              matrix-profile-array|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=array
+              matrix-profile-wide|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=wide
+              matrix-profile-o3|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=o3
+              matrix-mode-sync|reference|sync|0|$MTX|
+              matrix-mode-nosync|reference|nosync|0|$MTX|
+              matrix-lazy-gap|reference|adaptive|50000|$MTX|QDB_EPOCH_MS=-1 QDB_JUNIT_SUITE_SUFFIX=lazygap
+              matrix-ddl-under-load|reference|adaptive|50000|$MTX|QDB_DDL_EVERY_ROWS=50000 QDB_JUNIT_SUITE_SUFFIX=ddl
+              matrix-sibling-table|reference|adaptive|50000|$MTX|QDB_SIBLING_TABLE=true QDB_JUNIT_SUITE_SUFFIX=sibling
+              matrix-recover-as-nosync|reference|adaptive|50000|$MTX|QDB_RECOVER_AS=nosync QDB_JUNIT_SUITE_SUFFIX=recoveras
+              matrix-rebase-wal|reference|adaptive|50000|$MTX|QDB_REBASE_AT_ROWS=100000 QDB_JUNIT_SUITE_SUFFIX=rebase
+              "
+                # Dimension 15. Off by default; see the includeOpenFindings parameter.
+                if [ "${{ parameters.includeOpenFindings }}" = "True" ] || [ "${{ parameters.includeOpenFindings }}" = "true" ]; then
+                  CELLS="$CELLS
+              matrix-mat-view|reference|adaptive|50000|$MTX|QDB_MAT_VIEW=true QDB_JUNIT_SUITE_SUFFIX=matview
+              "
+                fi
+              fi
+
+              while IFS='|' read -r name arm mode win pts extra; do
+                name=$(echo "$name" | tr -d '[:space:]')
+                [ -z "$name" ] && continue
+                arm=$(echo "$arm" | tr -d '[:space:]'); mode=$(echo "$mode" | tr -d '[:space:]')
+                win=$(echo "$win" | tr -d '[:space:]'); pts=$(echo "$pts" | tr -d '[:space:]')
+                # Per-arm cost, measured on this agent by build 270631: 4.8 s per reference
+                # boundary and 22.8 s per product boundary, both under a concurrent soak, so
+                # both are upper bounds. Rounded up to 7 and 25.
+                #
+                # The fixed part is 2 minutes, not the 4 this used to carry: the measured
+                # per-cell fixed cost (record the workload, boot, build the log-writes
+                # stack) is ~45 s. 4 minutes was harmless for three sweeps and is not
+                # harmless for nineteen -- it would reserve an hour of window that nothing
+                # spends, and phase_fits would skip cells that would have finished. An
+                # over-estimate is not free. It is also not the safety mechanism: run_phase
+                # wraps every cell in `timeout $(remaining)s`, so a cell that outlives the
+                # budget is cut cleanly and recorded as skipped, never as a failure.
+                case "$arm" in
+                  product|qwp|qwp-sf) sec=25 ;;
+                  *)                  sec=7  ;;
+                esac
+                need=$(( 2 + (pts * sec + 59) / 60 ))
+                # $extra is deliberately unquoted: it carries zero or more KEY=VALUE words
+                # for env, and quoting would pass the whole string as one argument.
+                # shellcheck disable=SC2086
+                run_phase "$name" "$need" \
+                  env QDB_ARM="$arm" QDB_SWEEP_POINTS="$pts" \
+                      QDB_JUNIT_XML="$(DURABILITY_RESULTS)/${name}.xml" $extra \
+                      bash run-flush-sweep.sh "$mode" "$win" || rc=1
+              done <<CELLS_EOF
+              $CELLS
+              CELLS_EOF
               exit $rc
             displayName: "Sweeps: reference W=0, reference W=50000, product W=50000"
             timeoutInMinutes: 75

@@ -33,6 +33,7 @@ revert the ones issued after it, so without a reset boundary N+1 inherits bounda
 | knob | default | meaning |
 |---|---|---|
 | `QDB_REPLAY_RESET` | `blkdiscard` | reset the data device before every replay; `none` disables it |
+| `QDB_JUNIT_SUITE_SUFFIX` | unset | appended to the JUnit suite name. The name is `durability.<arm>.<mode>.W<window>.<profile>`, so two sweeps differing only by a flag (`QDB_SIBLING_TABLE`, `QDB_DDL_EVERY_ROWS`, …) report as the same suite and their `flush-N` cases collide. Set it whenever you vary something the name does not carry |
 | `QDB_VM_DATA_DISCARD` | `ignore` | `unmap` on the REPLAY boot only. The recording boot must not have it, or a discard issued by the workload becomes a DISCARD entry in the log and changes what was recorded |
 
 **The trap, if you touch this.** Under QEMU's default `discard=ignore` the guest still
