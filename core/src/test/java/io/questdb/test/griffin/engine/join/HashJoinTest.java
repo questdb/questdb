@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.join;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Misc;
@@ -43,15 +44,26 @@ public class HashJoinTest extends AbstractCairoTest {
     @Test
     public void testHashJoinBuildSideSwapDrivesOutputWhenNoTimestampIsInPlay() throws Exception {
         // Companion to testHashJoinScanDirectionDoesNotChangeRows: neither side carries a
-        // designated timestamp, so the master's forward scan direction claims nothing about the
-        // join's row order and the build-side swap is taken. The rows below are the swapped ones -
-        // the (larger) slave drives the output - so the expectation changes if the swap stops
-        // firing, rather than the optimisation going quietly dead.
+        // designated timestamp, so the join has no timestamp order to claim and the build-side
+        // swap is taken. The rows below are the swapped ones - the (larger) slave drives the
+        // output - so the expectation changes if the swap stops firing, rather than the
+        // optimisation going quietly dead.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m (k SYMBOL, v INT)");
             execute("CREATE TABLE s (k SYMBOL, w INT)");
             execute("INSERT INTO m SELECT 'k' || (x % 5), x::int FROM long_sequence(30)");
             execute("INSERT INTO s SELECT 'k' || (x % 5), x::int FROM long_sequence(300)");
+
+            // The other half of the same invariant, asserted directly rather than through the
+            // rows: a join that may swap must make no order claim at all, or a consumer can elide
+            // work on the strength of an order the swap destroys.
+            try (RecordCursorFactory factory = select("SELECT m.k, m.v, s.w FROM m JOIN s ON m.k = s.k")) {
+                Assert.assertEquals(-1, factory.getMetadata().getTimestampIndex());
+                Assert.assertEquals("a swap-eligible join must not claim a scan direction",
+                        RecordCursorFactory.SCAN_DIRECTION_OTHER, factory.getScanDirection());
+                Assert.assertFalse("a swap-eligible join must not claim it followed order by advice",
+                        factory.followedOrderByAdvice());
+            }
 
             // These are the swapped rows - the larger slave drives the output. If the swap stops
             // firing, the master drives instead and this order changes, so the optimisation cannot
@@ -207,6 +219,51 @@ public class HashJoinTest extends AbstractCairoTest {
                             1\t10
                             2\t20
                             """);
+        });
+    }
+
+    @Test
+    public void testHashJoinDoesNotClaimTimestampOrderItMayNotDeliver() throws Exception {
+        // The join has no designated timestamp of its own, so it is free to swap the build side -
+        // and must therefore not advertise the master's forward scan as timestamp order. An
+        // enclosing timestamp(col) re-attaches a designated timestamp onto the *wrapper's*
+        // metadata, which this join cannot see; if the join answered FORWARD, generateOrderBy
+        // would elide the ORDER BY on the strength of an order the swapped join does not deliver.
+        //
+        // This is the shape the first attempt at the idempotency fix regressed: identical plans on
+        // both branches, sort elided in both, 1500 of 1800 rows out of order.
+        assertMemoryLeak(() -> {
+            // ts is a TIMESTAMP column but NOT the designated timestamp of m
+            execute("CREATE TABLE m (ts TIMESTAMP, k SYMBOL)");
+            execute("CREATE TABLE s (k SYMBOL, w INT)");
+            // m is inserted in ascending ts order - the promise timestamp(ts) makes below - and is
+            // smaller than s, so the build-side swap is eligible.
+            execute("INSERT INTO m SELECT (x * 1000000)::timestamp, 'k' || (x % 5) FROM long_sequence(30)");
+            execute("INSERT INTO s SELECT 'k' || (x % 5), x::int FROM long_sequence(300)");
+
+            final String sql = "SELECT * FROM (" +
+                    "SELECT m.ts AS ts, m.k AS k, s.w AS w FROM m JOIN s ON m.k = s.k" +
+                    ") timestamp(ts) ORDER BY ts";
+
+            try (RecordCursorFactory factory = select(sql)) {
+                int rows = 0;
+                int violations = 0;
+                long previous = Long.MIN_VALUE;
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        final long ts = record.getTimestamp(0);
+                        if (ts < previous) {
+                            violations++;
+                        }
+                        previous = ts;
+                        rows++;
+                    }
+                }
+                // keeps the assertion from going vacuous if the join shape ever changes
+                Assert.assertEquals("the producer must still join 30 x 300 rows on 5 keys", 1800, rows);
+                Assert.assertEquals("ORDER BY ts returned rows out of order", 0, violations);
+            }
         });
     }
 

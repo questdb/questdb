@@ -50,6 +50,30 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    // Swapping the build side makes the slave drive the output, so a join that may swap cannot
+    // publish the master's row order as its own. Which consumers will read that claim is settled
+    // during code generation, not at getCursor() time, and no runtime re-derivation inside this
+    // factory can see an enclosing wrapper - so the decision is taken once here, from properties
+    // of the child factories that are final by the time this constructor runs. The getters stay
+    // pure, which is what keeps a cached factory returning the same rows however often, and in
+    // whatever order, it is asked about itself.
+    //
+    // getScanDirection() describes the order of the designated timestamp and nothing else (see
+    // RecordCursorFactory.getScanDirection), so a join with no designated timestamp has no order
+    // claim to lose by swapping - and must not answer FORWARD, because an enclosing timestamp(col)
+    // re-attaches a designated timestamp onto the wrapper's metadata and the planner then elides
+    // an ORDER BY on the strength of an order this join does not deliver. When the join does have
+    // a designated timestamp - createJoinMetadata copies the master's index verbatim for the inner
+    // join this factory serves - the master's order is this join's order, so the claim is
+    // published and the swap is off.
+    //
+    // followedOrderByAdvice() is a claim about any column, not just the timestamp, so it blocks
+    // the swap on its own.
+    //
+    // This mirrors HashOuterJoinLightRecordCursorFactory, which settles the same question once
+    // from joinType: it swaps only for FULL OUTER, and answers SCAN_DIRECTION_OTHER and false for
+    // exactly that join type.
+    private final boolean canSwapBuildSide;
     private final RecordSink masterSink;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
     private final RecordSink slaveKeySink;
@@ -72,6 +96,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             int @Nullable [] slaveSymbolKeyColumnIndices
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        this.canSwapBuildSide = metadata.getTimestampIndex() == -1 && !masterFactory.followedOrderByAdvice();
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
         this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null ?
@@ -89,6 +114,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public boolean followedOrderByAdvice() {
+        // No guard needed: canSwapBuildSide is false whenever this returns true.
         return masterFactory.followedOrderByAdvice();
     }
 
@@ -98,23 +124,10 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         RecordCursor masterCursor = null;
         try {
             masterCursor = masterFactory.getCursor(executionContext);
-            // Swapping makes the slave drive the output, so it is only allowed while this factory
-            // makes no claim about the order its rows come out in. The claim is read here, per
-            // execution, from the master: accumulating it in the getters instead made a single
-            // getScanDirection() call - which /exp makes on a cached factory before opening its
-            // cursor - change the rows the next execution of that factory returned.
-            //
-            // followedOrderByAdvice() is a claim about any column, so it always blocks the swap.
-            // A forward/backward scan direction says only that rows arrive in designated timestamp
-            // order (see RecordCursorFactory.getScanDirection), so it blocks the swap only when
-            // there is a designated timestamp for it to describe. The master's metadata is
-            // consulted along with this factory's because an enclosing timestamp(col) clause can
-            // re-attach, by name, a timestamp that the join metadata dropped.
-            final boolean masterOrderClaimed = masterFactory.followedOrderByAdvice()
-                    || ((getMetadata().getTimestampIndex() != -1 || masterFactory.getMetadata().getTimestampIndex() != -1)
-                    && masterFactory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER);
             boolean swapped = false;
-            if (masterFactory.recordCursorSupportsRandomAccess() && !masterOrderClaimed) {
+            // canSwapBuildSide is fixed at construction - see its declaration. Only the sizes are
+            // decided here, and they do not feed back into anything this factory advertises.
+            if (canSwapBuildSide && masterFactory.recordCursorSupportsRandomAccess()) {
                 long masterSize = masterCursor.size();
                 long slaveSize = slaveCursor.size();
 
@@ -141,7 +154,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public int getScanDirection() {
-        return masterFactory.getScanDirection();
+        return canSwapBuildSide ? SCAN_DIRECTION_OTHER : masterFactory.getScanDirection();
     }
 
     @Override
