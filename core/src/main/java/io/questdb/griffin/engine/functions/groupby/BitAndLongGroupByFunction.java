@@ -71,6 +71,10 @@ public class BitAndLongGroupByFunction extends LongFunction implements GroupByFu
             long rowCount,
             long baseRowId
     ) {
+        // computeFirst() never runs on this path, so a group's first row is the one the map
+        // flagged as a new batch entry. For a NOT NULL argument LONG_NULL is a legal value rather
+        // than an empty slot, so only that flag may reset the accumulator; the sentinel test is
+        // left in place for the nullable argument, whose empty slot still reads as LONG_NULL.
         final long valueColumnOffset = mapValue.getOffset(valueIndex);
         // Fast path: arg is a direct long column with data on the current frame.
         // Zero page address means a column top; fall through to the record-based path.
@@ -83,7 +87,8 @@ public class BitAndLongGroupByFunction extends LongFunction implements GroupByFu
                 if (isArgNotNull || value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getLong(addr);
-                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? current & value : value);
+                    final boolean isFreshSlot = Map.isNewBatchEntry(encoded) || (!isArgNotNull && current == Numbers.LONG_NULL);
+                    Unsafe.putLong(addr, isFreshSlot ? value : current & value);
                 }
             }
         } else {
@@ -94,7 +99,8 @@ public class BitAndLongGroupByFunction extends LongFunction implements GroupByFu
                 if (isArgNotNull || value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getLong(addr);
-                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? current & value : value);
+                    final boolean isFreshSlot = Map.isNewBatchEntry(encoded) || (!isArgNotNull && current == Numbers.LONG_NULL);
+                    Unsafe.putLong(addr, isFreshSlot ? value : current & value);
                 }
             }
         }
@@ -103,13 +109,11 @@ public class BitAndLongGroupByFunction extends LongFunction implements GroupByFu
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final long value = arg.getLong(record);
-        if (isArgNotNull || value != Numbers.LONG_NULL) {
+        if (isArgNotNull) {
+            mapValue.putLong(valueIndex, mapValue.getLong(valueIndex) & value);
+        } else if (value != Numbers.LONG_NULL) {
             final long current = mapValue.getLong(valueIndex);
-            if (current != Numbers.LONG_NULL) {
-                mapValue.putLong(valueIndex, current & value);
-            } else {
-                mapValue.putLong(valueIndex, value);
-            }
+            mapValue.putLong(valueIndex, current != Numbers.LONG_NULL ? current & value : value);
         }
     }
 

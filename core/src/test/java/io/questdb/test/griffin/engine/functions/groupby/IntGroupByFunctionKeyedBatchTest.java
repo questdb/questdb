@@ -40,11 +40,13 @@ import io.questdb.griffin.engine.functions.groupby.MinIntGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.SumIntGroupByFunction;
 import io.questdb.std.Numbers;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.IndirectIntArg;
 import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.allocArgBuffer;
 import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.assertEquivalence;
+import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.foldKeyedBatch;
 
 /**
  * Asserts byte-for-byte equivalence of every {@code computeKeyedBatch} override
@@ -59,6 +61,27 @@ public class IntGroupByFunctionKeyedBatchTest {
     private static final int[] ARG_VALUES = {
             100, Numbers.INT_NULL, -50, 200, 0, Numbers.INT_NULL, -1, 7
     };
+    // A NOT NULL INT column carries the type's full signed range, so 0x8000_0000 is ordinary data
+    // on it rather than an absent value. Rows picked out of this buffer fold into ONE map entry;
+    // the sentinel sits at index 2 so the accumulator lands on it midway.
+    //   -2       = 0xFFFF_FFFE  1111...1110
+    //   0        = 0x0000_0000  0000...0000
+    //   INT_NULL = 0x8000_0000  1000...0000
+    //   1        = 0x0000_0001  0000...0001
+    private static final int[] SENTINEL_ARG_VALUES = {-2, 0, Numbers.INT_NULL, 1};
+    // Only the first row creates the entry; the sentinel and the row after it arrive at an entry
+    // the map has already seen, which is the state the accumulator has to survive.
+    private static final boolean[] SENTINEL_IS_NEW = {true, false, false};
+    // bit_or and bit_xor fold 0, then the sentinel, then 1. Starting from 0x0000_0000 both
+    // operators pass the sentinel through unchanged:
+    //   0 | INT_NULL = 0 ^ INT_NULL = 0x8000_0000, the accumulator IS the sentinel
+    //   ...      | 1 = ...      ^ 1 = 0x8000_0001 = -2147483647
+    private static final long SENTINEL_OR_XOR_RESULT = -2_147_483_647L;
+    // bit_and folds -2, then the sentinel, then 1:
+    //   -2 & INT_NULL = 0x8000_0000, the accumulator IS the sentinel bit pattern
+    //   ...       & 1 = 0x0000_0000 = 0
+    private static final long[] SENTINEL_ROWS_AND = {0, 2, 3};
+    private static final long[] SENTINEL_ROWS_OR_XOR = {1, 2, 3};
 
     @Test
     public void testAvgIntFastPath() throws Exception {
@@ -91,6 +114,24 @@ public class IntGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testBitAndIntNotNullSentinelIndirectArg() throws Exception {
+        // An indirect argument is no ColumnFunction, so argColumnIndex stays -1 and the fold runs
+        // through the record-based loop of computeKeyedBatch.
+        assertSentinelFold(
+                new BitAndIntGroupByFunction(new IndirectIntArg(ARG_COLUMN_INDEX, true)),
+                SENTINEL_ROWS_AND, 0L);
+    }
+
+    @Test
+    public void testBitAndIntNotNullSentinelSlowPath() throws Exception {
+        // A column top leaves the frame with no page for the column, so getPageAddress returns 0
+        // and the fold runs through the record-based loop of computeKeyedBatch.
+        assertSentinelFold(
+                new BitAndIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX, true)),
+                SENTINEL_ROWS_AND, 0L);
+    }
+
+    @Test
     public void testBitAndIntSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new BitAndIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX)), false));
@@ -109,6 +150,24 @@ public class IntGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testBitOrIntNotNullSentinelIndirectArg() throws Exception {
+        // An indirect argument is no ColumnFunction, so argColumnIndex stays -1 and the fold runs
+        // through the record-based loop of computeKeyedBatch.
+        assertSentinelFold(
+                new BitOrIntGroupByFunction(new IndirectIntArg(ARG_COLUMN_INDEX, true)),
+                SENTINEL_ROWS_OR_XOR, SENTINEL_OR_XOR_RESULT);
+    }
+
+    @Test
+    public void testBitOrIntNotNullSentinelSlowPath() throws Exception {
+        // A column top leaves the frame with no page for the column, so getPageAddress returns 0
+        // and the fold runs through the record-based loop of computeKeyedBatch.
+        assertSentinelFold(
+                new BitOrIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX, true)),
+                SENTINEL_ROWS_OR_XOR, SENTINEL_OR_XOR_RESULT);
+    }
+
+    @Test
     public void testBitOrIntSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new BitOrIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX)), false));
@@ -124,6 +183,24 @@ public class IntGroupByFunctionKeyedBatchTest {
     public void testBitXorIntIndirectArg() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new BitXorIntGroupByFunction(new IndirectIntArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testBitXorIntNotNullSentinelIndirectArg() throws Exception {
+        // An indirect argument is no ColumnFunction, so argColumnIndex stays -1 and the fold runs
+        // through the record-based loop of computeKeyedBatch.
+        assertSentinelFold(
+                new BitXorIntGroupByFunction(new IndirectIntArg(ARG_COLUMN_INDEX, true)),
+                SENTINEL_ROWS_OR_XOR, SENTINEL_OR_XOR_RESULT);
+    }
+
+    @Test
+    public void testBitXorIntNotNullSentinelSlowPath() throws Exception {
+        // A column top leaves the frame with no page for the column, so getPageAddress returns 0
+        // and the fold runs through the record-based loop of computeKeyedBatch.
+        assertSentinelFold(
+                new BitXorIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX, true)),
+                SENTINEL_ROWS_OR_XOR, SENTINEL_OR_XOR_RESULT);
     }
 
     @Test
@@ -274,6 +351,13 @@ public class IntGroupByFunctionKeyedBatchTest {
     public void testSumIntSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new SumIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    private static void assertSentinelFold(GroupByFunction function, long[] rowIndexes, long expected) throws Exception {
+        TestUtils.assertMemoryLeak(() -> Assert.assertEquals(expected, foldKeyedBatch(
+                function, false, Integer.BYTES,
+                allocArgBuffer(SENTINEL_ARG_VALUES), (long) SENTINEL_ARG_VALUES.length * Integer.BYTES,
+                rowIndexes, SENTINEL_IS_NEW)));
     }
 
     private static void testEquivalence(GroupByFunction function, boolean fastPath) {
