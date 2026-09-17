@@ -142,13 +142,13 @@ public interface TableTransactionLogFile extends Closeable {
      *
      * @param txnLo      transaction id to start reading from
      * @param path       to the log
-     * @param cursorPool optional caller-owned cursor pool
+     * @param cursorHolder optional caller-owned cursor pool
      * @return cursor
      */
     default TransactionLogCursor getCursor(
             long txnLo,
             @Transient Path path,
-            @Nullable TableSequencerCursorPool cursorPool
+            @Nullable TableSequencerCursorHolder cursorHolder
     ) {
         return getCursor(txnLo, path);
     }
