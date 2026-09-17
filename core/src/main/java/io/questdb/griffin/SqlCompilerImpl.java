@@ -3535,6 +3535,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         int metadataColumnIndex = metadata.getColumnIndexQuiet(columnNameList.getQuick(i));
                         if (metadataColumnIndex > -1) {
                             final ExpressionNode node = insertModel.getRowTupleValues(tupleIndex).getQuick(i);
+                            rejectNullLiteralOnNotNullColumn(node, metadata, metadataColumnIndex, metadataTimestampIndex);
                             final Function function = functionParser.parseFunction(
                                     node,
                                     EmptyRecordMetadata.INSTANCE,
@@ -3577,6 +3578,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     for (int i = 0; i < columnCount; i++) {
                         final ExpressionNode node = values.getQuick(i);
+                        rejectNullLiteralOnNotNullColumn(node, metadata, i, metadataTimestampIndex);
 
                         Function function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
                         insertValidateFunctionAndAddToList(
@@ -3673,6 +3675,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.invalidColumn(model.getColumnPosition(i), columnName);
                     }
 
+                    rejectNullLiteralOnNotNullColumn(
+                            selectColumnAst(model, i),
+                            writerMetadata,
+                            index,
+                            writerTimestampIndex
+                    );
+
                     int fromType = cursorMetadata.getColumnType(i);
                     int toType = writerMetadata.getColumnType(index);
                     if (ColumnType.isConvertibleFrom(fromType, toType)) {
@@ -3728,6 +3737,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
 
                 for (int i = 0; i < n; i++) {
+                    rejectNullLiteralOnNotNullColumn(selectColumnAst(model, i), writerMetadata, i, writerTimestampIndex);
+
                     int fromType = cursorMetadata.getColumnType(i);
                     int toType = writerMetadata.getColumnType(i);
                     if (ColumnType.isConvertibleFrom(fromType, toType)) {
@@ -5737,6 +5748,51 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         executionContext.getSecurityContext().authorizeSuspendWal(tableToken);
         alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
+    }
+
+    /**
+     * Rejects an explicit NULL literal targeting a NOT NULL column. The designated timestamp is
+     * excluded because {@code compileInsert} reports it through a more specific message.
+     * <p>
+     * The check is deliberately syntactic. A NOT NULL column stores the type's legacy null-sentinel
+     * bit pattern as ordinary data, so the writer cannot tell a sentinel that the user meant as data
+     * from one produced by a runtime NULL. Only the literal spelling carries that intent, so only the
+     * literal spelling can be refused.
+     */
+    /**
+     * Returns the projected expression for cursor column {@code index}, or null when the model does
+     * not expose one (set operations, nested models). A null return disables the literal check for
+     * that column rather than guessing.
+     */
+    private static ExpressionNode selectColumnAst(InsertModel model, int index) {
+        final IQueryModel queryModel = model.getQueryModel();
+        if (queryModel == null) {
+            return null;
+        }
+        final ObjList<QueryColumn> columns = queryModel.getColumns();
+        if (columns == null || index < 0 || index >= columns.size()) {
+            return null;
+        }
+        final QueryColumn column = columns.getQuick(index);
+        return column != null ? column.getAst() : null;
+    }
+
+    private void rejectNullLiteralOnNotNullColumn(
+            ExpressionNode value,
+            TableRecordMetadata metadata,
+            int metadataColumnIndex,
+            int metadataTimestampIndex
+    ) throws SqlException {
+        if (metadataColumnIndex < 0 || metadataColumnIndex == metadataTimestampIndex) {
+            return;
+        }
+        if (!metadata.isNotNull(metadataColumnIndex)) {
+            return;
+        }
+        if (isExpressionConstantNull(value)) {
+            throw SqlException.$(value.position, "NOT NULL constraint violation [column=")
+                    .put(metadata.getColumnName(metadataColumnIndex)).put(']');
+        }
     }
 
     private void rejectUpdateNullOnNotNullColumn(

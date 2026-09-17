@@ -42,18 +42,19 @@ import java.sql.Types;
  * <p>
  * QuestDB NOT NULL semantic (per
  * {@code NotNullColumnTest.testEnforceNotNullSentinelValuesAccepted}):
- * NOT NULL means "the column must be written to". An explicit {@code NULL}
- * literal counts as written and is accepted -- the type's sentinel value is
- * stored. Omitting a NOT NULL column from the INSERT column list is rejected.
- * The PG wire path must match these semantics.
+ * an explicit {@code NULL} literal on a NOT NULL column is a compile-time
+ * error; an explicitly spelled sentinel bit pattern is ordinary data; a bind
+ * variable set to NULL is a runtime NULL and stores the sentinel. Omitting a
+ * NOT NULL column from the INSERT column list is rejected by the writer. The
+ * PG wire path must match these semantics.
  */
 public class PGNotNullInsertTest extends BasePGTest {
 
     @Test
-    public void testPgInsertExplicitNullStoresSentinel() throws Exception {
-        // Explicit NULL into NOT NULL column is accepted -- the type's sentinel
-        // is stored. For DOUBLE that's NaN. Mirrors the SQL semantic asserted
-        // by NotNullColumnTest.testEnforceNotNullSentinelValuesAccepted.
+    public void testPgInsertExplicitNullRejected() throws Exception {
+        // An explicit NULL literal into a NOT NULL column is a compile-time error,
+        // surfaced to the JDBC driver as an SQLException; no row lands. Mirrors the
+        // SQL semantic asserted by NotNullColumnTest.testEnforceNotNullSentinelValuesAccepted.
         assertWithPgServer(CONN_AWARE_SIMPLE, (connection, binary, mode, port) -> {
             try (Statement s = connection.createStatement()) {
                 s.execute("""
@@ -65,12 +66,14 @@ public class PGNotNullInsertTest extends BasePGTest {
             }
             try (Statement s = connection.createStatement()) {
                 s.execute("INSERT INTO pg_nn_explicit_null (ts, x) VALUES ('2024-01-01', NULL)");
+                Assert.fail("Expected NOT NULL constraint violation for explicit NULL literal");
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "NOT NULL constraint violation [column=x]");
             }
             try (Statement s = connection.createStatement();
-                 ResultSet rs = s.executeQuery("SELECT x FROM pg_nn_explicit_null")) {
+                 ResultSet rs = s.executeQuery("SELECT count() FROM pg_nn_explicit_null")) {
                 Assert.assertTrue(rs.next());
-                double x = rs.getDouble(1);
-                Assert.assertTrue("NOT NULL DOUBLE sentinel must read back as NaN", Double.isNaN(x));
+                Assert.assertEquals(0, rs.getLong(1));
                 Assert.assertFalse(rs.next());
             }
         });
@@ -103,9 +106,10 @@ public class PGNotNullInsertTest extends BasePGTest {
 
     @Test
     public void testPgPreparedInsertNullBindStoresSentinel() throws Exception {
-        // Extended-query bind variable set to NULL via setNull() is semantically
-        // equivalent to the simple-query explicit-NULL case: it counts as
-        // "written to" and stores the sentinel.
+        // Unlike a simple-query explicit NULL literal, which fails at compile
+        // time (NOT NULL constraint violation), a bind variable set to NULL via
+        // setNull() is a runtime NULL: it counts as "written to" and stores the
+        // sentinel (syntactic-limit contract).
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             try (Statement s = connection.createStatement()) {
                 s.execute("""

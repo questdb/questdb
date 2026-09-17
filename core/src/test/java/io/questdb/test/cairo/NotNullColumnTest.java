@@ -137,16 +137,16 @@ public class NotNullColumnTest extends AbstractCairoTest {
             execute("ALTER TABLE t ALTER COLUMN x SET NOT NULL");
             assertTrue(getNotNull("t", "x"));
 
-            assertSql(
-                    """
+            assertQuery("SHOW CREATE TABLE t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 't' (\s
                             \tx INT NOT NULL,
                             \tts TIMESTAMP NOT NULL
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE t"
-            );
+                            """);
         });
     }
 
@@ -174,12 +174,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
             // writes the 4-char text "null" and yields a StrConstant("null") — not a
             // real null. The guard folds to StrConstant.NULL / VarcharConstant.NULL so
             // IS NULL / COALESCE / output layers keep working downstream.
-            assertSql(
-                    """
-                            i\tl\td\tf\tdate\tts\tip
-                            \t\t\t\t\t\t
-                            """,
-                    """
+            assertQuery("""
                             SELECT cast(cast(null as int) as string) i,
                                    cast(cast(null as long) as string) l,
                                    cast(cast(null as double) as string) d,
@@ -187,15 +182,15 @@ public class NotNullColumnTest extends AbstractCairoTest {
                                    cast(cast(null as date) as string) date,
                                    cast(cast(null as timestamp) as string) ts,
                                    cast(cast(null as ipv4) as string) ip
-                            """
-            );
-
-            assertSql(
-                    """
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             i\tl\td\tf\tdate\tts\tip
                             \t\t\t\t\t\t
-                            """,
-                    """
+                            """);
+
+            assertQuery("""
                             SELECT cast(cast(null as int) as varchar) i,
                                    cast(cast(null as long) as varchar) l,
                                    cast(cast(null as double) as varchar) d,
@@ -203,13 +198,27 @@ public class NotNullColumnTest extends AbstractCairoTest {
                                    cast(cast(null as date) as varchar) date,
                                    cast(cast(null as timestamp) as varchar) ts,
                                    cast(cast(null as ipv4) as varchar) ip
-                            """
-            );
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i\tl\td\tf\tdate\tts\tip
+                            \t\t\t\t\t\t
+                            """);
 
             // IS NULL against the folded constant is TRUE (would be FALSE with a StrConstant("null")).
-            assertSql("c\ntrue\n", "SELECT cast(cast(null as int) as string) IS NULL c");
-            assertSql("c\ntrue\n", "SELECT cast(cast(null as long) as varchar) IS NULL c");
-            assertSql("c\ntrue\n", "SELECT cast(cast(null as timestamp) as string) IS NULL c");
+            assertQuery("SELECT cast(cast(null as int) as string) IS NULL c")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\ntrue\n");
+            assertQuery("SELECT cast(cast(null as long) as varchar) IS NULL c")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\ntrue\n");
+            assertQuery("SELECT cast(cast(null as timestamp) as string) IS NULL c")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\ntrue\n");
         });
     }
 
@@ -222,40 +231,43 @@ public class NotNullColumnTest extends AbstractCairoTest {
             execute("""
                     INSERT INTO t VALUES
                         (1, 100, 1.5, '2024-01-05T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
-                        (NULL, NULL, NULL, NULL, '2024-01-02T00:00:00.000000Z')
+                        (-2147483648, CAST(-9223372036854775807 AS LONG) - 1, 'NaN'::double,
+                         CAST(CAST(-9223372036854775807 AS LONG) - 1 AS TIMESTAMP), '2024-01-02T00:00:00.000000Z')
                     """);
 
             // INT_NULL / LONG_NULL format as their MIN_VALUE numeric text. DOUBLE NaN
             // formats to "NaN". TIMESTAMP_NULL (MIN_VALUE) falls back to the numeric
             // bit pattern because the timestamp formatter itself short-circuits on it.
-            assertSql(
-                    """
+            // The sentinel row spells each bit pattern explicitly: the NULL literal is
+            // rejected at compile time on NOT NULL columns.
+            assertQuery("SELECT i::string i_str, l::string l_str, d::string d_str, ts::string ts_str FROM t ORDER BY tsrow")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             i_str\tl_str\td_str\tts_str
                             1\t100\t1.5\t2024-01-05T00:00:00.000000Z
                             -2147483648\t-9223372036854775808\tNaN\t-9223372036854775808
-                            """,
-                    "SELECT i::string i_str, l::string l_str, d::string d_str, ts::string ts_str FROM t ORDER BY tsrow"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("SELECT i::varchar i_v, l::varchar l_v, d::varchar d_v, ts::varchar ts_v FROM t ORDER BY tsrow")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             i_v\tl_v\td_v\tts_v
                             1\t100\t1.5\t2024-01-05T00:00:00.000000Z
                             -2147483648\t-9223372036854775808\tNaN\t-9223372036854775808
-                            """,
-                    "SELECT i::varchar i_v, l::varchar l_v, d::varchar d_v, ts::varchar ts_v FROM t ORDER BY tsrow"
-            );
+                            """);
 
             // Nullable columns continue to produce empty-field output for a null value.
             execute("CREATE TABLE u (i INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO u VALUES (NULL, NULL, '2024-01-01T00:00:00.000000Z')");
-            assertSql(
-                    """
+            assertQuery("SELECT i::string i_str, l::string l_str FROM u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             i_str\tl_str
                             \t
-                            """,
-                    "SELECT i::string i_str, l::string l_str FROM u"
-            );
+                            """);
         });
     }
 
@@ -287,17 +299,17 @@ public class NotNullColumnTest extends AbstractCairoTest {
                 assertTrue(metadata.isNotNull(metadata.getColumnIndex("ts")));
             }
 
-            assertSql(
-                    """
+            assertQuery("SHOW CREATE TABLE t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 't' (\s
                             \tx INT NOT NULL,
                             \ty DOUBLE,
                             \tts TIMESTAMP NOT NULL
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE t"
-            );
+                            """);
         });
     }
 
@@ -308,13 +320,14 @@ public class NotNullColumnTest extends AbstractCairoTest {
             execute("ALTER TABLE t DROP COLUMN x");
             execute("INSERT INTO t VALUES (1.5, '2024-01-01')");
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             y\tts
                             1.5\t2024-01-01T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t"
-            );
+                            """);
         });
     }
 
@@ -353,32 +366,40 @@ public class NotNullColumnTest extends AbstractCairoTest {
             // y is nullable, so missing it is fine
             execute("INSERT INTO t (x, ts) VALUES (1, '2024-01-01')");
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             x\ty\tts
                             1\tnull\t2024-01-01T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
         });
     }
 
     @Test
     public void testEnforceNotNullSentinelValuesAccepted() throws Exception {
         assertMemoryLeak(() -> {
-            // Sentinel values (INT_NULL, NaN) are valid data for NOT NULL columns.
-            // NOT NULL only means "column must be written to", not "no sentinel values".
-            // For NOT NULL columns, sentinel values print as their real representation:
-            // INT_NULL → "-2147483648", NaN → "NaN"
+            // Sentinel bit patterns (INT_NULL, NaN) are valid DATA for NOT NULL columns
+            // when spelled explicitly. For NOT NULL columns they print as their real
+            // representation: INT_NULL → "-2147483648", NaN → "NaN". The NULL literal
+            // itself is a compile-time error on a NOT NULL column.
             execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES (NULL, NULL, '2024-01-01')");
+            execute("INSERT INTO t VALUES (-2147483648, 'NaN'::double, '2024-01-01')");
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             x\ty\tts
                             -2147483648\tNaN\t2024-01-01T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t"
+                            """);
+
+            assertExceptionNoLeakCheck(
+                    "INSERT INTO t VALUES (NULL, 0.0, '2024-01-02')",
+                    22,
+                    "NOT NULL constraint violation [column=x]"
             );
         });
     }
@@ -390,14 +411,15 @@ public class NotNullColumnTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES (42, 1.5, '2024-01-01')");
             execute("INSERT INTO t VALUES (0, NULL, '2024-01-02')");
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             x\ty\tts
                             42\t1.5\t2024-01-01T00:00:00.000000Z
                             0\tnull\t2024-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -414,15 +436,15 @@ public class NotNullColumnTest extends AbstractCairoTest {
                         (5, 50.0, '2024-01-05')
                     """);
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t WHERE x > 2 ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             x\ty\tts
                             3\t30.0\t2024-01-03T00:00:00.000000Z
                             4\t40.0\t2024-01-04T00:00:00.000000Z
                             5\t50.0\t2024-01-05T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t WHERE x > 2 ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -433,13 +455,14 @@ public class NotNullColumnTest extends AbstractCairoTest {
             execute("CREATE TABLE t (b BOOLEAN, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t (y, ts) VALUES (1.5, '2024-01-01')");
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             b\ty\tts
                             false\t1.5\t2024-01-01T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t"
-            );
+                            """);
         });
     }
 
@@ -463,15 +486,14 @@ public class NotNullColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM information_schema.columns() ORDER BY ordinal_position")
+                    .noLeakCheck()
+                    .returns("""
                             table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
                             qdb\tpublic\tt\tx\t0\t\tno\tinteger
                             qdb\tpublic\tt\ty\t1\t\tyes\tdouble precision
                             qdb\tpublic\tt\tts\t2\t\tno\ttimestamp without time zone
-                            """,
-                    "SELECT * FROM information_schema.columns() ORDER BY ordinal_position"
-            );
+                            """);
         });
     }
 
@@ -479,7 +501,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     public void testExplicitNotNullPreservedOnTypeChange() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (b INT NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
+            execute("INSERT INTO t VALUES (-2147483648, '2024-01-01')");
 
             try (TableReader reader = engine.getReader("t")) {
                 assertTrue(reader.getMetadata().isNotNull(reader.getMetadata().getColumnIndex("b")));
@@ -500,10 +522,18 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testExplicitNotNullSentinelsPreservedAcrossDecimalTypeChanges() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (i INT NOT NULL, dd DECIMAL(2, 0) NOT NULL, df DECIMAL(2, 0) NOT NULL, "
-                    + "ds DECIMAL(2, 0) NOT NULL, dv DECIMAL(2, 0) NOT NULL, ts TIMESTAMP NOT NULL) "
+            // DECIMAL has no sentinel literal spelling, so the sentinel row is produced
+            // on nullable columns and the columns are reclassified with SET NOT NULL
+            // (metadata-only; the stored bit patterns become data).
+            execute("CREATE TABLE t (i INT, dd DECIMAL(2, 0), df DECIMAL(2, 0), "
+                    + "ds DECIMAL(2, 0), dv DECIMAL(2, 0), ts TIMESTAMP NOT NULL) "
                     + "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO t VALUES (NULL, NULL, NULL, NULL, NULL, '2024-01-01')");
+            execute("ALTER TABLE t ALTER COLUMN i SET NOT NULL");
+            execute("ALTER TABLE t ALTER COLUMN dd SET NOT NULL");
+            execute("ALTER TABLE t ALTER COLUMN df SET NOT NULL");
+            execute("ALTER TABLE t ALTER COLUMN ds SET NOT NULL");
+            execute("ALTER TABLE t ALTER COLUMN dv SET NOT NULL");
 
             execute("ALTER TABLE t ALTER COLUMN i TYPE DECIMAL(10, 0)");
             execute("ALTER TABLE t ALTER COLUMN dd TYPE DECIMAL(4, 0)");
@@ -511,13 +541,13 @@ public class NotNullColumnTest extends AbstractCairoTest {
             execute("ALTER TABLE t ALTER COLUMN ds TYPE STRING");
             execute("ALTER TABLE t ALTER COLUMN dv TYPE VARCHAR");
 
-            assertSql(
-                    """
+            assertQuery("SELECT i, dd, df, ds, dv FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             i\tdd\tdf\tds\tdv
                             -2147483648\t-128\t-128.0\t-128\t-128
-                            """,
-                    "SELECT i, dd, df, ds, dv FROM t"
-            );
+                            """);
         });
     }
 
@@ -525,7 +555,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     public void testExplicitNotNullSentinelPreservedOnWalTypeChange() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (b INT NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
+            execute("INSERT INTO t VALUES (-2147483648, '2024-01-01')");
             drainWalQueue();
 
             execute("ALTER TABLE t ALTER COLUMN b TYPE LONG");
@@ -540,8 +570,12 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testExplicitNotNullDecimalSentinelPreservedOnWalTypeChange() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (d DECIMAL(2, 0) NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // DECIMAL has no sentinel literal spelling; reclassify after storing the
+            // sentinel through the nullable column.
+            execute("CREATE TABLE t (d DECIMAL(2, 0), ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
+            drainWalQueue();
+            execute("ALTER TABLE t ALTER COLUMN d SET NOT NULL");
             drainWalQueue();
 
             execute("ALTER TABLE t ALTER COLUMN d TYPE VARCHAR");
@@ -618,15 +652,15 @@ public class NotNullColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
-            assertSql(
-                    """
+            assertQuery("SHOW COLUMNS FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tnotNull
                             x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\ttrue
                             y\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
                             ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\ttrue
-                            """,
-                    "SHOW COLUMNS FROM t"
-            );
+                            """);
         });
     }
 
@@ -642,8 +676,10 @@ public class NotNullColumnTest extends AbstractCairoTest {
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
 
-            assertSql(
-                    """
+            assertQuery("SHOW CREATE TABLE t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 't' (\s
                             \ta INT NOT NULL,
@@ -651,9 +687,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
                             \tc STRING NOT NULL,
                             \tts TIMESTAMP NOT NULL
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE t"
-            );
+                            """);
         });
     }
 
@@ -665,24 +699,25 @@ public class NotNullColumnTest extends AbstractCairoTest {
             execute("CREATE TABLE t (x DOUBLE NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t VALUES
-                        (NULL, '2024-01-01'),
+                        ('NaN'::double, '2024-01-01'),
                         (1.5, '2024-01-02'),
                         (CAST('Infinity' AS DOUBLE), '2024-01-03'),
                         (CAST('-Infinity' AS DOUBLE), '2024-01-04'),
                         (CAST('NaN' AS DOUBLE), '2024-01-05')
                     """);
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             x\tts
                             NaN\t2024-01-01T00:00:00.000000Z
                             1.5\t2024-01-02T00:00:00.000000Z
                             Infinity\t2024-01-03T00:00:00.000000Z
                             -Infinity\t2024-01-04T00:00:00.000000Z
                             NaN\t2024-01-05T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -692,24 +727,25 @@ public class NotNullColumnTest extends AbstractCairoTest {
             execute("CREATE TABLE t (x FLOAT NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t VALUES
-                        (NULL, '2024-01-01'),
+                        ('NaN'::float, '2024-01-01'),
                         (1.5, '2024-01-02'),
                         (CAST('Infinity' AS FLOAT), '2024-01-03'),
                         (CAST('-Infinity' AS FLOAT), '2024-01-04'),
                         (CAST('NaN' AS FLOAT), '2024-01-05')
                     """);
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             x\tts
                             NaN\t2024-01-01T00:00:00.000000Z
                             1.5\t2024-01-02T00:00:00.000000Z
                             Infinity\t2024-01-03T00:00:00.000000Z
                             -Infinity\t2024-01-04T00:00:00.000000Z
                             NaN\t2024-01-05T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -717,17 +753,18 @@ public class NotNullColumnTest extends AbstractCairoTest {
     public void testNotNullLongSentinelPrintsValue() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x LONG NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
+            execute("INSERT INTO t VALUES (CAST(-9223372036854775807 AS LONG) - 1, '2024-01-01')");
             execute("INSERT INTO t VALUES (42, '2024-01-02')");
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             x\tts
                             -9223372036854775808\t2024-01-01T00:00:00.000000Z
                             42\t2024-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -735,17 +772,18 @@ public class NotNullColumnTest extends AbstractCairoTest {
     public void testNotNullIpv4SentinelPrintsValue() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x IPv4 NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
+            execute("INSERT INTO t VALUES ('0.0.0.0', '2024-01-01')");
             execute("INSERT INTO t VALUES ('192.168.1.1', '2024-01-02')");
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             x\tts
                             0.0.0.0\t2024-01-01T00:00:00.000000Z
                             192.168.1.1\t2024-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -753,17 +791,18 @@ public class NotNullColumnTest extends AbstractCairoTest {
     public void testNotNullUuidSentinelPrintsValue() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x UUID NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
+            execute("INSERT INTO t VALUES ('80000000-0000-0000-8000-000000000000', '2024-01-01')");
             execute("INSERT INTO t VALUES ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-02')");
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             x\tts
                             80000000-0000-0000-8000-000000000000\t2024-01-01T00:00:00.000000Z
                             a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\t2024-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -771,18 +810,19 @@ public class NotNullColumnTest extends AbstractCairoTest {
     public void testNotNullCharSentinelPrintsValue() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x CHAR NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
+            execute("INSERT INTO t VALUES (cast(0 as char), '2024-01-01')");
             execute("INSERT INTO t VALUES ('A', '2024-01-02')");
 
             // CHAR NOT NULL with sentinel (char 0) prints empty — the NUL character has no visible representation
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             x\tts
                             \0\t2024-01-01T00:00:00.000000Z
                             A\t2024-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -877,13 +917,14 @@ public class NotNullColumnTest extends AbstractCairoTest {
             execute("CREATE TABLE t (x INT, y DOUBLE, z LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t (ts) VALUES ('2024-01-01')");
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             x\ty\tz\tts
                             null\tnull\tnull\t2024-01-01T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t"
-            );
+                            """);
         });
     }
 
@@ -958,13 +999,14 @@ public class NotNullColumnTest extends AbstractCairoTest {
             }
             // re-added column is appended at the end
             execute("INSERT INTO t (ts) VALUES ('2024-01-01')");
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tx
                             2024-01-01T00:00:00.000000Z\tnull
-                            """,
-                    "SELECT * FROM t"
-            );
+                            """);
         });
     }
 
@@ -979,13 +1021,14 @@ public class NotNullColumnTest extends AbstractCairoTest {
             }
 
             execute("INSERT INTO t VALUES ('a', '2024-01-01')");
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             x\tts
                             a\t2024-01-01T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t"
-            );
+                            """);
         });
     }
 
@@ -1031,15 +1074,14 @@ public class NotNullColumnTest extends AbstractCairoTest {
             execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM information_schema.columns() ORDER BY ordinal_position")
+                    .noLeakCheck()
+                    .returns("""
                             table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
                             qdb\tpublic\tt\tx\t0\t\tno\tinteger
                             qdb\tpublic\tt\ty\t1\t\tyes\tdouble precision
                             qdb\tpublic\tt\tts\t2\t\tno\ttimestamp without time zone
-                            """,
-                    "SELECT * FROM information_schema.columns() ORDER BY ordinal_position"
-            );
+                            """);
         });
     }
 
@@ -1054,13 +1096,14 @@ public class NotNullColumnTest extends AbstractCairoTest {
             execute("CREATE TABLE dst (x INT NOT NULL, y LONG NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO dst SELECT x, y, ts FROM src");
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM dst")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             x\ty\tts
                             -2147483648\t-9223372036854775808\t2024-01-01T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM dst"
-            );
+                            """);
         });
     }
 
@@ -1089,14 +1132,15 @@ public class NotNullColumnTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES ('', '2024-01-01')");
             execute("INSERT INTO t VALUES ('a', '2024-01-02')");
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             x\tts
                             \t2024-01-01T00:00:00.000000Z
                             a\t2024-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -1263,52 +1307,84 @@ public class NotNullColumnTest extends AbstractCairoTest {
             execute("""
                     INSERT INTO t VALUES
                         (1, 10, 1.5, 0.5, 100, 1000, '2024-01-01'),
-                        (NULL, NULL, NULL, NULL, NULL, NULL, '2024-01-02'),
+                        (-2147483648, CAST(-9223372036854775807 AS LONG) - 1, 'NaN'::double, 'NaN'::float, NULL, NULL, '2024-01-02'),
                         (3, 30, 3.5, 2.5, 300, 3000, '2024-01-03')
                     """);
 
             // Projection: (col IS NULL) — false every row for NOT NULL columns (sentinel row included).
             // Nullable columns still flag the sentinel row as null.
-            assertSql(
-                    """
+            assertQuery("SELECT (i IS NULL) i_is_null, (l IS NULL) l_is_null, (d IS NULL) d_is_null, " +
+                            "(f IS NULL) f_is_null, (nul_i IS NULL) nul_i_is_null, (nul_l IS NULL) nul_l_is_null " +
+                            "FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             i_is_null\tl_is_null\td_is_null\tf_is_null\tnul_i_is_null\tnul_l_is_null
                             false\tfalse\tfalse\tfalse\tfalse\tfalse
                             false\tfalse\tfalse\tfalse\ttrue\ttrue
                             false\tfalse\tfalse\tfalse\tfalse\tfalse
-                            """,
-                    "SELECT (i IS NULL) i_is_null, (l IS NULL) l_is_null, (d IS NULL) d_is_null, " +
-                            "(f IS NULL) f_is_null, (nul_i IS NULL) nul_i_is_null, (nul_l IS NULL) nul_l_is_null " +
-                            "FROM t ORDER BY ts"
-            );
+                            """);
 
             // IS NOT NULL: true for NOT NULL columns, flips for nullable.
-            assertSql(
-                    """
+            assertQuery("SELECT (i IS NOT NULL) i_nn, (nul_i IS NOT NULL) nul_i_nn FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             i_nn\tnul_i_nn
                             true\ttrue
                             true\tfalse
                             true\ttrue
-                            """,
-                    "SELECT (i IS NOT NULL) i_nn, (nul_i IS NOT NULL) nul_i_nn FROM t ORDER BY ts"
-            );
+                            """);
 
             // WHERE x IS NULL on NOT NULL columns matches zero rows — even the sentinel row.
             // Behaviour here depends on the WHERE filter path picking up the constant-folded
             // function (BooleanConstant.FALSE). JIT and the WhereClauseParser intrinsic pass
             // can bypass the factory layer; if they do, they still sentinel-skip and this
             // assertion would return 1 instead of 0 — a known gap tracked separately.
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE i IS NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE l IS NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE d IS NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE f IS NULL");
+            assertQuery("SELECT count(*) FROM t WHERE i IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE l IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE d IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE f IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             // WHERE x IS NOT NULL on NOT NULL columns matches every row.
-            assertSql("count\n3\n", "SELECT count(*) FROM t WHERE i IS NOT NULL");
-            assertSql("count\n3\n", "SELECT count(*) FROM t WHERE l IS NOT NULL");
+            assertQuery("SELECT count(*) FROM t WHERE i IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
+            assertQuery("SELECT count(*) FROM t WHERE l IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
 
             // Sanity: the nullable column's IS NULL does find the sentinel row.
-            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE nul_i IS NULL");
-            assertSql("count\n2\n", "SELECT count(*) FROM t WHERE nul_i IS NOT NULL");
+            assertQuery("SELECT count(*) FROM t WHERE nul_i IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM t WHERE nul_i IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
         });
     }
 
@@ -1338,45 +1414,101 @@ public class NotNullColumnTest extends AbstractCairoTest {
                          '0x01', 'u33db', '2024-01-01')
                     """);
 
-            assertSql(
-                    """
-                            ipv4_null\tuuid_null\tchar_null\tstr_null\tvc_null\tsym_null\tl256_null\tgeo_null
-                            false\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse
-                            """,
-                    "SELECT (ipv4_c IS NULL) ipv4_null, (uuid_c IS NULL) uuid_null, " +
+            assertQuery("SELECT (ipv4_c IS NULL) ipv4_null, (uuid_c IS NULL) uuid_null, " +
                             "(char_c IS NULL) char_null, (str_c IS NULL) str_null, " +
                             "(vc_c IS NULL) vc_null, (sym_c IS NULL) sym_null, " +
-                            "(l256_c IS NULL) l256_null, (geo_c IS NULL) geo_null FROM t"
-            );
-            assertSql(
-                    """
-                            ipv4_nn\tuuid_nn\tchar_nn\tstr_nn\tvc_nn\tsym_nn\tl256_nn\tgeo_nn
-                            true\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue
-                            """,
-                    "SELECT (ipv4_c IS NOT NULL) ipv4_nn, (uuid_c IS NOT NULL) uuid_nn, " +
+                            "(l256_c IS NULL) l256_null, (geo_c IS NULL) geo_null FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ipv4_null\tuuid_null\tchar_null\tstr_null\tvc_null\tsym_null\tl256_null\tgeo_null
+                            false\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse
+                            """);
+            assertQuery("SELECT (ipv4_c IS NOT NULL) ipv4_nn, (uuid_c IS NOT NULL) uuid_nn, " +
                             "(char_c IS NOT NULL) char_nn, (str_c IS NOT NULL) str_nn, " +
                             "(vc_c IS NOT NULL) vc_nn, (sym_c IS NOT NULL) sym_nn, " +
-                            "(l256_c IS NOT NULL) l256_nn, (geo_c IS NOT NULL) geo_nn FROM t"
-            );
+                            "(l256_c IS NOT NULL) l256_nn, (geo_c IS NOT NULL) geo_nn FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ipv4_nn\tuuid_nn\tchar_nn\tstr_nn\tvc_nn\tsym_nn\tl256_nn\tgeo_nn
+                            true\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue
+                            """);
 
             // WHERE x IS NULL on NOT NULL columns of these types matches zero rows via
             // the eq-factory short-circuit. (JIT/intrinsic paths for these types still
             // fall through to the factory layer for IS NULL.)
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE ipv4_c IS NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE uuid_c IS NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE str_c IS NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE vc_c IS NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE sym_c IS NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE l256_c IS NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE geo_c IS NULL");
+            assertQuery("SELECT count(*) FROM t WHERE ipv4_c IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE uuid_c IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE str_c IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE vc_c IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE sym_c IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE l256_c IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE geo_c IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
-            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE ipv4_c IS NOT NULL");
-            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE uuid_c IS NOT NULL");
-            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE str_c IS NOT NULL");
-            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE vc_c IS NOT NULL");
-            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE sym_c IS NOT NULL");
-            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE l256_c IS NOT NULL");
-            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE geo_c IS NOT NULL");
+            assertQuery("SELECT count(*) FROM t WHERE ipv4_c IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM t WHERE uuid_c IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM t WHERE str_c IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM t WHERE vc_c IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM t WHERE sym_c IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM t WHERE l256_c IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM t WHERE geo_c IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
         });
     }
 
@@ -1407,16 +1539,48 @@ public class NotNullColumnTest extends AbstractCairoTest {
                     """);
 
             // Typed-null equality on a NOT NULL decimal column folds to false.
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE d8 = cast(NULL as DECIMAL(2, 0))");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE d16 = cast(NULL as DECIMAL(4, 0))");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE d32 = cast(NULL as DECIMAL(9, 0))");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE d64 = cast(NULL as DECIMAL(18, 2))");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE d128 = cast(NULL as DECIMAL(38, 2))");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE d256 = cast(NULL as DECIMAL(60, 2))");
+            assertQuery("SELECT count(*) FROM t WHERE d8 = cast(NULL as DECIMAL(2, 0))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE d16 = cast(NULL as DECIMAL(4, 0))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE d32 = cast(NULL as DECIMAL(9, 0))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE d64 = cast(NULL as DECIMAL(18, 2))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE d128 = cast(NULL as DECIMAL(38, 2))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE d256 = cast(NULL as DECIMAL(60, 2))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             // Standard IS NULL / IS NOT NULL still works.
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE d64 IS NULL");
-            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE d64 IS NOT NULL");
+            assertQuery("SELECT count(*) FROM t WHERE d64 IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE d64 IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
         });
     }
 
@@ -1452,31 +1616,107 @@ public class NotNullColumnTest extends AbstractCairoTest {
                     """);
 
             // Right-hand constant NULL folded to FALSE across the Eq factories.
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE i = CAST(NULL AS INT)");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE l = CAST(NULL AS LONG)");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE ip = CAST(NULL AS IPv4)");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE c = CAST(NULL AS CHAR)");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE s = CAST(NULL AS CHAR)");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE vc = CAST(NULL AS VARCHAR)");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE str = CAST(NULL AS VARCHAR)");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE ts = CAST(NULL AS TIMESTAMP)");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE uu = CAST(NULL AS UUID)");
+            assertQuery("SELECT count(*) FROM t WHERE i = CAST(NULL AS INT)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE l = CAST(NULL AS LONG)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE ip = CAST(NULL AS IPv4)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE c = CAST(NULL AS CHAR)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE s = CAST(NULL AS CHAR)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE vc = CAST(NULL AS VARCHAR)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE str = CAST(NULL AS VARCHAR)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE ts = CAST(NULL AS TIMESTAMP)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE uu = CAST(NULL AS UUID)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             // Left-hand constant NULL — same factories but through the other
             // createHalfConstantFunc branch (swapped a/b).
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE CAST(NULL AS INT) = i");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE CAST(NULL AS LONG) = l");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE CAST(NULL AS IPv4) = ip");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE CAST(NULL AS CHAR) = c");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE CAST(NULL AS VARCHAR) = vc");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE CAST(NULL AS TIMESTAMP) = ts");
+            assertQuery("SELECT count(*) FROM t WHERE CAST(NULL AS INT) = i")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE CAST(NULL AS LONG) = l")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE CAST(NULL AS IPv4) = ip")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE CAST(NULL AS CHAR) = c")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE CAST(NULL AS VARCHAR) = vc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE CAST(NULL AS TIMESTAMP) = ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             // IS NOT NULL via `col != CAST(NULL AS T)` flips the fold to TRUE —
             // exercises NegatingFunctionFactory's wrap over the same BooleanConstant.
-            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE i != CAST(NULL AS INT)");
-            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE ip != CAST(NULL AS IPv4)");
-            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE vc != CAST(NULL AS VARCHAR)");
-            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE ts != CAST(NULL AS TIMESTAMP)");
+            assertQuery("SELECT count(*) FROM t WHERE i != CAST(NULL AS INT)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM t WHERE ip != CAST(NULL AS IPv4)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM t WHERE vc != CAST(NULL AS VARCHAR)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM t WHERE ts != CAST(NULL AS TIMESTAMP)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
         });
     }
 
@@ -1500,39 +1740,41 @@ public class NotNullColumnTest extends AbstractCairoTest {
                         (4, 'b', '2024-01-04')
                     """);
 
-            assertSql(
-                    """
+            assertQuery("SELECT count(x) count_x, count(*) count_star FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             count_x\tcount_star
                             4\t4
-                            """,
-                    "SELECT count(x) count_x, count(*) count_star FROM t"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("SELECT g, count(x) count_x FROM t ORDER BY g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             g\tcount_x
                             a\t2
                             b\t2
-                            """,
-                    "SELECT g, count(x) count_x FROM t ORDER BY g"
-            );
+                            """);
 
             // Sum, min, max match a plain SELECT across the same rows.
-            assertSql(
-                    """
+            assertQuery("SELECT sum(x) sum_x, min(x) min_x, max(x) max_x FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             sum_x\tmin_x\tmax_x
                             10\t1\t4
-                            """,
-                    "SELECT sum(x) sum_x, min(x) min_x, max(x) max_x FROM t"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("SELECT g, sum(x) sum_x FROM t ORDER BY g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             g\tsum_x
                             a\t3
                             b\t7
-                            """,
-                    "SELECT g, sum(x) sum_x FROM t ORDER BY g"
-            );
+                            """);
         });
     }
 
@@ -1551,13 +1793,14 @@ public class NotNullColumnTest extends AbstractCairoTest {
                         (3, 30, '2024-01-03')
                     """);
 
-            assertSql(
-                    """
+            assertQuery("SELECT sum(x) sum_x, sum(y) sum_y, count(x) count_x, count(y) count_y, min(x) min_x, max(x) max_x FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             sum_x\tsum_y\tcount_x\tcount_y\tmin_x\tmax_x
                             6\t40\t3\t2\t1\t3
-                            """,
-                    "SELECT sum(x) sum_x, sum(y) sum_y, count(x) count_x, count(y) count_y, min(x) min_x, max(x) max_x FROM t"
-            );
+                            """);
         });
     }
 
@@ -1578,25 +1821,25 @@ public class NotNullColumnTest extends AbstractCairoTest {
             // COALESCE(x, y): x is NOT NULL so y is unreachable; the sentinel
             // bit pattern from row 1 renders as "null" (nullable result type)
             // but is distinct from the y fallback.
-            assertSql(
-                    """
+            assertQuery("SELECT coalesce(x, y) c FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             c
                             null
                             42
-                            """,
-                    "SELECT coalesce(x, y) c FROM t ORDER BY ts"
-            );
+                            """);
 
             // COALESCE(y, x): y is nullable, so the first-non-null walk still
             // happens. When y is NULL the row falls back to x.
-            assertSql(
-                    """
+            assertQuery("SELECT coalesce(y, x) c FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             c
                             10
                             42
-                            """,
-                    "SELECT coalesce(y, x) c FROM t ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -1615,13 +1858,14 @@ public class NotNullColumnTest extends AbstractCairoTest {
                         (3, '2024-01-03')
                     """);
 
-            assertSql(
-                    """
+            assertQuery("SELECT count(x) count_x, count(*) count_star FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             count_x\tcount_star
                             3\t3
-                            """,
-                    "SELECT count(x) count_x, count(*) count_star FROM t"
-            );
+                            """);
 
             // GROUP BY path goes through a different factory; must produce the
             // same count.
@@ -1632,14 +1876,14 @@ public class NotNullColumnTest extends AbstractCairoTest {
                         (CAST(-9223372036854775807 AS LONG) - 1, 0, '2024-01-02'),
                         (5, 1, '2024-01-03')
                     """);
-            assertSql(
-                    """
+            assertQuery("SELECT k, count(x) count_x FROM g GROUP BY k ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             k\tcount_x
                             0\t2
                             1\t1
-                            """,
-                    "SELECT k, count(x) count_x FROM g GROUP BY k ORDER BY k"
-            );
+                            """);
         });
     }
 
@@ -1680,20 +1924,20 @@ public class NotNullColumnTest extends AbstractCairoTest {
                     + "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("""
                     INSERT INTO t VALUES
-                        ('a', NULL, NULL, 'x', '2024-01-01'),
+                        ('a', CAST(-9223372036854775807 AS LONG) - 1, 'NaN'::double, 'x', '2024-01-01'),
                         ('b', 5, 5, 'x', '2024-01-02'),
                         ('c', 7, 7, 'y', '2024-01-03'),
-                        ('d', NULL, NULL, 'y', '2024-01-04')
+                        ('d', CAST(-9223372036854775807 AS LONG) - 1, 'NaN'::double, 'y', '2024-01-04')
                     """);
 
-            assertSql(
-                    """
+            assertQuery("SELECT g, arg_min(v, kl), arg_min(v, kd), arg_max(v, kd) FROM t GROUP BY g ORDER BY g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             g\targ_min\targ_min1\targ_max
                             x\ta\ta\ta
                             y\td\td\td
-                            """,
-                    "SELECT g, arg_min(v, kl), arg_min(v, kd), arg_max(v, kd) FROM t GROUP BY g ORDER BY g"
-            );
+                            """);
         });
     }
 
@@ -1721,47 +1965,42 @@ public class NotNullColumnTest extends AbstractCairoTest {
             execute("CREATE TABLE t (i INT NOT NULL, l LONG NOT NULL, f FLOAT NOT NULL, d DOUBLE NOT NULL, k SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("""
                     INSERT INTO t VALUES
-                        (NULL, NULL, NULL, NULL, 'a', '2024-01-01'),
+                        (-2147483648, CAST(-9223372036854775807 AS LONG) - 1, 'NaN'::float, 'NaN'::double, 'a', '2024-01-01'),
                         (2, 2, 2, 2, 'a', '2024-01-02'),
                         (3, 3, 3, 3, 'a', '2024-01-03'),
                         (4, 4, 4, 4, 'b', '2024-01-04'),
                         (5, 5, 5, 5, 'b', '2024-01-05'),
-                        (NULL, NULL, NULL, NULL, 'b', '2024-01-06')
+                        (-2147483648, CAST(-9223372036854775807 AS LONG) - 1, 'NaN'::float, 'NaN'::double, 'b', '2024-01-06')
                     """);
 
-            assertSql(
-                    """
+            assertQuery("SELECT k, count_distinct(i), sum(i), avg(i), min(i), max(i) FROM t GROUP BY k ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             k	count_distinct	sum	avg	min	max
                             a	3	-2147483643	-7.15827881E8	null	3
                             b	3	-2147483639	-7.158278796666666E8	null	5
-                            """,
-                    "SELECT k, count_distinct(i), sum(i), avg(i), min(i), max(i) FROM t GROUP BY k ORDER BY k"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("SELECT k, count_distinct(l), sum(l), min(l), max(l) FROM t GROUP BY k ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             k	count_distinct	sum	min	max
                             a	3	-9223372036854775803	null	3
                             b	3	-9223372036854775799	null	5
-                            """,
-                    "SELECT k, count_distinct(l), sum(l), min(l), max(l) FROM t GROUP BY k ORDER BY k"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("SELECT k, avg(l) < -3.0E18 avg_includes_sentinel FROM t GROUP BY k ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             k	avg_includes_sentinel
                             a	true
                             b	true
-                            """,
-                    "SELECT k, avg(l) < -3.0E18 avg_includes_sentinel FROM t GROUP BY k ORDER BY k"
-            );
+                            """);
             assertQuery("SELECT k, min(f) min_f, max(f) max_f, min(d) min_d, max(d) max_d FROM t GROUP BY k ORDER BY k")
                     .expectSize()
                     .returns("k\tmin_f\tmax_f\tmin_d\tmax_d\na\tnull\tnull\tnull\tnull\nb\tnull\tnull\tnull\tnull\n");
-            assertSql(
-                    """
-                            a_first_i	a_first_l	a_first_f	a_first_d	b_last_i	b_last_l	b_last_f	b_last_d
-                            true	true	true	true	true	true	true	true
-                            """,
-                    """
+            assertQuery("""
                             SELECT
                                 first_not_null(i) != 2 a_first_i,
                                 first_not_null(l) != 2 a_first_l,
@@ -1772,8 +2011,14 @@ public class NotNullColumnTest extends AbstractCairoTest {
                                 last_not_null(f) != 5 b_last_f,
                                 last_not_null(d) != 5 b_last_d
                             FROM t
-                            """
-            );
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            a_first_i	a_first_l	a_first_f	a_first_d	b_last_i	b_last_l	b_last_f	b_last_d
+                            true	true	true	true	true	true	true	true
+                            """);
         });
     }
 
@@ -1796,23 +2041,25 @@ public class NotNullColumnTest extends AbstractCairoTest {
             // sentinel on rows 1 and 3). The result type is nullable LONG so
             // the default rendering shows "null"; y still has a skip-null
             // semantic since it is a nullable column.
-            assertSql(
-                    """
+            assertQuery("SELECT first_not_null(x) first_not_null_x, first_not_null(y) first_not_null_y, " +
+                            "last_not_null(x) last_not_null_x, last_not_null(y) last_not_null_y FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             first_not_null_x\tfirst_not_null_y\tlast_not_null_x\tlast_not_null_y
                             null\t42\tnull\t42
-                            """,
-                    "SELECT first_not_null(x) first_not_null_x, first_not_null(y) first_not_null_y, " +
-                            "last_not_null(x) last_not_null_x, last_not_null(y) last_not_null_y FROM t"
-            );
+                            """);
 
             // Nullable sibling column: last_not_null(y) returns 42 from row 3;
             // first_not_null(y) returns 42 too because rows 1 and 2 are NULL.
             // Under the old behaviour first_not_null(x) would have skipped the
             // sentinel rows and hit row 2's value 2 -- pin that regression:
-            assertSql(
-                    "expected\ntrue\n",
-                    "SELECT first_not_null(x) != 2 expected FROM t"
-            );
+            assertQuery("SELECT first_not_null(x) != 2 expected FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("expected\ntrue\n");
         });
     }
 
@@ -1840,15 +2087,16 @@ public class NotNullColumnTest extends AbstractCairoTest {
             assertTrue(getNotNull("t", "ts"));
             assertFalse(getNotNull("t", "y"));
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             x\ty\tts
                             1\t1.0\t2024-01-01T10:00:00.000000Z
                             2\t2.0\t2024-01-02T10:00:00.000000Z
                             3\t3.0\t2024-01-03T10:00:00.000000Z
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
 
             // enforcement still applies after attach
             try {
@@ -1875,24 +2123,24 @@ public class NotNullColumnTest extends AbstractCairoTest {
                         (4, 400, '2024-01-04')
                     """);
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t WHERE x > 1 AND y < 400 AND x < 4 ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             x\ty\tts
                             2\t200\t2024-01-02T00:00:00.000000Z
                             3\t300\t2024-01-03T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t WHERE x > 1 AND y < 400 AND x < 4 ORDER BY ts"
-            );
+                            """);
 
             // sentinel values for NOT NULL columns should still pass the filter when non-null check would have excluded them
-            execute("INSERT INTO t VALUES (NULL, NULL, '2024-01-05')");
-            assertSql(
-                    """
+            execute("INSERT INTO t VALUES (-2147483648, CAST(-9223372036854775807 AS LONG) - 1, '2024-01-05')");
+            assertQuery("SELECT * FROM t WHERE x < 0 ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             x\ty\tts
                             -2147483648\t-9223372036854775808\t2024-01-05T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t WHERE x < 0 ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -1909,7 +2157,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
                     INSERT INTO t VALUES
                         (1, 100, '2024-01-01'),
                         (2, 200, '2024-01-02'),
-                        (NULL, NULL, '2024-01-03'),
+                        (-2147483648, CAST(-9223372036854775807 AS LONG) - 1, '2024-01-03'),
                         (3, 300, '2024-01-04')
                     """);
             // Row at 2024-01-03 stores the INT_NULL and LONG_NULL sentinels as real data. NOT NULL
@@ -1917,31 +2165,54 @@ public class NotNullColumnTest extends AbstractCairoTest {
             // sentinel bit pattern.
 
             // Confirm the JIT path is taken for these filters (not the Java fallback).
-            assertPlanNoLeakCheck(
-                    "SELECT * FROM t WHERE x IS NULL OR x = 10",
-                    """
+            assertQuery("SELECT * FROM t WHERE x IS NULL OR x = 10")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async JIT Filter workers: 1
                               filter: x=10
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: t
-                            """
-            );
+                            """);
 
             // `x IS NULL OR x = 10` — the overall Function simplifies to `x = 10` (FALSE || x = x),
             // which is non-constant, so codegen takes the JIT path. The JIT fold makes the
             // `IS NULL` arm emit constant-false; otherwise JIT evaluates `x = -2^31` and matches
             // the sentinel row at 2024-01-03.
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE x IS NULL OR x = 10");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE y IS NULL OR y = 1_000_000");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE null = x OR x = 10");
+            assertQuery("SELECT count(*) FROM t WHERE x IS NULL OR x = 10")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE y IS NULL OR y = 1_000_000")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE null = x OR x = 10")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             // `x IS NOT NULL OR x = 10` must match every row (including the sentinel row).
-            assertSql("count\n4\n", "SELECT count(*) FROM t WHERE x IS NOT NULL OR x = 10");
-            assertSql("count\n4\n", "SELECT count(*) FROM t WHERE x <> null OR x = 10");
+            assertQuery("SELECT count(*) FROM t WHERE x IS NOT NULL OR x = 10")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n4\n");
+            assertQuery("SELECT count(*) FROM t WHERE x <> null OR x = 10")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n4\n");
 
             // The non-IS-NULL arm still matches normally through the JIT.
-            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE x IS NULL OR x = 2");
+            assertQuery("SELECT count(*) FROM t WHERE x IS NULL OR x = 2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
         });
     }
 
@@ -1979,62 +2250,210 @@ public class NotNullColumnTest extends AbstractCairoTest {
                     """);
 
             // Right-side NULL (symmetric to IS NULL).
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE i = NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE l = NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE d = NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE f = NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE c = NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE v = NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE s = NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE sym = NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE ip = NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE uu = NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE l256 = NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE ts = NULL");
+            assertQuery("SELECT count(*) FROM t WHERE i = NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE l = NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE d = NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE f = NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE c = NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE v = NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE s = NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE sym = NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE ip = NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE uu = NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE l256 = NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE ts = NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             // Left-side NULL — exercises the mirror branch in createHalfConstantFunc
             // (the factory swaps operands so the column lands on the variable side, but
             // the NULL-detection check runs on whichever side had the constant).
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = i");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = l");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = d");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = f");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = c");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = v");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = s");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = sym");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = ip");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = uu");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = l256");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = ts");
+            assertQuery("SELECT count(*) FROM t WHERE NULL = i")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE NULL = l")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE NULL = d")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE NULL = f")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE NULL = c")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE NULL = v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE NULL = s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE NULL = sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE NULL = ip")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE NULL = uu")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE NULL = l256")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE NULL = ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             // Sym-vs-Char (EqSymCharFunctionFactory) — char null sentinel bidirectional.
             // `sym = cast(null as char)` is handled when the char side is detected as
             // Numbers.CHAR_NULL. Mirror: char column = sym with cast(null as symbol).
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE sym = cast(NULL as CHAR)");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE cast(NULL as CHAR) = sym");
+            assertQuery("SELECT count(*) FROM t WHERE sym = cast(NULL as CHAR)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE cast(NULL as CHAR) = sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             // Sym-vs-Timestamp (EqSymTimestampFunctionFactory) — both null-sentinel branches.
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE sym = cast(NULL as TIMESTAMP)");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE cast(NULL as TIMESTAMP) = sym");
+            assertQuery("SELECT count(*) FROM t WHERE sym = cast(NULL as TIMESTAMP)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE cast(NULL as TIMESTAMP) = sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             // Char-vs-Char (EqCharCharFunctionFactory) — both-constants-null, column on other side.
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE c = cast(NULL as CHAR)");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE cast(NULL as CHAR) = c");
+            assertQuery("SELECT count(*) FROM t WHERE c = cast(NULL as CHAR)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE cast(NULL as CHAR) = c")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             // Long128 variant of UUID, hit via the Long128 tag explicitly.
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE uu = cast(NULL as UUID)");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE cast(NULL as UUID) = uu");
+            assertQuery("SELECT count(*) FROM t WHERE uu = cast(NULL as UUID)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE cast(NULL as UUID) = uu")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             // BINARY has no literal syntax; `b = NULL` covers the ColumnType.isNull(a|b) guard
             // in EqBinaryFunctionFactory.
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE b = NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = b");
+            assertQuery("SELECT count(*) FROM t WHERE b = NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE NULL = b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             // IS NOT NULL must still match every row for both sides.
-            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE i <> NULL");
-            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE NULL <> i");
-            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE l256 <> NULL");
+            assertQuery("SELECT count(*) FROM t WHERE i <> NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM t WHERE NULL <> i")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM t WHERE l256 <> NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
         });
     }
 
@@ -2046,26 +2465,42 @@ public class NotNullColumnTest extends AbstractCairoTest {
             // already tested in testNotNull{Long,Ipv4,Uuid,Char}SentinelPrintsValue:
             // DATE, INT, TIMESTAMP (as stored column, not the designated ts), LONG128,
             // LONG256, INTERVAL, GEOHASH, and DECIMAL 8/16/32/64/128/256.
+            // GEOHASH, DATE, TIMESTAMP and DECIMAL have no sentinel literal spelling, so
+            // the sentinel row is produced through nullable columns and the columns are
+            // reclassified with SET NOT NULL (metadata-only; stored bit patterns become data).
             execute("""
                     CREATE TABLE t (
-                        d DATE NOT NULL,
-                        i INT NOT NULL,
-                        t2 TIMESTAMP NOT NULL,
-                        g5 GEOHASH(5c) NOT NULL,
-                        g2 GEOHASH(2c) NOT NULL,
-                        l256 LONG256 NOT NULL,
-                        dec8 DECIMAL(2, 0) NOT NULL,
-                        dec16 DECIMAL(4, 0) NOT NULL,
-                        dec32 DECIMAL(9, 0) NOT NULL,
-                        dec64 DECIMAL(18, 2) NOT NULL,
-                        dec128 DECIMAL(38, 2) NOT NULL,
-                        dec256 DECIMAL(60, 2) NOT NULL,
+                        d DATE,
+                        i INT,
+                        t2 TIMESTAMP,
+                        g5 GEOHASH(5c),
+                        g2 GEOHASH(2c),
+                        l256 LONG256,
+                        dec8 DECIMAL(2, 0),
+                        dec16 DECIMAL(4, 0),
+                        dec32 DECIMAL(9, 0),
+                        dec64 DECIMAL(18, 2),
+                        dec128 DECIMAL(38, 2),
+                        dec256 DECIMAL(60, 2),
                         ts TIMESTAMP NOT NULL
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
-            // Row 1 inserts NULL into every non-ts NOT NULL column — each value lands as the
-            // type's null sentinel but must be surfaced, not hidden as "null" in the output.
+            // Row 1 stores the null sentinel in every non-ts column while they are still
+            // nullable — after reclassification each value must be surfaced, not hidden
+            // as "null" in the output.
             execute("INSERT INTO t VALUES (NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '2024-01-01')");
+            execute("ALTER TABLE t ALTER COLUMN d SET NOT NULL");
+            execute("ALTER TABLE t ALTER COLUMN i SET NOT NULL");
+            execute("ALTER TABLE t ALTER COLUMN t2 SET NOT NULL");
+            execute("ALTER TABLE t ALTER COLUMN g5 SET NOT NULL");
+            execute("ALTER TABLE t ALTER COLUMN g2 SET NOT NULL");
+            execute("ALTER TABLE t ALTER COLUMN l256 SET NOT NULL");
+            execute("ALTER TABLE t ALTER COLUMN dec8 SET NOT NULL");
+            execute("ALTER TABLE t ALTER COLUMN dec16 SET NOT NULL");
+            execute("ALTER TABLE t ALTER COLUMN dec32 SET NOT NULL");
+            execute("ALTER TABLE t ALTER COLUMN dec64 SET NOT NULL");
+            execute("ALTER TABLE t ALTER COLUMN dec128 SET NOT NULL");
+            execute("ALTER TABLE t ALTER COLUMN dec256 SET NOT NULL");
             // Row 2 has real values for comparison.
             execute("""
                     INSERT INTO t VALUES (
@@ -2092,15 +2527,51 @@ public class NotNullColumnTest extends AbstractCairoTest {
             // LONG256 null prints as all-zero hex.
             // DECIMAL nulls print via Decimals.appendNonNull, which emits the raw sentinel as a
             // decimal with the column's scale — specific format verified by row count, not value.
-            assertSql("count\n2\n", "SELECT count(*) FROM t");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE d IS NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE i IS NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE t2 IS NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE g5 IS NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE g2 IS NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE l256 IS NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE dec8 IS NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE dec256 IS NULL");
+            assertQuery("SELECT count(*) FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
+            assertQuery("SELECT count(*) FROM t WHERE d IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE i IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE t2 IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE g5 IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE g2 IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE l256 IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE dec8 IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE dec256 IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             // Spot-check that the INT sentinel (Integer.MIN_VALUE) renders as its raw value
             // on the NULL-inserted row, and that the DATE sentinel (Long.MIN_VALUE) likewise
@@ -2109,14 +2580,14 @@ public class NotNullColumnTest extends AbstractCairoTest {
             // When the value is the Long.MIN_VALUE sentinel, the DATE NOT NULL branch in
             // CursorPrinter bypasses the datetime formatter and writes the raw long —
             // otherwise it formats as usual. Same for TIMESTAMP.
-            assertSql(
-                    """
+            assertQuery("SELECT i, d FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             i\td
                             -2147483648\t-9223372036854775808
                             42\t2024-06-15T00:00:00.000Z
-                            """,
-                    "SELECT i, d FROM t ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -2149,17 +2620,33 @@ public class NotNullColumnTest extends AbstractCairoTest {
                         '2024-01-01'
                     )
                     """);
-            // The sentinel row — inserted nulls land as the type's null bit pattern. The
+            // The sentinel row — explicitly spelled sentinel bit patterns land as data. The
             // factory short-circuit must still fold IS NULL to false (otherwise this row
             // would leak out).
-            execute("INSERT INTO t VALUES (NULL, NULL, '2024-01-02')");
+            execute("INSERT INTO t VALUES ('80000000-0000-0000-8000-000000000000', '0.0.0.0', '2024-01-02')");
 
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE uu IS NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE ip IS NULL");
+            assertQuery("SELECT count(*) FROM t WHERE uu IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE ip IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             // IS NOT NULL must match every row including the sentinel one.
-            assertSql("count\n2\n", "SELECT count(*) FROM t WHERE uu IS NOT NULL");
-            assertSql("count\n2\n", "SELECT count(*) FROM t WHERE ip IS NOT NULL");
+            assertQuery("SELECT count(*) FROM t WHERE uu IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
+            assertQuery("SELECT count(*) FROM t WHERE ip IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
         });
     }
 
@@ -2177,16 +2664,15 @@ public class NotNullColumnTest extends AbstractCairoTest {
                     """);
 
             // Designated timestamp is implicitly NOT NULL and also returns "no".
-            assertSql(
-                    """
+            assertQuery("SELECT column_name, is_nullable FROM information_schema.columns " +
+                            "WHERE table_name = 't' ORDER BY ordinal_position")
+                    .noLeakCheck()
+                    .returns("""
                             column_name\tis_nullable
                             nn\tno
                             nl\tyes
                             ts\tno
-                            """,
-                    "SELECT column_name, is_nullable FROM information_schema.columns " +
-                            "WHERE table_name = 't' ORDER BY ordinal_position"
-            );
+                            """);
         });
     }
 
@@ -2241,15 +2727,16 @@ public class NotNullColumnTest extends AbstractCairoTest {
             // Read-back after Parquet conversion — exercises the Rust reader
             // (parquet_read/row_groups.rs NOT NULL flag plumbing) and the Java
             // PartitionDecoder.setNotNullFlag path.
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             i\tl\tf\td\tip\tdec8\tdec16\tdec32\tdec64\tdec128\tdec256\tts
                             1\t10\t1.5\t2.5\t1.2.3.4\t1\t100\t1000\t12345.67\t99999.99\t1234567890.12\t2024-06-10T00:00:00.000000Z
                             2\t20\t2.5\t3.5\t5.6.7.8\t2\t200\t2000\t22345.67\t88888.88\t2234567890.12\t2024-06-10T00:00:01.000000Z
                             3\t30\t3.5\t4.5\t9.10.11.12\t3\t300\t3000\t32345.67\t77777.77\t3234567890.12\t2024-06-11T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
 
             // NOT NULL metadata must survive the Parquet round-trip — both in the Parquet
             // partition and when converting back to native.
@@ -2264,15 +2751,16 @@ public class NotNullColumnTest extends AbstractCairoTest {
             // Convert back and read again — verifies the Rust reader populated the NOT
             // NULL flag when loading the Parquet file into the native partition.
             execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-06-10'");
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             i\tl\tf\td\tip\tdec8\tdec16\tdec32\tdec64\tdec128\tdec256\tts
                             1\t10\t1.5\t2.5\t1.2.3.4\t1\t100\t1000\t12345.67\t99999.99\t1234567890.12\t2024-06-10T00:00:00.000000Z
                             2\t20\t2.5\t3.5\t5.6.7.8\t2\t200\t2000\t22345.67\t88888.88\t2234567890.12\t2024-06-10T00:00:01.000000Z
                             3\t30\t3.5\t4.5\t9.10.11.12\t3\t300\t3000\t32345.67\t77777.77\t3234567890.12\t2024-06-11T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -2299,16 +2787,17 @@ public class NotNullColumnTest extends AbstractCairoTest {
 
             // First three rows have y == Long.MIN_VALUE (column_top null), row 4 has 40.
             // The NOT NULL branch in CursorPrinter renders the sentinel as its raw value.
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             x\tts\ty
                             1\t2024-06-10T00:00:00.000000Z\t-9223372036854775808
                             2\t2024-06-10T00:00:01.000000Z\t-9223372036854775808
                             3\t2024-06-10T00:00:02.000000Z\t-9223372036854775808
                             4\t2024-06-10T00:00:03.000000Z\t40
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
 
             assertTrue(getNotNull("t", "y"));
         });

@@ -75,8 +75,16 @@ public class NotNullSymbolIndexTest extends AbstractCairoTest {
                         ('gamma', '2024-01-01T00:00:03')
                     """);
 
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE s IS NULL");
-            assertSql("count\n4\n", "SELECT count(*) FROM t WHERE s IS NOT NULL");
+            assertQuery("SELECT count(*) FROM t WHERE s IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE s IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n4\n");
 
             // The column must remain indexed and NOT NULL after the inserts.
             try (TableReader reader = engine.getReader("t")) {
@@ -90,29 +98,31 @@ public class NotNullSymbolIndexTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolNotNullIndexedRejectsExplicitNull() throws Exception {
-        // SYMBOL NOT NULL rejects explicit NULL even though numeric NOT NULL
-        // accepts it (per testEnforceNotNullSentinelValuesAccepted). The
-        // SYMBOL null sentinel (-1) is the same encoding the IS NULL operator
-        // matches against, so accepting an explicit NULL would store a row
-        // that user-visibly tests as NULL -- defeating the constraint. The
-        // putSym/putSymIndex paths in TableWriter and WalWriter throw at
-        // rowAppend-equivalent time when value is null on a NOT NULL column.
+        // An explicit NULL literal into a NOT NULL column is a compile-time error,
+        // reported at the NULL token before the symbol map writer or index writer
+        // ever sees the -1 key.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t (s SYMBOL INDEX NOT NULL, ts TIMESTAMP NOT NULL)
                     TIMESTAMP(ts) PARTITION BY DAY
                     """);
-            try {
-                execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
-                fail("Expected NOT NULL violation for explicit NULL into SYMBOL NOT NULL");
-            } catch (CairoException e) {
-                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
-                assertContains(e.getFlyweightMessage(), "column=s");
-            }
+            assertExceptionNoLeakCheck(
+                    "INSERT INTO t VALUES (NULL, '2024-01-01')",
+                    22,
+                    "NOT NULL constraint violation [column=s]"
+            );
 
             // No row landed.
-            assertSql("count\n0\n", "SELECT count(*) FROM t");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE s IS NULL");
+            assertQuery("SELECT count(*) FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE s IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
         });
     }
 
@@ -159,20 +169,32 @@ public class NotNullSymbolIndexTest extends AbstractCairoTest {
             // The fold to FALSE means the WHERE clause is a constant filter that
             // rejects every row. Counts must be zero regardless of the planner
             // path actually chosen.
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE s IS NULL");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE NULL = s");
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE s = NULL");
+            assertQuery("SELECT count(*) FROM t WHERE s IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE NULL = s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM t WHERE s = NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             // Compose with another predicate to make sure the constant fold
             // composes safely (`(s IS NULL) OR (s = 'beta')` must reduce to
             // `s = 'beta'` and surface only the matching row).
-            assertSql(
-                    """
+            assertQuery("SELECT ts, s FROM t WHERE s IS NULL OR s = 'beta' ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\ts
                             2024-01-01T00:00:01.000000Z\tbeta
-                            """,
-                    "SELECT ts, s FROM t WHERE s IS NULL OR s = 'beta' ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -208,14 +230,19 @@ public class NotNullSymbolIndexTest extends AbstractCairoTest {
             // Index lookup still works after the reload — and IS NULL still
             // folds to false (the EqSymStrFunctionFactory fast-path consults
             // the freshly-loaded metadata flag).
-            assertSql(
-                    """
+            assertQuery("SELECT count(*) FROM t WHERE s = 'alpha'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             count
                             2
-                            """,
-                    "SELECT count(*) FROM t WHERE s = 'alpha'"
-            );
-            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE s IS NULL");
+                            """);
+            assertQuery("SELECT count(*) FROM t WHERE s IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             // A subsequent insert that omits the symbol respects the constraint
             // after the reload — exercises the missing-column rejection path

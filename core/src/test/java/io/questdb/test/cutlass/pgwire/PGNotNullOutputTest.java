@@ -38,11 +38,12 @@ import java.sql.Statement;
  * per-type formatters is untested, even though the flag is always allocated
  * and set.
  * <p>
- * Each test inserts a sentinel row (the result of {@code INSERT NULL} into a
- * NOT NULL column — stored as the type's null bit pattern) and a real-value
- * row. The NOT NULL branch must surface the raw sentinel bits over the PG wire
- * rather than emitting the wire-level NULL marker, which would be the
- * behaviour on a nullable column.
+ * Each test stores a sentinel row (the type's null bit pattern, spelled as an
+ * explicit sentinel literal or stored through a nullable column that is then
+ * reclassified with {@code SET NOT NULL}) and a real-value row. The NOT NULL
+ * branch must surface the raw sentinel bits over the PG wire rather than
+ * emitting the wire-level NULL marker, which would be the behaviour on a
+ * nullable column.
  */
 public class PGNotNullOutputTest extends BasePGTest {
 
@@ -53,7 +54,7 @@ public class PGNotNullOutputTest extends BasePGTest {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement s = connection.createStatement()) {
                 s.execute("CREATE TABLE t (c CHAR NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
-                s.execute("INSERT INTO t VALUES (NULL, '2024-01-01')"); // sentinel row
+                s.execute("INSERT INTO t VALUES (cast(0 as char), '2024-01-01')"); // sentinel row
                 s.execute("INSERT INTO t VALUES ('A', '2024-01-02')");
             }
             try (PreparedStatement ps = connection.prepareStatement("SELECT c FROM t ORDER BY ts")) {
@@ -79,9 +80,13 @@ public class PGNotNullOutputTest extends BasePGTest {
         // frame carried data rather than a -1 length.
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement s = connection.createStatement()) {
-                s.execute("CREATE TABLE t (d DATE NOT NULL, tm TIMESTAMP NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+                // DATE / TIMESTAMP have no sentinel literal spelling: store the sentinel
+                // through nullable columns, then reclassify with SET NOT NULL.
+                s.execute("CREATE TABLE t (d DATE, tm TIMESTAMP, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
                 s.execute("INSERT INTO t VALUES (NULL, NULL, '2024-01-01')");
                 s.execute("INSERT INTO t VALUES ('2024-06-15'::DATE, '2024-06-15T12:00:00', '2024-01-02')");
+                s.execute("ALTER TABLE t ALTER COLUMN d SET NOT NULL");
+                s.execute("ALTER TABLE t ALTER COLUMN tm SET NOT NULL");
             }
             try (PreparedStatement ps = connection.prepareStatement("SELECT d, tm FROM t ORDER BY ts")) {
                 try (ResultSet rs = ps.executeQuery()) {
@@ -111,18 +116,26 @@ public class PGNotNullOutputTest extends BasePGTest {
         // layout from precision alone.
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement s = connection.createStatement()) {
+                // DECIMAL has no sentinel literal spelling: store the sentinels through
+                // nullable columns, then reclassify with SET NOT NULL.
                 s.execute("""
                         CREATE TABLE t (
-                            d8 DECIMAL(2, 0) NOT NULL,
-                            d16 DECIMAL(4, 0) NOT NULL,
-                            d32 DECIMAL(9, 0) NOT NULL,
-                            d64 DECIMAL(18, 2) NOT NULL,
-                            d128 DECIMAL(38, 2) NOT NULL,
-                            d256 DECIMAL(76, 2) NOT NULL,
+                            d8 DECIMAL(2, 0),
+                            d16 DECIMAL(4, 0),
+                            d32 DECIMAL(9, 0),
+                            d64 DECIMAL(18, 2),
+                            d128 DECIMAL(38, 2),
+                            d256 DECIMAL(76, 2),
                             ts TIMESTAMP NOT NULL
                         ) TIMESTAMP(ts)
                         """);
                 s.execute("INSERT INTO t VALUES (NULL, NULL, NULL, NULL, NULL, NULL, '2024-01-01')");
+                s.execute("ALTER TABLE t ALTER COLUMN d8 SET NOT NULL");
+                s.execute("ALTER TABLE t ALTER COLUMN d16 SET NOT NULL");
+                s.execute("ALTER TABLE t ALTER COLUMN d32 SET NOT NULL");
+                s.execute("ALTER TABLE t ALTER COLUMN d64 SET NOT NULL");
+                s.execute("ALTER TABLE t ALTER COLUMN d128 SET NOT NULL");
+                s.execute("ALTER TABLE t ALTER COLUMN d256 SET NOT NULL");
                 s.execute("""
                         INSERT INTO t VALUES (
                             1::DECIMAL(2, 0), 100::DECIMAL(4, 0), 1000::DECIMAL(9, 0),
@@ -167,7 +180,7 @@ public class PGNotNullOutputTest extends BasePGTest {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement s = connection.createStatement()) {
                 s.execute("CREATE TABLE t (d DOUBLE NOT NULL, f FLOAT NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
-                s.execute("INSERT INTO t VALUES (NULL, NULL, '2024-01-01')");
+                s.execute("INSERT INTO t VALUES ('NaN'::double, 'NaN'::float, '2024-01-01')");
                 s.execute("INSERT INTO t VALUES (1.5, 2.5, '2024-01-02')");
             }
             try (PreparedStatement ps = connection.prepareStatement("SELECT d, f FROM t ORDER BY ts")) {
@@ -199,7 +212,7 @@ public class PGNotNullOutputTest extends BasePGTest {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement s = connection.createStatement()) {
                 s.execute("CREATE TABLE t (i INT NOT NULL, l LONG NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
-                s.execute("INSERT INTO t VALUES (NULL, NULL, '2024-01-01')");
+                s.execute("INSERT INTO t VALUES (-2147483648, CAST(-9223372036854775807 AS LONG) - 1, '2024-01-01')");
                 s.execute("INSERT INTO t VALUES (42, 99, '2024-01-02')");
             }
             try (PreparedStatement ps = connection.prepareStatement("SELECT i, l FROM t ORDER BY ts")) {
@@ -226,7 +239,7 @@ public class PGNotNullOutputTest extends BasePGTest {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement s = connection.createStatement()) {
                 s.execute("CREATE TABLE t (ip IPv4 NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
-                s.execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
+                s.execute("INSERT INTO t VALUES ('0.0.0.0', '2024-01-01')");
                 s.execute("INSERT INTO t VALUES ('1.2.3.4', '2024-01-02')");
             }
             try (PreparedStatement ps = connection.prepareStatement("SELECT ip FROM t ORDER BY ts")) {
@@ -243,12 +256,12 @@ public class PGNotNullOutputTest extends BasePGTest {
 
     @Test
     public void testNotNullLong256() throws Exception {
-        // outColTxtLong256: NOT NULL branch — the all-zero sentinel is sent as the
-        // raw hex string rather than wire NULL.
+        // outColTxtLong256: NOT NULL branch — the sentinel (four LONG_NULL words,
+        // 4×0x8000000000000000) is sent as the raw hex string rather than wire NULL.
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement s = connection.createStatement()) {
                 s.execute("CREATE TABLE t (l LONG256 NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
-                s.execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
+                s.execute("INSERT INTO t VALUES ('0x8000000000000000800000000000000080000000000000008000000000000000', '2024-01-01')");
                 s.execute("INSERT INTO t VALUES ('0x01', '2024-01-02')");
             }
             try (PreparedStatement ps = connection.prepareStatement("SELECT l FROM t ORDER BY ts")) {
@@ -256,7 +269,7 @@ public class PGNotNullOutputTest extends BasePGTest {
                     Assert.assertTrue(rs.next());
                     String sentinel = rs.getString(1);
                     Assert.assertFalse("NOT NULL LONG256 sentinel must not wire as NULL", rs.wasNull());
-                    // Sentinel is 0x0 (short form of all-zeros).
+                    // Sentinel is 4×0x8000000000000000 (four LONG_NULL words).
                     Assert.assertNotNull(sentinel);
                     Assert.assertTrue(rs.next());
                     Assert.assertNotNull(rs.getString(1));
@@ -272,7 +285,7 @@ public class PGNotNullOutputTest extends BasePGTest {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement s = connection.createStatement()) {
                 s.execute("CREATE TABLE t (u UUID NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
-                s.execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
+                s.execute("INSERT INTO t VALUES ('80000000-0000-0000-8000-000000000000', '2024-01-01')");
                 s.execute("INSERT INTO t VALUES ('11111111-1111-1111-1111-111111111111', '2024-01-02')");
             }
             try (PreparedStatement ps = connection.prepareStatement("SELECT u FROM t ORDER BY ts")) {

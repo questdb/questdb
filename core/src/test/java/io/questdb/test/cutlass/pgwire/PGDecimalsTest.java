@@ -91,8 +91,17 @@ public class PGDecimalsTest extends BasePGTest {
         assertWithPgServerExtendedBinaryOnly(
                 (connection, _, _, _) -> {
                     try (Statement statement = connection.createStatement()) {
-                        statement.execute("CREATE TABLE t (padding VARCHAR NOT NULL, d8 DECIMAL(2, 0) NOT NULL, d16 DECIMAL(4, 0) NOT NULL, d32 DECIMAL(9, 0) NOT NULL, d64 DECIMAL(18, 2) NOT NULL, d128 DECIMAL(38, 2) NOT NULL, d256 DECIMAL(76, 2) NOT NULL, trailing INT NOT NULL)");
+                        // DECIMAL has no sentinel literal spelling and an explicit NULL literal
+                        // is a compile-time error on a NOT NULL column: store the sentinels
+                        // through nullable columns, then reclassify with SET NOT NULL.
+                        statement.execute("CREATE TABLE t (padding VARCHAR NOT NULL, d8 DECIMAL(2, 0), d16 DECIMAL(4, 0), d32 DECIMAL(9, 0), d64 DECIMAL(18, 2), d128 DECIMAL(38, 2), d256 DECIMAL(76, 2), trailing INT NOT NULL)");
                         statement.execute("INSERT INTO t VALUES (lpad('', 600, 'x'), NULL, NULL, NULL, NULL, NULL, NULL, 42)");
+                        statement.execute("ALTER TABLE t ALTER COLUMN d8 SET NOT NULL");
+                        statement.execute("ALTER TABLE t ALTER COLUMN d16 SET NOT NULL");
+                        statement.execute("ALTER TABLE t ALTER COLUMN d32 SET NOT NULL");
+                        statement.execute("ALTER TABLE t ALTER COLUMN d64 SET NOT NULL");
+                        statement.execute("ALTER TABLE t ALTER COLUMN d128 SET NOT NULL");
+                        statement.execute("ALTER TABLE t ALTER COLUMN d256 SET NOT NULL");
                     }
                     try (PreparedStatement statement = connection.prepareStatement(
                             "SELECT * FROM t"

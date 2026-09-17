@@ -86,14 +86,15 @@ public class NotNullAlterTableTest extends AbstractCairoTest {
 
             // Existing rows return INT_NULL sentinel formatted numerically because
             // x is NOT NULL. No "null" appears.
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tts\tx
                             1\t2024-01-01T00:00:00.000000Z\t-2147483648
                             2\t2024-01-02T00:00:00.000000Z\t-2147483648
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -119,14 +120,15 @@ public class NotNullAlterTableTest extends AbstractCairoTest {
                 assertTrue(metadata.isNotNull(metadata.getColumnIndex("x")));
             }
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tts\tx
                             1\t2024-01-01T00:00:00.000000Z\t-9223372036854775808
                             2\t2024-01-02T00:00:00.000000Z\t-9223372036854775808
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -167,15 +169,16 @@ public class NotNullAlterTableTest extends AbstractCairoTest {
             // A new NULL insert is now accepted
             execute("INSERT INTO t (ts) VALUES ('2024-01-03')");
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             x\tts
                             1\t2024-01-01T00:00:00.000000Z
                             2\t2024-01-02T00:00:00.000000Z
                             null\t2024-01-03T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -201,15 +204,16 @@ public class NotNullAlterTableTest extends AbstractCairoTest {
             execute("ALTER TABLE t ALTER COLUMN x SET NOT NULL");
             assertTrue(getNotNull("t", "x"));
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             x\tts
                             1\t2024-01-01T00:00:00.000000Z
                             -2147483648\t2024-01-02T00:00:00.000000Z
                             3\t2024-01-03T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -231,14 +235,15 @@ public class NotNullAlterTableTest extends AbstractCairoTest {
             drainWalQueue();
             assertTrue(getNotNull("t", "x"));
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             x\tts
                             1\t2024-01-01T00:00:00.000000Z
                             -2147483648\t2024-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
 
             // After SET NOT NULL, new rows missing the now-NOT-NULL column
             // are rejected. The constraint propagates to the WalWriter's
@@ -280,15 +285,16 @@ public class NotNullAlterTableTest extends AbstractCairoTest {
                 assertContains(e.getFlyweightMessage(), "column=x");
             }
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             x\tts
                             1\t2024-01-01T00:00:00.000000Z
                             2\t2024-01-02T00:00:00.000000Z
                             3\t2024-01-03T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -344,14 +350,15 @@ public class NotNullAlterTableTest extends AbstractCairoTest {
             // Providing a real value works. The pre-existing row keeps its sentinel.
             execute("INSERT INTO t VALUES (3, '2024-01-03', 30)");
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tts\tx
                             1\t2024-01-01T00:00:00.000000Z\t-2147483648
                             3\t2024-01-03T00:00:00.000000Z\t30
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -398,13 +405,12 @@ public class NotNullAlterTableTest extends AbstractCairoTest {
             execute("CREATE TABLE t (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("ALTER TABLE t ADD COLUMN s SYMBOL NOT NULL");
 
-            try {
-                execute("INSERT INTO t VALUES (1, '2024-01-01', NULL)");
-                fail("Expected rejection of explicit NULL into NOT NULL SYMBOL");
-            } catch (CairoException e) {
-                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
-                assertContains(e.getFlyweightMessage(), "column=s");
-            }
+            // The explicit NULL literal is rejected at compile time, at the NULL token.
+            assertExceptionNoLeakCheck(
+                    "INSERT INTO t VALUES (1, '2024-01-01', NULL)",
+                    39,
+                    "NOT NULL constraint violation [column=s]"
+            );
         });
     }
 
@@ -500,14 +506,15 @@ public class NotNullAlterTableTest extends AbstractCairoTest {
             }
 
             // The row must remain unmodified.
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tx\tts
                             1\t10\t2024-01-01T00:00:00.000000Z
                             2\t20\t2024-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -552,13 +559,14 @@ public class NotNullAlterTableTest extends AbstractCairoTest {
 
             execute("UPDATE t SET x = NULL WHERE id = 1");
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tx\tts
                             1\tnull\t2024-01-01T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t"
-            );
+                            """);
         });
     }
 
@@ -571,13 +579,14 @@ public class NotNullAlterTableTest extends AbstractCairoTest {
 
             execute("UPDATE t SET x = 42 WHERE id = 1");
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tx\tts
                             1\t42\t2024-01-01T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM t"
-            );
+                            """);
         });
     }
 
