@@ -633,6 +633,23 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    /**
+     * True when {@code model} hands its base's rows on in the order it received them, so an ordering
+     * restated below it is still the order its parent sees. A projection does; anything that
+     * aggregates, de-duplicates, joins or windows decides the order itself.
+     */
+    private static boolean isRowOrderPreserving(IQueryModel model) {
+        if (model.getJoinModels().size() > 1) {
+            return false;
+        }
+        return switch (model.getSelectModelType()) {
+            case IQueryModel.SELECT_MODEL_NONE,
+                 IQueryModel.SELECT_MODEL_CHOOSE,
+                 IQueryModel.SELECT_MODEL_VIRTUAL -> true;
+            default -> false;
+        };
+    }
+
     private static boolean hasNestedUnionAll(IQueryModel model) {
         for (IQueryModel u = model.getNestedModel(); u != null; u = u.getNestedModel()) {
             if (u.getUnionModel() != null && u.getSetOperationType() == IQueryModel.SET_OPERATION_UNION_ALL) {
@@ -5540,13 +5557,32 @@ public class SqlOptimiser implements Mutable {
      * expression rather than a plain column, and any LIMIT.
      */
     private boolean isAscendingTimestampOrderBy(IQueryModel model, CharSequence timestamp) {
-        if (model.getOrderBy().size() != 1 || model.getLimitLo() != null) {
+        return model.getLimitLo() == null
+                && isAscendingTimestampOrderTerm(model.getOrderBy(), model.getOrderByDirection(), timestamp);
+    }
+
+    /**
+     * The same test against the order-by advice this model received from its parent rather than against
+     * its own ORDER BY. Advice is the parent's requirement seen through a channel that does not record
+     * which spelling produced it, so only the one spelling that asks for exactly the order
+     * {@link #restateTimestampOrderForOrderSensitiveBase(IQueryModel)} restates is admitted; any other
+     * advice still bails. That one spelling is what
+     * {@code select * from (<sample by over a union> ) order by ts} produces, and it wants the merge for
+     * the same reason the unwrapped spelling does.
+     */
+    private boolean isAscendingTimestampOrderByAdvice(IQueryModel model, CharSequence timestamp) {
+        return model.getLimitLo() == null
+                && isAscendingTimestampOrderTerm(model.getOrderByAdvice(), model.getOrderByDirectionAdvice(), timestamp);
+    }
+
+    private static boolean isAscendingTimestampOrderTerm(ObjList<ExpressionNode> terms, IntList directions, CharSequence timestamp) {
+        if (terms.size() != 1 || directions.size() != 1) {
             return false;
         }
-        if (model.getOrderByDirection().getQuick(0) != IQueryModel.ORDER_DIRECTION_ASCENDING) {
+        if (directions.getQuick(0) != IQueryModel.ORDER_DIRECTION_ASCENDING) {
             return false;
         }
-        final ExpressionNode term = model.getOrderBy().getQuick(0);
+        final ExpressionNode term = terms.getQuick(0);
         return term.type == LITERAL && Chars.equalsIgnoreCase(term.token, timestamp);
     }
 
@@ -8540,37 +8576,79 @@ public class SqlOptimiser implements Mutable {
      * except in one case: {@code ORDER BY <designated timestamp>} ascending asks for the order this method
      * restates, so bailing on it buys nothing and costs the merge. That one spelling is admitted - see
      * {@link #isAscendingTimestampOrderBy(IQueryModel, CharSequence)} for what "that one spelling" excludes.
-     * Order-by advice reaching this model is still a bail outright: it is the parent's requirement seen
-     * through a channel that says nothing about which spelling produced it.
+     * Order-by advice reaching this model is the same question asked through a channel that does not record
+     * which spelling produced it, so the one spelling that asks for exactly this order is admitted and every
+     * other advice bails - that spelling is what
+     * {@code select * from (<sample by over a union>) order by ts} produces.
      */
     private void restateTimestampOrderForOrderSensitiveBase(IQueryModel model) {
-        if (model.getOrderByAdvice().size() > 0 || !hasNestedUnionAll(model)) {
+        if (!hasNestedUnionAll(model)) {
             return;
         }
         if (model.getSampleBy() == null
                 && !hasAscendingTimestampGroupByFunc(sqlNodeStack, functionParser.getFunctionFactoryCache(), model.getColumns())) {
             return;
         }
-        final CharSequence timestamp = findTimestamp(model);
-        if (timestamp == null) {
-            return;
-        }
-        if (model.getOrderBy().size() > 0 && !isAscendingTimestampOrderBy(model, timestamp)) {
-            return;
+        if (model.getOrderBy().size() > 0 || model.getOrderByAdvice().size() > 0) {
+            // An ORDER BY the consumer wrote, or one its parent asked for through the advice channel, is
+            // only admitted when it asks for the order this method restates - which it can only do
+            // through a timestamp the consumer projects.
+            final CharSequence consumerTimestamp = findTimestamp(model);
+            if (consumerTimestamp == null) {
+                return;
+            }
+            if (model.getOrderBy().size() > 0 && !isAscendingTimestampOrderBy(model, consumerTimestamp)) {
+                return;
+            }
+            if (model.getOrderByAdvice().size() > 0 && !isAscendingTimestampOrderByAdvice(model, consumerTimestamp)) {
+                return;
+            }
         }
         final IQueryModel base = model.getNestedModel();
         if (base == null) {
             return;
         }
+        // Find the model to write the ORDER BY onto. It is the one directly above the union head, and
+        // only that one: an ORDER BY there reaches the union branches through the advice channel and
+        // selects MergeUnionAllRecordCursorFactory, while the same ORDER BY written one projection
+        // higher sorts instead - on this branch and on master alike, so this is a property of the
+        // planner rather than of the restatement. Injecting at the immediate base therefore repaired
+        // only the spelling where the two coincide, which is the UNION ALL as the consumer's immediate
+        // nested model. Every model passed through on the way down has to hand its base's rows on in
+        // the order it received them, or the restated order is not the order the consumer sees.
+        IQueryModel target = null;
+        boolean hasUnion = false;
         for (IQueryModel m = base; m != null; m = m.getNestedModel()) {
             if (m.getOrderBy().size() > 0 || m.getLimitLo() != null || m.hasSharedRefs()) {
                 return;
             }
             if (m.getUnionModel() != null && m.getSetOperationType() == IQueryModel.SET_OPERATION_UNION_ALL) {
+                hasUnion = true;
                 break;
             }
+            if (!isRowOrderPreserving(m)) {
+                return;
+            }
+            target = m;
         }
-        base.addOrderBy(nextLiteral(timestamp), IQueryModel.ORDER_DIRECTION_ASCENDING);
+        if (!hasUnion) {
+            return;
+        }
+        if (target == null) {
+            // base is the union head itself, so there is no model between it and the consumer to carry
+            // the ORDER BY. Keep writing it onto base, as before.
+            target = base;
+        }
+        // Resolve the timestamp against the target, not against the consumer: the ORDER BY has to name a
+        // column the model it lands on projects. Resolving it against the consumer made this method
+        // inert for the whole flagged-aggregate arm, because a group by calling twap(x, ts) or
+        // sparkline(x) projects the aggregate and not the timestamp, so the consumer's
+        // columnNameToAliasMap has no entry for it and every such query fell through to the sort.
+        final CharSequence timestamp = findTimestamp(target);
+        if (timestamp == null) {
+            return;
+        }
+        target.addOrderBy(nextLiteral(timestamp), IQueryModel.ORDER_DIRECTION_ASCENDING);
     }
 
     private void resolveJoinColumns(IQueryModel model) throws SqlException {

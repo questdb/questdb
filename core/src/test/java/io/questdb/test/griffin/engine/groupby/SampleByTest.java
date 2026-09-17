@@ -4282,6 +4282,150 @@ public class SampleByTest extends AbstractCairoTest {
                 .failsWith("base query does not provide ASC order over designated TIMESTAMP column");
     }
 
+    /**
+     * The same repair for every shape that puts a projection model between the SAMPLE BY and the
+     * UNION ALL. Each of these threw "ASC order over TIMESTAMP column is required but not provided"
+     * while the single-nesting spelling above merged, because generateSelectChoose enforces the same
+     * requirement one model earlier than generateSampleBy's gate and refusing there skips both tiers.
+     * All of them compile on master, and the VIEW spelling is the one a deployed schema is most
+     * likely to hold - the user never writes TIMESTAMP(col) at the call site, the view carries it.
+     * <p>
+     * Every row asserts the plan as well as the answer, and the plan is the point: 4, 4, 4 on six
+     * rows is what a blind tier-2 sort returns too, and that sort is the thing that fails rather than
+     * slows at scale. "Union All Merge" is the only assertion that separates them.
+     */
+    @Test
+    public void testOrderSensitiveSampleByOverNestedUnionAllMerges() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SCAN_DIRECTION_DDL);
+            execute(SCAN_DIRECTION_ROWS);
+            execute("create view sdtv as (select * from (select ts, x from sdt union all select ts, x from sdt) timestamp(ts))");
+            final String union = "(select ts, x from sdt union all select ts, x from sdt)";
+            final String[] queries = {
+                    // one redundant pair of parentheses
+                    "select ts, count() c from (" + union + " timestamp(ts)) sample by 1d fill(null)",
+                    // an alias on it
+                    "select ts, count() c from (" + union + " timestamp(ts)) q sample by 1d fill(null)",
+                    // a select * wrapper
+                    "select ts, count() c from (select * from " + union + " timestamp(ts)) sample by 1d fill(null)",
+                    // a WHERE in the wrapper
+                    "select ts, count() c from (select * from " + union + " timestamp(ts) where x > 0) sample by 1d fill(null)",
+                    // a VIEW carrying the timestamp
+                    "select ts, count() c from sdtv sample by 1d fill(null)",
+                    // no FILL at all, and ALIGN TO FIRST OBSERVATION, over the view
+                    "select ts, count() c from sdtv sample by 1d",
+                    "select ts, count() c from sdtv sample by 1d align to first observation",
+                    // a LIMIT above the SAMPLE BY - it selects rows of the result, not of the base
+                    "select ts, count() c from (" + union + " timestamp(ts)) sample by 1d fill(null) limit 3",
+            };
+            for (String query : queries) {
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .withPlanContaining("Union All Merge", "order: [ts asc]")
+                        .returns("""
+                                ts\tc
+                                2024-01-01T00:00:00.000000Z\t4
+                                2024-01-02T00:00:00.000000Z\t4
+                                2024-01-03T00:00:00.000000Z\t4
+                                """);
+            }
+        });
+    }
+
+    /**
+     * A LIMIT the user wrote <i>between</i> the SAMPLE BY and the UNION ALL is the carve-out, and it
+     * stays one. The limit makes the row set theirs, so restating an order underneath it would change
+     * which rows they get; the statement answers through the tier-2 sort instead of the merge, and
+     * this pins that it is the sort, so the carve-out cannot quietly become a merge.
+     */
+    @Test
+    public void testOrderSensitiveSampleByOverLimitedUnionAllSorts() throws Exception {
+        assertQuery("""
+                select ts, count() c
+                from (select * from (select ts, x from sdt union all select ts, x from sdt) timestamp(ts) limit 100)
+                sample by 1d fill(null)
+                """)
+                .ddl(SCAN_DIRECTION_DDL, SCAN_DIRECTION_ROWS)
+                .noLeakCheck()
+                .timestamp("ts")
+                .inferRandomAccess()
+                .sizeMayVary()
+                .withPlanContaining("Sample By", "Union All")
+                .withPlanNotContaining("Union All Merge")
+                .returns("""
+                        ts\tc
+                        2024-01-01T00:00:00.000000Z\t4
+                        2024-01-02T00:00:00.000000Z\t4
+                        2024-01-03T00:00:00.000000Z\t4
+                        """);
+    }
+
+    /**
+     * {@code select * from (<order-sensitive SAMPLE BY over a UNION ALL>) order by ts} asks for the
+     * same thing the unwrapped {@code ... sample by 1d fill(null) order by ts} asks for, but the outer
+     * ORDER BY reaches the SAMPLE BY model as order-by advice rather than as its own ORDER BY. Bailing
+     * on all advice cost the merge for this spelling alone; the one advice term that asks for exactly
+     * the restated order is now admitted.
+     */
+    @Test
+    public void testOrderSensitiveSampleByOverUnionAllMergesThroughOrderByAdvice() throws Exception {
+        assertQuery("""
+                select * from (
+                  select ts, count() c
+                  from (select ts, x from sdt union all select ts, x from sdt) timestamp(ts)
+                  sample by 1d fill(null)
+                ) order by ts
+                """)
+                .ddl(SCAN_DIRECTION_DDL, SCAN_DIRECTION_ROWS)
+                .noLeakCheck()
+                .timestamp("ts")
+                .inferRandomAccess()
+                .sizeMayVary()
+                .withPlanContaining("Union All Merge", "order: [ts asc]")
+                .returns("""
+                        ts\tc
+                        2024-01-01T00:00:00.000000Z\t4
+                        2024-01-02T00:00:00.000000Z\t4
+                        2024-01-03T00:00:00.000000Z\t4
+                        """);
+    }
+
+    /**
+     * Advice that is not the restated order still bails, so the admission above cannot be mistaken for
+     * "any advice will do". A DESC term and a term on another column both keep the sort.
+     */
+    @Test
+    public void testOrderSensitiveSampleByBailsOnOtherOrderByAdvice() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SCAN_DIRECTION_DDL);
+            execute(SCAN_DIRECTION_ROWS);
+            final String inner = """
+                    select ts, count() c
+                    from (select ts, x from sdt union all select ts, x from sdt) timestamp(ts)
+                    sample by 1d fill(null)
+                    """;
+            assertQuery("select * from (" + inner + ") order by ts desc")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .withPlanNotContaining("Union All Merge")
+                    .returns("""
+                            ts\tc
+                            2024-01-03T00:00:00.000000Z\t4
+                            2024-01-02T00:00:00.000000Z\t4
+                            2024-01-01T00:00:00.000000Z\t4
+                            """);
+            // the counts tie, so only the routing is asserted for a non-timestamp term
+            assertQuery("select * from (" + inner + ") order by c")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("Union All Merge");
+        });
+    }
+
     @Test
     public void testOuterAggregateOverNonKeyedSampleByFillCte() throws Exception {
         // CTE form of the same cross-boundary regression. The CTE inliner in the parser

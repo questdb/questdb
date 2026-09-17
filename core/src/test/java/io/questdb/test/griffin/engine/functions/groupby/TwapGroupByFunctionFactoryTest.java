@@ -727,6 +727,15 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
         // backward jump between branches cancelled the forward interval out. The generator
         // now obtains the order before building the function, so the unordered spelling and
         // the explicitly ordered one must agree.
+        //
+        // The plan assertions are as load-bearing as the agreement. Agreement alone is satisfied by
+        // the tier-2 sort as well as by the merge, and on six rows the two are indistinguishable -
+        // but the sort is a full-cardinality materialisation that no sort factory in engine/orderby/
+        // spills, so at scale it throws where the merge answers. "Union All Merge" is what tells
+        // them apart, and without it this test passed while the tier it names never fired: the
+        // restatement resolved the timestamp against the group by, which projects twap(x, ts) and
+        // no timestamp at all, and bailed. Both nesting levels are pinned because they took
+        // different paths - the outer one reached a second, unrepaired copy of the SAMPLE BY gate.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL INDEX, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -738,9 +747,18 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     ('2024-01-03T00:00:00.000000Z','b',5),
                     ('2024-01-03T01:00:00.000000Z','a',6)
                     """);
-            final String unordered = "SELECT twap(x, ts) FROM ((SELECT ts, x FROM t UNION ALL SELECT ts, x FROM t) TIMESTAMP(ts))";
-            final String ordered = "SELECT twap(x, ts) FROM ((SELECT ts, x FROM t UNION ALL SELECT ts, x FROM t ORDER BY ts) TIMESTAMP(ts))";
-            TestUtils.assertSqlCursors(engine, sqlExecutionContext, ordered, unordered, LOG);
+            final String union = "(SELECT ts, x FROM t UNION ALL SELECT ts, x FROM t)";
+            final String ordered = "SELECT twap(x, ts) FROM (" + union + " TIMESTAMP(ts) ORDER BY ts)";
+            for (String unordered : new String[]{
+                    "SELECT twap(x, ts) FROM " + union + " TIMESTAMP(ts)",
+                    "SELECT twap(x, ts) FROM (" + union + " TIMESTAMP(ts))",
+                    "SELECT twap(x, ts) FROM (SELECT * FROM " + union + " TIMESTAMP(ts))",
+            }) {
+                assertQuery(unordered)
+                        .noLeakCheck()
+                        .assertsPlanContaining("values: [twap(x,ts)]", "Union All Merge", "order: [ts asc]");
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, ordered, unordered, LOG);
+            }
         });
     }
 
