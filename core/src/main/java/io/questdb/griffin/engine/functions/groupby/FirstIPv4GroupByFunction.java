@@ -156,6 +156,11 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return UnaryFunction.super.isThreadSafe();
     }

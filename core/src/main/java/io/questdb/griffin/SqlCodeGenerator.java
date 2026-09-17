@@ -10277,6 +10277,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         throw e;
                     }
 
+                    // A vectorized group by consumes its base to exhaustion, so the
+                    // base's timestamp ordering is only needed if some
+                    // VectorAggregateFunction is order-sensitive. Check the functions
+                    // rather than trust a comment: today none are (count/sum/avg/min/
+                    // max/ksum/nsum -- there is no vector first()/last()), but a future
+                    // one declares itself via isOrderSensitive() instead of silently
+                    // producing the wrong value over an unordered base.
+                    if (factory != null) {
+                        boolean orderSensitive = false;
+                        for (int i = 0, n = tempVaf.size(); i < n; i++) {
+                            final VectorAggregateFunction vaf = tempVaf.getQuick(i);
+                            if (vaf != null && vaf.isOrderSensitive()) {
+                                orderSensitive = true;
+                                break;
+                            }
+                        }
+                        try {
+                            // One pass over each frame PER AGGREGATE: buildRosti() dispatches
+                            // `for (frameIndex) for (vafIndex)`, publishing an independent task
+                            // per (frame, aggregate) pair. So this consumer's per-frame cost --
+                            // and hence the density at which a base trading rows-per-frame for
+                            // frame count stops paying -- scales with the aggregate count. That
+                            // is the number the base wants, and this is the only site that knows
+                            // it. See RecordCursorFactory#tryDisableTimestampOrdering.
+                            factory.tryDisableTimestampOrdering(orderSensitive, null, tempVaf.size());
+                        } catch (Throwable e) {
+                            Misc.freeObjList(tempVaf);
+                            throw e;
+                        }
+                    }
                     return generateFill(
                             model,
                             new GroupByRecordCursorFactory(
@@ -10455,6 +10485,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 factory.getMetadata()
                         );
 
+                        // Not-keyed group by consumes its base to exhaustion too, so
+                        // the same rule applies as for the keyed path. There is no grouping
+                        // filter to share here: this site passes null and
+                        // AsyncGroupByNotKeyedRecordCursorFactory adopts none, so the keyed
+                        // site's shared-object hazard has no counterpart to defend against.
+                        //
+                        // This must stay ABOVE the ownership transfer below. The offer
+                        // reaches GroupByFunction.isOrderSensitive() and the base
+                        // factory, either of which may throw, and the transfer nulls
+                        // innerProjectionFunctions and outerProjectionFunctions -- the
+                        // only owners the catch at the bottom of this method can free
+                        // the assembled functions through. With both null,
+                        // freeAssembledProjectionFunctions is a no-op, so a throw
+                        // between transfer and adoption leaks every assembled
+                        // projection function.
+                        offerUnorderedScan(factory, groupByFunctions, null);
+
                         // Transfer ownership to the factory constructor.
                         final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
                         final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions0 = perWorkerGroupByFunctions;
@@ -10511,6 +10558,47 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             factory.getMetadata()
                     );
 
+                    // An order-sensitive aggregate (first/last) is only correct over a base
+                    // that delivers designated-timestamp order, OR over a base that accepts
+                    // the offer below and thereby owns the claim that its arrangement is
+                    // legal for these aggregates and these grouping columns -- a covering
+                    // scan grouped by its own index column, say. The offer is where that is
+                    // decided; the base refuses whenever an order-sensitive aggregate is
+                    // present and the grouping is not exactly its index key.
+                    //
+                    // keyColumns, NOT the live listColumnFilterA. The offer and the factory
+                    // MUST read the same grouping columns, or the offer decides against a
+                    // grouping the factory will not execute. listColumnFilterA is a
+                    // compiler-scoped scratch list and the copy above exists precisely
+                    // because generateSubQuery and compileWorkerFiltersConditionally are
+                    // documented as able to overwrite it; the calls between that copy and
+                    // this line (compilePerWorkerInnerProjectionFunctions,
+                    // compileWorkerFiltersConditionally) re-enter function parsing, so they
+                    // are on the documented hazard's path.
+                    //
+                    // The hazard was NOT reproduced. Three independent attempts to make the
+                    // two diverge failed: identityHashCode of listColumnFilterA matched the
+                    // pre-copy value at five probe points across five query shapes, including
+                    // ones that really do clone per-worker filters, and swapping this line
+                    // back to listColumnFilterA left 613 tests green. So this is a defensive
+                    // read against a hazard the surrounding code documents, not a bug anyone
+                    // here has exhibited -- and it is the right default either way, because
+                    // the failure it would cause is silent: an entry that factored to the
+                    // index key's query position would let a time-bucket grouping take
+                    // per-key, which returns wrong rows without erroring. Binding the copy to
+                    // a name here makes an edit back to the live list change a visibly shared
+                    // identifier rather than swap one similar-looking one for another.
+                    //
+                    // This must stay ABOVE the ownership transfer below. The offer reaches
+                    // GroupByFunction.isOrderSensitive() and the base factory, either of
+                    // which may throw, and the transfer nulls innerProjectionFunctions and
+                    // outerProjectionFunctions -- the only owners the catch at the bottom of
+                    // this method can free the assembled functions through. With both null,
+                    // freeAssembledProjectionFunctions is a no-op, so a throw between
+                    // transfer and adoption leaks every assembled projection function.
+                    final ListColumnFilter keyColumns = listColumnFilterCopy;
+                    offerUnorderedScan(factory, groupByFunctions, keyColumns);
+
                     // Transfer ownership to the factory constructor. The factory adopts the
                     // per-worker projection clones through the disjoint group-by/key views.
                     final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
@@ -10535,7 +10623,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     executionContext.getMessageBus(),
                                     factory,
                                     outerProjectionMetadata,
-                                    listColumnFilterCopy,
+                                    // Same object the offer above decided against -- see keyColumns.
+                                    keyColumns,
                                     keyTypesCopy,
                                     valueTypesCopy,
                                     groupByFunctions0,
@@ -12003,6 +12092,52 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return result;
+    }
+
+    /**
+     * A GROUP BY / SAMPLE BY consumes its base to EXHAUSTION, so it gives up no
+     * early-exit-on-ordered-stream, and it only depends on row order through
+     * order-sensitive aggregates. When it has none, tell the base it may stop
+     * guaranteeing designated-timestamp order -- which lets a multi-key covering
+     * scan emit one frame per key instead of k-way merging, keeping the decode on
+     * the async workers instead of the cursor thread.
+     * <p>
+     * This is the consumer declaring what it needs, rather than the base guessing.
+     * A LIMIT over an ordered scan must NOT do this: it relies on the ordered stream
+     * to stop early, and losing that turns O(limit) into O(n log n).
+     * <p>
+     * The CAPABILITY half is deliberately not tested here. Per-key mode exists only on the
+     * page-frame path, and both call sites below do sit under a {@code supportsPageFrameCursor()}
+     * test -- but that is routing, held by the consumer, not something either party declares. The
+     * base refuses the offer itself when it has no page-frame cursor; see
+     * {@code CoveringIndexRecordCursorFactory#tryDisableTimestampOrdering}. Repeating the check
+     * here would leave two guards where only one is exercised by a test.
+     */
+    private static boolean offerUnorderedScan(
+            RecordCursorFactory base,
+            ObjList<GroupByFunction> groupByFunctions,
+            @Nullable ListColumnFilter groupByKeyColumns
+    ) {
+        if (base == null || groupByFunctions == null) {
+            return false;
+        }
+        boolean orderSensitive = false;
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            final GroupByFunction f = groupByFunctions.getQuick(i);
+            if (f != null && f.isOrderSensitive()) {
+                orderSensitive = true;
+                break;
+            }
+        }
+        // ONE pass per frame, whatever the aggregate count. Both async group bys take a frame as
+        // a single task and walk its rows once, updating every aggregate per row through
+        // GroupByFunctionsUpdater (see AsyncGroupByRecordCursorFactory.aggregateFiltered/
+        // aggregateSharded). Aggregate count therefore adds per-ROW cost, which both of the
+        // base's modes pay alike and which cancels out of its crossover, and no per-frame cost at
+        // all. Contrast the vectorized site, which dispatches one task per (frame, aggregate).
+        // Measured: the crossover does not move between one and four aggregates here, and moves
+        // ~4x there.
+        return base.tryDisableTimestampOrdering(orderSensitive, groupByKeyColumns, 1);
     }
 
     private RecordCursorFactory generateTableQuery0(

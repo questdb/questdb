@@ -150,6 +150,11 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return UnaryFunction.super.isThreadSafe();
     }

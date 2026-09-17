@@ -161,6 +161,11 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return UnaryFunction.super.isThreadSafe();
     }

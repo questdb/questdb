@@ -132,6 +132,11 @@ public class FirstNotNullDateGroupByFunction extends FirstDateGroupByFunction {
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcVal = srcValue.getDate(valueIndex + 1);
         if (srcVal == Numbers.LONG_NULL) {

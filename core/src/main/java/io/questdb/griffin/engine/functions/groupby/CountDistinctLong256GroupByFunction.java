@@ -140,6 +140,11 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }

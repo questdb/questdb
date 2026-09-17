@@ -81,5 +81,10 @@ public class RegressionR2FunctionFactory implements FunctionFactory {
         public String getName() {
             return "regr_r2";
         }
+
+        @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
     }
 }

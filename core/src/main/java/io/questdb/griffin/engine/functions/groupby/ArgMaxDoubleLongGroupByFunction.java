@@ -113,6 +113,11 @@ public class ArgMaxDoubleLongGroupByFunction extends DoubleFunction implements G
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return BinaryFunction.super.isThreadSafe();
     }

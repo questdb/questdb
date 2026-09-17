@@ -151,6 +151,11 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
+
         // Chan et al. [CGL82; CGL83]
         @Override
         public void merge(MapValue destValue, MapValue srcValue) {

@@ -134,6 +134,11 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         float srcVal = srcValue.getFloat(valueIndex + 1);
         if (Numbers.isNull(srcVal)) {

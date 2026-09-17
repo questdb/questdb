@@ -48,4 +48,9 @@ public class CovarPopGroupByFunction extends CovarSampleGroupByFunctionFactory.C
     public String getName() {
         return "covar_pop";
     }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
 }

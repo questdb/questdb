@@ -54,6 +54,11 @@ public class FirstNotNullSymbolGroupByFunction extends FirstSymbolGroupByFunctio
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         int srcVal = srcValue.getInt(valueIndex + 1);
         if (srcVal == SymbolTable.VALUE_IS_NULL) {

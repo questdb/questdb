@@ -135,6 +135,18 @@ class AvgDecimal256GroupByFunction extends Decimal256Function implements GroupBy
         return false;
     }
 
+    /**
+     * True, for the reason spelled out on
+     * {@link SumDecimal256GroupByFunction#isOrderSensitive()}: avg() carries the same FIXED
+     * 256-bit running sum, and {@link #computeNext} throws {@code Overflow in addition} on a
+     * partial sum that the same rows in another order would never reach. The count and the
+     * final divide are order-invariant; the running sum is the part that is not.
+     */
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
     @Override
     public boolean isThreadSafe() {
         return false;

@@ -115,4 +115,9 @@ public class CountSymbolGroupByFunction extends AbstractCountGroupByFunction {
                 ? arg.getInt(record) != SymbolTable.VALUE_IS_NULL
                 : arg.getSymbol(record) != null;
     }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
 }

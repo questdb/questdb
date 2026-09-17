@@ -147,6 +147,11 @@ public class MaxLongGroupByFunction extends LongFunction implements GroupByFunct
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return UnaryFunction.super.isThreadSafe();
     }
