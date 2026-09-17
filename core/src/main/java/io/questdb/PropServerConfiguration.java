@@ -506,6 +506,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long queryContinuationWakeIntervalMillis;
     private final long queryMemoryLimitBytes;
     private final boolean queryWithinLatestByOptimisationEnabled;
+    private final boolean qwpBrowserTlsTerminationEnabled;
     private final int qwpEgressForcedZstdLevel;
     private final int qwpMaxRowsPerTable;
     private final int qwpMaxTablesPerConnection;
@@ -2094,6 +2095,12 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.qwpUdpPort = p;
             });
             this.qwpUdpGroupIPv4Address = getIPv4Address(properties, env, PropertyKey.QWP_UDP_JOIN, "224.1.1.1");
+            this.qwpBrowserTlsTerminationEnabled = getBoolean(
+                    properties,
+                    env,
+                    PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED,
+                    false
+            );
             this.qwpEgressForcedZstdLevel = getInt(
                     properties,
                     env,
@@ -6575,6 +6582,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isQueryCacheEnabled() {
             return httpSqlCacheEnabled;
+        }
+
+        @Override
+        public boolean isQwpBrowserTlsTerminationEnabled() {
+            return qwpBrowserTlsTerminationEnabled;
         }
 
         @Override
