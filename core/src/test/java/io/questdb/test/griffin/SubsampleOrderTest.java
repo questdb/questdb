@@ -341,6 +341,48 @@ public class SubsampleOrderTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testUnprojectedOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithSortColumn();
+            assertQuery("SELECT ts, v FROM t ORDER BY x").expectSize().returns("""
+                    ts\tv
+                    1970-01-01T01:00:00.000000Z\t50
+                    1970-01-01T03:00:00.000000Z\t40
+                    1970-01-01T04:00:00.000000Z\t30
+                    1970-01-01T02:00:00.000000Z\t20
+                    1970-01-01T00:00:00.000000Z\t10
+                    """);
+            for (int mode = 0; mode < 2; mode++) {
+                setWindowMode(mode);
+                assertQuery("SELECT ts, v FROM t SUBSAMPLE uniform(3) ORDER BY x").returns("""
+                        ts\tv
+                        1970-01-01T04:00:00.000000Z\t30
+                        1970-01-01T02:00:00.000000Z\t20
+                        1970-01-01T00:00:00.000000Z\t10
+                        """);
+            }
+        });
+    }
+
+    @Test
+    public void testUnprojectedOrderByLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithSortColumn();
+            for (int mode = 0; mode < 2; mode++) {
+                setWindowMode(mode);
+                // The rows with the smallest x do not survive sampling. Sort the selected rows,
+                // then apply LIMIT; neither operation may change the sampling input.
+                assertQuery("SELECT ts, v FROM t SUBSAMPLE uniform(3) ORDER BY x LIMIT 2")
+                        .expectSize().returns("""
+                                ts\tv
+                                1970-01-01T04:00:00.000000Z\t30
+                                1970-01-01T02:00:00.000000Z\t20
+                                """);
+            }
+        });
+    }
+
     private static void createPivotTable() throws SqlException {
         createTable();
         execute("CREATE TABLE p AS (SELECT ts, 'a'::SYMBOL AS c, v FROM t) TIMESTAMP(ts)");
@@ -354,6 +396,18 @@ public class SubsampleOrderTest extends AbstractCairoTest {
                 ('1970-01-01T01:00:00.000000Z', 10),
                 ('1970-01-01T02:00:00.000000Z', 40),
                 ('1970-01-01T03:00:00.000000Z', 20)
+                """);
+    }
+
+    private static void createTableWithSortColumn() throws SqlException {
+        execute("CREATE TABLE t (ts TIMESTAMP, v INT, x INT) TIMESTAMP(ts)");
+        execute("""
+                INSERT INTO t VALUES
+                ('1970-01-01T00:00:00.000000Z', 10, 50),
+                ('1970-01-01T01:00:00.000000Z', 50, 1),
+                ('1970-01-01T02:00:00.000000Z', 20, 30),
+                ('1970-01-01T03:00:00.000000Z', 40, 2),
+                ('1970-01-01T04:00:00.000000Z', 30, 10)
                 """);
     }
 
