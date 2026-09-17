@@ -327,6 +327,11 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                 ") timestamp(k) partition by NONE";
 
         // The union restarts the designated timestamp; the engine obtains the order rather than refusing.
+        // Which tier it obtains it through is pinned as well, because the two are indistinguishable in
+        // the rows: "order by 3, 2, 1" carries three terms and the optimiser restates the ordering
+        // requirement only across the single ascending designated-timestamp term, so this shape takes
+        // the tier-2 sort rather than the merge. That is the guard behaving as designed, and pinning it
+        // here is what stops this test staying green if tier 1 regressed entirely.
         assertQuery("select b, max(a), k from " +
                 " (x where b = 'PEHN' union all x where b = 'VTJW' ) timestamp(k)" +
                 "sample by 3h fill(linear) align to first observation order by 3, 2, 1")
@@ -334,6 +339,8 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                 .timestamp("k")
                 .inferRandomAccess()
                 .sizeMayVary()
+                .withPlanContaining("Sample By", "fill: linear", "UnionSymbolCast", "Union All")
+                .withPlanNotContaining("Union All Merge")
                 .returns("""
                         b\tmax\tk
                         PEHN\t0.8445258177211064\t1970-01-03T00:06:00.000000Z
@@ -352,6 +359,8 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                 .timestamp("k")
                 .inferRandomAccess()
                 .sizeMayVary()
+                .withPlanContaining("Sample By", "fill: linear", "UnionSymbolCast", "Union All")
+                .withPlanNotContaining("Union All Merge")
                 .returns("""
                         b\tmax\tk
                         PEHN\t0.8445258177211064\t1970-01-03T00:00:00.000000Z
