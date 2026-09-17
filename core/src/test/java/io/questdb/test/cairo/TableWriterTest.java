@@ -3175,6 +3175,55 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSwitchNativePartitionWithParquetActivePartitionReopensOnAbort() throws Exception {
+        // An active-partition switch closes the active partition before it force-squashes and links.
+        // Every abort after that point must reopen it, or the next newRow() dereferences the closed
+        // native append columns. Marking the partition parquet-ready without producing data.parquet
+        // drives the switch past closeActivePartition() and into the missing-file abort.
+        assertMemoryLeak(() -> {
+            int N = 1000;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+
+                final TxWriter txWriter = writer.getTxWriter();
+                final long activePartitionTimestamp = txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp());
+                final long rowCountBefore = writer.size();
+                final int partitionIndex = txWriter.getPartitionIndex(activePartitionTimestamp);
+
+                // Generated but no data.parquet on disk: the switch passes the generated guard, closes
+                // the active partition, then aborts on the missing file.
+                txWriter.setPartitionParquetGenerated(partitionIndex, true);
+                Assert.assertEquals(
+                        TableWriter.SWITCH_NO_PARQUET,
+                        writer.switchNativePartitionWithParquet(activePartitionTimestamp, -1)
+                );
+
+                Assert.assertFalse("aborted switch must leave the partition native",
+                        txWriter.isPartitionParquet(partitionIndex));
+                Assert.assertFalse("the missing parquet file must clear the generated flag",
+                        txWriter.isPartitionParquetGenerated(partitionIndex));
+
+                // The reopen is what this asserts: appending into the still-active partition must work.
+                populateProducts(writer, rnd, txWriter.getMaxTimestamp() + interval, 10, interval);
+                writer.commit();
+                Assert.assertEquals(rowCountBefore + 10, writer.size());
+            }
+
+            // And the rows survive a reopen of the writer.
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                Assert.assertEquals(N + 10, writer.size());
+            }
+        });
+    }
+
+    @Test
     public void testSwitchNativePartitionWithParquetLinksPmSidecar() throws Exception {
         assertMemoryLeak(() -> {
             int N = 10000;
