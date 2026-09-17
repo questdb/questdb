@@ -393,10 +393,9 @@ public final class TableUtils {
         // partition becomes eligible as soon as the next (active) partition begins; for larger
         // intervals it simply becomes eligible one partition width sooner than table TTL would.
         final long partitionFloor = txReader.getPartitionFloor(partitionTimestamp);
-        // Zero represents the active-partition policy. Historical partitions are immediately
-        // eligible; the storage-policy walker separately requires the active logical partition to
-        // have completed its IDLE window. Keep the timestamp comparison for defensive handling of
-        // invalid future partition timestamps.
+        // A zero TTL expires any partition whose floor is not in the future. Active-partition
+        // eligibility is independent of the TTL value: the storage-policy walker additionally
+        // requires the active logical partition to have completed its IDLE window.
         if (ttl == 0) {
             return partitionFloor <= maxTimestamp;
         }
