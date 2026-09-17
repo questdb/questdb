@@ -4162,10 +4162,7 @@ public class SubsampleTest extends AbstractCairoTest {
 
     @Test
     public void testHoistingBlockedByOuterLimit() throws Exception {
-        // SUBSAMPLE inside subquery with outer LIMIT. The code generator
-        // blocks SUBSAMPLE pull-up across the user subquery boundary
-        // (isNestedModelIsSubQuery), and the optimizer blocks WHERE pushdown
-        // via hasSubsampleInChain. LIMIT stays on the outer model.
+        // The outer LIMIT applies after the inner SUBSAMPLE selects rows.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("""

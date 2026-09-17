@@ -1493,11 +1493,6 @@ public class QueryModel implements IQueryModel {
             limitAdviceLo = baseModel.getLimitAdviceLo();
             limitAdviceHi = baseModel.getLimitAdviceHi();
         }
-        // SUBSAMPLE is intentionally NOT transferred here. mergePartially
-        // collapses select-shape models (column mapping), but SUBSAMPLE
-        // changes row count and must not be moved by column-merging operations.
-        // SUBSAMPLE propagation is handled by subsampleSource in
-        // SqlOptimiser.rewriteSelectClause0() and skipNoneTypeModels().
     }
 
     @Override
