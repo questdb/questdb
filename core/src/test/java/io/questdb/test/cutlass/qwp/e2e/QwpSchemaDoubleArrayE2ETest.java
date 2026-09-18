@@ -74,13 +74,13 @@ public class QwpSchemaDoubleArrayE2ETest extends AbstractQwpWebSocketTest {
                     port, 0, 0, TimeUnit.MILLISECONDS.toNanos(Integer.MAX_VALUE - 1L))) {
                 sender.table("schema_double_array_rows").doubleArray("value", new double[][]{{1.0, 2.0}})
                         .stringColumn("marker", "A").at(1, ChronoUnit.MICROS);
-                sender.table("schema_double_array_rows").stringColumn("marker", "failed-B");
+                sender.stringColumn("marker", "failed-B");
                 LineSenderSchemaException rankError = Assert.assertThrows(LineSenderSchemaException.class,
                         () -> sender.doubleArray("value", new double[]{99.0}));
                 Assert.assertEquals(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE, rankError.getReason());
                 Assert.assertTrue(rankError.getMessage(), rankError.getMessage().contains("sourceDims=1"));
                 Assert.assertTrue(rankError.getMessage(), rankError.getMessage().contains("targetDims=2"));
-                sender.table("schema_double_array_rows").doubleArray("value", new double[][]{{3.0}, {4.0}})
+                sender.doubleArray("value", new double[][]{{3.0}, {4.0}})
                         .stringColumn("marker", "C").at(2, ChronoUnit.MICROS);
 
                 long fsn = sender.flushAndGetSequence();

@@ -138,18 +138,18 @@ public class QwpSchemaStringLong256E2ETest extends AbstractQwpWebSocketTest {
             try (QwpWebSocketSender sender = connectWs(port, 0, 0, TimeUnit.MILLISECONDS.toNanos(Integer.MAX_VALUE - 1L))) {
                 sender.table("schema_string_l256_rows").stringColumn("value", null)
                         .binaryColumn("value", new byte[]{1}).stringColumn("marker", "A").at(1, ChronoUnit.MICROS);
-                sender.table("schema_string_l256_rows").stringColumn("marker", "failed-B");
+                sender.stringColumn("marker", "failed-B");
                 LineSenderSchemaException invalid = Assert.assertThrows(LineSenderSchemaException.class,
                         () -> sender.stringColumn("value", "0x0"));
                 Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, invalid.getReason());
                 Assert.assertTrue(invalid.getMessage(), invalid.getMessage().contains("column=value"));
                 Assert.assertTrue(invalid.getMessage(), invalid.getMessage().contains("targetType=LONG256"));
-                sender.table("schema_string_l256_rows").stringColumn("value", "0xff").stringColumn("marker", "C").at(2, ChronoUnit.MICROS);
-                sender.table("schema_string_l256_rows").stringColumn("marker", "failed-designated");
+                sender.stringColumn("value", "0xff").stringColumn("marker", "C").at(2, ChronoUnit.MICROS);
+                sender.stringColumn("marker", "failed-designated");
                 LineSenderSchemaException designated = Assert.assertThrows(LineSenderSchemaException.class,
                         () -> sender.stringColumn("ts", "0xff"));
                 Assert.assertEquals(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE, designated.getReason());
-                sender.table("schema_string_l256_rows").stringColumn("marker", "D").at(3, ChronoUnit.MICROS);
+                sender.stringColumn("marker", "D").at(3, ChronoUnit.MICROS);
                 long fsn = sender.flushAndGetSequence();
                 Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));
             }

@@ -97,7 +97,7 @@ public class QwpSchemaSmallIntegerTextE2ETest extends AbstractQwpWebSocketTest {
                         .intColumn("y", 7)
                         .at(1_000_000, ChronoUnit.MICROS);
 
-                sender.table("schema_small_integer_text_rows").stringColumn("marker", "failed-B").byteColumn("s", (byte) 1);
+                sender.stringColumn("marker", "failed-B").byteColumn("s", (byte) 1);
                 LineSenderSchemaException error = Assert.assertThrows(
                         LineSenderSchemaException.class,
                         () -> sender.intColumn("bad", 9)
@@ -107,7 +107,7 @@ public class QwpSchemaSmallIntegerTextE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertTrue(error.getMessage(), error.getMessage().contains("inputType=INT"));
                 Assert.assertTrue(error.getMessage(), error.getMessage().contains("targetType=UUID"));
 
-                sender.table("schema_small_integer_text_rows").byteColumn("s", Byte.MAX_VALUE)
+                sender.byteColumn("s", Byte.MAX_VALUE)
                         .shortColumn("v", Short.MAX_VALUE)
                         .intColumn("y", 7)
                         .at(2_000_000, ChronoUnit.MICROS);

@@ -75,7 +75,7 @@ public class QwpSchemaStringDateE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testPartialInvalidRowIsCancelledAndNextRowStartsExplicitly() throws Exception {
+    public void testPartialInvalidRowIsCancelledAndNextRowNeedsNoReselection() throws Exception {
         runInContext(port -> {
             execute("create table schema_string_date_rows (value date, marker string, ts timestamp) "
                     + "timestamp(ts) partition by day wal");
@@ -83,13 +83,13 @@ public class QwpSchemaStringDateE2ETest extends AbstractQwpWebSocketTest {
                     port, 0, 0, TimeUnit.MILLISECONDS.toNanos(Integer.MAX_VALUE - 1L))) {
                 sender.table("schema_string_date_rows").stringColumn("value", "1970-01-01")
                         .stringColumn("marker", "A").at(1, ChronoUnit.MICROS);
-                sender.table("schema_string_date_rows").stringColumn("marker", "failed-B");
+                sender.stringColumn("marker", "failed-B");
                 LineSenderSchemaException error = Assert.assertThrows(LineSenderSchemaException.class,
                         () -> sender.stringColumn("value", "not-a-date"));
                 Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, error.getReason());
                 Assert.assertTrue(error.getMessage(), error.getMessage().contains("column=value"));
                 Assert.assertTrue(error.getMessage(), error.getMessage().contains("targetType=DATE(7)"));
-                sender.table("schema_string_date_rows").stringColumn("value", "1969-12-31").stringColumn("marker", "C")
+                sender.stringColumn("value", "1969-12-31").stringColumn("marker", "C")
                         .at(2, ChronoUnit.MICROS);
                 long fsn = sender.flushAndGetSequence();
                 Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));

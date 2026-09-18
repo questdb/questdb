@@ -97,7 +97,7 @@ public class QwpSchemaUuidTextE2ETest extends AbstractQwpWebSocketTest {
                         .uuidColumn("s", 0xa456426614174000L, 0x123e4567e89b12d3L)
                         .uuidColumn("v", 0, Long.MIN_VALUE)
                         .at(1_000_000, ChronoUnit.MICROS);
-                sender.table("schema_uuid_text_rows").stringColumn("marker", "failed-B");
+                sender.stringColumn("marker", "failed-B");
                 LineSenderSchemaException error = Assert.assertThrows(
                         LineSenderSchemaException.class,
                         () -> sender.uuidColumn("bad", 1, 2)
@@ -107,7 +107,7 @@ public class QwpSchemaUuidTextE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertTrue(error.getMessage(), error.getMessage().contains("column=bad"));
                 Assert.assertTrue(error.getMessage(), error.getMessage().contains("inputType=UUID"));
                 Assert.assertTrue(error.getMessage(), error.getMessage().contains("targetType=LONG"));
-                sender.table("schema_uuid_text_rows").uuidColumn("s", Long.MIN_VALUE, Long.MIN_VALUE)
+                sender.uuidColumn("s", Long.MIN_VALUE, Long.MIN_VALUE)
                         .uuidColumn("v", 81985529216486895L, -81985529216486896L)
                         .at(2_000_000, ChronoUnit.MICROS);
                 long fsn = sender.flushAndGetSequence();

@@ -115,14 +115,14 @@ public class QwpSchemaNativeGeoHashE2ETest extends AbstractQwpWebSocketTest {
                         .geoHashColumn("g8", 0xff, 8)
                         .stringColumn("marker", "A")
                         .at(1_000_000L, ChronoUnit.MICROS);
-                sender.table("schema_native_geo_rows").geoHashColumn("g20", 0x11111, 20)
+                sender.geoHashColumn("g20", 0x11111, 20)
                         .stringColumn("marker", "failed-B");
                 LineSenderSchemaException error = Assert.assertThrows(
                         LineSenderSchemaException.class,
                         () -> sender.geoHashColumn("g8", 1, 7)
                 );
                 Assert.assertEquals(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE, error.getReason());
-                sender.table("schema_native_geo_rows").geoHashColumn("g20", 0x12345, 20)
+                sender.geoHashColumn("g20", 0x12345, 20)
                         .geoHashColumn("g8", 0, 8)
                         .stringColumn("marker", "C")
                         .at(2_000_000L, ChronoUnit.MICROS);

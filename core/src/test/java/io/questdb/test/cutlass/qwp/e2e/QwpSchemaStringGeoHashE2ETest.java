@@ -108,7 +108,7 @@ public class QwpSchemaStringGeoHashE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));
                 for (int bits = 1; bits <= 60; bits++) {
                     sender.table("schema_geo_bits_" + bits).stringColumn("value", "").at(100 + bits, ChronoUnit.MICROS);
-                    sender.table("schema_geo_bits_" + bits).stringColumn("value", null).at(200 + bits, ChronoUnit.MICROS);
+                    sender.stringColumn("value", null).at(200 + bits, ChronoUnit.MICROS);
                 }
                 fsn = sender.flushAndGetSequence();
                 Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));
@@ -140,20 +140,20 @@ public class QwpSchemaStringGeoHashE2ETest extends AbstractQwpWebSocketTest {
                 }
                 execute("create table schema_geo_recovery (value geohash(8b), marker string, ts timestamp) timestamp(ts) partition by day wal");
                 sender.table("schema_geo_recovery").stringColumn("value", "00").stringColumn("marker", "A").at(1, ChronoUnit.MICROS);
-                sender.table("schema_geo_recovery").stringColumn("marker", "failed-B");
+                sender.stringColumn("marker", "failed-B");
                 LineSenderSchemaException invalid = Assert.assertThrows(
                         LineSenderSchemaException.class,
                         () -> sender.stringColumn("value", "a")
                 );
                 Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, invalid.getReason());
-                sender.table("schema_geo_recovery").stringColumn("value", "zz").stringColumn("marker", "C").at(2, ChronoUnit.MICROS);
-                sender.table("schema_geo_recovery").stringColumn("marker", "failed-designated");
+                sender.stringColumn("value", "zz").stringColumn("marker", "C").at(2, ChronoUnit.MICROS);
+                sender.stringColumn("marker", "failed-designated");
                 LineSenderSchemaException designated = Assert.assertThrows(
                         LineSenderSchemaException.class,
                         () -> sender.stringColumn("ts", "0")
                 );
                 Assert.assertEquals(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE, designated.getReason());
-                sender.table("schema_geo_recovery").stringColumn("marker", "D").at(3, ChronoUnit.MICROS);
+                sender.stringColumn("marker", "D").at(3, ChronoUnit.MICROS);
                 long fsn = sender.flushAndGetSequence();
                 Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));
             }

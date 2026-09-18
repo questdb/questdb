@@ -110,10 +110,10 @@ public class QwpSchemaNativeDecimalE2ETest extends AbstractQwpWebSocketTest {
                         () -> sender.decimalColumn("value", new Decimal64(100, 0))
                 );
                 Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, error.getReason());
-                sender.table("schema_decimal_recovery").decimalColumn("value", new Decimal64(-12, 1))
+                sender.decimalColumn("value", new Decimal64(-12, 1))
                         .stringColumn("marker", "C")
                         .at(4, ChronoUnit.MICROS);
-                sender.table("schema_decimal_recovery").decimalColumn("marker", Decimal64.NULL_VALUE)
+                sender.decimalColumn("marker", Decimal64.NULL_VALUE)
                         .decimalColumn("marker", (Decimal256) null);
                 sender.stringColumn("marker", "failed-designated");
                 LineSenderSchemaException designated = Assert.assertThrows(
@@ -121,7 +121,7 @@ public class QwpSchemaNativeDecimalE2ETest extends AbstractQwpWebSocketTest {
                         () -> sender.decimalColumn("ts", new Decimal64(1, 0))
                 );
                 Assert.assertEquals(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE, designated.getReason());
-                sender.table("schema_decimal_recovery").decimalColumn("value", new Decimal64(0, 1))
+                sender.decimalColumn("value", new Decimal64(0, 1))
                         .stringColumn("marker", "D")
                         .at(5, ChronoUnit.MICROS);
                 long fsn = sender.flushAndGetSequence();

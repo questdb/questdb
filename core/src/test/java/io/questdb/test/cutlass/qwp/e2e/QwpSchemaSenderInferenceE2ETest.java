@@ -43,7 +43,7 @@ public class QwpSchemaSenderInferenceE2ETest extends AbstractQwpWebSocketTest {
 
                 LineSenderSchemaException invalid = Assert.assertThrows(
                         LineSenderSchemaException.class,
-                        () -> sender.table("schema_infer_column").stringColumn("marker", "B")
+                        () -> sender.stringColumn("marker", "B")
                                 .stringColumn("failed_only", "must-not-exist")
                                 .stringColumn("added", "not-a-long")
                 );
@@ -51,7 +51,7 @@ public class QwpSchemaSenderInferenceE2ETest extends AbstractQwpWebSocketTest {
 
                 // The ACK supplied the resulting server schema. Switching from
                 // longColumn to stringColumn now converts against known LONG.
-                sender.table("schema_infer_column").stringColumn("added", "8")
+                sender.stringColumn("added", "8")
                         .stringColumn("marker", "C")
                         .at(2_000_000, ChronoUnit.MICROS);
                 long secondFsn = sender.flushAndGetSequence();
