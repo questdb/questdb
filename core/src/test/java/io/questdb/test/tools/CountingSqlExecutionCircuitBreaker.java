@@ -25,7 +25,6 @@
 package io.questdb.test.tools;
 
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.mp.continuation.CancellationBinding;
 
 import java.util.concurrent.atomic.AtomicBoolean;

@@ -25,7 +25,6 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.mp.continuation.CancellationBinding;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
