@@ -230,6 +230,87 @@ public class QueryModelGenerationStateTest {
         state.clear();
     }
 
+    @Test
+    public void testUnionBranchRestoresNestedUnionsWithoutTouchingFollowingBranch() {
+        QueryModel parent = model();
+        QueryModel branch = model();
+        QueryModel nested = model();
+        QueryModel nestedTail = model();
+        QueryModel following = model();
+        QueryModelWrapper wrapper = new QueryModelWrapper().of(branch, 1);
+        parent.setNestedModel(wrapper);
+        branch.setNestedModel(nested);
+        branch.setUnionModel(following);
+        nested.setUnionModel(nestedTail);
+        branch.setWhereClause(node("branch"));
+        nested.setWhereClause(node("nested"));
+        nestedTail.setWhereClause(node("nested tail"));
+        following.setWhereClause(node("following"));
+        ExpressionNode limit = node("1");
+        ExpressionNode followingLimit = node("2");
+        branch.setLimit(limit, null);
+        nested.setLimitAdvice(limit, null);
+        following.setLimit(followingLimit, null);
+        QueryModelGenerationState state = new QueryModelGenerationState();
+        ObjectPool<ExpressionNode> pool = pool();
+        state.begin(parent, pool);
+        for (int i = 0; i < 3; i++) {
+            branch.setWhereClause(null);
+            nested.setWhereClause(null);
+            nestedTail.setWhereClause(null);
+            following.setWhereClause(null);
+            limit.implemented = followingLimit.implemented = true;
+            Assert.assertTrue(state.enterUnionBranch(wrapper, pool));
+            Assert.assertEquals("branch", branch.getWhereClause().token);
+            Assert.assertEquals("nested", nested.getWhereClause().token);
+            Assert.assertEquals("nested tail", nestedTail.getWhereClause().token);
+            Assert.assertNull(following.getWhereClause());
+            Assert.assertFalse(limit.implemented);
+            Assert.assertTrue(followingLimit.implemented);
+            Assert.assertSame(limit, branch.getLimitLo());
+            Assert.assertSame(limit, nested.getLimitAdviceLo());
+            Assert.assertFalse(state.enterRegion(branch, pool));
+            Assert.assertFalse(state.enterUnionBranch(branch, pool));
+            state.enterModel(branch);
+            state.exitRegion(true);
+            Assert.assertFalse(state.enterUnionBranch(branch, pool));
+            state.exitModel(branch);
+
+            // Full-region regeneration must still restore the following branch.
+            ExpressionNode retained = branch.getWhereClause();
+            retained.token = "consumed";
+            Assert.assertTrue(state.enterRegion(branch, pool));
+            Assert.assertEquals("branch", branch.getWhereClause().token);
+            Assert.assertEquals("following", following.getWhereClause().token);
+            Assert.assertFalse(followingLimit.implemented);
+            Assert.assertEquals("consumed", retained.token);
+            Assert.assertNotSame(retained, branch.getWhereClause());
+            state.exitRegion(true);
+        }
+        state.clear();
+        Assert.assertEquals(0, state.getRetainedNodeCount());
+    }
+
+    @Test
+    public void testUnionBranchRetainsOtherEdgesToSameDelegate() {
+        QueryModel parent = model();
+        QueryModel branch = model();
+        QueryModel shared = model();
+        parent.setNestedModel(branch);
+        branch.setNestedModel(new QueryModelWrapper().of(shared, 1));
+        branch.setUnionModel(new QueryModelWrapper().of(shared, 2));
+        shared.setWhereClause(node("shared"));
+        QueryModelGenerationState state = new QueryModelGenerationState();
+        ObjectPool<ExpressionNode> pool = pool();
+        state.begin(parent, pool);
+        shared.setWhereClause(null);
+        Assert.assertTrue(state.enterUnionBranch(branch, pool));
+        Assert.assertEquals("shared", shared.getWhereClause().token);
+        state.exitRegion(true);
+        state.clear();
+        Assert.assertEquals(0, state.getRetainedNodeCount());
+    }
+
     private static QueryModel model() {
         return QueryModel.FACTORY.newInstance();
     }

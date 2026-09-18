@@ -11745,7 +11745,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (symbolUnionColumns == null && factoryA instanceof MergeUnionAllRecordCursorFactory mergeFactory) {
                 symbolUnionColumns = mergeFactory.getSymbolUnionColumns();
             }
-            final boolean hasEntered = generationState.enterRegion(model.getUnionModel(), expressionNodePool);
+            final boolean hasEntered = generationState.enterUnionBranch(model.getUnionModel(), expressionNodePool);
             try {
                 factoryB = generateQuery0(model.getUnionModel(), executionContext, true);
             } finally {

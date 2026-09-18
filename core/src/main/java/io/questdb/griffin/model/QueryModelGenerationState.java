@@ -66,7 +66,7 @@ public final class QueryModelGenerationState implements Mutable {
                     saveMarker(model.getLimitAdviceHi());
                 }
             }
-            prepare(root, pool);
+            prepare(root, pool, false);
             scopes.add(unwrap(root));
             isReady = true;
         } catch (Throwable th) {
@@ -97,14 +97,15 @@ public final class QueryModelGenerationState implements Mutable {
      * Returns whether the caller must close a newly prepared scope.
      */
     public boolean enterRegion(IQueryModel root, ObjectPool<ExpressionNode> pool) {
-        root = unwrap(root);
-        if (!isReady || !selections.containsKey(root) || active.containsKey(root)
-                || (scopes.size() > 0 && scopes.getLast() == root)) {
-            return false;
-        }
-        prepare(root, pool);
-        scopes.add(root);
-        return true;
+        return enterRegion(root, pool, false);
+    }
+
+    /**
+     * Prepares one set operand, excluding its next-UNION edge but retaining nested UNIONs.
+     * Returns whether the caller must close a newly prepared scope.
+     */
+    public boolean enterUnionBranch(IQueryModel root, ObjectPool<ExpressionNode> pool) {
+        return enterRegion(root, pool, true);
     }
 
     public void exitModel(IQueryModel model) {
@@ -284,10 +285,22 @@ public final class QueryModelGenerationState implements Mutable {
         return hasSharing;
     }
 
-    private void prepare(IQueryModel root, ObjectPool<ExpressionNode> pool) {
+    private boolean enterRegion(IQueryModel root, ObjectPool<ExpressionNode> pool, boolean isUnionBranch) {
+        root = unwrap(root);
+        if (!isReady || !selections.containsKey(root) || active.containsKey(root)
+                || (scopes.size() > 0 && scopes.getLast() == root)) {
+            return false;
+        }
+        prepare(root, pool, isUnionBranch);
+        scopes.add(root);
+        return true;
+    }
+
+    private void prepare(IQueryModel root, ObjectPool<ExpressionNode> pool, boolean isUnionBranch) {
         if (preparationHook != null) {
             preparationHook.accept(unwrap(root));
         }
+        IQueryModel unionModel = isUnionBranch ? unwrap(root.getUnionModel()) : null;
         IdentityHashMap<Object, Boolean> visited = new IdentityHashMap<>();
         IdentityHashMap<ExpressionNode, ExpressionNode> copies = new IdentityHashMap<>();
         ObjList<Object> pending = new ObjList<>();
@@ -312,7 +325,19 @@ public final class QueryModelGenerationState implements Mutable {
             }
             ObjList<Object> edges = graph.get(node);
             if (edges != null) {
-                pending.addAll(edges);
+                if (node == root && unionModel != null) {
+                    for (int i = 0; i < edges.size(); i++) {
+                        Object edge = edges.getQuick(i);
+                        if (edge == unionModel) {
+                            // Skip one edge, not the model: another child may share its delegate.
+                            unionModel = null;
+                        } else {
+                            pending.add(edge);
+                        }
+                    }
+                } else {
+                    pending.addAll(edges);
+                }
             }
         }
         preparationCount += visited.size();
