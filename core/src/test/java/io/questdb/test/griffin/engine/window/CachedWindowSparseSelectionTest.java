@@ -51,6 +51,38 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class CachedWindowSparseSelectionTest extends AbstractCairoTest {
     @Test
+    public void testDenseMappingDoesNotScanInput() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(4096);
+            // The cutoff is 64 selections. Keep the final ordinal so a sequential replay
+            // must visit all 4096 rows, even though the bitmap needs only 64 words.
+            bindVariableService.setLong(0, 65);
+            final SqlExecutionCircuitBreaker originalBreaker = sqlExecutionContext.getCircuitBreaker();
+            final CountingBreaker breaker = new CountingBreaker();
+            ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+            try (RecordCursorFactory factory = select(uniformQuery(false))) {
+                final Object lightCursor = field(findLight(factory), "cursor");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    for (int run = 0; run < 2; run++) {
+                        // Isolate remapping from buffering, sorting and pass1. Indexing the
+                        // selected rows and scanning the bitmap take 130 checks, not 4161.
+                        breaker.checks = 0;
+                        mapSelectedRows(lightCursor);
+                        Assert.assertTrue("mapping checks=" + breaker.checks, breaker.checks <= 256);
+                        Assert.assertEquals(65, ((DirectLongList) field(lightCursor, "selectedRowIds")).size());
+                        Assert.assertEquals("dense mapping must retain the bitmap", 64,
+                                ((DirectLongList) field(lightCursor, "selectedRowBits")).getCapacity());
+                    }
+                }
+                assertUniformSelection(factory, 4096, 65, false);
+            } finally {
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(originalBreaker);
+            }
+        });
+    }
+
+    @Test
     public void testIndexedReadBoundsAndTraversalPosition() throws Exception {
         assertMemoryLeak(() -> {
             createTable(4096);
