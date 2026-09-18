@@ -59,13 +59,13 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * key types the fused plan accepts. Grouping keys, aggregate arguments and single-side predicates
  * come from either input, so every join type sees them on the probe, on the build and on the
  * null-extended side. Each input is the table itself, a projection over it that renames some
- * columns and may filter (the fused planner resolves columns through it), or a {@code LIMIT}
- * sub-query (a barrier the fused planner must refuse).
+ * columns and may filter (the fused planner resolves columns through it), a {@code LATEST ON}
+ * sub-query, or a {@code LIMIT} sub-query (a barrier the fused planner must refuse).
  * <p>
  * Most queries reference only the column types and aggregates the fused plan reads. The rest
  * reach the features the fused planner has to turn down, each of which keeps the ordinary plan
  * in both arms of the fused axis: a constant WHERE conjunct, SAMPLE BY with FILL, a
- * {@code LIMIT} sub-query, a cross-input WHERE predicate, an ON predicate over the preserved side
+ * {@code LIMIT} sub-query, {@code LATEST ON} on a table input, a cross-input WHERE predicate, an ON predicate over the preserved side
  * of an outer join, a composite key, columns of other types, and aggregates outside the fused
  * allowlist. A planner that accepts one of them by mistake returns different rows than the
  * ordinary plan, and the fused axis reports it.
@@ -362,12 +362,15 @@ public final class HashJoinGroupByClause {
     }
 
     /**
-     * Draws one input: the table itself on 32 draws in 40, a projection over it on seven, and
-     * a {@code LIMIT} sub-query on one. The projection keeps every column and the designated
-     * timestamp's name, renames each other column with probability 1/4 and filters on half the
-     * draws, so the fused planner has to resolve the outer names through it. The {@code LIMIT}
-     * sub-query takes the first rows in timestamp order, which is the same set in every storage
-     * layout, and is a barrier that keeps the ordinary plan.
+     * Draws one input: the table itself on 32 draws in 40, a projection over it on six, a
+     * {@code LATEST ON} sub-query on one and a {@code LIMIT} sub-query on one. The projection
+     * keeps every column and the designated timestamp's name, renames each other column with
+     * probability 1/4 and filters on half the draws, so the fused planner has to resolve the outer
+     * names through it. The {@code LATEST ON} sub-query keeps the latest row per join key. Written
+     * on the table, it is a feature the fused planner refuses; written around a projection of the
+     * table, child compilation applies it to the input, and the input may fuse as a build. The
+     * {@code LIMIT} sub-query takes the first rows in timestamp order, which is the same set in
+     * every storage layout, and is a barrier that keeps the ordinary plan.
      */
     private static Input pickInput(Rnd rnd, FuzzTable table, boolean isFusableOnly, BindContext ctx) {
         final String tableName = FuzzNames.table(rnd, table.getName());
@@ -377,6 +380,13 @@ public final class HashJoinGroupByClause {
         }
         if (pick == 39) {
             return new Input("(SELECT * FROM " + tableName + " LIMIT " + (10 + rnd.nextInt(50)) + ')', table.getColumns(), isFusableOnly, false);
+        }
+        if (pick == 38) {
+            final String latestOn = " LATEST ON " + table.getTsColumnName() + " PARTITION BY " + (rnd.nextBoolean() ? INT_KEY : SYMBOL_KEY);
+            final String sql = rnd.nextBoolean()
+                    ? "(SELECT * FROM " + tableName + latestOn + ')'
+                    : "((SELECT * FROM " + tableName + ')' + latestOn + ')';
+            return new Input(sql, table.getColumns(), isFusableOnly, false);
         }
         final ObjList<FuzzColumn> exposed = new ObjList<>();
         final StringSink sql = new StringSink();
