@@ -7433,10 +7433,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     throw e;
                 }
             }
-            if (!isEmptyTable()
-                    && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit)
-                    && !isLastPartitionParquet()) {
-                openPartition(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
+            if (!isEmptyTable()) {
+                if (isLastPartitionParquet()) {
+                    if (!isLastPartitionClosed()) {
+                        // The commit made a parquet partition the last one while the writer still
+                        // holds the previous native last partition open. The writer cannot append
+                        // into parquet, so there is no partition to switch to; left as is, the
+                        // column append memories keep describing that native partition with
+                        // offsets that a later mid-partition O3 append (which writes through its
+                        // own fds) silently outgrows. The next truncating close
+                        // (doClose -> freeColumns -> MemoryCMARWImpl.close(true)) then trims
+                        // every .d back to ceilPageSize(staleOffset) and discards the appended
+                        // rows; a reader or column converter mapping the committed row count
+                        // SIGBUSes past the shortened file.
+                        //
+                        // Close WITHOUT truncating, as removePartition and
+                        // convertPartitionNativeToParquet already do when the last partition
+                        // turns parquet on their paths, and reset the open-partition marker so
+                        // the writer is in the same state as a freshly opened one over a table
+                        // whose last partition is parquet.
+                        drainPendingPostingSealPurgesBeforeIndexerRelease();
+                        closeActivePartition(false);
+                        lastOpenPartitionTs = Long.MIN_VALUE;
+                        lastOpenPartitionIsReadOnly = false;
+                    }
+                } else if (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit) {
+                    openPartition(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
+                }
             }
 
             // Data is written out successfully, however, we can still fail to set append position, for
