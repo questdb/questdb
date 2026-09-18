@@ -120,13 +120,13 @@ public abstract class TimestampFunction implements Function {
     @Override
     public final double getDouble(Record rec) {
         final long val = getTimestamp(rec);
-        return val != Numbers.LONG_NULL ? val : Double.NaN;
+        return isNotNull() || val != Numbers.LONG_NULL ? val : Double.NaN;
     }
 
     @Override
     public final float getFloat(Record rec) {
         final long val = getTimestamp(rec);
-        return val != Numbers.LONG_NULL ? val : Float.NaN;
+        return isNotNull() || val != Numbers.LONG_NULL ? val : Float.NaN;
     }
 
     @Override

@@ -78,6 +78,35 @@ public class NotNullSetOperationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExceptCastPathSentinelDataSurvivesWidening() throws Exception {
+        assertMemoryLeak(() -> {
+            // Branch type mismatch forces the INT branch to widen to LONG. The widened
+            // sentinel-as-data value is -2147483648L, not LONG_NULL, so it must render
+            // as data and stay invisible to IS NULL even though the output column is
+            // nullable (cast-path output nullability is explicit-false by design).
+            createSentinelTable();
+            execute("CREATE TABLE nl (v LONG)");
+            execute("INSERT INTO nl VALUES (NULL), (40)");
+
+            assertQuery("SELECT v FROM nnS EXCEPT SELECT v FROM nl")
+                    .noLeakCheck()
+                    .returns("""
+                            v
+                            10
+                            -2147483648
+                            """);
+            assertQuery("SELECT count() FROM (SELECT v FROM nnS EXCEPT SELECT v FROM nl) WHERE v IS NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            0
+                            """);
+        });
+    }
+
+    @Test
     public void testExceptNotNullFirst() throws Exception {
         assertMemoryLeak(() -> {
             createMatrixTables();
@@ -281,6 +310,38 @@ public class NotNullSetOperationTest extends AbstractCairoTest {
                             20
                             """);
             assertQuery("SELECT count() FROM (SELECT v FROM nl UNION ALL SELECT v FROM nn) WHERE v IS NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            1
+                            """);
+        });
+    }
+
+    @Test
+    public void testUnionAllCastPathSentinelDataSurvivesWidening() throws Exception {
+        assertMemoryLeak(() -> {
+            // UNION ALL with an INT NOT NULL branch and a LONG nullable branch: the
+            // widened sentinel-as-data row renders as -2147483648, distinct from the
+            // genuine NULL contributed by the LONG branch.
+            createSentinelTable();
+            execute("CREATE TABLE nl (v LONG)");
+            execute("INSERT INTO nl VALUES (NULL), (40)");
+
+            assertQuery("SELECT v FROM nnS UNION ALL SELECT v FROM nl")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            10
+                            -2147483648
+                            null
+                            40
+                            """);
+            assertQuery("SELECT count() FROM (SELECT v FROM nnS UNION ALL SELECT v FROM nl) WHERE v IS NULL")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()

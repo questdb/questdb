@@ -73,7 +73,8 @@ public abstract class IntFunction implements Function {
 
     @Override
     public long getDate(Record rec) {
-        return Numbers.intToLong(getInt(rec));
+        final int value = getInt(rec);
+        return isNotNull() || value != Numbers.INT_NULL ? value : Numbers.LONG_NULL;
     }
 
     @Override
@@ -108,12 +109,14 @@ public abstract class IntFunction implements Function {
 
     @Override
     public double getDouble(Record rec) {
-        return Numbers.intToDouble(getInt(rec));
+        final int value = getInt(rec);
+        return isNotNull() || value != Numbers.INT_NULL ? value : Double.NaN;
     }
 
     @Override
     public float getFloat(Record rec) {
-        return Numbers.intToFloat(getInt(rec));
+        final int value = getInt(rec);
+        return isNotNull() || value != Numbers.INT_NULL ? value : Float.NaN;
     }
 
     @Override
@@ -148,7 +151,8 @@ public abstract class IntFunction implements Function {
 
     @Override
     public long getLong(Record rec) {
-        return Numbers.intToLong(getInt(rec));
+        final int value = getInt(rec);
+        return isNotNull() || value != Numbers.INT_NULL ? value : Numbers.LONG_NULL;
     }
 
     @Override
@@ -213,7 +217,8 @@ public abstract class IntFunction implements Function {
 
     @Override
     public long getTimestamp(Record rec) {
-        return Numbers.intToLong(getInt(rec));
+        final int value = getInt(rec);
+        return isNotNull() || value != Numbers.INT_NULL ? value : Numbers.LONG_NULL;
     }
 
     @Override

@@ -146,9 +146,19 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
         if (firstNotNull == 0) {
             closeFunctions(args, 1, argsSize);
-            return args.getQuick(0);
-        }
-        if (firstNotNull > 0) {
+            final Function first = args.getQuick(0);
+            if (first.getType() == returnType) {
+                return first;
+            }
+            // The computed common type is wider than the argument's own type:
+            // getCastFunction leaves implicit-widening pairs unwrapped, so returning
+            // the argument bare would collapse the expression's type. Keep a
+            // single-argument coalesce wrapper of the computed return type; it reads
+            // the argument through the widening getter, which preserves the stored
+            // sentinel as data because the argument reports isNotNull().
+            args = new ObjList<>(1);
+            args.add(first);
+        } else if (firstNotNull > 0) {
             closeFunctions(args, firstNotNull + 1, argsSize);
             args.setPos(firstNotNull + 1);
         }

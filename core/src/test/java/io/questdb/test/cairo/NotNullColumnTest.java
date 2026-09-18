@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableUtils;
@@ -1141,6 +1142,94 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImplicitWideningPreservesNotNullIntSentinelAsData() throws Exception {
+        assertMemoryLeak(() -> {
+            // Inherited widening getters (IntFunction.getLong/getDouble) used to map
+            // the INT sentinel to the wider type's sentinel unconditionally. On a
+            // NOT NULL column the sentinel is data; arithmetic must use the value.
+            execute("CREATE TABLE t (i INT NOT NULL)");
+            execute("INSERT INTO t VALUES (-2147483648), (7)");
+
+            // implicit INT->LONG widening inside +
+            assertQuery("SELECT i + 1L s FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s
+                            -2147483647
+                            8
+                            """);
+
+            // explicit cast control: CastIntToLong is already isNotNull-aware, so this
+            // pins the inherited-vs-explicit distinction
+            assertQuery("SELECT CAST(i AS LONG) s FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s
+                            -2147483648
+                            7
+                            """);
+
+            // implicit INT->DOUBLE widening inside *
+            assertQuery("SELECT i * 1.0 s FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s
+                            -2.147483648E9
+                            7.0
+                            """);
+
+            // Java-filter route, forced interpreted (the JIT matrix is validated
+            // separately): the INT->LONG comparison widening must see the sentinel as
+            // data. setUp() restores the class JIT mode before the next test.
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertQuery("SELECT i FROM t WHERE i < 0L")
+                    .noLeakCheck()
+                    .returns("""
+                            i
+                            -2147483648
+                            """);
+        });
+    }
+
+    @Test
+    public void testImplicitWideningKeepsNullableIntNull() throws Exception {
+        assertMemoryLeak(() -> {
+            // nullable control: the same widening getters must keep mapping the
+            // sentinel to NULL when the function is not provably non-null
+            execute("CREATE TABLE n (i INT)");
+            execute("INSERT INTO n VALUES (NULL), (7)");
+
+            assertQuery("SELECT i + 1L s FROM n")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s
+                            null
+                            8
+                            """);
+            assertQuery("SELECT count() FROM n WHERE i + 1L IS NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            1
+                            """);
+            assertQuery("SELECT i * 1.0 s FROM n")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s
+                            null
+                            7.0
+                            """);
+        });
+    }
+
+    @Test
     public void testInsertAsSelectPassesSourceNullAsSentinel() throws Exception {
         assertMemoryLeak(() -> {
             // INSERT AS SELECT consults row.append() enforcement: every column in the row
@@ -1895,6 +1984,69 @@ public class NotNullColumnTest extends AbstractCairoTest {
                             c
                             10
                             42
+                            """);
+        });
+    }
+
+    @Test
+    public void testCoalesceShortCircuitPreservesComputedType() throws Exception {
+        assertMemoryLeak(() -> {
+            // The common type of (INT, DOUBLE) is DOUBLE. The NOT NULL short-circuit
+            // must not collapse the expression back to the first argument's INT type:
+            // that would turn the surrounding division into integer division.
+            execute("CREATE TABLE t (i INT NOT NULL)");
+            execute("INSERT INTO t VALUES (1), (-2147483648)");
+
+            assertQuery("SELECT coalesce(i, 0.0) / 2 c FROM t WHERE i = 1")
+                    .noLeakCheck()
+                    .returns("""
+                            c
+                            0.5
+                            """);
+
+            // sentinel-as-data must survive the INT->DOUBLE widening: INT_MIN is data
+            assertQuery("SELECT coalesce(i, 0.0) c FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            c
+                            1.0
+                            -2.147483648E9
+                            """);
+
+            // multi-arg path: same rules with more than two arguments
+            assertQuery("SELECT coalesce(i, 0.5, 1.5) c FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            c
+                            1.0
+                            -2.147483648E9
+                            """);
+
+            // NOT NULL later in the list: the nullable prefix still walks, the
+            // widened NOT NULL fallback still renders the sentinel as data
+            execute("CREATE TABLE d (v DOUBLE, i INT NOT NULL)");
+            execute("INSERT INTO d VALUES (2.5, 1), (NULL, -2147483648)");
+            assertQuery("SELECT coalesce(v, i) c FROM d")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            c
+                            2.5
+                            -2.147483648E9
+                            """);
+
+            // FLOAT return type exercises the getFloat widening route
+            execute("CREATE TABLE f (v FLOAT, i INT NOT NULL)");
+            execute("INSERT INTO f VALUES (2.5, 1), (NULL, -2147483648)");
+            assertQuery("SELECT coalesce(v, i) c FROM f")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            c
+                            2.5
+                            -2.1474836E9
                             """);
         });
     }
