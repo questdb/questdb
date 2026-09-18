@@ -898,6 +898,11 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
         }
 
         @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
+        }
+
+        @Override
         protected void _close() {
             closeCount++;
             super._close();
@@ -931,6 +936,11 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             return cursor;
+        }
+
+        @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
         }
     }
 

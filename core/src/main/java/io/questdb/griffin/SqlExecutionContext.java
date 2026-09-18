@@ -312,6 +312,21 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return false;
     }
 
+    /**
+     * Returns true when the consumer that required a designated timestamp also requires the base to
+     * already scan it ascending, because it has no way to obtain that order itself. A consumer that
+     * does have one - {@code SqlCodeGenerator.generateSampleBy}, which either restates the requirement
+     * as an ORDER BY the planner can satisfy with a merge or sorts at its own gate - pushes the
+     * requirement with {@link #pushTimestampRequiredFlag(boolean, boolean)} and
+     * {@code ascOrderRequired = false}, so the projection models between it and the base hand the base
+     * through instead of refusing on its behalf.
+     * <p>
+     * Always false when {@link #isTimestampRequired()} is false.
+     */
+    default boolean isTimestampAscOrderRequired() {
+        return isTimestampRequired();
+    }
+
     boolean isTimestampRequired();
 
     default boolean isUninterruptible() {
@@ -348,6 +363,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void pushIntervalModel(RuntimeIntrinsicIntervalModel intervalModel);
 
     void pushTimestampRequiredFlag(boolean flag);
+
+    /**
+     * Pushes a designated-timestamp requirement that also says whether the consumer needs the base to
+     * already scan ascending. Pass {@code ascOrderRequired = false} when the consumer obtains that
+     * order itself; see {@link #isTimestampAscOrderRequired()}.
+     */
+    default void pushTimestampRequiredFlag(boolean flag, boolean ascOrderRequired) {
+        pushTimestampRequiredFlag(flag);
+    }
 
     void reset();
 

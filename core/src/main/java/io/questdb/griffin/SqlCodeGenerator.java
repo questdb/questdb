@@ -1643,6 +1643,45 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
+     * The scan direction the window functions of {@code windowExpr} will actually read rows in, which is
+     * what {@link io.questdb.griffin.engine.window.WindowContext#isOrderedByDesignatedTimestamp()} is asking
+     * about. Two different orders meet here and must not be conflated:
+     * <ul>
+     *     <li>when the window's own ORDER BY was dismissed, the base already delivers that order, so the
+     *     base's own claim is the answer;</li>
+     *     <li>otherwise the cached window path sorts the rows into the window's ORDER BY before any function
+     *     sees them (see the {@code osz > 0 && !dismissOrder} branch that groups functions by their order
+     *     indices), so the functions read that order no matter what the base claimed.</li>
+     * </ul>
+     * Reporting SCAN_DIRECTION_OTHER for the second case is what made a RANGE frame refuse over a base that
+     * stopped claiming FORWARD, while the ROWS frame of the same query over the same base kept working - the
+     * sort was there in both cases.
+     * <p>
+     * ASC only. There is deliberately no BACKWARD claim for a DESC window order: descending designated
+     * timestamp order is not expressible here, and
+     * {@code WindowFunctionTest.testFrameFunctionOverRangeIsOnlySupportedOverDesignatedTimestamp} pins that
+     * {@code over (order by ts desc range ...)} keeps refusing.
+     */
+    private static int effectiveWindowScanDirection(
+            RecordCursorFactory base,
+            RecordMetadata baseMetadata,
+            WindowExpression windowExpr,
+            boolean dismissOrder
+    ) {
+        if (dismissOrder) {
+            return base.getScanDirection();
+        }
+        final int timestampIndex = baseMetadata.getTimestampIndex();
+        if (timestampIndex != -1
+                && windowExpr.getOrderBy().size() == 1
+                && windowExpr.getOrderByDirection().getQuick(0) == ORDER_ASC
+                && SqlUtil.getColumnIndexQuiet(baseMetadata, windowExpr.getOrderBy().getQuick(0).token) == timestampIndex) {
+            return RecordCursorFactory.SCAN_DIRECTION_FORWARD;
+        }
+        return RecordCursorFactory.SCAN_DIRECTION_OTHER;
+    }
+
+    /**
      * Finds the HorizonJoinContext from the synthetic offset model that precedes the HORIZON JOIN model.
      * The synthetic offset model is identified by having no table name and a non-null HorizonJoinContext alias.
      *
@@ -8809,6 +8848,72 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    /**
+     * Sorts {@code base} by its designated timestamp, ascending, for a consumer that needs that order and
+     * has no ordered plan to select instead. The result reports SCAN_DIRECTION_FORWARD honestly: the sort
+     * factories derive their direction from the sign of the first sort key, and the metadata copy keeps the
+     * designated timestamp, so {@link #isBaseTimestampAscending} is satisfied rather than merely believed.
+     * <p>
+     * This is the fallback, not the repair of first resort. The sort is over the base's full cardinality and
+     * no sort factory in engine/orderby/ spills to disk - they are bounded by cairo.sql.sort.key.max.bytes
+     * and throw from MemoryPages on overflow - so wherever an ordered plan can be selected instead, it must
+     * be, by restating the ordering requirement before the base is generated
+     * (SqlOptimiser.restateTimestampOrderForOrderSensitiveBase). Reaching here means no such plan exists,
+     * which for an aggregating base is the normal case and costs a sort over the aggregate, not the input.
+     * <p>
+     * The caller must null its own reference to {@code base} before calling: the sort constructors free
+     * {@code base} from their own catch, so an enclosing {@code catch { Misc.free(factory); }} would
+     * double-free.
+     */
+    private RecordCursorFactory sortByDesignatedTimestamp(RecordCursorFactory base, int timestampIndex) throws SqlException {
+        // Ownership mirrors generateOrderBy: SortedLightRecordCursorFactory and SortedRecordCursorFactory
+        // free their base from their own catch, so `owned` is released before entering them; the encoded
+        // variants do not, so it is still held when they are entered and the catch below covers them.
+        RecordCursorFactory owned = base;
+        try {
+            final RecordMetadata metadata = base.getMetadata();
+            final GenericRecordMetadata orderedMetadata = GenericRecordMetadata.copyOf(metadata);
+            orderedMetadata.setTimestampIndex(timestampIndex);
+            listColumnFilterA.clear();
+            // the sign carries the direction and 0 cannot carry one, hence the +1
+            listColumnFilterA.add(timestampIndex + 1);
+            final boolean isEncodedSortSupported = configuration.isSqlOrderBySortEnabled()
+                    && SortKeyEncoder.isSupported(metadata, listColumnFilterA);
+            if (base.recordCursorSupportsRandomAccess()) {
+                if (isEncodedSortSupported) {
+                    return new EncodedSortLightRecordCursorFactory(
+                            configuration,
+                            orderedMetadata,
+                            base,
+                            listColumnFilterA.copy()
+                    );
+                }
+                final RecordComparator comparator = recordComparatorCompiler.newInstance(metadata, listColumnFilterA);
+                final ListColumnFilter filter = listColumnFilterA.copy();
+                owned = null;
+                return new SortedLightRecordCursorFactory(configuration, orderedMetadata, base, comparator, filter);
+            }
+            entityColumnFilter.of(orderedMetadata.getColumnCount());
+            if (isEncodedSortSupported) {
+                return new EncodedSortRecordCursorFactory(
+                        configuration,
+                        orderedMetadata,
+                        base,
+                        RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter),
+                        listColumnFilterA.copy()
+                );
+            }
+            final RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter);
+            final RecordComparator comparator = recordComparatorCompiler.newInstance(metadata, listColumnFilterA);
+            final ListColumnFilter filter = listColumnFilterA.copy();
+            owned = null;
+            return new SortedRecordCursorFactory(configuration, orderedMetadata, base, sink, comparator, filter);
+        } catch (Throwable th) {
+            Misc.free(owned);
+            throw th;
+        }
+    }
+
     private RecordCursorFactory generateQuery(IQueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
         final RecordCursorFactory factory = generateQuery0(model, executionContext, processJoins);
         if (model.getUnionModel() != null) {
@@ -8942,7 +9047,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // We require timestamp with asc order.
             final int timestampIndex;
             // Require timestamp in sub-query when it's not additionally specified as timestamp(col).
-            executionContext.pushTimestampRequiredFlag(model.getTimestamp() == null);
+            // The order is required too, but this generator obtains it rather than depending on it - the
+            // optimiser has already restated it as an ORDER BY the planner can answer with a merge, and
+            // the gate below sorts whatever is left. So the requirement travels with ascOrderRequired =
+            // false: the projection models between here and the base must keep the timestamp column, but
+            // must not refuse on this generator's behalf at generateSelectChoose's copy of this gate.
+            // That copy runs first, and refusing there skips both tiers - which is what made one
+            // redundant pair of parentheses, an alias, a select *, a WHERE, a LIMIT or a VIEW over the
+            // same base throw "ASC order over TIMESTAMP column is required but not provided".
+            executionContext.pushTimestampRequiredFlag(model.getTimestamp() == null, false);
             try {
                 factory = generateSubQuery(model, executionContext);
                 timestampIndex = getTimestampIndex(model, factory);
@@ -8950,7 +9063,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     throw SqlException.$(model.getModelPosition(), "base query does not provide designated TIMESTAMP column");
                 }
                 if (factory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
-                    throw SqlException.$(model.getModelPosition(), "base query does not provide ASC order over designated TIMESTAMP column");
+                    // A base that claims BACKWARD keeps refusing. Its rows are ordered, just the other way
+                    // round, and putting them the right way round is a reversal rather than a sort - work
+                    // the base has just done, undone at full cardinality. It is also the only case where
+                    // the order is visible in the query text (an explicit ORDER BY ts DESC, or a LATEST ON
+                    // over one), so sorting it would quietly make a written DESC stop meaning anything.
+                    // SCAN_DIRECTION_OTHER is the opposite case: no claim at all, so there is nothing to
+                    // contradict and a sort is the only way to get the order this generator needs.
+                    if (factory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER) {
+                        throw SqlException.$(model.getModelPosition(), "base query does not provide ASC order over designated TIMESTAMP column");
+                    }
+                    final RecordCursorFactory unordered = factory;
+                    factory = null;
+                    factory = sortByDesignatedTimestamp(unordered, timestampIndex);
                 }
             } catch (Throwable e) {
                 Misc.free(factory);
@@ -9713,7 +9838,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (timestampIndex == -1) {
                     throw SqlException.$(model.getModelPosition(), "TIMESTAMP column is required but not provided");
                 }
-                if (factory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
+                // Only refuse on the direction for a consumer that cannot obtain the order itself - a
+                // time-series join, which has no plan to fall back to and whose remedy is to write the
+                // ORDER BY inside the sub-query. An order-sensitive SAMPLE BY does have one and asks for
+                // the column without the order (isTimestampAscOrderRequired() is false); refusing here
+                // would pre-empt both of its tiers, and does so one projection model earlier than its own
+                // gate, so a query that merges as `... from (U) timestamp(ts) sample by ...` would throw
+                // as `... from ((U) timestamp(ts)) sample by ...`.
+                if (executionContext.isTimestampAscOrderRequired()
+                        && factory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
                     throw SqlException.$(model.getModelPosition(), "ASC order over TIMESTAMP column is required but not provided");
                 }
             }
@@ -10194,6 +10327,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             final int timestampIndex = getTimestampIndex(model, factory);
+
+            // twap() and sparkline() integrate across adjacent rows, so they need the base ascending by the
+            // designated timestamp and refuse otherwise (GroupByUtils, via isBaseTimestampAscending below).
+            // A base that makes no ordering claim at all can be repaired here by sorting; a base that claims
+            // BACKWARD cannot, for the same reason as at the SAMPLE BY gate - that would be reversing an
+            // ordered stream, and the order is written in the query text - so it keeps refusing.
+            //
+            // Scoped to queries that actually call such an aggregate. Sorting every group-by over an
+            // unordered base would insert a full-cardinality, non-spilling materialisation into a far wider
+            // surface than the two functions that need it. Where an ordered plan exists instead of a sort,
+            // SqlOptimiser.restateTimestampOrderForOrderSensitiveBase has already selected it and this base
+            // arrives claiming FORWARD.
+            if (timestampIndex != -1
+                    && factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_OTHER
+                    && SqlOptimiser.hasAscendingTimestampGroupByFunc(
+                    sqlNodeStack,
+                    functionParser.getFunctionFactoryCache(),
+                    model.getColumns()
+            )) {
+                final RecordCursorFactory unordered = factory;
+                factory = null;
+                factory = sortByDesignatedTimestamp(unordered, timestampIndex);
+                baseMetadata = factory.getMetadata();
+            }
 
             keyTypes.clear();
             valueTypes.clear();
@@ -10935,7 +11092,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             partitionBySink,
                             keyTypes,
                             osz > 0,
-                            dismissOrder ? base.getScanDirection() : RecordCursorFactory.SCAN_DIRECTION_OTHER,
+                            effectiveWindowScanDirection(base, baseMetadata, ac, dismissOrder),
                             orderByPos,
                             base.recordCursorSupportsRandomAccess(),
                             ac.getFramingMode(),
@@ -11322,7 +11479,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             partitionBySink,
                             keyTypes,
                             osz > 0,
-                            dismissOrder ? base.getScanDirection() : RecordCursorFactory.SCAN_DIRECTION_OTHER,
+                            effectiveWindowScanDirection(base, baseMetadata, ac, dismissOrder),
                             orderByPos,
                             base.recordCursorSupportsRandomAccess(),
                             ac.getFramingMode(),
@@ -14305,6 +14462,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         @Override
         public RecordMetadata getMetadata() {
             return null;
+        }
+
+        @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
         }
 
         @Override
