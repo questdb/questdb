@@ -68,6 +68,7 @@ public final class HashJoinGroupByCandidate {
     private final ExpressionNode buildOnFilter;
     private final IntList columnSources;
     private final LowerCaseCharSequenceIntHashMap[] inputColumns;
+    private final boolean isInputSwapped;
     private final boolean isSymbolKey;
     private final IQueryModel joinModel;
     private final int logicalJoinType;
@@ -80,7 +81,7 @@ public final class HashJoinGroupByCandidate {
     private final RecordMetadata resolvedMetadata;
     private final ObjList<ExpressionNode> resolvedPostJoinFilters;
 
-    private HashJoinGroupByCandidate(Analyzer analyzer, int probeKeyColumn, int buildKeyColumn, boolean isSymbolKey) {
+    private HashJoinGroupByCandidate(Analyzer analyzer, int probeKeyColumn, int buildKeyColumn, boolean isSymbolKey, boolean isInputSwapped) {
         this.probeBaseMetadata = GenericRecordMetadata.copyOf(analyzer.sources[1 - analyzer.buildIndex]);
         this.postJoinFilterSources = analyzer.postJoinFilterSources;
         this.inputColumns = analyzer.inputColumns;
@@ -93,6 +94,7 @@ public final class HashJoinGroupByCandidate {
         this.buildIndex = analyzer.buildIndex;
         this.buildKeyColumn = buildKeyColumn;
         this.isSymbolKey = isSymbolKey;
+        this.isInputSwapped = isInputSwapped;
         this.buildOnFilter = analyzer.buildOnFilter;
         this.joinModel = analyzer.join;
         this.logicalJoinType = analyzer.joinType;
@@ -135,8 +137,9 @@ public final class HashJoinGroupByCandidate {
         return requiredBuildColumns;
     }
 
+    /** True when the build is the first input in join order: every RIGHT join, and an INNER join whose first table is smaller. */
     public boolean isInputSwapped() {
-        return logicalJoinType == IQueryModel.JOIN_RIGHT_OUTER;
+        return isInputSwapped;
     }
 
     /** Both key columns are SYMBOL; otherwise both are INT. */
@@ -261,8 +264,8 @@ public final class HashJoinGroupByCandidate {
                 TableReader leftReader = executionContext.getReader(executionContext.getTableToken(left.getTableName()), left.getMetadataVersion());
                 TableReader rightReader = executionContext.getReader(executionContext.getTableToken(right.getTableName()), right.getMetadataVersion())
         ) {
-            Analyzer analyzer = new Analyzer(join, joinType,
-                    joinType == IQueryModel.JOIN_RIGHT_OUTER ? order.getQuick(0) : order.getQuick(1),
+            final int buildIndex = selectBuildIndex(joinType, order, leftReader.size(), rightReader.size());
+            Analyzer analyzer = new Analyzer(join, joinType, buildIndex,
                     leftReader.getMetadata(), rightReader.getMetadata(), parser, executionContext);
             int a = analyzer.resolveInput(keys.aIndexes.getQuick(0), keys.aNames.getQuick(0), 0);
             int b = analyzer.resolveInput(keys.bIndexes.getQuick(0), keys.bNames.getQuick(0), 0);
@@ -311,7 +314,7 @@ public final class HashJoinGroupByCandidate {
             int buildKey = keys.aIndexes.getQuick(0) == analyzer.buildIndex ? a : b;
             int probeKey = buildKey == a ? b : a;
             return new HashJoinGroupByCandidate(analyzer, analyzer.columnIndexes.getQuick(probeKey),
-                    analyzer.columnIndexes.getQuick(buildKey), keyType == ColumnType.SYMBOL);
+                    analyzer.columnIndexes.getQuick(buildKey), keyType == ColumnType.SYMBOL, buildIndex == order.getQuick(0));
         } catch (SqlException e) {
             // The ordinary plan reports errors in its own compile order, and only its interval extraction
             // and generateFilter() compile optimiser-internal nodes such as and_offset. A failed
@@ -417,6 +420,24 @@ public final class HashJoinGroupByCandidate {
         return !hasBarrier(model) && (model.getSelectModelType() == IQueryModel.SELECT_MODEL_CHOOSE
                 || model.getSelectModelType() == IQueryModel.SELECT_MODEL_VIRTUAL
                 || model.getSelectModelType() == IQueryModel.SELECT_MODEL_NONE);
+    }
+
+    /**
+     * The probe preserves its unmatched rows, so an outer join fixes the build: the table after
+     * the join for LEFT, the one before it for RIGHT. An INNER join builds the table with fewer
+     * rows and keeps the join order on a tie. Row counts ignore filters and bind values on
+     * purpose: one cached factory serves every bind value, and the unfiltered count bounds the
+     * build at min(|left|, |right|) rows whatever the filters select.
+     */
+    private static int selectBuildIndex(int joinType, IntList order, long leftSize, long rightSize) {
+        final int first = order.getQuick(0);
+        final int second = order.getQuick(1);
+        return switch (joinType) {
+            case IQueryModel.JOIN_RIGHT_OUTER -> first;
+            case IQueryModel.JOIN_LEFT_OUTER -> second;
+            // The readers follow model indexes: leftSize is model 0, rightSize is model 1.
+            default -> (first == 0 ? leftSize : rightSize) < (second == 0 ? leftSize : rightSize) ? first : second;
+        };
     }
 
     private ExpressionNode remapProbeFilter(ExpressionNode node) {

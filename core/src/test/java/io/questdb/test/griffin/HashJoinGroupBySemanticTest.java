@@ -124,6 +124,49 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInnerJoinOrientationsAgree() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables(false);
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                context.changePageFrameSizes(1, 2);
+                // a and b start with 8 rows each. Step 1 makes b the larger table, step 2 makes a the larger one.
+                for (int step = 0; step < 3; step++) {
+                    if (step == 1) {
+                        insertRows("b", true);
+                    } else if (step == 2) {
+                        insertRows("a", false);
+                        insertRows("a", false);
+                    }
+                    for (String on : KEYS) {
+                        for (boolean isKeyed : new boolean[]{false, true}) {
+                            String select = isKeyed
+                                    ? "SELECT r.s, p.s2, count(*) pairs, sum(r.d) rsum, sum(p.d) psum, count(p.i) pi"
+                                    : "SELECT count(*) pairs, sum(r.d) rsum, avg(p.d) pavg, count(r.l) rl";
+                            String orderBy = isKeyed ? " ORDER BY r.s, p.s2" : "";
+                            String rp = select + " FROM " + PROJECTED_R + " JOIN " + PROJECTED_P + " ON " + on + orderBy;
+                            String pr = select + " FROM " + PROJECTED_P + " JOIN " + PROJECTED_R + " ON " + on + orderBy;
+                            assertDifferential(rp, context, true);
+                            assertDifferential(pr, context, true);
+                            try (
+                                    RecordCursorFactory rpFactory = engine.select(rp, context);
+                                    RecordCursorFactory prFactory = engine.select(pr, context)
+                            ) {
+                                // INNER builds the smaller table and keeps the join order on a tie,
+                                // so r JOIN p swaps only when a is smaller and p JOIN r only when b is.
+                                String rpPlan = plan(rpFactory, context);
+                                String prPlan = plan(prFactory, context);
+                                Assert.assertTrue(rpPlan, rpPlan.contains("inputSwapped: " + (step == 1)));
+                                Assert.assertTrue(prPlan, prPlan.contains("inputSwapped: " + (step == 2)));
+                                Assert.assertEquals(rp, result(rpFactory, context), result(prFactory, context));
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSymbolRolesAcrossAllStoragePairs() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 2);

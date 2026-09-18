@@ -182,6 +182,21 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                 Assert.assertEquals(0, candidate.getProbeKeyColumn());
                 Assert.assertEquals(0, candidate.getBuildKeyColumn());
                 Assert.assertEquals("[1,2]", candidate.getRequiredBuildColumns().toString());
+                // An INNER join builds the smaller table: r is empty and p has one row, so r builds
+                // in either order and the payload holds only r's column.
+                execute("INSERT INTO p VALUES (1, 'ES', 5, 1, 'a')");
+                for (String join : new String[]{"r join p", "p join r"}) {
+                    candidate = candidate(compiler, "select p.country, sum(r.energy_kwh) from " + join + " on r.plant_id=p.plant_id");
+                    Assert.assertNotNull(join, candidate);
+                    Assert.assertEquals(join, join.equals("r join p"), candidate.isInputSwapped());
+                    Assert.assertEquals(IQueryModel.JOIN_INNER, candidate.getLogicalJoinType());
+                    Assert.assertEquals(IQueryModel.JOIN_INNER, candidate.getPhysicalJoinType());
+                    Assert.assertEquals("p", candidate.getProbeModel().getTableName().toString());
+                    Assert.assertEquals("r", candidate.getBuildModel().getTableName().toString());
+                    Assert.assertEquals(0, candidate.getProbeKeyColumn());
+                    Assert.assertEquals(0, candidate.getBuildKeyColumn());
+                    Assert.assertEquals("[2]", candidate.getRequiredBuildColumns().toString());
+                }
             }
         });
     }

@@ -121,6 +121,88 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInnerJoinBuildsSmallerTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // Equal sizes keep the join order: the second table builds.
+                assertBuild("r join p", "p", false, 5, context);
+                assertBuild("p join r", "r", false, 5, context);
+                execute("INSERT INTO p VALUES (3, 'FR', 13), (4, 'DE', 17)");
+                // p has 7 rows and r has 5. INNER builds r in either order, and the outer joins
+                // keep building the table that does not preserve its rows, whatever its size.
+                assertBuild("r join p", "r", true, 5, context);
+                assertBuild("p join r", "r", false, 5, context);
+                assertBuild("r left join p", "p", false, 7, context);
+                assertBuild("p right join r", "p", true, 7, context);
+                assertBuild("p left join r", "r", false, 5, context);
+                assertBuild("r right join p", "r", true, 5, context);
+                execute("INSERT INTO r VALUES (4, '2021-02-01', 60, 600), (5, '2021-03-01', 70, 700), (NULL, '2021-04-01', 80, NULL)");
+                // r has 8 rows and p has 7. INNER builds p in either order.
+                assertBuild("r join p", "p", false, 7, context);
+                assertBuild("p join r", "p", true, 7, context);
+                assertBuild("p left join r", "r", false, 8, context);
+                assertBuild("r right join p", "r", true, 8, context);
+                assertQuery("SELECT count(*) pairs, sum(r.energy_kwh) energy, sum(p.installed_kwp) capacity"
+                        + " FROM p JOIN r ON r.plant_id = p.plant_id")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlan("""
+                                Async Hash Join Group By workers: 4
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: true
+                                  condition: r.plant_id=p.plant_id
+                                  buildStrategy: shared
+                                  aggregation: scalar
+                                  values: [count(*),sum(r.energy_kwh),sum(p.installed_kwp)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: r
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: p
+                                """)
+                        .returns("""
+                                pairs\tenergy\tcapacity
+                                11\t350.0\t76.0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testInnerJoinOrientationDecidesEligibility() throws Exception {
+        assertMemoryLeak(() -> {
+            // A predicate on the indexed r.s turns the scan of r into an index scan, which
+            // exposes no page frames: r qualifies as the build, never as the probe.
+            execute("CREATE TABLE r (id INT, d DOUBLE, s SYMBOL INDEX, t TIMESTAMP) TIMESTAMP(t) PARTITION BY DAY");
+            execute("CREATE TABLE p (id INT, d DOUBLE, s SYMBOL, t TIMESTAMP) TIMESTAMP(t) PARTITION BY DAY");
+            execute("INSERT INTO r VALUES (1, 1, 'a', '2020-01-01'), (2, 2, 'b', '2020-01-02')");
+            execute("INSERT INTO p VALUES (1, 4, 'a', '2020-01-01'), (2, 8, 'b', '2020-01-02'), (1, 16, 'a', '2020-01-03')");
+            String select = "SELECT sum(r.d) rd, sum(p.d) pd, count(*) n";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // r is the smaller table, so INNER builds it in either order and the index scan qualifies.
+                assertDifferential(select + " FROM r JOIN p ON r.id = p.id WHERE r.s = 'a'", context, true);
+                assertDifferential(select + " FROM p JOIN r ON r.id = p.id WHERE r.s = 'a'", context, true);
+                // LEFT preserves r, so r is the probe and the query keeps the ordinary plan.
+                assertDifferential(select + " FROM r LEFT JOIN p ON r.id = p.id WHERE r.s = 'a'", context, false);
+                execute("INSERT INTO r VALUES (1, 32, 'a', '2020-01-04'), (3, 64, 'c', '2020-01-05')");
+                // r is the larger table now, so INNER probes it in either order, and the order
+                // that used to build r keeps the ordinary plan as well.
+                assertDifferential(select + " FROM r JOIN p ON r.id = p.id WHERE r.s = 'a'", context, false);
+                assertDifferential(select + " FROM p JOIN r ON r.id = p.id WHERE r.s = 'a'", context, false);
+                // RIGHT builds r whatever the sizes.
+                assertDifferential(select + " FROM r RIGHT JOIN p ON r.id = p.id", context, true);
+            }
+        });
+    }
+
+    @Test
     public void testProjectionsAndAliases() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -170,7 +252,8 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     try (RecordCursorFactory factory = engine.select(sql, context)) {
                         String plan = plan(factory, context);
                         Assert.assertTrue(plan, plan.contains("symbolKeyJoin: true"));
-                        Assert.assertTrue(plan, plan.contains("inputSwapped: " + (j == 2)));
+                        // p has one row more than r, so the INNER join builds r, as RIGHT does.
+                        Assert.assertTrue(plan, plan.contains("inputSwapped: " + (j != 1)));
                     }
                     // Mixed text keys keep the ordinary plan, which converts the keys itself.
                     for (String column : new String[]{"plant_str", "plant_vc"}) {
@@ -406,6 +489,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     public void testLargerBuildStillSelectsShared() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            // INNER builds the smaller r; LEFT and RIGHT keep building the larger p.
             execute("insert into p select x::int, 'ES', 2.0 from long_sequence(100003)");
             try (SqlExecutionContextImpl context = enabledContext()) {
                 for (String join : JOINS) {
@@ -504,6 +588,34 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    // Checks keyed and scalar results against the ordinary plan, the build input in EXPLAIN, and the build's row count.
+    private void assertBuild(String join, String buildTable, boolean isInputSwapped, long buildRows, SqlExecutionContextImpl context) throws Exception {
+        String from = " from " + join + " on r.plant_id=p.plant_id";
+        assertDifferential(SELECT + from + " order by country, yr, mo", context, true);
+        assertDifferential(SCALAR_SELECT + from, context, true);
+        try (RecordCursorFactory factory = engine.select(SCALAR_SELECT + from, context)) {
+            TextPlanSink sink = new TextPlanSink();
+            sink.of(factory, context);
+            StringSink lines = new StringSink();
+            // Lines are numbered from 1.
+            for (int i = 1; i <= sink.getLineCount(); i++) {
+                lines.put(sink.getLine(i)).put('\n');
+            }
+            String plan = lines.toString();
+            // The Probe child precedes the Build child, and each ends with the scan of its table.
+            int probe = plan.indexOf("Probe\n");
+            int build = plan.indexOf("Build\n");
+            Assert.assertTrue(plan, plan.contains("inputSwapped: " + isInputSwapped + '\n'));
+            Assert.assertTrue(plan, probe > 0 && build > probe);
+            String probeTable = buildTable.equals("r") ? "p" : "r";
+            Assert.assertTrue(plan, plan.substring(probe, build).contains(" on: " + probeTable + '\n'));
+            Assert.assertTrue(plan, plan.substring(build).contains(" on: " + buildTable + '\n'));
+            try (RecordCursor ignored = factory.getCursor(context)) {
+                Assert.assertEquals(plan, buildRows, fused(factory).getAtom().getFrozenBuild().getRowCount());
+            }
+        }
     }
 
     private void assertDifferential(String sql, SqlExecutionContextImpl context, boolean enabled) throws Exception {

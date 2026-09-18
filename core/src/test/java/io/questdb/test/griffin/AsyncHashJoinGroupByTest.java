@@ -225,6 +225,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                             : new String[]{"", " WHERE p.installed_kwp > 6 OR p.installed_kwp IS NULL"};
                     for (String filter : filters) {
                         String sql = aggregate + join + filter;
+                        // An empty p is the smaller INNER input, so the fixture's orientation holds.
+                        execute("TRUNCATE TABLE p");
                         try (Fixture fixture = new Fixture(sql); Reducers reducers = new Reducers()) {
                             for (int execution = 0; execution < 2; execution++) {
                                 execute("TRUNCATE TABLE p");
@@ -1425,6 +1427,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             execute("drop table p");
             execute("create table p (plant_id " + keyType() + ", country symbol, installed_kwp double, ts timestamp) timestamp(ts) partition by DAY");
             execute("insert into p select " + key("x::int") + ", 'ES', 1.0, timestamp_sequence('2020-01-01', 1000000) from long_sequence(100000)");
+            // An INNER join builds the smaller table. Unmatched r rows keep p the build.
+            execute("insert into r select null, timestamp_sequence('2021-02-01', 1000000), 1.0, 1.0 from long_sequence(100_000)");
             // Force the JIT factory's interpreted fallback without an extra production hook.
             execute("alter table p add column top_col int");
             SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
@@ -2145,6 +2149,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     HashJoinGroupByCandidate candidate = SqlCodeGenerator.getHashJoinGroupByCandidate(model,
                             new FunctionParser(configuration, engine.getFunctionFactoryCache()), sqlExecutionContext);
                     Assert.assertNotNull(sql, candidate);
+                    // The fixture compiles r as the probe. An INNER join builds the smaller table,
+                    // so a test that grows p must keep r at least as large.
+                    Assert.assertEquals(sql, "r", String.valueOf(candidate.getProbeModel().getName()));
                     try (HashJoinGroupByMetadata metadata = new HashJoinGroupByMetadata(configuration, candidate,
                             probeFactory.getMetadata(), probeColumns, buildFactory.getMetadata(), buildColumns)) {
                         functions = generator.compileHashJoinGroupByFunctions(model, metadata, WORKERS, sqlExecutionContext);
