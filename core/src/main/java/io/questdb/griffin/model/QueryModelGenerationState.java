@@ -93,7 +93,9 @@ public final class QueryModelGenerationState implements Mutable {
         }
     }
 
-    /** Returns whether the caller must close a newly prepared scope. */
+    /**
+     * Returns whether the caller must close a newly prepared scope.
+     */
     public boolean enterRegion(IQueryModel root, ObjectPool<ExpressionNode> pool) {
         root = unwrap(root);
         if (!isReady || !selections.containsKey(root) || active.containsKey(root)
