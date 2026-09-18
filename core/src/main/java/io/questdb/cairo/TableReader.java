@@ -102,6 +102,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private LongList columnTops;
     private ObjList<MemoryCMR> columns;
     private boolean hasActiveColumns;
+    private boolean hasParquetPartitions;
     private ObjList<IndexReader> indexes;
     private int openPartitionCount;
     private LongList openPartitionInfo;
@@ -419,6 +420,23 @@ public class TableReader implements Closeable, SymbolTableSource {
         final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
         final long partitionTxn = txFile.getPartitionNameTxn(partitionIndex);
         IndexReader indexReader = getIndexReaderIfExists(partitionIndex, columnIndex, direction);
+        if (indexReader != null && isStandInNullReader(indexReader) != (columns.getQuick(index) instanceof NullMemoryCMR)) {
+            // The partition gained the column since this reader was cached (an O3 insert
+            // rewrites a partition that predated it), or lost it again. The two reader
+            // kinds are not interchangeable and of() cannot turn one into the other: a
+            // stand-in null reader would keep answering the NULL key with EVERY row of a
+            // partition that now holds real values, and a real reader would open an index
+            // file the writer never created. Drop it and build the right one.
+            // Only the gaining direction has a known producer -- an in-place O3 grow keeps
+            // the partition open across the reload. Every operation that takes the column
+            // away from a partition (DETACH plus ATTACH of a directory without it, a
+            // partition rewrite) changes the partition name txn, and the reload closes the
+            // partition, which drops this cache with it. The losing half is kept for
+            // symmetry: it costs one comparison and the wrong reader here is silent.
+            final int indexSlot = direction == IndexReader.DIR_BACKWARD ? index : index + 1;
+            Misc.free(indexes.getAndSetQuick(indexSlot, null));
+            indexReader = null;
+        }
         if (indexReader != null) {
             // Single choke point for refreshing the scoreboard pin on cached
             // readers. TableReader.txn advances through several paths
@@ -739,12 +757,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public boolean hasParquetPartitions() {
-        for (int i = 0; i < partitionCount; i++) {
-            if (txFile.isPartitionParquet(i)) {
-                return true;
-            }
-        }
-        return false;
+        return hasParquetPartitions;
     }
 
     public boolean isActive() {
@@ -1158,6 +1171,16 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+    /**
+     * Whether {@code reader} is one of the stand-in readers {@link #createIndexReaderAt}
+     * installs for a partition that does not contain the indexed column at all. They
+     * answer the NULL key with every row of the partition and hold no files, so they are
+     * valid only while the column really is absent there.
+     */
+    private static boolean isStandInNullReader(IndexReader reader) {
+        return reader instanceof IndexFwdNullReader || reader instanceof IndexBwdNullReader;
+    }
+
     private IndexReader createIndexReaderAt(int globalIndex, int columnBase, int columnIndex, long columnNameTxn, int direction, long partitionTxn) {
         IndexReader reader;
         if (!metadata.isColumnIndexed(columnIndex)) {
@@ -1418,12 +1441,14 @@ public class TableReader implements Closeable, SymbolTableSource {
     private @NotNull LongList initOpenPartitionInfo() {
         final LongList openPartitionInfo = new LongList(partitionCount * PARTITIONS_SLOT_SIZE);
         openPartitionInfo.setPos(partitionCount * PARTITIONS_SLOT_SIZE);
+        hasParquetPartitions = false;
         for (int i = 0; i < partitionCount; i++) {
             // ts, number of rows, txn, column version for each partition
             // it is compared to attachedPartitions within the txn file to determine if a partition needs to be reloaded or not
             final int baseOffset = i * PARTITIONS_SLOT_SIZE;
             final long partitionTimestamp = txFile.getPartitionTimestampByIndex(i);
             final boolean isParquet = txFile.isPartitionParquet(i);
+            hasParquetPartitions |= isParquet;
             openPartitionInfo.setQuick(baseOffset, partitionTimestamp);
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_SIZE, -1); // -1 means it is not open
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txFile.getPartitionNameTxn(i));
@@ -1851,6 +1876,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
                 for (; partitionIndex < txPartitionCount; partitionIndex++) {
                     insertPartition(partitionIndex, txFile.getPartitionTimestampByIndex(partitionIndex));
+                    hasParquetPartitions |= txFile.isPartitionParquet(partitionIndex);
                 }
                 reloadSymbolMapCounts();
             }
@@ -1864,6 +1890,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         int txPartitionCount = txFile.getPartitionCount();
         int txPartitionIndex = partitionIndex;
         boolean changed = false;
+        boolean hasParquetPartitions = false;
         while (partitionIndex < partitionCount && txPartitionIndex < txPartitionCount) {
             final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
             final long txPartTs = txFile.getPartitionTimestampByIndex(txPartitionIndex);
@@ -1876,11 +1903,13 @@ public class TableReader implements Closeable, SymbolTableSource {
             } else if (openPartitionTimestamp > txPartTs) {
                 // Insert partition
                 insertPartition(partitionIndex, txPartTs);
+                hasParquetPartitions |= txFile.isPartitionParquet(txPartitionIndex);
                 changed = true;
                 txPartitionIndex++;
                 partitionIndex++;
             } else {
                 // Refresh partition
+                hasParquetPartitions |= txFile.isPartitionParquet(txPartitionIndex);
                 final long txPartitionSize = txFile.getPartitionSize(txPartitionIndex);
                 final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
                 final long openPartitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
@@ -1938,8 +1967,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         // inserts new partitions at the end
         for (; partitionIndex < txPartitionCount; partitionIndex++) {
             insertPartition(partitionIndex, txFile.getPartitionTimestampByIndex(partitionIndex));
+            hasParquetPartitions |= txFile.isPartitionParquet(partitionIndex);
             changed = true;
         }
+
+        this.hasParquetPartitions = hasParquetPartitions;
 
         if (forceTruncate) {
             reloadAllSymbols();

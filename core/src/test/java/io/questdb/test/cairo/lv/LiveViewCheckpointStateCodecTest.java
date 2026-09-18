@@ -50,6 +50,38 @@ public class LiveViewCheckpointStateCodecTest extends AbstractCairoTest {
     private static final int SINK_PAGE_SIZE = 1024 * 1024;
 
     @Test
+    public void testAllMaxValueStridesKeepTheirBase() throws Exception {
+        assertMemoryLeak(() -> {
+            // A LONG value ring carries raw column payloads, so a frame whose rows
+            // all hold Long.MAX_VALUE hands the plain-FoR encoder a stride whose
+            // minimum equals the seed that encoder starts its scan from. The block
+            // must store that minimum as its base rather than reset it: the page is
+            // its 13-byte header alone, and every row has to decode back to
+            // Long.MAX_VALUE instead of 0.
+            final long[] allMax = new long[64];
+            Arrays.fill(allMax, Long.MAX_VALUE);
+            assertLongSelection(allMax, LiveViewCheckpointStateCodec.COVERING_LONG,
+                    CoveringCompressor.LONG_HEADER_SIZE);
+
+            // Two rows are the smallest page the covering block wins, and the
+            // smallest one that can carry the clobbered base.
+            assertLongSelection(new long[]{Long.MAX_VALUE, Long.MAX_VALUE},
+                    LiveViewCheckpointStateCodec.COVERING_LONG, CoveringCompressor.LONG_HEADER_SIZE);
+
+            // One row cannot pay for the header, so raw wins and the covering
+            // encoder's output never reaches the page at all.
+            assertLongSelection(new long[]{Long.MAX_VALUE},
+                    LiveViewCheckpointStateCodec.RAW_64, Long.BYTES);
+
+            // The same stride under the timestamp page's three-way selection. The
+            // linear candidate fits a zero stride and zero residuals, but its
+            // 29-byte header cannot beat the plain block's 13.
+            assertTimestampSelection(allMax, LiveViewCheckpointStateCodec.COVERING_LONG,
+                    CoveringCompressor.LONG_HEADER_SIZE);
+        });
+    }
+
+    @Test
     public void testCorruptCoveringDoublePagesAreRejected() throws Exception {
         assertMemoryLeak(() -> {
             final long[] values = new long[256];
@@ -137,10 +169,14 @@ public class LiveViewCheckpointStateCodecTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // ALP stores whatever it cannot transform bit-exactly as an exception,
             // so a NaN payload, an infinity and a signed zero must come back
-            // verbatim whichever codec the page ends up under.
+            // verbatim whichever codec the page ends up under. Long.MAX_VALUE is
+            // in the list because it is the encoder's own "not encodable" marker:
+            // read as a double it is a NaN, so it leaves through the exception
+            // list and never reaches the block's FoR base.
             final long[] bits = {
                     0L,
                     Long.MIN_VALUE,
+                    Long.MAX_VALUE,
                     1L,
                     Long.MIN_VALUE | 1L,
                     0x000f_ffff_ffff_ffffL,

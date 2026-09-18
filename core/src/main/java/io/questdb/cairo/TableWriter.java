@@ -185,7 +185,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final long TIMESTAMP_EPOCH = 0L;
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     private static final long IGNORE = -1L;
-    private static final Log LOG = LogFactory.getLog(TableWriter.class);
+    // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(TableWriter.class);
     /*
         The most recent logical partition is allowed to have up to cairo.o3.last.partition.max.splits (20 by default) splits.
         Any other partition is allowed to have cairo.o3.mid.partition.max.splits (1 by default) splits.
@@ -15231,14 +15233,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         rollback();
         checkNoPartitionWithDelta("truncate table");
 
+        boolean hasNonEmptySymbolTables = false;
         if (!keepSymbolTables) {
             // we do this before size check so that "old" corrupt symbol tables are brought back in line
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
-                denseSymbolMapWriters.getQuick(i).truncate();
+                MapWriter symbolMapWriter = denseSymbolMapWriters.getQuick(i);
+                hasNonEmptySymbolTables |= symbolMapWriter.getSymbolCount() > 0;
+                symbolMapWriter.truncate();
             }
         }
 
         if (size() == 0) {
+            if (hasNonEmptySymbolTables) {
+                txWriter.resetTimestamp();
+                columnVersionWriter.truncate();
+                txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+            }
             return;
         }
 

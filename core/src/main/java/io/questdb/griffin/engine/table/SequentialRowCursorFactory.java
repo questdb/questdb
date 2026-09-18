@@ -108,6 +108,10 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
 
         @Override
         public boolean hasNext() {
+            // Guard against an empty key set (cursorFactoriesIdx[0] == 0): currentCursor is null.
+            if (currentCursor == null) {
+                return false;
+            }
             boolean hasNext = currentCursor.hasNext();
             if (hasNext) {
                 return true;

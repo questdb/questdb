@@ -27,6 +27,7 @@ package io.questdb.test.cairo.fuzz;
 import io.questdb.PropertyKey;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
@@ -291,7 +292,7 @@ public class ParallelDecimalCastTest extends AbstractCairoTest {
 
     private void assertDecimalCasting(String ddl, String sql, String expected) throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
 
             TestUtils.execute(
                     pool,

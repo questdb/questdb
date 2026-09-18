@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.DirectLongList;
@@ -79,11 +80,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private PageFrameMemory frameMemory;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId = -1;
-    private boolean isCancelled;
+    private int interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
     // Valid for TYPE_FILTER only. When set, only filteredRowCount field is initialized by the filter,
     // i.e. filteredRows can't be used.
     private boolean isCountOnly;
-    private boolean isInterrupted;
     private boolean isOutOfMemory;
     // Number of sub-frames in this run (>= 1). A native frame or an unsplit parquet row group is 1.
     private int subFrameCount;
@@ -147,8 +147,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
             default -> CairoException.critical(errno)
                     .position(errorMessagePosition)
                     .put(errorMsg)
-                    .setCancellation(isCancelled)
-                    .setInterruption(isInterrupted)
+                    .setInterruptionReason(interruptionReason)
                     .setOutOfMemory(isOutOfMemory);
         };
     }
@@ -254,7 +253,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     }
 
     public boolean isCancelled() {
-        return isCancelled;
+        return interruptionReason == SqlExecutionCircuitBreaker.STATE_CANCELLED;
     }
 
     public boolean isCountOnly() {
@@ -298,8 +297,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         errorMessagePosition = 0;
         errno = CairoException.NON_CRITICAL;
         errorKind = AsyncQueryErrorKind.KIND_NONE;
-        isCancelled = false;
-        isInterrupted = false;
+        interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
         isOutOfMemory = false;
     }
 
@@ -430,8 +428,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
         if (th instanceof CairoException ce) {
             errno = ce.getErrno();
-            isCancelled = ce.isCancellation();
-            isInterrupted = ce.isInterruption();
+            interruptionReason = ce.getInterruptionReason();
             isOutOfMemory = ce.isOutOfMemory();
         }
 

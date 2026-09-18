@@ -45,6 +45,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -79,6 +80,7 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
     private final boolean convertToParquet;
     private final boolean enableJitCompiler;
     private final boolean enableParallelTopK;
+    private final Rnd rnd = TestUtils.generateRandom(LOG);
 
     public ParallelTopKFuzzTest(boolean enableParallelTopK, boolean enableJitCompiler, boolean convertToParquet) {
         this.enableParallelTopK = enableParallelTopK;
@@ -151,8 +153,7 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
     public void testParallelTopKEncodedTypes() throws Exception {
         // assertTopKMatch sets the parallel flag per side, so the run is independent of enableParallelTopK.
         assertMemoryLeak(() -> {
-            final Rnd rnd = TestUtils.generateRandom(LOG);
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -375,7 +376,7 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
         // masked-prefix tie. The 30k rows make every worker cross the 4096 compaction trigger
         // and the collisions are spread past it so they hit the reject with the boundary set.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -543,7 +544,7 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
 
     private void testParallelTopK(BindVariablesInitializer initializer, String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {

@@ -1,5 +1,6 @@
 package io.questdb.test.lifecycle;
 
+import io.questdb.lifecycle.Component;
 import io.questdb.lifecycle.LifecycleContext;
 import io.questdb.lifecycle.LifecycleOrchestrator;
 import io.questdb.lifecycle.LifecycleSnapshot;
@@ -17,15 +18,289 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
 
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class LifecycleOrchestratorTest {
 
     @Rule
     public Timeout timeout = Timeout.builder().withTimeout(30, TimeUnit.SECONDS).withLookingForStuckThread(true).build();
+
+    @Test
+    public void testCancellationExceptionWithoutStopFailsBoot() {
+        final CancellationException cancellation = new CancellationException("unexpected cancellation");
+        final LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
+        orch.register(new ProbeComponent("a") {
+            @Override
+            public void start(LifecycleContext ctx) {
+                throw cancellation;
+            }
+        });
+        try {
+            orch.run();
+            Assert.fail("expected LifecycleStartupException");
+        } catch (LifecycleStartupException expected) {
+            Assert.assertSame(cancellation, expected.getCause());
+        } finally {
+            orch.close();
+        }
+    }
+
+    @Test
+    public void testCloseAllowsOwnerReentryFromStop() throws Exception {
+        final CountDownLatch closeReturned = new CountDownLatch(1);
+        final AtomicReference<LifecycleOrchestrator> orchRef = new AtomicReference<>();
+        final AtomicReference<Throwable> terminalError = new AtomicReference<>();
+        final LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
+        orchRef.set(orch);
+        orch.register(new ProbeComponent("a") {
+            @Override
+            public void stop() {
+                orchRef.get().close();
+                super.stop();
+            }
+        });
+        orch.run();
+
+        final Thread terminalClose = new Thread(() -> {
+            try {
+                orch.close();
+            } catch (Throwable th) {
+                terminalError.set(th);
+            } finally {
+                closeReturned.countDown();
+            }
+        });
+        terminalClose.setDaemon(true);
+        terminalClose.start();
+
+        Assert.assertTrue("close() deadlocked after owner reentry", closeReturned.await(1, TimeUnit.SECONDS));
+        terminalClose.join(TimeUnit.SECONDS.toMillis(10));
+        Assert.assertNull(terminalError.get());
+        Assert.assertTrue(orch.isStopComplete());
+    }
+
+    @Test
+    public void testCloseRetriesFailedComponentStopWhenLoggingFails() {
+        final AtomicInteger stopAttempts = new AtomicInteger();
+        final LifecycleOrchestrator orch = new LifecycleOrchestrator(new CapturingLog(true), null, null);
+        final ProbeComponent independent = new ProbeComponent("independent");
+        final ProbeComponent dependency = new ProbeComponent("a");
+        final ObjList<String> hardDeps = new ObjList<>();
+        hardDeps.add("a");
+        final ProbeComponent component = new ProbeComponent("b", hardDeps, new ObjList<>()) {
+            @Override
+            public void stop() {
+                if (stopAttempts.getAndIncrement() == 0) {
+                    throw new IllegalStateException("stop");
+                }
+                super.stop();
+            }
+        };
+        orch.register(independent);
+        orch.register(dependency);
+        orch.register(component);
+        orch.run();
+        orch.close();
+        Assert.assertFalse(orch.isStopComplete());
+        Assert.assertEquals(State.READY, orch.stateOf("a"));
+        Assert.assertEquals(State.STOPPING, orch.stateOf("b"));
+        Assert.assertEquals(-1, dependency.getStopSeq());
+        Assert.assertEquals(State.STOPPED, orch.stateOf("independent"));
+        Assert.assertTrue(independent.getStopSeq() > -1);
+        Assert.assertEquals(1, stopAttempts.get());
+        orch.close();
+        Assert.assertTrue(orch.isStopComplete());
+        Assert.assertEquals(State.STOPPED, orch.stateOf("a"));
+        Assert.assertEquals(State.STOPPED, orch.stateOf("b"));
+        Assert.assertTrue(dependency.getStopSeq() > -1);
+        Assert.assertEquals(2, stopAttempts.get());
+    }
+
+    @Test
+    public void testCloseStopsSafeComponentsAfterPreStopHookAndLoggingFailure() {
+        final AtomicInteger hookAttempts = new AtomicInteger();
+        final LifecycleOrchestrator orch = new LifecycleOrchestrator(new CapturingLog(true), null, null);
+        final ProbeComponent audit = new ProbeComponent(
+                "audit",
+                listOf("worker-pool-manager"),
+                new ObjList<>()
+        );
+        final ProbeComponent auditConsumer = new ProbeComponent(
+                "audit-consumer",
+                listOf("audit"),
+                new ObjList<>()
+        );
+        final ProbeComponent auth = new ProbeComponent("auth");
+        final ProbeComponent factory = new ProbeComponent("factory");
+        final ProbeComponent engine = new ProbeComponent("engine", listOf("factory"), new ObjList<>());
+        final ProbeComponent hydration = new ProbeComponent("hydration", listOf("engine"), new ObjList<>());
+        final ProbeComponent independent = new ProbeComponent("independent");
+        final ProbeComponent workerPoolManager = new ProbeComponent(
+                "worker-pool-manager",
+                listOf("engine"),
+                new ObjList<>()
+        );
+        final ProbeComponent listener = new ProbeComponent(
+                "listener",
+                listOf("worker-pool-manager", "auth", "audit"),
+                new ObjList<>()
+        );
+        final ProbeComponent requestHandler = new ProbeComponent(
+                "request-handler",
+                listOf("listener", "audit"),
+                new ObjList<>()
+        );
+        orch.register(auth);
+        orch.register(factory);
+        orch.register(engine);
+        orch.register(hydration);
+        orch.register(independent);
+        orch.register(workerPoolManager);
+        orch.register(listener);
+        orch.register(audit);
+        orch.register(auditConsumer);
+        orch.register(requestHandler);
+        orch.setPreStopHook(() -> {
+            if (hookAttempts.getAndIncrement() == 0) {
+                throw new IllegalStateException("worker pool halt failed");
+            }
+        });
+        orch.run();
+
+        orch.close();
+
+        Assert.assertFalse(orch.isStopComplete());
+        Assert.assertEquals(State.READY, orch.stateOf("audit"));
+        Assert.assertEquals(State.READY, orch.stateOf("audit-consumer"));
+        Assert.assertEquals(State.READY, orch.stateOf("auth"));
+        Assert.assertEquals(State.READY, orch.stateOf("factory"));
+        Assert.assertEquals(State.READY, orch.stateOf("engine"));
+        Assert.assertEquals(State.STOPPED, orch.stateOf("hydration"));
+        Assert.assertEquals(State.STOPPED, orch.stateOf("independent"));
+        Assert.assertEquals(State.READY, orch.stateOf("worker-pool-manager"));
+        Assert.assertEquals(State.READY, orch.stateOf("listener"));
+        Assert.assertEquals(State.READY, orch.stateOf("request-handler"));
+
+        orch.close();
+
+        Assert.assertEquals(2, hookAttempts.get());
+        Assert.assertTrue(orch.isStopComplete());
+        Assert.assertEquals(State.STOPPED, orch.stateOf("audit"));
+        Assert.assertEquals(State.STOPPED, orch.stateOf("audit-consumer"));
+        Assert.assertEquals(State.STOPPED, orch.stateOf("auth"));
+        Assert.assertEquals(State.STOPPED, orch.stateOf("factory"));
+        Assert.assertEquals(State.STOPPED, orch.stateOf("engine"));
+        Assert.assertEquals(State.STOPPED, orch.stateOf("worker-pool-manager"));
+        Assert.assertEquals(State.STOPPED, orch.stateOf("listener"));
+        Assert.assertEquals(State.STOPPED, orch.stateOf("request-handler"));
+    }
+
+    @Test
+    public void testCloseClaimsOwnershipBeforeStopRequest() {
+        final AtomicInteger stopRequests = new AtomicInteger();
+        final AtomicReference<LifecycleOrchestrator> orchRef = new AtomicReference<>();
+        final LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
+        orchRef.set(orch);
+        orch.register(new ProbeComponent("a") {
+            @Override
+            public void requestStop() {
+                if (stopRequests.incrementAndGet() == 1) {
+                    orchRef.get().close();
+                }
+            }
+        });
+        orch.run();
+
+        orch.close();
+        orch.close();
+
+        Assert.assertEquals(1, stopRequests.get());
+        Assert.assertTrue(orch.isStopComplete());
+    }
+
+    @Test
+    public void testCloseDispatchesTerminalComponentStop() {
+        final AtomicInteger terminalStopCount = new AtomicInteger();
+        final LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
+        orch.register(new ProbeComponent("a") {
+            @Override
+            public void stop() {
+                terminalStopCount.incrementAndGet();
+                super.stop();
+            }
+        });
+        orch.run();
+
+        orch.close();
+
+        Assert.assertEquals(1, terminalStopCount.get());
+        Assert.assertTrue(orch.isStopComplete());
+    }
+
+    @Test
+    public void testCloseDoesNotHideConcurrentStartFailure() throws Exception {
+        final CountDownLatch startEntered = new CountDownLatch(1);
+        final CountDownLatch stopRequested = new CountDownLatch(1);
+        final AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+        final AtomicReference<Throwable> runFailure = new AtomicReference<>();
+        final LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
+        orch.register(new ProbeComponent("a") {
+            @Override
+            public void requestStop() {
+                stopRequested.countDown();
+            }
+
+            @Override
+            public void start(LifecycleContext ctx) {
+                startEntered.countDown();
+                try {
+                    stopRequested.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                throw new IllegalStateException("start failed");
+            }
+        });
+        final Thread closer = new Thread(() -> {
+            try {
+                orch.close();
+            } catch (Throwable th) {
+                closeFailure.set(th);
+            }
+        });
+        final Thread runner = new Thread(() -> {
+            try {
+                orch.run();
+            } catch (Throwable th) {
+                runFailure.set(th);
+            }
+        });
+        runner.start();
+        try {
+            Assert.assertTrue(startEntered.await(10, TimeUnit.SECONDS));
+            closer.start();
+            runner.join(TimeUnit.SECONDS.toMillis(10));
+            closer.join(TimeUnit.SECONDS.toMillis(10));
+        } finally {
+            stopRequested.countDown();
+            runner.join(TimeUnit.SECONDS.toMillis(10));
+            if (closer.getState() != Thread.State.NEW) {
+                closer.join(TimeUnit.SECONDS.toMillis(10));
+            }
+            orch.close();
+        }
+        Assert.assertFalse(runner.isAlive());
+        Assert.assertFalse(closer.isAlive());
+        Assert.assertNull(closeFailure.get());
+        Assert.assertTrue(runFailure.get() instanceof LifecycleStartupException);
+        TestUtils.assertContains(runFailure.get().getMessage(), "start failed");
+        Assert.assertTrue(orch.isStopComplete());
+    }
 
     @Test
     public void testCloseDrainsInFlightWorkWhenCallerIsInterrupted() throws Exception {
@@ -173,7 +448,195 @@ public class LifecycleOrchestratorTest {
     }
 
     @Test
-    public void testCloseWaitsForBootWhenInterruptedDuringJoin() throws Exception {
+    public void testCloseSignalsInFlightStartBeforeWaitingForBootThread() throws Exception {
+        final CountDownLatch entered = new CountDownLatch(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        final AtomicInteger stopRequests = new AtomicInteger();
+        final LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
+        orch.register(new Component() {
+            @Override
+            public ObjList<String> hardRequiredDependencies() {
+                return new ObjList<>();
+            }
+
+            @Override
+            public String name() {
+                return "a";
+            }
+
+            @Override
+            public void requestStop() {
+                stopRequests.incrementAndGet();
+                release.countDown();
+            }
+
+            @Override
+            public ObjList<String> softDependencies() {
+                return new ObjList<>();
+            }
+
+            @Override
+            public void start(LifecycleContext ctx) {
+                entered.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+
+            @Override
+            public void stop() {
+            }
+        });
+        final Thread runner = new Thread(orch::run);
+        runner.start();
+        try {
+            Assert.assertTrue(entered.await(10, TimeUnit.SECONDS));
+            orch.close();
+            Assert.assertEquals(1, stopRequests.get());
+        } finally {
+            release.countDown();
+            runner.join();
+            orch.close();
+        }
+    }
+
+    @Test
+    public void testCloseTreatsCancelledStartAsShutdown() throws Exception {
+        final CountDownLatch cancel = new CountDownLatch(1);
+        final CountDownLatch entered = new CountDownLatch(1);
+        final AtomicBoolean isStartExited = new AtomicBoolean();
+        final AtomicBoolean isStopAfterStart = new AtomicBoolean();
+        final AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+        final AtomicReference<Throwable> runFailure = new AtomicReference<>();
+        final LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
+        orch.register(new Component() {
+            @Override
+            public ObjList<String> hardRequiredDependencies() {
+                return new ObjList<>();
+            }
+
+            @Override
+            public String name() {
+                return "a";
+            }
+
+            @Override
+            public void requestStop() {
+                cancel.countDown();
+            }
+
+            @Override
+            public ObjList<String> softDependencies() {
+                return new ObjList<>();
+            }
+
+            @Override
+            public void start(LifecycleContext ctx) {
+                entered.countDown();
+                try {
+                    cancel.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    isStartExited.set(true);
+                }
+                throw new CancellationException("cancelled");
+            }
+
+            @Override
+            public void stop() {
+                isStopAfterStart.set(isStartExited.get());
+            }
+        });
+        final Thread closer = new Thread(() -> {
+            try {
+                orch.close();
+            } catch (Throwable th) {
+                closeFailure.set(th);
+            }
+        });
+        final Thread runner = new Thread(() -> {
+            try {
+                orch.run();
+            } catch (Throwable th) {
+                runFailure.set(th);
+            }
+        });
+        runner.start();
+        try {
+            Assert.assertTrue(entered.await(10, TimeUnit.SECONDS));
+            closer.start();
+            runner.join(10_000L);
+            closer.join(10_000L);
+        } finally {
+            cancel.countDown();
+            runner.join(10_000L);
+            if (closer.isAlive()) {
+                closer.join(10_000L);
+            }
+            orch.close();
+        }
+        Assert.assertFalse(runner.isAlive());
+        Assert.assertFalse(closer.isAlive());
+        Assert.assertNull(closeFailure.get());
+        Assert.assertNull(runFailure.get());
+        Assert.assertTrue(isStopAfterStart.get());
+        Assert.assertTrue(orch.isStopComplete());
+    }
+
+    @Test
+    public void testCloseTreatsCancelledStartWithCleanupFailureAsFailure() throws Exception {
+        final CountDownLatch cancel = new CountDownLatch(1);
+        final CountDownLatch entered = new CountDownLatch(1);
+        final AtomicReference<Throwable> runFailure = new AtomicReference<>();
+        final IllegalStateException cleanupFailure = new IllegalStateException("cleanup failed");
+        final LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
+        orch.register(new ProbeComponent("a") {
+            @Override
+            public void requestStop() {
+                cancel.countDown();
+            }
+
+            @Override
+            public void start(LifecycleContext ctx) {
+                entered.countDown();
+                try {
+                    cancel.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                final CancellationException cancellation = new CancellationException("cancelled");
+                cancellation.addSuppressed(cleanupFailure);
+                throw cancellation;
+            }
+        });
+        final Thread runner = new Thread(() -> {
+            try {
+                orch.run();
+            } catch (Throwable th) {
+                runFailure.set(th);
+            }
+        });
+        runner.start();
+        try {
+            Assert.assertTrue(entered.await(10, TimeUnit.SECONDS));
+            orch.close();
+            runner.join(10_000L);
+        } finally {
+            cancel.countDown();
+            runner.join(10_000L);
+            orch.close();
+        }
+        Assert.assertFalse(runner.isAlive());
+        Assert.assertTrue(runFailure.get() instanceof LifecycleStartupException);
+        Assert.assertSame(cleanupFailure, runFailure.get().getCause().getSuppressed()[0]);
+        Assert.assertTrue(orch.isStopComplete());
+    }
+
+    @Test
+    public void testCloseWaitsForBootWhenInterruptedDuringAwait() throws Exception {
         final BarrierComponent component = new BarrierComponent("boot-blocker");
         final CountDownLatch preStopEntered = new CountDownLatch(1);
         final AtomicBoolean isInterruptRestored = new AtomicBoolean();
@@ -203,25 +666,22 @@ public class LifecycleOrchestratorTest {
             bootThread.start();
             Assert.assertTrue("component start did not block", component.awaitEntered(TimeUnit.SECONDS.toMillis(5)));
             closeThread.start();
-            TestUtils.assertEventually(
-                    () -> Assert.assertEquals(Thread.State.TIMED_WAITING, closeThread.getState()),
-                    5
-            );
+            TestUtils.assertEventually(() -> {
+                final Thread.State state = closeThread.getState();
+                Assert.assertTrue(state == Thread.State.WAITING || state == Thread.State.TIMED_WAITING);
+            }, 5);
 
             closeThread.interrupt();
             TestUtils.assertEventually(() -> {
                 if (preStopEntered.getCount() == 0) {
                     return;
                 }
-                Assert.assertFalse("close thread has not consumed the join interrupt", closeThread.isInterrupted());
-                boolean isJoining = false;
-                for (StackTraceElement frame : closeThread.getStackTrace()) {
-                    if (frame.getMethodName().equals("join") || frame.getMethodName().equals("timedJoin")) {
-                        isJoining = true;
-                        break;
-                    }
-                }
-                Assert.assertTrue("close thread did not resume the boot join", isJoining);
+                Assert.assertFalse("close thread has not consumed the await interrupt", closeThread.isInterrupted());
+                final Thread.State state = closeThread.getState();
+                Assert.assertTrue(
+                        "close thread did not resume the boot await",
+                        state == Thread.State.WAITING || state == Thread.State.TIMED_WAITING
+                );
             }, 5);
             Assert.assertEquals("close entered pre-stop while boot was active", 1, preStopEntered.getCount());
 
@@ -233,7 +693,7 @@ public class LifecycleOrchestratorTest {
             Assert.assertNull("boot failed", bootFailure.get());
             Assert.assertNull("close failed", closeFailure.get());
             Assert.assertEquals("close did not run pre-stop", 0, preStopEntered.getCount());
-            Assert.assertTrue("close did not restore the join interrupt", isInterruptRestored.get());
+            Assert.assertTrue("close did not restore the await interrupt", isInterruptRestored.get());
         } finally {
             component.releaseBarrier();
             bootThread.join(TimeUnit.SECONDS.toMillis(5));
@@ -316,6 +776,11 @@ public class LifecycleOrchestratorTest {
                 Assert.assertEquals(State.FAILED, orch.stateOf("c"));
                 // Soft dependent NOT auto-cascaded -- observed events instead.
                 Assert.assertNotEquals(State.FAILED, orch.stateOf("d"));
+                Assert.assertTrue(a.isStopped());
+                Assert.assertEquals(-1, b.getStartSeq());
+                Assert.assertEquals(-1, b.getStopSeq());
+                Assert.assertEquals(-1, c.getStartSeq());
+                Assert.assertEquals(-1, c.getStopSeq());
             }
         } finally {
             orch.close();
@@ -437,6 +902,42 @@ public class LifecycleOrchestratorTest {
     }
 
     @Test
+    public void testRequestStopBeforeRunPreventsStart() {
+        final LifecycleOrchestrator orch = newOrchestrator();
+        final ProbeComponent component = new ProbeComponent("a");
+        orch.register(component);
+        orch.requestStop();
+        orch.run();
+        Assert.assertEquals(-1, component.getStartSeq());
+        Assert.assertEquals(State.INIT, orch.stateOf("a"));
+        orch.close();
+        Assert.assertTrue(orch.isStopComplete());
+    }
+
+    @Test
+    public void testRequestStopContinuesAfterCallbackFailure() {
+        final AtomicInteger stopRequests = new AtomicInteger();
+        final LifecycleOrchestrator orch = newOrchestrator();
+        orch.register(new ProbeComponent("a") {
+            @Override
+            public void requestStop() {
+                throw new IllegalStateException("request");
+            }
+        });
+        orch.register(new ProbeComponent("b") {
+            @Override
+            public void requestStop() {
+                stopRequests.incrementAndGet();
+            }
+        });
+        orch.run();
+        orch.requestStop();
+        Assert.assertEquals(1, stopRequests.get());
+        orch.close();
+        Assert.assertTrue(orch.isStopComplete());
+    }
+
+    @Test
     public void testReverseTopologicalShutdown() {
         LifecycleOrchestrator orch = newOrchestrator();
         ProbeComponent a = new ProbeComponent("a");
@@ -474,6 +975,104 @@ public class LifecycleOrchestratorTest {
         } finally {
             orch.close();
         }
+    }
+
+    @Test
+    public void testRunReportsFailurePublishedBeforeConcurrentClose() throws Exception {
+        final CountDownLatch failurePublished = new CountDownLatch(1);
+        final CountDownLatch releaseStart = new CountDownLatch(1);
+        final CountDownLatch stopRequested = new CountDownLatch(1);
+        final AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+        final AtomicReference<Throwable> runFailure = new AtomicReference<>();
+        final LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
+        orch.register(new ProbeComponent("a") {
+            @Override
+            public void requestStop() {
+                stopRequested.countDown();
+            }
+
+            @Override
+            public void start(LifecycleContext ctx) {
+                ctx.publish(State.FAILED, "boom");
+                failurePublished.countDown();
+                try {
+                    releaseStart.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+        final Thread closer = new Thread(() -> {
+            try {
+                orch.close();
+            } catch (Throwable th) {
+                closeFailure.set(th);
+            }
+        });
+        final Thread runner = new Thread(() -> {
+            try {
+                orch.run();
+            } catch (Throwable th) {
+                runFailure.set(th);
+            }
+        });
+        runner.start();
+        try {
+            Assert.assertTrue(failurePublished.await(10, TimeUnit.SECONDS));
+            closer.start();
+            Assert.assertTrue(stopRequested.await(10, TimeUnit.SECONDS));
+            releaseStart.countDown();
+            runner.join(TimeUnit.SECONDS.toMillis(10));
+            closer.join(TimeUnit.SECONDS.toMillis(10));
+        } finally {
+            releaseStart.countDown();
+            runner.join(TimeUnit.SECONDS.toMillis(10));
+            if (closer.getState() != Thread.State.NEW) {
+                closer.join(TimeUnit.SECONDS.toMillis(10));
+            }
+            orch.close();
+        }
+        Assert.assertFalse(runner.isAlive());
+        Assert.assertFalse(closer.isAlive());
+        Assert.assertNull(closeFailure.get());
+        Assert.assertTrue(runFailure.get() instanceof LifecycleStartupException);
+        Assert.assertTrue(orch.isStopComplete());
+    }
+
+    @Test
+    public void testFailedComponentStopsOnceAcrossCloseRetries() {
+        final AtomicInteger failedStopCount = new AtomicInteger();
+        final AtomicInteger flakyStopAttempts = new AtomicInteger();
+        final LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
+        final ProbeComponent failed = new ProbeComponent("a") {
+            @Override
+            public void stop() {
+                failedStopCount.incrementAndGet();
+                super.stop();
+            }
+        };
+        orch.register(failed);
+        orch.register(new ProbeComponent("b") {
+            @Override
+            public void stop() {
+                if (flakyStopAttempts.incrementAndGet() == 1) {
+                    throw new IllegalStateException("first stop attempt fails");
+                }
+                super.stop();
+            }
+        });
+        orch.run();
+        failed.advanceTo(State.FAILED);
+
+        orch.close();
+        Assert.assertEquals(1, failedStopCount.get());
+        Assert.assertEquals(1, flakyStopAttempts.get());
+        Assert.assertFalse(orch.isStopComplete());
+
+        orch.close();
+        Assert.assertEquals(1, failedStopCount.get());
+        Assert.assertEquals(2, flakyStopAttempts.get());
+        Assert.assertTrue(orch.isStopComplete());
     }
 
     @Test

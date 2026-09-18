@@ -2171,7 +2171,9 @@ public class PostingIndexWriter implements IndexWriter {
         return switch (ColumnType.tagOf(colType)) {
             case ColumnType.DOUBLE -> {
                 int alpSize = CoveringCompressor.compressDoubles(rawBuf, valueCount, 3, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
-                int rawSize = 4 + valueCount * Double.BYTES;
+                // The raw layout is never wider than CoveringCompressor.maxCompressedSize, which
+                // validateSidecarBlockSize already held to Integer.MAX_VALUE, so the narrowing is safe.
+                int rawSize = (int) (4L + (long) valueCount * Double.BYTES);
                 if (alpSize <= rawSize) {
                     yield alpSize;
                 }
@@ -2181,7 +2183,7 @@ public class PostingIndexWriter implements IndexWriter {
             }
             case ColumnType.FLOAT -> {
                 int alpSize = CoveringCompressor.compressFloats(rawBuf, valueCount, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
-                int rawSize = 4 + valueCount * Float.BYTES;
+                int rawSize = (int) (4L + (long) valueCount * Float.BYTES);
                 if (alpSize <= rawSize) {
                     yield alpSize;
                 }
@@ -2202,7 +2204,7 @@ public class PostingIndexWriter implements IndexWriter {
                 // Raw copy for remaining fixed-width types: LONG128, UUID, LONG256, DECIMAL128/256
                 Unsafe.putInt(destBuf, valueCount);
                 Unsafe.copyMemory(rawBuf, destBuf + 4, (long) valueCount << shift);
-                yield 4 + (valueCount << shift);
+                yield (int) (4L + ((long) valueCount << shift));
             }
         };
     }
@@ -2288,6 +2290,32 @@ public class PostingIndexWriter implements IndexWriter {
         return longOffsets
                 ? Unsafe.getLong(mem.addressOf(offsetsStart + idx * Long.BYTES))
                 : Unsafe.getInt(mem.addressOf(offsetsStart + idx * Integer.BYTES)) & 0xFFFFFFFFL;
+    }
+
+    /**
+     * Rejects a per-key sidecar block whose worst-case compressed form cannot be addressed with a
+     * 32-bit size. The block header stores its value count in a 32-bit word (with the top bit
+     * reserved for {@link CoveringCompressor#RAW_BLOCK_FLAG}), and every compressor returns an
+     * {@code int} size, so a larger block has no representation. Lifting the limit needs a sidecar
+     * format bump.
+     * <p>
+     * The bound bites well below {@code Integer.MAX_VALUE} values: DOUBLE's worst case is ~20 bytes
+     * per value, so ~107M values for one index key in one sealed partition generation reach it.
+     * Nothing upstream caps a per-key count below the ~2^31 whole-generation limit, so a table where
+     * a single symbol dominates a partition can get there.
+     *
+     * @param blockSize   worst-case block size from {@link CoveringCompressor#maxCompressedSize}
+     * @param maxKeyCount the largest per-key value count that size covers
+     * @param colType     the covered column type
+     */
+    private static void validateSidecarBlockSize(long blockSize, int maxKeyCount, int colType) {
+        if (blockSize > Integer.MAX_VALUE) {
+            throw CairoException.critical(0)
+                    .put("posting index sidecar block exceeds 2^31 bytes [valueCount=").put(maxKeyCount)
+                    .put(", columnType=").put(ColumnType.nameOf(colType))
+                    .put(", blockSize=").put(blockSize)
+                    .put("]; reduce the rows per index key in a partition");
+        }
     }
 
     private static void writeNullSentinel(MemoryMARW mem, int valueSize, int colType) {
@@ -7244,7 +7272,8 @@ public class PostingIndexWriter implements IndexWriter {
         for (int j = 0; j < ks; j++) {
             maxKeyCount = Math.max(maxKeyCount, keyCounts[j]);
         }
-        int compressBufSize = maxKeyCount > 0 ? CoveringCompressor.maxCompressedSize(maxKeyCount, colType) : 0;
+        long compressBufSize = maxKeyCount > 0 ? CoveringCompressor.maxCompressedSize(maxKeyCount, colType) : 0;
+        validateSidecarBlockSize(compressBufSize, maxKeyCount, colType);
         long compressBuf = compressBufSize > 0 ? Unsafe.malloc(compressBufSize, MemoryTag.NATIVE_INDEX_READER) : 0;
 
         try {
@@ -7419,7 +7448,8 @@ public class PostingIndexWriter implements IndexWriter {
         long longWorkspaceSize = (long) maxKeyCount * Long.BYTES;
         long longWorkspaceAddr = 0;
         long exceptionWorkspaceAddr = 0;
-        int compressBufSize = (!isVarSize && maxKeyCount > 0) ? CoveringCompressor.maxCompressedSize(maxKeyCount, colType) : 0;
+        long compressBufSize = (!isVarSize && maxKeyCount > 0) ? CoveringCompressor.maxCompressedSize(maxKeyCount, colType) : 0;
+        validateSidecarBlockSize(compressBufSize, maxKeyCount, colType);
         long compressBuf = 0;
         long sidecarBufSize = isVarSize ? 0 : (long) maxKeyCount * valueSize;
 
@@ -7816,16 +7846,28 @@ public class PostingIndexWriter implements IndexWriter {
 
         if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
             Path p = Path.getThreadLocal(coveredPartitionPath);
-            for (int c = 0; c < coverCount; c++) {
-                if (coveredColumnIndices.getQuick(c) < 0) {
-                    continue;
+            try {
+                for (int c = 0; c < coverCount; c++) {
+                    if (coveredColumnIndices.getQuick(c) < 0) {
+                        continue;
+                    }
+                    try {
+                        mapCoveredColumn(p, c);
+                        writeSidecarForColumn(c, sc, siSize, totalCountsAddr, strideValsAddr, globalMaxKeyCount);
+                    } finally {
+                        unmapCoveredColumn(c);
+                    }
                 }
-                try {
-                    mapCoveredColumn(p, c);
-                    writeSidecarForColumn(c, sc, siSize, totalCountsAddr, strideValsAddr, globalMaxKeyCount);
-                } finally {
-                    unmapCoveredColumn(c);
-                }
+            } finally {
+                // The per-column map/unmap loop above leaves the covered
+                // read-map arrays allocated with every entry unmapped (0).
+                // ensureCoveredColumnReadMaps() early-returns on non-null
+                // arrays, so keeping them would make every later covered
+                // read -- post-seal gen flushes (writeSidecarGenData) and
+                // incremental seals (writeSidecarStrideData) -- resolve to
+                // addr 0 and silently write NULL covered values. Null the
+                // arrays so the next covered read lazily re-maps.
+                unmapCoveredColumnReads();
             }
         } else if (coveredColumnAddrs.size() > 0) {
             // O3 addr-based path: all addresses provided by caller, no per-column mapping needed
@@ -7859,16 +7901,23 @@ public class PostingIndexWriter implements IndexWriter {
 
         if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
             Path p = Path.getThreadLocal(coveredPartitionPath);
-            for (int c = 0; c < coverCount; c++) {
-                if (coveredColumnIndices.getQuick(c) < 0) {
-                    continue;
+            try {
+                for (int c = 0; c < coverCount; c++) {
+                    if (coveredColumnIndices.getQuick(c) < 0) {
+                        continue;
+                    }
+                    try {
+                        mapCoveredColumn(p, c);
+                        writeSidecarForColumnStreaming(c, sc, siSize, totalCountsAddr, keyBuffer, maxKeyCount, keyCounts);
+                    } finally {
+                        unmapCoveredColumn(c);
+                    }
                 }
-                try {
-                    mapCoveredColumn(p, c);
-                    writeSidecarForColumnStreaming(c, sc, siSize, totalCountsAddr, keyBuffer, maxKeyCount, keyCounts);
-                } finally {
-                    unmapCoveredColumn(c);
-                }
+            } finally {
+                // See writeSidecarsPerColumn: reset the lazy-mapping state so
+                // ensureCoveredColumnReadMaps() re-maps on the next covered
+                // read instead of early-returning on stale all-zero arrays.
+                unmapCoveredColumnReads();
             }
         } else if (coveredColumnAddrs.size() > 0) {
             ensureCoveredColumnReadMaps();

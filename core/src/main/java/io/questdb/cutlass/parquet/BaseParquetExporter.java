@@ -47,7 +47,16 @@ public abstract class BaseParquetExporter {
     protected CopyExportRequestTask task;
 
     protected BaseParquetExporter(CairoEngine engine) {
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+        this(engine, false);
+    }
+
+    protected BaseParquetExporter(CairoEngine engine, boolean isPartitionFormatChangeTolerated) {
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1) {
+            @Override
+            public boolean isPartitionFormatChangeTolerated() {
+                return isPartitionFormatChangeTolerated;
+            }
+        };
         this.copyExportContext = engine.getCopyExportContext();
     }
 

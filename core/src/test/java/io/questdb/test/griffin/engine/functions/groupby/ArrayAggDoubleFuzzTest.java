@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
@@ -219,7 +220,7 @@ public class ArrayAggDoubleFuzzTest extends AbstractCairoTest {
         // forces multi-worker dispatch and the parallel merge path runs every time.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 for (int iter = 0; iter < ITERATIONS; iter++) {
                     int numGroups = rnd.nextInt(5) + 1;
