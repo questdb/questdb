@@ -43,7 +43,7 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     private static final int INITIAL_SINK_CAPACITY = 512;
     private static final int LIST_CLEAR_THRESHOLD = 64;
     private final Function arg;
-    private final char delimiter;
+    private final CharSequence delimiter;
     private final int functionPosition;
     private final int maxBytes;
     private ObjList<DirectUtf16Sink> sinks = new ObjList<>();
@@ -52,7 +52,7 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     private int touchedMemorySize;
     private int valueIndex;
 
-    public StringAggGroupByFunction(Function arg, int functionPosition, char delimiter, int maxBytes) {
+    public StringAggGroupByFunction(Function arg, int functionPosition, CharSequence delimiter, int maxBytes) {
         this.arg = arg;
         this.delimiter = delimiter;
         this.maxBytes = maxBytes;
@@ -117,8 +117,8 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
         if (str != null) {
             final int hi = sink.size();
             final boolean nullValue = mapValue.getBool(valueIndex + 1);
-            if (!nullValue) {
-                sink.putAscii(delimiter);
+            if (!nullValue && delimiter != null) {
+                sink.put(delimiter);
             }
             sink.put(str);
             mapValue.putBool(valueIndex + 1, false);
