@@ -65,10 +65,10 @@ import java.util.Base64;
  */
 public class LineHttpSecurityContextTest extends AbstractBootstrapTest {
     private static final String PWD = "pwd";
-    // may insert into any table
-    private static final String USER_RW = "rwUser";
     // may use the ILP endpoint, but may not insert
     private static final String USER_RO = "roUser";
+    // may insert into any table
+    private static final String USER_RW = "rwUser";
 
     @Before
     @Override
@@ -245,7 +245,7 @@ public class LineHttpSecurityContextTest extends AbstractBootstrapTest {
                 "Host: 127.0.0.1:" + HTTP_PORT + "\r\n" +
                 "Connection: keep-alive\r\n" +
                 "Authorization: " + authHeader(user) + "\r\n" +
-                "Content-Length: " + lines.length() + "\r\n" +
+                "Content-Length: " + lines.getBytes(StandardCharsets.UTF_8).length + "\r\n" +
                 "\r\n" +
                 lines;
     }
