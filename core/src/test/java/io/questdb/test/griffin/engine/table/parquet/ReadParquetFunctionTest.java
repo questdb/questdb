@@ -120,6 +120,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         (int) bloomFilterColumnIndexes.size(),
                         0.01,
                         0.0,
+                        false, // failOnInvalidUtf16
                         -1,
                         -1L,
                         -1L
