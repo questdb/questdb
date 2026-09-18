@@ -110,20 +110,20 @@ public class QwpSchemaSmallIntegerDecimalE2ETest extends AbstractQwpWebSocketTes
                         .stringColumn("marker", "A")
                         .at(1, ChronoUnit.MICROS);
 
-                sender.stringColumn("marker", "failed-B").shortColumn("value", (short) 99);
+                sender.table("schema_small_integer_decimal_rows").stringColumn("marker", "failed-B").shortColumn("value", (short) 99);
                 LineSenderSchemaException error = Assert.assertThrows(
                         LineSenderSchemaException.class,
                         () -> sender.intColumn("bad", 1)
                 );
                 Assert.assertEquals(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE, error.getReason());
 
-                sender.shortColumn("value", (short) -7)
+                sender.table("schema_small_integer_decimal_rows").shortColumn("value", (short) -7)
                         .stringColumn("marker", "C")
                         .at(2, ChronoUnit.MICROS);
-                sender.intColumn("value", Integer.MIN_VALUE)
+                sender.table("schema_small_integer_decimal_rows").intColumn("value", Integer.MIN_VALUE)
                         .stringColumn("marker", "source-null")
                         .at(3, ChronoUnit.MICROS);
-                sender.stringColumn("marker", "omitted")
+                sender.table("schema_small_integer_decimal_rows").stringColumn("marker", "omitted")
                         .at(4, ChronoUnit.MICROS);
                 long fsn = sender.flushAndGetSequence();
                 Assert.assertTrue(fsn >= 0);

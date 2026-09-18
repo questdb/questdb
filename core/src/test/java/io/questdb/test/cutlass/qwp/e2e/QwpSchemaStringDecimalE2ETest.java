@@ -98,14 +98,14 @@ public class QwpSchemaStringDecimalE2ETest extends AbstractQwpWebSocketTest {
                 );
                 Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, error.getReason());
 
-                sender.stringColumn("value", "-2.5")
+                sender.table("schema_string_decimal_recovery").stringColumn("value", "-2.5")
                         .stringColumn("marker", "C")
                         .at(2, ChronoUnit.MICROS);
-                sender.stringColumn("value", null)
+                sender.table("schema_string_decimal_recovery").stringColumn("value", null)
                         .stringColumn("value", "invalid")
                         .stringColumn("marker", "source-null")
                         .at(3, ChronoUnit.MICROS);
-                sender.stringColumn("marker", "omitted")
+                sender.table("schema_string_decimal_recovery").stringColumn("marker", "omitted")
                         .at(4, ChronoUnit.MICROS);
                 long fsn = sender.flushAndGetSequence();
                 Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));

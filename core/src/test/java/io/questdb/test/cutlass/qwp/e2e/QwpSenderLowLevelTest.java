@@ -227,8 +227,8 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
             byte type,
             boolean useNullBitmap
     ) {
-        // Schema discovery may replace the sender's active table buffer after a
-        // completed row, so low-level tests reacquire it for each row.
+        // Prepare each row before injecting raw values into its buffer.
+        sender.table(table);
         return sender.getTableBuffer(table).getOrCreateColumn(name, type, useNullBitmap);
     }
 }

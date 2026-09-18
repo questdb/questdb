@@ -67,7 +67,6 @@ public class QwpSchemaSenderE2ETest extends AbstractQwpWebSocketTest {
                 LineSenderSchemaException denied = Assert.assertThrows(
                         LineSenderSchemaException.class,
                         () -> sender.table("schema_sender_denied")
-                                .stringColumn("id", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
                 );
                 Assert.assertEquals(LineSenderSchemaException.Reason.ACCESS_DENIED, denied.getReason());
 
@@ -166,17 +165,17 @@ public class QwpSchemaSenderE2ETest extends AbstractQwpWebSocketTest {
 
                 LineSenderSchemaException invalid = Assert.assertThrows(
                         LineSenderSchemaException.class,
-                        () -> sender.stringColumn("marker", "inferred-b")
+                        () -> sender.table("schema_sender_missing").stringColumn("marker", "inferred-b")
                                 .stringColumn("failed_only", "must-be-rolled-back")
                                 .stringColumn("id", "not-a-uuid")
                 );
                 Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, invalid.getReason());
 
                 // ACK feedback replaces the inferred binding with the resulting
-                // server schema. The next row switches setter family without
-                // another table() and must convert the string into known UUID;
+                // server schema. The next table() prepares the row with that
+                // snapshot and must convert the string into known UUID;
                 // the failed B row and its new-only column stay rolled back.
-                sender.stringColumn("id", "cccccccc-cccc-cccc-cccc-cccccccccccc")
+                sender.table("schema_sender_missing").stringColumn("id", "cccccccc-cccc-cccc-cccc-cccccccccccc")
                         .stringColumn("marker", "inferred-c")
                         .atNow();
 
@@ -239,14 +238,14 @@ public class QwpSchemaSenderE2ETest extends AbstractQwpWebSocketTest {
                 // pinned; the rejection is local and rolls the whole row back.
                 LineSenderSchemaException invalid = Assert.assertThrows(
                         LineSenderSchemaException.class,
-                        () -> sender.stringColumn("marker", "B")
+                        () -> sender.table("schema_sender_stale").stringColumn("marker", "B")
                                 .stringColumn("failed_b", "must-be-rolled-back")
                                 .stringColumn("id", "not-a-uuid")
                 );
                 Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, invalid.getReason());
                 LineSenderSchemaException stillInvalid = Assert.assertThrows(
                         LineSenderSchemaException.class,
-                        () -> sender.stringColumn("id", "not-a-uuid")
+                        () -> sender.table("schema_sender_stale").stringColumn("id", "not-a-uuid")
                 );
                 Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, stillInvalid.getReason());
 
@@ -295,13 +294,13 @@ public class QwpSchemaSenderE2ETest extends AbstractQwpWebSocketTest {
 
                 LineSenderSchemaException invalid = Assert.assertThrows(
                         LineSenderSchemaException.class,
-                        () -> sender.stringColumn("marker", "B")
+                        () -> sender.table("schema_sender_unrelated").stringColumn("marker", "B")
                                 .stringColumn("failed_b", "must-be-rolled-back")
                                 .stringColumn("id", "not-a-uuid")
                 );
                 Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, invalid.getReason());
 
-                sender.stringColumn("id", "cccccccc-cccc-cccc-cccc-cccccccccccc")
+                sender.table("schema_sender_unrelated").stringColumn("id", "cccccccc-cccc-cccc-cccc-cccccccccccc")
                         .stringColumn("marker", "C")
                         .atNow();
                 long fsn = sender.flushAndGetSequence();
@@ -353,16 +352,16 @@ public class QwpSchemaSenderE2ETest extends AbstractQwpWebSocketTest {
 
                 LineSenderSchemaException error = Assert.assertThrows(
                         LineSenderSchemaException.class,
-                        () -> sender.stringColumn("marker", "B")
+                        () -> sender.table("schema_sender_uuid").stringColumn("marker", "B")
                                 .stringColumn("failed_b", "must-be-rolled-back")
                                 .stringColumn("id", "not-a-uuid")
                 );
                 Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, error.getReason());
                 Assert.assertTrue(error.getMessage(), error.getMessage().contains("UUID"));
 
-                // The failed setter cancels B. The next row remains on the selected
-                // table and may use the typed UUID setter against the same binding.
-                sender.uuidColumn("id", c.getLeastSignificantBits(), c.getMostSignificantBits())
+                // The failed setter cancels B. A fresh table() opens the next row
+                // against the batch's pinned binding.
+                sender.table("schema_sender_uuid").uuidColumn("id", c.getLeastSignificantBits(), c.getMostSignificantBits())
                         .stringColumn("marker", "C")
                         .atNow();
 
@@ -402,7 +401,7 @@ public class QwpSchemaSenderE2ETest extends AbstractQwpWebSocketTest {
 
                 LineSenderSchemaException error = Assert.assertThrows(
                         LineSenderSchemaException.class,
-                        () -> sender.stringColumn("marker", "failed")
+                        () -> sender.table(tableName).stringColumn("marker", "failed")
                                 .at(Long.MAX_VALUE, ChronoUnit.DAYS)
                 );
                 Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, error.getReason());
@@ -410,7 +409,7 @@ public class QwpSchemaSenderE2ETest extends AbstractQwpWebSocketTest {
                 Instant instant = timestampType.equals("timestamp_ns")
                         ? Instant.ofEpochSecond(2, 345_678_901)
                         : Instant.ofEpochSecond(2, 345_678_000);
-                sender.stringColumn("marker", "instant").at(instant);
+                sender.table(tableName).stringColumn("marker", "instant").at(instant);
 
                 long fsn = sender.flushAndGetSequence();
                 Assert.assertTrue("published FSN", fsn >= 0);
@@ -423,8 +422,8 @@ public class QwpSchemaSenderE2ETest extends AbstractQwpWebSocketTest {
                     0,
                     TimeUnit.MILLISECONDS.toNanos(Integer.MAX_VALUE - 1L)
             )) {
-                // There is no warm cache or bound layout: atNow() itself must
-                // negotiate, resolve, bind and emit the timestamp-only row.
+                // There is no warm cache or bound layout: table() prepares the
+                // schema before atNow() completes the timestamp-only row.
                 cold.table(tableName).atNow();
                 long fsn = cold.flushAndGetSequence();
                 Assert.assertTrue("cold atNow FSN", fsn >= 0);

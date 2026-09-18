@@ -114,7 +114,7 @@ public class QwpSchemaTimestampTextE2ETest extends AbstractQwpWebSocketTest {
                         .stringColumn("marker", "A")
                         .at(1_000_000, ChronoUnit.MICROS);
 
-                sender.stringColumn("marker", "failed-B");
+                sender.table("schema_timestamp_text_rows").stringColumn("marker", "failed-B");
                 LineSenderSchemaException overflow = Assert.assertThrows(
                         LineSenderSchemaException.class,
                         () -> sender.timestampColumn("v", Long.MAX_VALUE, ChronoUnit.DAYS)
@@ -126,7 +126,7 @@ public class QwpSchemaTimestampTextE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertTrue(overflow.getMessage(), overflow.getMessage().contains("inputType=TIMESTAMP"));
                 Assert.assertTrue(overflow.getMessage(), overflow.getMessage().contains("targetType=VARCHAR"));
 
-                sender.timestampColumn("v", 1, ChronoUnit.SECONDS)
+                sender.table("schema_timestamp_text_rows").timestampColumn("v", 1, ChronoUnit.SECONDS)
                         .stringColumn("marker", "C")
                         .at(2_000_000, ChronoUnit.MICROS);
                 long fsn = sender.flushAndGetSequence();
@@ -156,7 +156,7 @@ public class QwpSchemaTimestampTextE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertEquals(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE, designated.getReason());
                 Assert.assertTrue(designated.getMessage(), designated.getMessage().contains("column=ts"));
 
-                sender.stringColumn("marker", "failed-B");
+                sender.table("schema_timestamp_text_guards").stringColumn("marker", "failed-B");
                 LineSenderSchemaException nullInstant = Assert.assertThrows(
                         LineSenderSchemaException.class,
                         () -> sender.timestampColumn("v", (Instant) null)
@@ -164,7 +164,7 @@ public class QwpSchemaTimestampTextE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, nullInstant.getReason());
                 Assert.assertTrue(nullInstant.getMessage(), nullInstant.getMessage().contains("column=v"));
 
-                sender.timestampColumn("v", 2, ChronoUnit.SECONDS)
+                sender.table("schema_timestamp_text_guards").timestampColumn("v", 2, ChronoUnit.SECONDS)
                         .stringColumn("marker", "C")
                         .at(3_000_000, ChronoUnit.MICROS);
                 long fsn = sender.flushAndGetSequence();

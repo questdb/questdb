@@ -157,25 +157,25 @@ public class QwpSchemaLongTimestampE2ETest extends AbstractQwpWebSocketTest {
                             .stringColumn("marker", "A")
                             .at(1, target.unit);
 
-                    sender.stringColumn("marker", "failed-B");
+                    sender.table(tableName).stringColumn("marker", "failed-B");
                     LineSenderSchemaException invalid = Assert.assertThrows(
                             LineSenderSchemaException.class,
                             () -> sender.longColumn("bad", 1)
                     );
                     Assert.assertEquals(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE, invalid.getReason());
 
-                    sender.longColumn("value", Long.MAX_VALUE)
+                    sender.table(tableName).longColumn("value", Long.MAX_VALUE)
                             .stringColumn("marker", "C")
                             .at(2, target.unit);
 
-                    sender.stringColumn("marker", "failed-designated");
+                    sender.table(tableName).stringColumn("marker", "failed-designated");
                     LineSenderSchemaException designated = Assert.assertThrows(
                             LineSenderSchemaException.class,
                             () -> sender.longColumn("ts", 3)
                     );
                     Assert.assertEquals(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE, designated.getReason());
 
-                    sender.stringColumn("marker", "D").at(4, target.unit);
+                    sender.table(tableName).stringColumn("marker", "D").at(4, target.unit);
                     long fsn = sender.flushAndGetSequence();
                     Assert.assertTrue(fsn >= 0);
                     Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));

@@ -56,8 +56,8 @@ public class QwpSchemaSmallIntegerNumericE2ETest extends AbstractQwpWebSocketTes
                         0,
                         TimeUnit.MILLISECONDS.toNanos(Integer.MAX_VALUE - 1L)
                 )) {
-                    sender.table(tableName);
                     for (Vector vector : targetVectors) {
+                        sender.table(tableName);
                         sender.longColumn("case_id", vector.invalid() ? 10_000 + accepted : accepted);
                         if (vector.invalid()) {
                             LineSenderSchemaException error = Assert.assertThrows(

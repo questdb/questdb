@@ -101,19 +101,19 @@ public class QwpSchemaDecimalTextInputE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertTrue(error.getMessage(), error.getMessage().contains("column=value"));
                 Assert.assertTrue(error.getMessage(), error.getMessage().contains("inputType=DECIMAL256"));
 
-                sender.decimalColumn("value", "-2.5")
+                sender.table("schema_decimal_text_input_rows").decimalColumn("value", "-2.5")
                         .stringColumn("marker", "C")
                         .at(2, ChronoUnit.MICROS);
-                sender.decimalColumn("value", "NaN")
+                sender.table("schema_decimal_text_input_rows").decimalColumn("value", "NaN")
                         .stringColumn("marker", "special-null")
                         .at(3, ChronoUnit.MICROS);
-                sender.decimalColumn("value", (CharSequence) null)
+                sender.table("schema_decimal_text_input_rows").decimalColumn("value", (CharSequence) null)
                         .stringColumn("marker", "java-null")
                         .at(4, ChronoUnit.MICROS);
-                sender.decimalColumn("value", "")
+                sender.table("schema_decimal_text_input_rows").decimalColumn("value", "")
                         .stringColumn("marker", "empty")
                         .at(5, ChronoUnit.MICROS);
-                sender.stringColumn("marker", "omitted")
+                sender.table("schema_decimal_text_input_rows").stringColumn("marker", "omitted")
                         .at(6, ChronoUnit.MICROS);
 
                 long fsn = sender.flushAndGetSequence();

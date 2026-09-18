@@ -117,7 +117,7 @@ public class QwpSchemaNativeDecimalTextE2ETest extends AbstractQwpWebSocketTest 
                         .stringColumn("marker", "A")
                         .at(1, ChronoUnit.MICROS);
 
-                sender.stringColumn("marker", "failed-B");
+                sender.table("schema_native_decimal_text_rows").stringColumn("marker", "failed-B");
                 LineSenderSchemaException error = Assert.assertThrows(
                         LineSenderSchemaException.class,
                         () -> sender.decimalColumn("bad", new Decimal64(1, 0))
@@ -128,12 +128,12 @@ public class QwpSchemaNativeDecimalTextE2ETest extends AbstractQwpWebSocketTest 
                 Assert.assertTrue(error.getMessage(), error.getMessage().contains("inputType=DECIMAL64"));
                 Assert.assertTrue(error.getMessage(), error.getMessage().contains("targetType=UUID"));
 
-                sender.decimalColumn("value", new Decimal64(-125, 3))
+                sender.table("schema_native_decimal_text_rows").decimalColumn("value", new Decimal64(-125, 3))
                         .stringColumn("marker", "C")
                         .at(2, ChronoUnit.MICROS);
-                sender.stringColumn("marker", "omitted")
+                sender.table("schema_native_decimal_text_rows").stringColumn("marker", "omitted")
                         .at(3, ChronoUnit.MICROS);
-                sender.decimalColumn("value", new Decimal256(
+                sender.table("schema_native_decimal_text_rows").decimalColumn("value", new Decimal256(
                                 0x161bcca7119915b5L,
                                 0x0764b4abe8652979L,
                                 0x7775a5f171950fffL,
@@ -141,13 +141,13 @@ public class QwpSchemaNativeDecimalTextE2ETest extends AbstractQwpWebSocketTest 
                                 76))
                         .stringColumn("marker", "long")
                         .at(4, ChronoUnit.MICROS);
-                sender.decimalColumn("value", new Decimal64(0, 0))
+                sender.table("schema_native_decimal_text_rows").decimalColumn("value", new Decimal64(0, 0))
                         .stringColumn("marker", "short")
                         .at(5, ChronoUnit.MICROS);
-                sender.decimalColumn("value", new Decimal128(Long.MAX_VALUE, -1L))
+                sender.table("schema_native_decimal_text_rows").decimalColumn("value", new Decimal128(Long.MAX_VALUE, -1L))
                         .stringColumn("marker", "physical-128")
                         .at(6, ChronoUnit.MICROS);
-                sender.decimalColumn("value", wrappedScale)
+                sender.table("schema_native_decimal_text_rows").decimalColumn("value", wrappedScale)
                         .stringColumn("marker", "wrapped-scale-257")
                         .at(7, ChronoUnit.MICROS);
                 long fsn = sender.flushAndGetSequence();

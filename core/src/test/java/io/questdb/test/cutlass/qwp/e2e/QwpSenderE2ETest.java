@@ -574,7 +574,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                         () -> sender.binaryColumn("b", (byte[]) null),
                         "table=dummy", "column=b", "inputType=BINARY", "targetType=BINARY");
                 assertSchemaError(LineSenderSchemaException.Reason.INVALID_VALUE,
-                        () -> sender.binaryColumn("b", (DirectByteSlice) null),
+                        () -> sender.table("dummy").binaryColumn("b", (DirectByteSlice) null),
                         "table=dummy", "column=b", "inputType=BINARY", "targetType=BINARY");
                 Assert.assertEquals(-1, sender.flushAndGetSequence());
             }
@@ -1414,7 +1414,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                         () -> sender.table(table).doubleArray("v", new double[][]{{1.0, 2.0}, {3.0, 4.0}}),
                         "table=" + table, "column=v", "inputType=DOUBLE_ARRAY",
                         "sourceDims=2", "targetDims=1");
-                sender.doubleArray("v", new double[]{5.0, 6.0}).at(1_000_000, ChronoUnit.MICROS);
+                sender.table(table).doubleArray("v", new double[]{5.0, 6.0}).at(1_000_000, ChronoUnit.MICROS);
                 sender.flush();
             }
             drainWalQueue();
@@ -3295,6 +3295,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
             assertServerRejection(port, table,
                     (s, t) -> {
+                        s.table(t);
                         QwpTableBuffer buf = s.getTableBuffer(t);
                         QwpTableBuffer.ColumnBuffer col = buf.getOrCreateColumn("col", TYPE_GEOHASH, true);
                         // Wire precision is 35 bits (5-byte values); the column is 5 bits (1-byte storage).
@@ -4899,20 +4900,20 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.table("schema_nan_public").floatColumn("v", Float.NaN)
                         .at(1_000_000, ChronoUnit.MICROS);
                 sender.flush();
-                sender.doubleColumn("v", Double.NaN).at(1_000_001, ChronoUnit.MICROS);
-                sender.at(1_000_002, ChronoUnit.MICROS);
+                sender.table("schema_nan_public").doubleColumn("v", Double.NaN).at(1_000_001, ChronoUnit.MICROS);
+                sender.table("schema_nan_public").at(1_000_002, ChronoUnit.MICROS);
 
                 sender.table("schema_long_edge_public").longColumn("marker", 1).longColumn("v", 1)
                         .at(2_000_000, ChronoUnit.MICROS);
-                sender.longColumn("marker", 2);
+                sender.table("schema_long_edge_public").longColumn("marker", 2);
                 assertSchemaError(LineSenderSchemaException.Reason.INVALID_VALUE,
                         () -> sender.floatColumn("v", 0x1.0p63f),
                         "table=schema_long_edge_public", "column=v", "inputType=FLOAT", "targetType=LONG");
-                sender.longColumn("marker", 3);
+                sender.table("schema_long_edge_public").longColumn("marker", 3);
                 assertSchemaError(LineSenderSchemaException.Reason.INVALID_VALUE,
                         () -> sender.doubleColumn("v", 0x1.0p63),
                         "table=schema_long_edge_public", "column=v", "inputType=DOUBLE", "targetType=LONG");
-                sender.longColumn("marker", 4).longColumn("v", 4)
+                sender.table("schema_long_edge_public").longColumn("marker", 4).longColumn("v", 4)
                         .at(2_000_001, ChronoUnit.MICROS);
                 sender.flush();
             }
@@ -5082,7 +5083,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
                     () -> sender.binaryColumn("v", payload),
                     "table=" + tableName, "column=v", "inputType=BINARY", "targetType=" + targetType);
-            sender.longColumn("marker", 2).at(2_000_000, ChronoUnit.MICROS);
+            sender.table(tableName).longColumn("marker", 2).at(2_000_000, ChronoUnit.MICROS);
             sender.flush();
         }
         drainWalQueue();

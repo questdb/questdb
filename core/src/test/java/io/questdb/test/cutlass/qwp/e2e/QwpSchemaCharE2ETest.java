@@ -205,22 +205,22 @@ public class QwpSchemaCharE2ETest extends AbstractQwpWebSocketTest {
                 sender.table("schema_char_rows").stringColumn("value", null)
                         .binaryColumn("value", new byte[]{1})
                         .stringColumn("marker", "null-first").at(0, ChronoUnit.MICROS);
-                sender.charColumn("value", 'A')
+                sender.table("schema_char_rows").charColumn("value", 'A')
                         .stringColumn("value", "ignored duplicate")
                         .stringColumn("marker", "A").at(1, ChronoUnit.MICROS);
-                sender.stringColumn("marker", "failed-B");
+                sender.table("schema_char_rows").stringColumn("marker", "failed-B");
                 LineSenderSchemaException invalid = Assert.assertThrows(LineSenderSchemaException.class,
                         () -> sender.stringColumn("bad", "not-a-uuid"));
                 Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, invalid.getReason());
-                sender.stringColumn("value", "C-tail").stringColumn("marker", "C").at(2, ChronoUnit.MICROS);
+                sender.table("schema_char_rows").stringColumn("value", "C-tail").stringColumn("marker", "C").at(2, ChronoUnit.MICROS);
                 LineSenderSchemaException wrong = Assert.assertThrows(LineSenderSchemaException.class,
-                        () -> sender.charColumn("wrong", 'X'));
+                        () -> sender.table("schema_char_rows").charColumn("wrong", 'X'));
                 Assert.assertEquals(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE, wrong.getReason());
-                sender.stringColumn("marker", "failed-designated");
+                sender.table("schema_char_rows").stringColumn("marker", "failed-designated");
                 LineSenderSchemaException designated = Assert.assertThrows(LineSenderSchemaException.class,
                         () -> sender.charColumn("ts", 'X'));
                 Assert.assertEquals(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE, designated.getReason());
-                sender.stringColumn("marker", "D").at(3, ChronoUnit.MICROS);
+                sender.table("schema_char_rows").stringColumn("marker", "D").at(3, ChronoUnit.MICROS);
                 long fsn = sender.flushAndGetSequence();
                 Assert.assertTrue(fsn >= 0);
                 Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));

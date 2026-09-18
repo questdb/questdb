@@ -124,14 +124,14 @@ public class QwpSchemaFloatingDecimalE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertTrue(error.getMessage(), error.getMessage().contains("inputType=DOUBLE"));
                 Assert.assertTrue(error.getMessage(), error.getMessage().contains("targetType=DECIMAL"));
 
-                sender.floatColumn("value", -2.5f)
+                sender.table("schema_floating_decimal_recovery").floatColumn("value", -2.5f)
                         .stringColumn("marker", "C")
                         .at(2, ChronoUnit.MICROS);
-                sender.doubleColumn("value", Double.longBitsToDouble(0x7ff8000000000042L))
+                sender.table("schema_floating_decimal_recovery").doubleColumn("value", Double.longBitsToDouble(0x7ff8000000000042L))
                         .floatColumn("value", 1.25f)
                         .stringColumn("marker", "source-null")
                         .at(3, ChronoUnit.MICROS);
-                sender.stringColumn("marker", "omitted")
+                sender.table("schema_floating_decimal_recovery").stringColumn("marker", "omitted")
                         .at(4, ChronoUnit.MICROS);
                 long fsn = sender.flushAndGetSequence();
                 Assert.assertTrue(fsn >= 0);

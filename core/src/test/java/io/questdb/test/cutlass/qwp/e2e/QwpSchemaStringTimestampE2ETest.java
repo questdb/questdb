@@ -101,7 +101,7 @@ public class QwpSchemaStringTimestampE2ETest extends AbstractQwpWebSocketTest {
                             LineSenderSchemaException.class,
                             () -> sender.stringColumn("ts", "1970-01-01T00:00:00Z"));
                     Assert.assertEquals(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE, error.getReason());
-                    sender.stringColumn("marker", "C").at(2, target.unit);
+                    sender.table(table).stringColumn("marker", "C").at(2, target.unit);
                     long fsn = sender.flushAndGetSequence();
                     Assert.assertTrue(fsn >= 0);
                     Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));
@@ -114,7 +114,7 @@ public class QwpSchemaStringTimestampE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testPartialInvalidRowIsCancelledAndNextRowNeedsNoReselection() throws Exception {
+    public void testPartialInvalidRowIsCancelledAndNextRowStartsExplicitly() throws Exception {
         runInContext(port -> {
             for (Target target : Target.values()) {
                 String table = "schema_string_ts_rows_" + target.suffix;
@@ -124,7 +124,7 @@ public class QwpSchemaStringTimestampE2ETest extends AbstractQwpWebSocketTest {
                         port, 0, 0, TimeUnit.MILLISECONDS.toNanos(Integer.MAX_VALUE - 1L))) {
                     sender.table(table).stringColumn("value", "1970-01-01T00:00:00Z")
                             .stringColumn("marker", "A").at(1, ChronoUnit.MICROS);
-                    sender.stringColumn("marker", "failed-B");
+                    sender.table(table).stringColumn("marker", "failed-B");
                     LineSenderSchemaException error = Assert.assertThrows(
                             LineSenderSchemaException.class,
                             () -> sender.stringColumn("value", "not-a-timestamp"));
@@ -133,7 +133,7 @@ public class QwpSchemaStringTimestampE2ETest extends AbstractQwpWebSocketTest {
                     Assert.assertTrue(message, message.contains(", table=" + table + ", column=value, inputType=STRING,"));
                     Assert.assertTrue(message, message.contains(target == Target.TIMESTAMP
                             ? "targetType=TIMESTAMP(8)" : "targetType=TIMESTAMP_NS(262152)"));
-                    sender.stringColumn("value", "1970-01-01T00:00:00.000001Z")
+                    sender.table(table).stringColumn("value", "1970-01-01T00:00:00.000001Z")
                             .stringColumn("marker", "C").at(2, ChronoUnit.MICROS);
                     long fsn = sender.flushAndGetSequence();
                     Assert.assertTrue(fsn >= 0);

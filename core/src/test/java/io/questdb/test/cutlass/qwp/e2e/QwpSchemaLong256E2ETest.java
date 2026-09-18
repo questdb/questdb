@@ -120,14 +120,14 @@ public class QwpSchemaLong256E2ETest extends AbstractQwpWebSocketTest {
                         .long256Column("value", 1, 2, 3, 4)
                         .stringColumn("marker", "A")
                         .at(1_000_000L, ChronoUnit.MICROS);
-                sender.long256Column("value", 5, 6, 7, 8)
+                sender.table("schema_long256_rows").long256Column("value", 5, 6, 7, 8)
                         .stringColumn("marker", "failed-B");
                 LineSenderSchemaException error = Assert.assertThrows(
                         LineSenderSchemaException.class,
                         () -> sender.long256Column("bad", 9, 10, 11, 12)
                 );
                 Assert.assertEquals(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE, error.getReason());
-                sender.long256Column("value", 13, 14, 15, 16)
+                sender.table("schema_long256_rows").long256Column("value", 13, 14, 15, 16)
                         .stringColumn("marker", "C")
                         .at(2_000_000L, ChronoUnit.MICROS);
                 long fsn = sender.flushAndGetSequence();

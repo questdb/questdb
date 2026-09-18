@@ -103,7 +103,7 @@ public class QwpSchemaFloatingTextConversionE2ETest extends AbstractQwpWebSocket
                         .binaryColumn("s", new byte[]{1})
                         .doubleColumn("v", -0.0)
                         .at(1_000_000, ChronoUnit.MICROS);
-                sender.stringColumn("marker", "failed-B");
+                sender.table("schema_floating_text_rows").stringColumn("marker", "failed-B");
                 LineSenderSchemaException error = Assert.assertThrows(
                         LineSenderSchemaException.class,
                         () -> sender.doubleColumn("bad", 2.5)
@@ -113,7 +113,7 @@ public class QwpSchemaFloatingTextConversionE2ETest extends AbstractQwpWebSocket
                 Assert.assertTrue(error.getMessage(), error.getMessage().contains("column=bad"));
                 Assert.assertTrue(error.getMessage(), error.getMessage().contains("inputType=DOUBLE"));
                 Assert.assertTrue(error.getMessage(), error.getMessage().contains("targetType=UUID"));
-                sender.floatColumn("s", 0.1f).doubleColumn("v", 1e23)
+                sender.table("schema_floating_text_rows").floatColumn("s", 0.1f).doubleColumn("v", 1e23)
                         .at(2_000_000, ChronoUnit.MICROS);
                 long fsn = sender.flushAndGetSequence();
                 Assert.assertTrue(fsn >= 0);
@@ -141,7 +141,7 @@ public class QwpSchemaFloatingTextConversionE2ETest extends AbstractQwpWebSocket
                 // The pending batch still validates against the pinned FLOAT target.
                 LineSenderSchemaException invalid = Assert.assertThrows(
                         LineSenderSchemaException.class,
-                        () -> sender.stringColumn("marker", "B").stringColumn("value", "not-a-number")
+                        () -> sender.table("schema_floating_text_rebind").stringColumn("marker", "B").stringColumn("value", "not-a-number")
                 );
                 Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, invalid.getReason());
                 long fsn = sender.flushAndGetSequence();

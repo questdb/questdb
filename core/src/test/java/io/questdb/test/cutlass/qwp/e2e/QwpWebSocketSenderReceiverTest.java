@@ -196,6 +196,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     public void testMixedNullAndNonNullArrayRowsAutoCreateTable() throws Exception {
         runInContext((port) -> {
             try (QwpWebSocketSender sender = createSender(port)) {
+                sender.table("ws_mixed_null_array_new_table");
                 sender.getTableBuffer("ws_mixed_null_array_new_table")
                         .getOrCreateColumn("arr", TYPE_DOUBLE_ARRAY, true)
                         .addNull();
@@ -221,6 +222,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             execute("CREATE TABLE ws_mixed_null_array_existing (arr DOUBLE[][][], timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = createSender(port)) {
+                sender.table("ws_mixed_null_array_existing");
                 sender.getTableBuffer("ws_mixed_null_array_existing")
                         .getOrCreateColumn("arr", TYPE_DOUBLE_ARRAY, true)
                         .addNull();
@@ -928,10 +930,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 );
                 Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, error.getReason());
 
-                // The failed row is cancelled automatically. A valid
-                // cross-setter conversion can continue without selecting the
-                // table again.
-                sender.doubleColumn("value", 3.0)
+                // The failed row is cancelled automatically. Start a new row
+                // for the valid cross-setter conversion.
+                sender.table("ws_test_col_type_mismatch").doubleColumn("value", 3.0)
                         .at(2_000_000L, ChronoUnit.MICROS);
                 long secondFsn = sender.flushAndGetSequence();
                 Assert.assertTrue(secondFsn > firstFsn);

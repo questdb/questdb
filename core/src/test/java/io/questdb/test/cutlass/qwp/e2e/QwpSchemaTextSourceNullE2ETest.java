@@ -220,7 +220,7 @@ public class QwpSchemaTextSourceNullE2ETest extends AbstractQwpWebSocketTest {
             Assert.assertTrue(error.getMessage(), error.getMessage().contains("column=v"));
             Assert.assertTrue(error.getMessage(), error.getMessage().contains("inputType=UUID"));
             Assert.assertTrue(error.getMessage(), error.getMessage().contains("targetType=SYMBOL"));
-            sender.stringColumn("v", "C").at(2_000_000, ChronoUnit.MICROS);
+            sender.table(tableName).stringColumn("v", "C").at(2_000_000, ChronoUnit.MICROS);
             long fsn = sender.flushAndGetSequence();
             Assert.assertTrue(fsn >= 0);
             Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));
