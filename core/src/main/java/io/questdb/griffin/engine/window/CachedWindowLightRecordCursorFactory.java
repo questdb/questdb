@@ -631,7 +631,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             final int forwardStateCount = forwardStates != null ? forwardStates.size() : 0;
             if (hasOrdered || forwardFnCount > 0) {
                 while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     // Fused row-selecting mode: the sole function's boolean output is never
                     // materialized (see the "Row-selecting fusion" comment below) nor read back
                     // (positionRecordA/positionRecordB skip repositioning the chain too), so
@@ -661,13 +661,13 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 }
                 if (hasOrdered) {
                     for (int i = 0; i < orderedGroupCount; i++) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         sortBuffers.getQuick(i).finishPut(circuitBreaker);
                     }
                 }
             } else {
                 while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     if (!rowSelecting) {
                         narrowChain.beginRecord();
                     }
@@ -695,7 +695,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                     }
                     group.toTop();
                     while (group.hasNext()) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         long rIdx = group.next();
                         if (isRecordRequired) {
                             positionRecordABaseOnly(rIdx);
@@ -719,7 +719,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                         windowMapGroups != null ? windowMapGroups.getBackwardUnorderedStates() : null;
                 final int backwardStateCount = backwardStates != null ? backwardStates.size() : 0;
                 for (long rIdx = size - 1; rIdx >= 0; rIdx--) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     positionRecordABaseOnly(rIdx);
                     for (int g = 0; g < backwardStateCount; g++) {
                         backwardStates.getQuick(g).computeNext(recordA);
@@ -783,7 +783,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                         final boolean needsRecord = ordered2PassNeedsRecord[i] || stateCount > 0;
                         group.toTop();
                         while (group.hasNext()) {
-                            circuitBreaker.statefulThrowExceptionIfTripped();
+                            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                             long rIdx = group.next();
                             // pass2 reads only base columns through recordA and reads/writes its own
                             // output via spi.getAddress (position-independent), so narrow positioning
@@ -813,7 +813,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                     // A map-state projection reads base columns, so any state forces positioning on.
                     final boolean needsRecord = unordered2PassNeedsRecord || pass2StateCount > 0;
                     for (long rIdx = 0; rIdx < size; rIdx++) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         // see the ordered pass2 loop: base-only positioning suffices here too.
                         if (needsRecord) {
                             positionRecordABaseOnly(rIdx);

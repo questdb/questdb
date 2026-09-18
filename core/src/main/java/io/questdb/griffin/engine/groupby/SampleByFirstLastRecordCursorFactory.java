@@ -168,7 +168,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         // Consult the breaker at open, so even the empty paths below (no matching symbol key, or a
         // base scan that yields no rows) still observe cancellation and stay cancellable.
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         // pageFrameCursor must be acquired before the groupByIndexKey lookup
         final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
         final int groupByIndexKey = symbolFilter.getSymbolFilterKey();
@@ -708,7 +708,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             while (state != STATE_DONE) {
                 // The state machine fetches/searches page frames here; observe the breaker on every
                 // transition so a long scan stays cancellable (a cold-open-only check would not).
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 state = getNextState(state);
                 if (state < 0) {
                     state = -state;

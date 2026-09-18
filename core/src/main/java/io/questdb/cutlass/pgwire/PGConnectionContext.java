@@ -428,6 +428,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         flushRemainingBuffer();
         if (resumeCallback != null) {
+            if (pipelineCurrentEntry != null) {
+                pipelineCurrentEntry.resumeCursorTimer();
+            }
             resumeCallback.resume();
         }
 
@@ -557,6 +560,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (remaining > 0) {
             bufferRemainingOffset = offset;
             bufferRemainingSize = remaining;
+            if (pipelineCurrentEntry != null) {
+                pipelineCurrentEntry.parkSqlExecutionOwner();
+            }
             throw PeerIsSlowToReadException.INSTANCE;
         }
     }
@@ -749,12 +755,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             pipelineCurrentEntry.closeSuspendedCursor();
         }
 
+        sqlExecutionContext.reset();
+        processBind(hi, lo, msgLimit, namedPortal);
+    }
+
+    private void processBind(long hi, long lo, long msgLimit, Utf8Sequence namedPortal) throws PGMessageProcessingException {
         pipelineCurrentEntry.setStateBind(true);
 
         // "bind" is asking us to create portal. We take the conservative approach and assume
         // that the prepared statement and the portal can be interleaved in the pipeline. For that
         // not to fail, these have to be separate factories and pipeline entries
-
         if (namedPortal != null) {
             LOG.info().$("create portal [name=").$(namedPortal).I$();
             int index = namedPortals.keyIndex(namedPortal);
@@ -943,20 +953,44 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         lo = hi + 1;
         pipelineCurrentEntry.setReturnRowCountLimit(pipelineCurrentEntry.getInt(lo, msgLimit, "could not read max rows value"));
         pipelineCurrentEntry.setStateExec(true);
-        sqlExecutionContext.initNow();
-        bindingServiceConfiguredFor = pipelineCurrentEntry;
-        transactionState = pipelineCurrentEntry.msgExecute(
-                sqlExecutionContext,
-                transactionState,
-                taiPool,
-                pendingWriters,
-                this,
-                bindVariableValuesCharacterStore,
-                utf8String,
-                binarySequenceParamsPool,
-                tempSequence,
-                preparedStatementDeallocator
-        );
+        try {
+            if (pipelineCurrentEntry.hasSqlExecutionOwner()) {
+                if (!circuitBreaker.isCancelled()) {
+                    circuitBreaker.resetTimer();
+                }
+                pipelineCurrentEntry.resumeSqlExecutionOwner();
+            } else {
+                pipelineCurrentEntry.beginSqlExecutionOwner(
+                        pipelineCurrentEntry.getSqlText(),
+                        sqlExecutionContext,
+                        pipelineCurrentEntry.getSqlType()
+                );
+            }
+        } catch (Throwable ex) {
+            if (transactionState == IN_TRANSACTION) {
+                transactionState = ERROR_TRANSACTION;
+            }
+            throw msgKaput().put(ex);
+        }
+        try {
+            pipelineCurrentEntry.publishSqlExecutionOwner();
+            sqlExecutionContext.initNow();
+            bindingServiceConfiguredFor = pipelineCurrentEntry;
+            transactionState = pipelineCurrentEntry.msgExecute(
+                    sqlExecutionContext,
+                    transactionState,
+                    taiPool,
+                    pendingWriters,
+                    this,
+                    bindVariableValuesCharacterStore,
+                    utf8String,
+                    binarySequenceParamsPool,
+                    tempSequence,
+                    preparedStatementDeallocator
+            );
+        } finally {
+            pipelineCurrentEntry.unmountSqlExecutionOwnerAfterExecute();
+        }
     }
 
     private void msgFlush() throws PeerIsSlowToReadException, PeerDisconnectedException {
@@ -1031,7 +1065,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         final CharSequence utf16SqlText = e.toImmutable();
         lo = hi + 1;
-
+        sqlExecutionContext.reset();
         // read parameter types before we are able to compile SQL text
         // parameter values are not provided here, but we do not need them to be able to
         // parse/compile the SQL.
@@ -1083,7 +1117,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tas)) {
                     pipelineCurrentEntry.ofCachedSelect(utf16SqlText, tas);
                     cachedStatus = CACHE_HIT_SELECT_VALID;
-                    sqlExecutionContext.reset();
                 } else {
                     tas.close();
                     cachedStatus = CACHE_HIT_SELECT_INVALID;
@@ -1151,6 +1184,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
             throw msgKaput().put(ex);
         } finally {
+            if (pipelineCurrentEntry != null) {
+                pipelineCurrentEntry.unmountSqlExecutionOwner();
+            }
             msgSync();
         }
     }
@@ -1427,51 +1463,26 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             boolean isExec = pipelineCurrentEntry.isStateExec();
             boolean isError = pipelineCurrentEntry.isError();
             boolean isClosed = pipelineCurrentEntry.isStateClosed();
-            // with the sync call the existing pipeline entry will assign its own completion hooks (resume callbacks)
-            while (true) {
+            try {
                 try {
-
-                    // we need to repopulate BindingService before sync
-                    // because syncing might access binding data too
-                    if (bindingServiceConfiguredFor != pipelineCurrentEntry && pipelineCurrentEntry.populateBindingServiceForSync(
-                            sqlExecutionContext,
-                            bindVariableValuesCharacterStore,
-                            utf8String,
-                            binarySequenceParamsPool
-                    )) {
-                        bindingServiceConfiguredFor = pipelineCurrentEntry;
+                    pipelineCurrentEntry.mountSqlExecutionOwnerForSync();
+                } catch (CairoException e) {
+                    if (e.isCritical()) {
+                        throw e;
                     }
-                    pipelineCurrentEntry.msgSync(
-                            sqlExecutionContext,
-                            pendingWriters,
-                            responseUtf8Sink
-                    );
-                    break;
-                } catch (NoSpaceLeftInResponseBufferException e) {
-                    responseUtf8Sink.resetToBookmark();
-                    if (responseUtf8Sink.sendBufferAndReset() == 0) {
-                        // we did not send anything, the sync is stuck
-                        responseUtf8Sink.reset();
-                        pipelineCurrentEntry.getErrorMessageSink()
-                                .put("not enough space in send buffer [sendBufferSize=").put(responseUtf8Sink.getSendBufferSize())
-                                .put(", requiredSize=").put(Math.max(e.getBytesRequired(), 2 * responseUtf8Sink.getSendBufferSize()))
-                                .put(']');
-                        pipelineCurrentEntry.msgSync(
-                                sqlExecutionContext,
-                                pendingWriters,
-                                responseUtf8Sink
-                        );
-                        break;
+                    pipelineCurrentEntry.setErrorMessagePosition(e.getPosition());
+                    pipelineCurrentEntry.getErrorMessageSink().put(e.getFlyweightMessage());
+                    isError = true;
+                    if (transactionState == IN_TRANSACTION) {
+                        transactionState = ERROR_TRANSACTION;
                     }
-                } catch (PGMessageProcessingException | SqlException e) {
-                    pipelineCurrentEntry.getErrorMessageSink().put(e.getMessage());
-                    pipelineCurrentEntry.msgSync(
-                            sqlExecutionContext,
-                            pendingWriters,
-                            responseUtf8Sink
-                    );
-                    break;
                 }
+                syncPipelineEntry();
+            } finally {
+                // A retained cursor means either portal suspension or a socket send that parked
+                // before sync completed. In both cases stop its execution timer before releasing
+                // admission. Completed and non-cursor entries have no cursor and only unmount.
+                pipelineCurrentEntry.unmountSqlExecutionOwnerAfterExecute();
             }
 
             // we want the pipelineCurrentEntry to retain the last entry of the pipeline
@@ -1480,18 +1491,20 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // "cacheIfPossible" has side effects on the entry.
 
             PGPipelineEntry nextEntry = pipeline.poll();
-            if (nextEntry != null || isExec || isError || isClosed) {
+            // A resumed sync re-enters after clearState() has reset stateExec. Keep
+            // retained portals suspended even when this entry is otherwise not consumed.
+            if (pipelineCurrentEntry.isSuspended()
+                    && nextEntry == null
+                    && !isClosed
+                    && !isError) {
                 if (bindingServiceConfiguredFor == pipelineCurrentEntry) {
                     bindingServiceConfiguredFor = null;
                 }
-                // check suspension before cacheIfPossible(), which frees the cursor
-                if (pipelineCurrentEntry.isSuspended()
-                        && nextEntry == null
-                        && !isClosed
-                        && !isError) {
-                    // portal is suspended with more rows to send, retain the entry
-                    // so the next Execute can resume the cursor
-                    break;
+                break;
+            }
+            if (nextEntry != null || isExec || isError || isClosed) {
+                if (bindingServiceConfiguredFor == pipelineCurrentEntry) {
+                    bindingServiceConfiguredFor = null;
                 }
                 if (pipelineCurrentEntry.isSuspended()) {
                     // cursor is suspended but we cannot retain (closed, error,
@@ -1513,6 +1526,54 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
         }
         sqlTextCharacterStore.clear();
+    }
+
+    private void syncPipelineEntry() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        // with the sync call the existing pipeline entry will assign its own completion hooks (resume callbacks)
+        while (true) {
+            try {
+                // we need to repopulate BindingService before sync
+                // because syncing might access binding data too
+                if (bindingServiceConfiguredFor != pipelineCurrentEntry && pipelineCurrentEntry.populateBindingServiceForSync(
+                        sqlExecutionContext,
+                        bindVariableValuesCharacterStore,
+                        utf8String,
+                        binarySequenceParamsPool
+                )) {
+                    bindingServiceConfiguredFor = pipelineCurrentEntry;
+                }
+                pipelineCurrentEntry.msgSync(
+                        sqlExecutionContext,
+                        pendingWriters,
+                        responseUtf8Sink
+                );
+                break;
+            } catch (NoSpaceLeftInResponseBufferException e) {
+                responseUtf8Sink.resetToBookmark();
+                if (responseUtf8Sink.sendBufferAndReset() == 0) {
+                    // we did not send anything, the sync is stuck
+                    responseUtf8Sink.reset();
+                    pipelineCurrentEntry.getErrorMessageSink()
+                            .put("not enough space in send buffer [sendBufferSize=").put(responseUtf8Sink.getSendBufferSize())
+                            .put(", requiredSize=").put(Math.max(e.getBytesRequired(), 2 * responseUtf8Sink.getSendBufferSize()))
+                            .put(']');
+                    pipelineCurrentEntry.msgSync(
+                            sqlExecutionContext,
+                            pendingWriters,
+                            responseUtf8Sink
+                    );
+                    break;
+                }
+            } catch (PGMessageProcessingException | SqlException e) {
+                pipelineCurrentEntry.getErrorMessageSink().put(e.getMessage());
+                pipelineCurrentEntry.msgSync(
+                        sqlExecutionContext,
+                        pendingWriters,
+                        responseUtf8Sink
+                );
+                break;
+            }
+        }
     }
 
     static void dumpBuffer(char direction, long buffer, int len, boolean dumpNetworkTraffic) {
@@ -1620,27 +1681,33 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         @Override
         public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) throws Exception {
-            CharacterStoreEntry entry = sqlTextCharacterStore.newEntry();
-            entry.put(queryText);
-            pipelineCurrentEntry.ofSimpleQuery(
-                    entry.toImmutable(),
-                    sqlExecutionContext,
-                    cq,
-                    taiPool
-            );
-            transactionState = pipelineCurrentEntry.msgExecute(
-                    sqlExecutionContext,
-                    transactionState,
-                    taiPool,
-                    pendingWriters,
-                    PGConnectionContext.this,
-                    bindVariableValuesCharacterStore,
-                    utf8String,
-                    binarySequenceParamsPool,
-                    tempSequence,
-                    preparedStatementDeallocator
-            );
-            pipelineCurrentEntry.setStateExec(true);
+            try {
+                CharacterStoreEntry entry = sqlTextCharacterStore.newEntry();
+                entry.put(queryText);
+                pipelineCurrentEntry.ofSimpleQuery(
+                        entry.toImmutable(),
+                        sqlExecutionContext,
+                        cq,
+                        taiPool
+                );
+                pipelineCurrentEntry.beginSqlExecutionOwner(queryText, sqlExecutionContext, cq.getType());
+                pipelineCurrentEntry.publishSqlExecutionOwner();
+                transactionState = pipelineCurrentEntry.msgExecute(
+                        sqlExecutionContext,
+                        transactionState,
+                        taiPool,
+                        pendingWriters,
+                        PGConnectionContext.this,
+                        bindVariableValuesCharacterStore,
+                        utf8String,
+                        binarySequenceParamsPool,
+                        tempSequence,
+                        preparedStatementDeallocator
+                );
+                pipelineCurrentEntry.setStateExec(true);
+            } finally {
+                pipelineCurrentEntry.unmountSqlExecutionOwner();
+            }
         }
 
         @Override
@@ -1659,14 +1726,25 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 // so if there was a cache hit, the cached plan should not have no parameter either
                 // -> msgParseReconcileParameterTypes() should always pass
                 tas.close();
-                return false;
+                return true;
             }
 
             CharacterStoreEntry entry = sqlTextCharacterStore.newEntry();
             entry.put(sqlText);
             try {
+                pipelineCurrentEntry.beginSqlExecutionOwner(sqlText, sqlExecutionContext, tas.getSqlType());
+            } catch (RuntimeException | Error e) {
+                try {
+                    tas.close();
+                } catch (Throwable cleanupFailure) {
+                    if (cleanupFailure != e) {
+                        e.addSuppressed(cleanupFailure);
+                    }
+                }
+                throw e;
+            }
+            try {
                 pipelineCurrentEntry.ofSimpleCachedSelect(entry.toImmutable(), sqlExecutionContext, tas);
-                return false; // we will not compile the query
             } catch (Throwable e) {
                 // a bad thing happened while we tried to use cached query
                 // let's pretend we never tried and compile the query as if there was no cache
@@ -1681,6 +1759,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 tas.close();
                 return true;
             }
+            pipelineCurrentEntry.publishSqlExecutionOwner();
+            pipelineCurrentEntry.unmountSqlExecutionOwner();
+            return false; // we will not compile the query
         }
     }
 
