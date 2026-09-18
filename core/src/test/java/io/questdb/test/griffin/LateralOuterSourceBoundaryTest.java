@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.QueryModelGenerationState;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.test.AbstractCairoTest;
@@ -78,6 +79,47 @@ public class LateralOuterSourceBoundaryTest extends AbstractCairoTest {
     @Test
     public void testGroupedHeadFilteredUnionTailRepeated() throws Exception {
         assertGroupedHeadFilteredTail("UNION");
+    }
+
+    @Test
+    public void testGroupedHeadNestedUnionAllTailRepeated() throws Exception {
+        assertGroupedHeadNestedTail("UNION ALL");
+    }
+
+    @Test
+    public void testGroupedHeadNestedUnionTailRepeated() throws Exception {
+        assertGroupedHeadNestedTail("UNION");
+    }
+
+    @Test
+    public void testGroupedLateralUnionPreparationScalesLinearly() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a(k INT)");
+            execute("CREATE TABLE b(k INT)");
+            execute("INSERT INTO a VALUES (1), (2), (0)");
+            execute("INSERT INTO b VALUES (1), (2)");
+            String head = """
+                    SELECT o.k FROM (SELECT k FROM a GROUP BY k) o
+                    JOIN LATERAL (SELECT k FROM b WHERE b.k = o.k) l ON true
+                    """;
+            int previousCount = 0;
+            try (PreparationCountingCompiler compiler = new PreparationCountingCompiler()) {
+                for (int branches = 32; branches <= 64; branches *= 2) {
+                    String query = head + " UNION ALL SELECT k FROM a WHERE k > 0".repeat(branches);
+                    assertQuery("SELECT * FROM (" + query + ") ORDER BY k").withCompiler(compiler)
+                            .returns("k\n" + "1\n".repeat(branches + 1) + "2\n".repeat(branches + 1));
+                    Assert.assertEquals("prepare the root, shared source, and each UNION operand",
+                            branches + 2, compiler.preparationCalls);
+                    Assert.assertTrue(compiler.preparationCount > previousCount);
+                    if (previousCount > 0) {
+                        Assert.assertTrue("doubling UNION operands must not more than double preparation visits [32="
+                                        + previousCount + ", 64=" + compiler.preparationCount + "]",
+                                compiler.preparationCount <= 2 * previousCount);
+                    }
+                    previousCount = compiler.preparationCount;
+                }
+            }
+        });
     }
 
     @Test
@@ -341,6 +383,32 @@ public class LateralOuterSourceBoundaryTest extends AbstractCairoTest {
         });
     }
 
+    private void assertGroupedHeadNestedTail(String setOperation) throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE TABLE tail AS (SELECT x::TIMESTAMP ts, x FROM long_sequence(200)) TIMESTAMP(ts)");
+            String nestedUnion = """
+                    (SELECT ts, x FROM t WHERE x = 101
+                     UNION ALL
+                     SELECT ts, x FROM t WHERE x = 150)
+                    """;
+            for (int shape = 0; shape < 2; shape++) {
+                String nestedBranch = shape == 0 ? nestedUnion : "SELECT * FROM " + nestedUnion;
+                String query = repeated("(SELECT ts, max(x) AS x FROM t WHERE x = 1 GROUP BY ts "
+                        + setOperation + " " + nestedBranch + " "
+                        + setOperation + " SELECT ts, x FROM tail WHERE x = 200)");
+                assertQuery(query).withPlanContaining("(Shared)").returns("""
+                        ts\tx\tc\td
+                        1970-01-01T00:00:00.000001Z\t1\t1\t0
+                        1970-01-01T00:00:00.000101Z\t101\t50\t50
+                        1970-01-01T00:00:00.000150Z\t150\t50\t50
+                        1970-01-01T00:00:00.000200Z\t200\t50\t50
+                        """);
+                assertTailSelection(query);
+            }
+        });
+    }
+
     private void assertTailSelection(String query) throws Exception {
         PlanSink plan = getPlanSink(query);
         StringBuilder text = new StringBuilder();
@@ -415,6 +483,27 @@ public class LateralOuterSourceBoundaryTest extends AbstractCairoTest {
     private void createTables() throws Exception {
         execute("CREATE TABLE t AS (SELECT x::TIMESTAMP ts, x FROM long_sequence(200)) TIMESTAMP(ts)");
         execute("CREATE TABLE u AS (SELECT x::TIMESTAMP ts FROM long_sequence(50)) TIMESTAMP(ts)");
+    }
+
+    private static class PreparationCountingCompiler extends SqlCompilerImpl {
+        private int preparationCalls;
+        private int preparationCount;
+
+        private PreparationCountingCompiler() {
+            super(AbstractCairoTest.engine);
+            QueryModelGenerationState state = codeGenerator.getGenerationStateForTesting();
+            state.setPreparationHook(model -> {
+                preparationCalls++;
+                // The hook runs before preparation; omit the final constant-size operand.
+                preparationCount = state.getPreparationCount();
+            });
+        }
+
+        @Override
+        protected RecordCursorFactory generateSelectOneShot(IQueryModel model, SqlExecutionContext context, boolean isProgressLogger) throws SqlException {
+            preparationCalls = preparationCount = 0;
+            return super.generateSelectOneShot(model, context, isProgressLogger);
+        }
     }
 
     private static class RetryCompiler extends SqlCompilerImpl {
