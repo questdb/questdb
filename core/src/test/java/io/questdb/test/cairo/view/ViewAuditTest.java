@@ -123,43 +123,27 @@ public class ViewAuditTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAuditsOfOneCompileDoNotCarryOverToTheNext() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndView();
+            markViewAudited("v");
+            // One compiler, so both statements go through the same parser and the same pooled query
+            // models. A read of a plain table must not inherit what the statement before it recorded.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                ExecutionModel model = compiler.generateExecutionModel("SELECT s FROM v", sqlExecutionContext);
+                assertEquals(1, model.getQueryModel().getViewAudits().size());
+                model = compiler.generateExecutionModel("SELECT s FROM t", sqlExecutionContext);
+                assertEquals(0, model.getQueryModel().getViewAudits().size());
+            }
+        });
+    }
+
+    @Test
     public void testCreateTableAsSelectFromAuditedViewRecordsTheRead() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTableAndView();
             markViewAudited("v");
             assertRecordsOneAuditOf("v", "CREATE TABLE copy AS (SELECT s FROM v)");
-        });
-    }
-
-    @Test
-    public void testRedefiningAnAuditedViewKeepsTheFlag() throws Exception {
-        assertMemoryLeak(() -> {
-            createBaseTableAndView();
-            final TableToken viewToken = engine.getTableTokenIfExists("v");
-            final ViewDefinition audited = new ViewDefinition();
-            audited.init(viewToken, "SELECT s FROM t", 0L, true);
-            writeDefinitionFile(viewToken, audited);
-            markViewAudited("v");
-
-            // The marking has to survive a redefinition, because losing it is a compliance event
-            // and neither statement asks for one. Both routes land in ViewGraph.updateView, which
-            // carries the current flag rather than taking one from the statement - CREATE OR
-            // REPLACE over an existing view is intercepted by compileCreate and executed as an
-            // alter, so it is the same route under a different spelling. That is what makes DROP
-            // the only way to remove the marking, and therefore the only place it has to be gated.
-            execute("CREATE OR REPLACE VIEW v AS (SELECT s FROM t WHERE s != 'z')");
-            drainWalAndViewQueues();
-            assertTrue("CREATE OR REPLACE must not clear the audited flag",
-                    engine.getViewGraph().getViewDefinition(engine.getTableTokenIfExists("v")).isAudited());
-            assertTrue("...and it has to survive on disk too",
-                    readDefinitionFile(engine.getTableTokenIfExists("v")).isAudited());
-
-            execute("ALTER VIEW v AS (SELECT s FROM t)");
-            drainWalAndViewQueues();
-            assertTrue("ALTER VIEW must not clear the audited flag",
-                    engine.getViewGraph().getViewDefinition(engine.getTableTokenIfExists("v")).isAudited());
-            assertTrue("...and it has to survive on disk too",
-                    readDefinitionFile(engine.getTableTokenIfExists("v")).isAudited());
         });
     }
 
@@ -208,35 +192,6 @@ public class ViewAuditTest extends AbstractCairoTest {
             assertTrue("the audited flag must not depend on block order", readBack.isAudited());
             assertEquals("SELECT s FROM t", readBack.getViewSql());
             assertEquals(5L, readBack.getSeqTxn());
-        });
-    }
-
-    @Test
-    public void testShowCreateViewReportsTheAuditedFlag() throws Exception {
-        assertMemoryLeak(() -> {
-            createBaseTableAndView();
-            final TableToken viewToken = engine.getTableTokenIfExists("v");
-
-            // SHOW CREATE VIEW reads the _view file rather than the graph, so marking the view
-            // through ViewGraph - what every other test here does - would not reach it.
-            // noRandomAccess: SHOW CREATE VIEW builds its one row on the fly, so the cursor cannot
-            // be re-positioned the way a table scan can.
-            assertQuery("SHOW CREATE VIEW v")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .returns("ddl\nCREATE VIEW 'v' AS ( \nSELECT s FROM t\n);\n");
-
-            final ViewDefinition audited = new ViewDefinition();
-            audited.init(viewToken, "SELECT s FROM t", 0L, true);
-            writeDefinitionFile(viewToken, audited);
-
-            // The flag's only user-visible surface in OSS. WITH AUDIT is an Enterprise clause, so
-            // what this round-trips into is an Enterprise statement - which is the point: the
-            // definition has to report the marking it is actually carrying.
-            assertQuery("SHOW CREATE VIEW v")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .returns("ddl\nCREATE VIEW 'v' AS ( \nSELECT s FROM t\n) WITH AUDIT;\n");
         });
     }
 
@@ -327,6 +282,128 @@ public class ViewAuditTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQueryReadingNoAuditedViewRecordsNothing() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, symbol SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE dest (ts TIMESTAMP, symbol SYMBOL, price DOUBLE)");
+            // Declares an AUDITED parameter but is not audited itself: the view's flag is what turns
+            // auditing on, not its declarations.
+            execute("""
+                    CREATE VIEW v_plain AS (
+                      DECLARE OVERRIDABLE AUDITED @sym := 'AAPL'
+                      SELECT ts, symbol, price FROM trades WHERE symbol = @sym)""");
+            execute("CREATE VIEW v_audited AS (SELECT ts, symbol, price FROM trades)");
+            execute("CREATE MATERIALIZED VIEW mv_trades AS (SELECT ts, symbol, max(price) price FROM trades SAMPLE BY 1d) PARTITION BY DAY");
+            drainWalAndViewQueues();
+            drainWalAndMatViewQueues();
+            markViewAudited("v_audited");
+
+            // Enterprise wraps a plan for auditing only when this list is not empty, so an empty
+            // list is what leaves a query that reads no audited view with the plan it always had.
+            assertRecordsNoAudit("SELECT * FROM trades");
+            assertRecordsNoAudit("DECLARE @sym := 'MSFT' SELECT * FROM trades WHERE symbol = @sym");
+            assertRecordsNoAudit("SELECT * FROM v_plain");
+            assertRecordsNoAudit("DECLARE @sym := 'MSFT' SELECT * FROM v_plain");
+            assertRecordsNoAudit("SELECT * FROM mv_trades");
+            // The statements that copy rows out take the same route to the model as a SELECT.
+            assertRecordsNoAudit("INSERT INTO dest SELECT ts, symbol, price FROM v_plain");
+            assertRecordsNoAudit("CREATE TABLE copy AS (SELECT * FROM mv_trades)");
+            assertRecordsNoAudit("UPDATE dest SET price = 1 FROM v_plain WHERE dest.symbol = v_plain.symbol");
+
+            // The control: the same check sees the audit once an audited view is read. Beside one,
+            // the sources that are not audited still add nothing.
+            assertRecordsOneAuditOf("v_audited", "SELECT * FROM v_audited");
+            assertRecordsOneAuditOf("v_audited", """
+                    SELECT a.ts, a.symbol, p.price, m.price, t.price
+                    FROM v_audited a
+                    JOIN v_plain p ON a.symbol = p.symbol
+                    JOIN mv_trades m ON a.symbol = m.symbol
+                    JOIN trades t ON a.symbol = t.symbol""");
+        });
+    }
+
+    @Test
+    public void testReadOfANonAuditedViewRecordsNothing() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndView();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final ExecutionModel model = compiler.generateExecutionModel("SELECT s FROM v", sqlExecutionContext);
+                assertEquals(0, model.getQueryModel().getViewAudits().size());
+            }
+        });
+    }
+
+    @Test
+    public void testRedefiningAnAuditedViewKeepsTheFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndView();
+            final TableToken viewToken = engine.getTableTokenIfExists("v");
+            final ViewDefinition audited = new ViewDefinition();
+            audited.init(viewToken, "SELECT s FROM t", 0L, true);
+            writeDefinitionFile(viewToken, audited);
+            markViewAudited("v");
+
+            // The marking has to survive a redefinition, because losing it is a compliance event
+            // and neither statement asks for one. Both routes land in ViewGraph.updateView, which
+            // carries the current flag rather than taking one from the statement - CREATE OR
+            // REPLACE over an existing view is intercepted by compileCreate and executed as an
+            // alter, so it is the same route under a different spelling. That is what makes DROP
+            // the only way to remove the marking, and therefore the only place it has to be gated.
+            execute("CREATE OR REPLACE VIEW v AS (SELECT s FROM t WHERE s != 'z')");
+            drainWalAndViewQueues();
+            assertTrue("CREATE OR REPLACE must not clear the audited flag",
+                    engine.getViewGraph().getViewDefinition(engine.getTableTokenIfExists("v")).isAudited());
+            assertTrue("...and it has to survive on disk too",
+                    readDefinitionFile(engine.getTableTokenIfExists("v")).isAudited());
+
+            execute("ALTER VIEW v AS (SELECT s FROM t)");
+            drainWalAndViewQueues();
+            assertTrue("ALTER VIEW must not clear the audited flag",
+                    engine.getViewGraph().getViewDefinition(engine.getTableTokenIfExists("v")).isAudited());
+            assertTrue("...and it has to survive on disk too",
+                    readDefinitionFile(engine.getTableTokenIfExists("v")).isAudited());
+        });
+    }
+
+    @Test
+    public void testSelectFromAuditedViewRecordsTheRead() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndView();
+            markViewAudited("v");
+            assertRecordsOneAuditOf("v", "SELECT s FROM v");
+        });
+    }
+
+    @Test
+    public void testShowCreateViewReportsTheAuditedFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndView();
+            final TableToken viewToken = engine.getTableTokenIfExists("v");
+
+            // SHOW CREATE VIEW reads the _view file rather than the graph, so marking the view
+            // through ViewGraph - what every other test here does - would not reach it.
+            // noRandomAccess: SHOW CREATE VIEW builds its one row on the fly, so the cursor cannot
+            // be re-positioned the way a table scan can.
+            assertQuery("SHOW CREATE VIEW v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("ddl\nCREATE VIEW 'v' AS ( \nSELECT s FROM t\n);\n");
+
+            final ViewDefinition audited = new ViewDefinition();
+            audited.init(viewToken, "SELECT s FROM t", 0L, true);
+            writeDefinitionFile(viewToken, audited);
+
+            // The flag's only user-visible surface in OSS. WITH AUDIT is an Enterprise clause, so
+            // what this round-trips into is an Enterprise statement - which is the point: the
+            // definition has to report the marking it is actually carrying.
+            assertQuery("SHOW CREATE VIEW v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("ddl\nCREATE VIEW 'v' AS ( \nSELECT s FROM t\n) WITH AUDIT;\n");
+        });
+    }
+
+    @Test
     public void testUnknownTrailingBlockIsSkipped() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTableAndView();
@@ -364,26 +441,6 @@ public class ViewAuditTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReadOfANonAuditedViewRecordsNothing() throws Exception {
-        assertMemoryLeak(() -> {
-            createBaseTableAndView();
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                final ExecutionModel model = compiler.generateExecutionModel("SELECT s FROM v", sqlExecutionContext);
-                assertEquals(0, model.getQueryModel().getViewAudits().size());
-            }
-        });
-    }
-
-    @Test
-    public void testSelectFromAuditedViewRecordsTheRead() throws Exception {
-        assertMemoryLeak(() -> {
-            createBaseTableAndView();
-            markViewAudited("v");
-            assertRecordsOneAuditOf("v", "SELECT s FROM v");
-        });
-    }
-
-    @Test
     public void testUpdateReadingAnAuditedViewRecordsTheRead() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTableAndView();
@@ -391,6 +448,15 @@ public class ViewAuditTest extends AbstractCairoTest {
             markViewAudited("v");
             assertRecordsOneAuditOf("v", "UPDATE dest SET l = 1 FROM v WHERE dest.s = v.s");
         });
+    }
+
+    private static void assertRecordsNoAudit(String sql) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            final ExecutionModel model = compiler.generateExecutionModel(sql, sqlExecutionContext);
+            final IQueryModel queryModel = model.getQueryModel();
+            assertNotNull("no query model for [" + sql + "]", queryModel);
+            assertEquals("wrong audit count for [" + sql + "]", 0, queryModel.getViewAudits().size());
+        }
     }
 
     private static void assertRecordsOneAuditOf(String viewName, String sql) throws Exception {
