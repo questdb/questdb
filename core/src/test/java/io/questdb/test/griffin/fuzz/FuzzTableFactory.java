@@ -31,6 +31,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.fuzz.types.ColumnKind;
 import io.questdb.test.griffin.fuzz.types.FuzzColumnType;
 import io.questdb.test.griffin.fuzz.types.FuzzColumnTypes;
+import io.questdb.test.griffin.fuzz.types.IntKeyType;
 import io.questdb.test.griffin.fuzz.types.SymbolType;
 import io.questdb.test.griffin.fuzz.types.TimestampType;
 
@@ -42,9 +43,11 @@ import java.time.format.DateTimeFormatter;
  * data but with independently random storage settings. Timestamps step
  * forward so a configurable chunk of rows spans multiple DAY partitions.
  * <p>
- * Every table carries at least one SYMBOL column named {@code sym} so a
- * join fuzzer has a predictable key to target. The designated timestamp
- * column is always the last column and is named {@code ts}.
+ * Every table carries a SYMBOL column named {@code sym} and an INT column
+ * named {@code k} over a small domain (see {@link IntKeyType}), so a join
+ * fuzzer has a predictable key of each type the fused hash join GROUP BY
+ * accepts. The designated timestamp column is always the last column and is
+ * named {@code ts}.
  * <p>
  * Each of the two siblings independently picks one of three parquet
  * modes uniformly at random: {@link ParquetMode#NONE} keeps every
@@ -68,6 +71,7 @@ public final class FuzzTableFactory {
     // Drawn uniformly when a SYMBOL column gets indexed, so bitmap and the
     // three posting variants all get exercised over a run.
     private static final FuzzIndex.Kind[] INDEX_KINDS = FuzzIndex.Kind.values();
+    private static final String INT_JOIN_KEY_COLUMN = "k";
     private static final String JOIN_KEY_COLUMN = "sym";
     private static final double PARTIAL_PARQUET_PARTITION_CHANCE = 0.5;
     // Per-posting-index chance of attaching a covering INCLUDE list.
@@ -163,6 +167,8 @@ public final class FuzzTableFactory {
 
         // Shared join key. Always SYMBOL so ASOF/LT/SPLICE on (sym) has a target.
         columns.add(new FuzzColumn(JOIN_KEY_COLUMN, SymbolType.INSTANCE));
+        // Shared INT join key over a small domain, so an INT equi-join matches rows.
+        columns.add(new FuzzColumn(INT_JOIN_KEY_COLUMN, IntKeyType.INSTANCE));
 
         for (int i = 0; i < numExtra; i++) {
             columns.add(new FuzzColumn("c" + i, dealType(rnd)));

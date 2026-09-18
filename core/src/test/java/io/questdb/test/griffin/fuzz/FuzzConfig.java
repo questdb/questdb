@@ -32,12 +32,14 @@ import io.questdb.std.Rnd;
  * test itself, so a developer can crank it up when hunting issues.
  */
 public final class FuzzConfig {
+    public static final String DIFF_FUSED_PROP = "questdb.fuzz.diff.fused";
     public static final String DIFF_JIT_PROP = "questdb.fuzz.diff.jit";
     public static final String DIFF_SHADOW_PROP = "questdb.fuzz.diff.shadow";
     public static final String DUMP_PROP = "questdb.fuzz.dump";
     public static final String FAULTS_PROP = "questdb.fuzz.faults";
     public static final String FAULT_PARALLEL_PROP = "questdb.fuzz.fault.parallel";
     public static final String FAULT_PCT_PROP = "questdb.fuzz.fault.pct";
+    public static final String HASH_JOIN_PROP = "questdb.fuzz.hashjoin";
     public static final String HORIZON_JOIN_PROP = "questdb.fuzz.horizonjoin";
     public static final String LATEST_ON_PROP = "questdb.fuzz.lateston";
     public static final String QUERIES_PROP = "questdb.fuzz.queries";
@@ -49,15 +51,17 @@ public final class FuzzConfig {
     // "this generator has stopped compiling" guard actually holds it. Measured queries per shape,
     // on one seed that drew a posting-indexed SYMBOL:
     //
-    //   budget | GROUP_BY SAMPLE_BY SIMPLE WINDOW LATEST_ON POSTING HORIZON_JOIN TEMPORAL_JOIN WINDOW_JOIN
-    //      100 |       16        31     11      7         7       0            3             3           6
-    //     1000 |      187       178    124    134        43      75           42            39          34
+    //   budget | GROUP_BY SAMPLE_BY SIMPLE WINDOW LATEST_ON POSTING HORIZON_JOIN TEMPORAL_JOIN WINDOW_JOIN HASH_JOIN_GROUP_BY
+    //      100 |        9        28     14      8         6       3            3             6           3                  6
+    //     1000 |      120       207    131    102        49      56           43            37          44                 52
     //
-    // At 100 only SAMPLE_BY reached the floor of 25, so the guard was dormant for the other eight
-    // shapes - every join shape among them. At 1000 all nine clear it on this seed, for ~2s more
-    // (1.7s -> 3.8s), which is noise next to the build it rides on.
+    // At 100 only SAMPLE_BY reached the floor of 25, so the guard was dormant for the other nine
+    // shapes - every join shape among them. At 1000 all ten clear it on this seed, for ~3s more
+    // (1.9s -> 4.6s), which is noise next to the build it rides on. The same budget also gives the
+    // fused on/off axis in QueryRunner enough completed comparisons for its own floor: 30 to 41
+    // over ten measured default runs, against a sample floor of 25.
     //
-    // Read POSTING's 0 -> 75 as conditional on the seed: PostingClause generates only when the
+    // Read POSTING's figures as conditional on the seed: PostingClause generates only when the
     // run's random schema draw put a posting-indexed SYMBOL on some table, which
     // FuzzTableFactory.assignIndexes decides per SYMBOL column. On a run that drew none - 7 of the
     // 40 measured - no budget lifts POSTING off zero and it reports 0/0 whatever the budget.
@@ -65,9 +69,11 @@ public final class FuzzConfig {
     // runs stay green instead of failing a working generator.
     private static final int DEFAULT_NUM_QUERIES = 1_000;
 
+    private final boolean isDiffFusedEnabled;
     private final boolean isDiffJitEnabled;
     private final boolean isDiffShadowEnabled;
     private final boolean isFaultInjectionEnabled;
+    private final boolean isHashJoinEnabled;
     private final boolean isHorizonJoinEnabled;
     private final boolean isLatestOnEnabled;
     private final boolean isParallelFaultEnabled;
@@ -104,6 +110,10 @@ public final class FuzzConfig {
         this.dumpPath = System.getProperty(DUMP_PROP);
         this.isDiffJitEnabled = Boolean.parseBoolean(System.getProperty(DIFF_JIT_PROP, "true"));
         this.isDiffShadowEnabled = Boolean.parseBoolean(System.getProperty(DIFF_SHADOW_PROP, "true"));
+        // Runs every equi-join GROUP BY query with the fused hash join GROUP BY on and off and
+        // compares the results (see QueryRunner). Pass -Dquestdb.fuzz.diff.fused=false to drop
+        // the comparison and keep the shape.
+        this.isDiffFusedEnabled = Boolean.parseBoolean(System.getProperty(DIFF_FUSED_PROP, "true"));
         this.isVerifyCursorEnabled = Boolean.parseBoolean(System.getProperty(VERIFY_CURSOR_PROP, "true"));
         this.isFaultInjectionEnabled = Boolean.parseBoolean(System.getProperty(FAULTS_PROP, "true"));
         this.faultProbabilityPct = Integer.getInteger(FAULT_PCT_PROP, 15);
@@ -128,6 +138,11 @@ public final class FuzzConfig {
         // drop either kind and give the band back to the remaining join shapes.
         this.isHorizonJoinEnabled = Boolean.parseBoolean(System.getProperty(HORIZON_JOIN_PROP, "true"));
         this.isWindowJoinEnabled = Boolean.parseBoolean(System.getProperty(WINDOW_JOIN_PROP, "true"));
+        // Equi-join GROUP BY shapes, the ones the fused hash join GROUP BY replaces, carve a band
+        // out of the GROUP BY range (see QueryGenerator). On by default; pass
+        // -Dquestdb.fuzz.hashjoin=false to drop them, for example while investigating a failure,
+        // and give the band back to GROUP BY.
+        this.isHashJoinEnabled = Boolean.parseBoolean(System.getProperty(HASH_JOIN_PROP, "true"));
         // LATEST ON shapes (latest row per PARTITION BY key) carve a band out of
         // the SIMPLE range (see QueryGenerator). On by default, like window. Pass
         // -Dquestdb.fuzz.lateston=false to drop them and give the band back to
@@ -171,6 +186,10 @@ public final class FuzzConfig {
         return tsStart;
     }
 
+    public boolean isDiffFusedEnabled() {
+        return isDiffFusedEnabled;
+    }
+
     public boolean isDiffJitEnabled() {
         return isDiffJitEnabled;
     }
@@ -181,6 +200,10 @@ public final class FuzzConfig {
 
     public boolean isFaultInjectionEnabled() {
         return isFaultInjectionEnabled;
+    }
+
+    public boolean isHashJoinEnabled() {
+        return isHashJoinEnabled;
     }
 
     public boolean isHorizonJoinEnabled() {
