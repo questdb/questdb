@@ -144,32 +144,19 @@ public class QwpResultBatchBuffer implements QuietCloseable {
 
     /**
      * Bulk-appends {@code (hi - lo)} rows of the given {@code frame}, driving the
-     * column emit in column-major order when the frame is in NATIVE format. Each
-     * supported column type reads its page memory directly from
-     * {@link PageFrame#getPageAddress} and hands a bulk-append call to the
-     * corresponding column scratch; types without a columnar fast path fall
-     * back to per-row iteration over {@code record}, touching only the columns
-     * that need it.
-     * <p>
-     * The parquet-format fallback iterates rows through {@code record} /
-     * {@link #appendRow}, preserving correctness without the columnar speedup.
-     * Replace with a parquet-specific columnar decoder as a follow-up.
+     * column emit in column-major order. Each supported column type reads its
+     * page memory from the frame-bound {@code record} and hands a bulk-append
+     * call to the corresponding column scratch. This works for native frames
+     * and for Parquet frames decoded into native-layout page buffers. Types
+     * without a columnar fast path fall back to per-row iteration over
+     * {@code record}, touching only the columns that need it.
      */
     public void appendPageFrame(PageFrame frame, PageFrameMemoryRecord record, long lo, long hi) {
         final int rows = (int) (hi - lo);
         if (rows <= 0) {
             return;
         }
-        if (frame.getFormat() != PartitionFormat.NATIVE) {
-            // Parquet frame: no contiguous column addresses we can memcpy from.
-            // Fall back to per-row using the existing single-row path. Row count
-            // advances via appendRow itself.
-            for (long r = lo; r < hi; r++) {
-                record.setRowIndex(r);
-                appendRow(record);
-            }
-            return;
-        }
+        final boolean isNative = frame.getFormat() == PartitionFormat.NATIVE;
         final int n = columnCount;
         final QwpColumnScratch[] scs = scratchesArr;
         final byte[] wts = wireTypesArr;
@@ -189,27 +176,39 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case QwpConstants.TYPE_TIMESTAMP:
                 case QwpConstants.TYPE_TIMESTAMP_NANOS:
                 case QwpConstants.TYPE_DECIMAL64: {
-                    long base = frame.getPageAddress(ci);
+                    long base = record.getPageAddress(ci);
                     if (base == 0) {
-                        fillNulls(scratch, rows);
+                        if (isNative || record.isParquetColumnTop(ci)) {
+                            fillNulls(scratch, rows);
+                        } else {
+                            perColumnRowLoop(record, lo, hi, ci);
+                        }
                     } else {
                         scratch.appendColumnLong8WithSentinel(base + lo * 8L, rows);
                     }
                     break;
                 }
                 case QwpConstants.TYPE_DOUBLE: {
-                    long base = frame.getPageAddress(ci);
+                    long base = record.getPageAddress(ci);
                     if (base == 0) {
-                        fillNulls(scratch, rows);
+                        if (isNative || record.isParquetColumnTop(ci)) {
+                            fillNulls(scratch, rows);
+                        } else {
+                            perColumnRowLoop(record, lo, hi, ci);
+                        }
                     } else {
                         scratch.appendColumnDouble8(base + lo * 8L, rows);
                     }
                     break;
                 }
                 case QwpConstants.TYPE_INT: {
-                    long base = frame.getPageAddress(ci);
+                    long base = record.getPageAddress(ci);
                     if (base == 0) {
-                        fillNulls(scratch, rows);
+                        if (isNative || record.isParquetColumnTop(ci)) {
+                            fillNulls(scratch, rows);
+                        } else {
+                            perColumnRowLoop(record, lo, hi, ci);
+                        }
                     } else {
                         scratch.appendColumnInt4WithSentinel(base + lo * 4L, rows, Numbers.INT_NULL);
                     }
@@ -217,18 +216,26 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 }
                 case QwpConstants.TYPE_IPV4: {
                     // QuestDB stores IPv4 NULL as the bit pattern 0 (Numbers.IPv4_NULL).
-                    long base = frame.getPageAddress(ci);
+                    long base = record.getPageAddress(ci);
                     if (base == 0) {
-                        fillNulls(scratch, rows);
+                        if (isNative || record.isParquetColumnTop(ci)) {
+                            fillNulls(scratch, rows);
+                        } else {
+                            perColumnRowLoop(record, lo, hi, ci);
+                        }
                     } else {
                         scratch.appendColumnInt4WithSentinel(base + lo * 4L, rows, Numbers.IPv4_NULL);
                     }
                     break;
                 }
                 case QwpConstants.TYPE_FLOAT: {
-                    long base = frame.getPageAddress(ci);
+                    long base = record.getPageAddress(ci);
                     if (base == 0) {
-                        fillNulls(scratch, rows);
+                        if (isNative || record.isParquetColumnTop(ci)) {
+                            fillNulls(scratch, rows);
+                        } else {
+                            perColumnRowLoop(record, lo, hi, ci);
+                        }
                     } else {
                         scratch.appendColumnFloat4(base + lo * 4L, rows);
                     }
@@ -236,37 +243,49 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 }
                 case QwpConstants.TYPE_SHORT:
                 case QwpConstants.TYPE_CHAR: {
-                    long base = frame.getPageAddress(ci);
+                    long base = record.getPageAddress(ci);
                     if (base == 0) {
-                        // Wire spec sec 11.5: SHORT / CHAR cannot carry NULL.
-                        // INSERT NULL stores 0 and the wire row keeps the null
-                        // bitmap bit clear, so a column-top frame ships literal
-                        // zero values rather than driving fillNulls (which would
-                        // set bits in the null bitmap that the client rejects).
-                        scratch.appendColumnFixedZero(rows, 2);
+                        if (isNative || record.isParquetColumnTop(ci)) {
+                            // Wire spec sec 11.5: SHORT / CHAR cannot carry NULL.
+                            // INSERT NULL stores 0 and the wire row keeps the null
+                            // bitmap bit clear, so a column-top frame ships literal
+                            // zero values rather than driving fillNulls (which would
+                            // set bits in the null bitmap that the client rejects).
+                            scratch.appendColumnFixedZero(rows, 2);
+                        } else {
+                            perColumnRowLoop(record, lo, hi, ci);
+                        }
                     } else {
                         scratch.appendColumnFixedNoNull(base + lo * 2L, rows, 2);
                     }
                     break;
                 }
                 case QwpConstants.TYPE_BYTE: {
-                    long base = frame.getPageAddress(ci);
+                    long base = record.getPageAddress(ci);
                     if (base == 0) {
-                        // Wire spec sec 11.5: BYTE cannot carry NULL. See the
-                        // SHORT / CHAR case above for the column-top rationale.
-                        scratch.appendColumnFixedZero(rows, 1);
+                        if (isNative || record.isParquetColumnTop(ci)) {
+                            // Wire spec sec 11.5: BYTE cannot carry NULL. See the
+                            // SHORT / CHAR case above for the column-top rationale.
+                            scratch.appendColumnFixedZero(rows, 1);
+                        } else {
+                            perColumnRowLoop(record, lo, hi, ci);
+                        }
                     } else {
                         scratch.appendColumnFixedNoNull(base + lo, rows, 1);
                     }
                     break;
                 }
                 case QwpConstants.TYPE_BOOLEAN: {
-                    long base = frame.getPageAddress(ci);
+                    long base = record.getPageAddress(ci);
                     if (base == 0) {
-                        // Wire spec sec 11.5: BOOLEAN cannot carry NULL. The
-                        // column-top fill is n bit-packed false values; the
-                        // null bitmap stays clear.
-                        scratch.appendColumnBooleanZero(rows);
+                        if (isNative || record.isParquetColumnTop(ci)) {
+                            // Wire spec sec 11.5: BOOLEAN cannot carry NULL. The
+                            // column-top fill is n bit-packed false values; the
+                            // null bitmap stays clear.
+                            scratch.appendColumnBooleanZero(rows);
+                        } else {
+                            perColumnRowLoop(record, lo, hi, ci);
+                        }
                     } else {
                         scratch.appendColumnBoolean(base + lo, rows);
                     }
@@ -274,9 +293,13 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 }
                 case QwpConstants.TYPE_SYMBOL: {
                     SymbolTable st = sts[ci];
-                    long base = frame.getPageAddress(ci);
+                    long base = record.getPageAddress(ci);
                     if (base == 0) {
-                        fillNulls(scratch, rows);
+                        if (isNative || record.isParquetColumnTop(ci)) {
+                            fillNulls(scratch, rows);
+                        } else {
+                            perColumnRowLoop(record, lo, hi, ci);
+                        }
                     } else if (st != null) {
                         scratch.appendColumnSymbolKeys(base + lo * 4L, rows, st, connDict);
                     } else {
@@ -823,7 +846,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 // The wire reader still cannot represent the literal address 0.0.0.0
                 // as non-null - that's a QuestDB-level limitation inherited by the
                 // wire format.
-                scratch.appendIPv4OrNull(record.getInt(ci));
+                scratch.appendIPv4OrNull(record.getIPv4(ci));
                 break;
             case QwpConstants.TYPE_LONG:
                 scratch.appendLongOrNull(record.getLong(ci));
