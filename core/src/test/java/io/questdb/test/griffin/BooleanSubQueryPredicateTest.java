@@ -142,17 +142,23 @@ public class BooleanSubQueryPredicateTest extends AbstractCairoTest {
     public void testLatestOnWithinWhereSubQueryPredicate() throws Exception {
         // exercises the extractWithin path, which runs ahead of intrinsic extraction
         setProperty(PropertyKey.QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED, "true");
-        assertMemoryLeak(() -> {
-            execute("create table gt (ts timestamp, g geohash(8c), sym symbol index) timestamp(ts) partition by day");
-            execute("insert into gt values ('2018-01-01', #sp052w92, 'a')");
-            execute("create table x_false (b boolean)");
-            execute("insert into x_false values (false)");
-            execute("create table x_true (b boolean)");
-            execute("insert into x_true values (true)");
-            final String expected = "ts\tg\tsym\n2018-01-01T00:00:00.000000Z\tsp052w92\ta\n";
-            assertPredicate(expected, "select * from gt where g within(#sp05) and (select b from x_true limit 1) latest on ts partition by sym");
-            assertPredicate("ts\tg\tsym\n", "select * from gt where g within(#sp05) and (select b from x_false limit 1) latest on ts partition by sym");
-        });
+        try {
+            assertMemoryLeak(() -> {
+                execute("create table gt (ts timestamp, g geohash(8c), sym symbol index) timestamp(ts) partition by day");
+                execute("insert into gt values ('2018-01-01', #sp052w92, 'a')");
+                execute("create table x_false (b boolean)");
+                execute("insert into x_false values (false)");
+                execute("create table x_true (b boolean)");
+                execute("insert into x_true values (true)");
+                final String expected = "ts\tg\tsym\n2018-01-01T00:00:00.000000Z\tsp052w92\ta\n";
+                assertPredicate(expected, "select * from gt where g within(#sp05) and (select b from x_true limit 1) latest on ts partition by sym");
+                assertPredicate("ts\tg\tsym\n", "select * from gt where g within(#sp05) and (select b from x_false limit 1) latest on ts partition by sym");
+            });
+        } finally {
+            // The pooled generator retains WITHIN prefixes when later tests disable the setting.
+            // Discard these compilers before another LATEST query can reuse their scratch state.
+            engine.getSqlCompilerPool().releaseAll();
+        }
     }
 
     @Test
@@ -194,6 +200,65 @@ public class BooleanSubQueryPredicateTest extends AbstractCairoTest {
             assertPredicate(THE_ROW, "select * from t where v = 5 or (select b from x_true limit 1)");
             assertPredicate(NO_ROWS, "select * from t where v = 5 or (select b from x_false limit 1)");
             assertPredicate(THE_ROW, "select * from t where v = 1 or (select b from x_false limit 1)");
+        });
+    }
+
+    @Test
+    public void testOuterAndSubQueryPredicateOverLatest() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertPredicate(NO_ROWS, """
+                    SELECT * FROM (SELECT * FROM t LATEST ON ts PARTITION BY sym)
+                    WHERE sym = 'a' AND (SELECT b FROM x_false LIMIT 1)
+                    """);
+            assertPredicate(NO_ROWS, """
+                    SELECT * FROM (SELECT * FROM t LATEST ON ts PARTITION BY sym)
+                    WHERE (SELECT b FROM x_false LIMIT 1) AND sym = 'a'
+                    """);
+        });
+    }
+
+    @Test
+    public void testOuterBareSubQueryPredicateOverLatest() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertPredicate(THE_ROW, """
+                    SELECT * FROM (SELECT * FROM t LATEST ON ts PARTITION BY sym)
+                    WHERE (SELECT b FROM x_true LIMIT 1)
+                    """);
+            assertPredicate(NO_ROWS, """
+                    SELECT * FROM (SELECT * FROM t LATEST ON ts PARTITION BY sym)
+                    WHERE (SELECT b FROM x_false LIMIT 1)
+                    """);
+            // An empty scalar sub-query yields NULL, which BOOLEAN renders as false.
+            assertPredicate(NO_ROWS, """
+                    SELECT * FROM (SELECT * FROM t LATEST ON ts PARTITION BY sym)
+                    WHERE (SELECT b FROM x_empty LIMIT 1)
+                    """);
+        });
+    }
+
+    @Test
+    public void testOuterOrSubQueryPredicateOverLatest() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // The selector scanner must inspect the tokenless OR leaf independently of bare predicates.
+            assertPredicate(THE_ROW, """
+                    SELECT * FROM (SELECT * FROM t LATEST ON ts PARTITION BY sym)
+                    WHERE sym = 'missing' OR (SELECT b FROM x_true LIMIT 1)
+                    """);
+            assertPredicate(NO_ROWS, """
+                    SELECT * FROM (SELECT * FROM t LATEST ON ts PARTITION BY sym)
+                    WHERE sym = 'missing' OR (SELECT b FROM x_false LIMIT 1)
+                    """);
+            assertPredicate(THE_ROW, """
+                    SELECT * FROM (SELECT * FROM t LATEST ON ts PARTITION BY sym)
+                    WHERE sym = 'missing' OR (sym = 'other' OR (SELECT b FROM x_true LIMIT 1))
+                    """);
+            assertPredicate(NO_ROWS, """
+                    SELECT * FROM (SELECT * FROM t LATEST ON ts PARTITION BY sym)
+                    WHERE sym = 'missing' OR (sym = 'other' OR (SELECT b FROM x_false LIMIT 1))
+                    """);
         });
     }
 
