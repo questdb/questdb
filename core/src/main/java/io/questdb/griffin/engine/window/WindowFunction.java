@@ -709,6 +709,17 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Whether {@link #pass1(Record, long, WindowSPI)} needs a positioned input record.
+     * Return {@code false} only when pass1 never reads the record, including its row ID,
+     * on any execution. The cached LIGHT executor may then skip record positioning, but
+     * still calls pass1 for every row. Any other function or map state in the same sort
+     * group that needs the record forces positioning for the whole group.
+     */
+    default boolean isPass1RecordRequired() {
+        return true;
+    }
+
+    /**
      * Whether this function is the desugared SUBSAMPLE {@code __keep_subsample} keep flag, as marked
      * by code generation via {@link #markSubsampleKeepFlag()} when the originating
      * {@code WindowExpression} carries the desugar marker. The keep-flag filter fusion fuses ONLY

@@ -687,11 +687,19 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                     final ObjList<WindowMapState> states =
                             windowMapGroups != null ? windowMapGroups.getOrderedStates(i) : null;
                     final int stateCount = states != null ? states.size() : 0;
+                    // Decide once per sort group, not per row. Map states read the record
+                    // independently of the functions, so they always require positioning.
+                    boolean isRecordRequired = stateCount > 0;
+                    for (int j = 0; j < functionCount && !isRecordRequired; j++) {
+                        isRecordRequired = functions.getQuick(j).isPass1RecordRequired();
+                    }
                     group.toTop();
                     while (group.hasNext()) {
                         circuitBreaker.statefulThrowExceptionIfTripped();
                         long rIdx = group.next();
-                        positionRecordABaseOnly(rIdx);
+                        if (isRecordRequired) {
+                            positionRecordABaseOnly(rIdx);
+                        }
                         for (int g = 0; g < stateCount; g++) {
                             states.getQuick(g).computeNext(recordA);
                         }

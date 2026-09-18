@@ -247,6 +247,12 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public boolean isPass1RecordRequired() {
+            // pass1 only counts rows and enforces the SUBSAMPLE row limit.
+            return false;
+        }
+
+        @Override
         public boolean isRowSelecting() {
             return true;
         }
