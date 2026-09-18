@@ -78,6 +78,11 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
     @Nullable
     MatViewState getViewState(TableToken matViewToken);
 
+    // Called by the refresh job when its batch bound trips, to decide whether the pass reports
+    // work left without dequeueing anything. Moment-in-time, like a failed tryDequeueRefreshTask:
+    // a task may arrive right after a true.
+    boolean isRefreshQueueEmpty();
+
     // Called by refresh job once it invalidated dependent mat views.
     void notifyBaseInvalidated(TableToken baseTableToken);
 

@@ -38,10 +38,12 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cutlass.pgwire.DefaultPGCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.pgwire.PGServer;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlException;
@@ -59,6 +61,7 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.IntIntHashMap;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -126,6 +129,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.IntConsumer;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
@@ -7905,6 +7909,106 @@ nodejs code:
     }
 
     @Test
+    public void testNamedPortalCancellationRebindsExecutionState() throws Exception {
+        final String queryA = "SELECT x FROM long_sequence(3)";
+        final String queryB = "SELECT x + 100 x FROM long_sequence(3)";
+        final AtomicLong queryIdA = new AtomicLong(-1);
+        final AtomicLong queryIdB = new AtomicLong(-1);
+        final AtomicReference<AtomicBoolean> cancelledA = new AtomicReference<>();
+        final AtomicReference<AtomicBoolean> cancelledB = new AtomicReference<>();
+        final AtomicReference<SqlExecutionContext> contextA = new AtomicReference<>();
+        final AtomicReference<SqlExecutionContext> contextB = new AtomicReference<>();
+        final AtomicReference<MemoryTracker> trackerA = new AtomicReference<>();
+        final AtomicReference<MemoryTracker> trackerB = new AtomicReference<>();
+        final QueryRegistry registry = engine.getQueryRegistry();
+        final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration =
+                new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                    @Override
+                    public int getCircuitBreakerThrottle() {
+                        return 1;
+                    }
+                };
+        final PGConfiguration pgConfiguration = new Port0PGConfiguration() {
+            @Override
+            public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+                return circuitBreakerConfiguration;
+            }
+        };
+
+        registry.setListener((query, queryId, context) -> {
+            if (queryA.contentEquals(query)) {
+                context.getCircuitBreaker().setFd(-1);
+                contextA.set(context);
+                queryIdA.set(queryId);
+                trackerA.set(context.getMemoryTracker());
+            } else if (queryB.contentEquals(query)) {
+                context.getCircuitBreaker().setFd(-1);
+                contextB.set(context);
+                queryIdB.set(queryId);
+                trackerB.set(context.getMemoryTracker());
+            }
+        });
+
+        try (SqlExecutionContextImpl cancellationContext = new SqlExecutionContextImpl(engine, 1)
+                .with(AllowAllSecurityContext.INSTANCE)) {
+            assertHexScript(
+                    NetworkFacadeImpl.INSTANCE,
+                    """
+                            >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                            <520000000800000003
+                            >700000000a717565737400
+                            <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                            >500000002853410053454c45435420782046524f4d206c6f6e675f73657175656e6365283329000000420000000f41005341000000000000004400000007504100500000003053420053454c4543542078202b2031303020782046524f4d206c6f6e675f73657175656e6365283329000000420000000f420053420000000000000044000000075042005300000004
+                            <31000000043200000004540000001a00017800000000000001000000140008ffffffff000031000000043200000004540000001a00017800000000000001000000140008ffffffff00005a0000000549
+                            >450000000a4100000000015300000004
+                            <440000000b0001000000013173000000045a0000000549
+                            >450000000a4200000000015300000004
+                            <440000000d00010000000331303173000000045a0000000549
+                            >450000000a4100000000005300000004
+                            <4500000029433030303030004d63616e63656c6c6564206279207573657200534552524f5200503100005a0000000549
+                            >5800000004
+                            """,
+                    pgConfiguration,
+                    receiveCount -> {
+                        if (receiveCount == 4) {
+                            Assert.assertTrue(queryIdA.get() > -1);
+                            Assert.assertNotNull(contextA.get());
+                            Assert.assertNotNull(trackerA.get());
+                            QueryRegistry.Entry entryA = registry.getEntry(queryIdA.get());
+                            Assert.assertNotNull(entryA);
+                            cancelledA.set(entryA.getCancelled());
+                            Assert.assertSame(cancelledA.get(), contextA.get().getCircuitBreaker().getCancelledFlag());
+                            Assert.assertSame(trackerA.get(), contextA.get().getMemoryTracker());
+                        } else if (receiveCount == 5) {
+                            Assert.assertTrue(queryIdB.get() > -1);
+                            Assert.assertNotNull(contextB.get());
+                            Assert.assertNotNull(trackerB.get());
+                            QueryRegistry.Entry entryB = registry.getEntry(queryIdB.get());
+                            Assert.assertNotNull(entryB);
+                            cancelledB.set(entryB.getCancelled());
+                            Assert.assertSame(contextA.get(), contextB.get());
+                            Assert.assertNotSame(cancelledA.get(), cancelledB.get());
+                            Assert.assertSame(cancelledB.get(), contextB.get().getCircuitBreaker().getCancelledFlag());
+                            Assert.assertNotSame(trackerA.get(), trackerB.get());
+                            Assert.assertSame(trackerB.get(), contextB.get().getMemoryTracker());
+                            Assert.assertTrue(registry.cancel(queryIdA.get(), cancellationContext));
+                            Assert.assertTrue(cancelledA.get().get());
+                            Assert.assertFalse(cancelledB.get().get());
+                        } else if (receiveCount == 6) {
+                            Assert.assertNull(registry.getEntry(queryIdA.get()));
+                            Assert.assertNotNull(registry.getEntry(queryIdB.get()));
+                            Assert.assertNull(contextA.get().getCircuitBreaker().getCancelledFlag());
+                            Assert.assertNull(contextA.get().getMemoryTracker());
+                            Assert.assertFalse(cancelledB.get().get());
+                        }
+                    }
+            );
+        } finally {
+            registry.setListener(null);
+        }
+    }
+
+    @Test
     public void testNamedPortalForInsert() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -8655,7 +8759,7 @@ nodejs code:
                 }
             };
 
-            final WorkerPool workerPool = new TestWorkerPool(4, conf.getMetrics());
+            final WorkerPool workerPool = new TestWorkerPool("testing", 4, conf.getMetrics(), conf.getWorkerPoolMode());
             try (final PGServer server = createPGWireServer(
                     conf,
                     engine,
@@ -12990,6 +13094,15 @@ create table tab as (
             String script,
             PGConfiguration configuration
     ) throws Exception {
+        assertHexScript(clientNf, script, configuration, null);
+    }
+
+    private void assertHexScript(
+            NetworkFacade clientNf,
+            String script,
+            PGConfiguration configuration,
+            IntConsumer afterReceive
+    ) throws Exception {
 
         /*
             You can use Wireshark to capture and decode. You can also see executed statements in the logs.
@@ -13024,7 +13137,7 @@ create table tab as (
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                NetUtils.playScript(clientNf, script, "127.0.0.1", server.getPort());
+                NetUtils.playScript(clientNf, script, "127.0.0.1", server.getPort(), afterReceive);
             }
         });
     }
@@ -13138,7 +13251,7 @@ create table tab as (
             }
         };
 
-        WorkerPool workerPool = new TestWorkerPool(2, conf.getMetrics());
+        WorkerPool workerPool = new TestWorkerPool("testing", 2, conf.getMetrics(), conf.getWorkerPoolMode());
         DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(conf, engine.getConfiguration());
         try {
             return createPGWireServer(

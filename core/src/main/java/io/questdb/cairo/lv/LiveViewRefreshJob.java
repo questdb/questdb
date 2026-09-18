@@ -293,14 +293,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // One-shot (self-clears on fire); always null in production.
     @TestOnly
     private Runnable simulateBaseApplyDuringRederiveForTest;
-    // Test-only: when armed, the fallback scan runs this action BETWEEN the ahead guard's two
-    // reads - after the view watermark read, before the base sequencer head read. That interval
-    // is the contract, not a convenience: it is the window a concurrent refresh worker used to
-    // race, so a test can publish and refresh the next base commit there instead of relying on
-    // thread timing. Keep the call between the two reads. Moving it outside them, or reordering
-    // the reads across it, makes the guard sample a coherent pair either way and silently strips
-    // testConcurrentRefreshCannotInvalidateFromStaleBaseHead of its power to tell the two orders
-    // apart.
+    // Test-only: when armed, the fallback scan runs this action inside the ahead guard - after
+    // the view watermark read, before the two base head reads (cached sequencer head and tracker
+    // writerTxn). That interval is the contract, not a convenience: it is the window a concurrent
+    // refresh worker used to race, so a test can publish and refresh the next base commit there
+    // instead of relying on thread timing. Keep the call between the watermark read and the base
+    // reads. Moving it outside them, or reordering the reads across it, makes the guard sample a
+    // coherent set either way and silently strips
+    // testConcurrentRefreshCannotInvalidateFromStaleBaseHead of its power to tell the orders apart.
     // One-shot (self-clears on fire); always null in production.
     @TestOnly
     private Runnable simulateBaseCommitBetweenAheadGuardReadsForTest;
@@ -512,9 +512,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     @Override
     public boolean run(@NotNull WorkerContext workerContext) {
-        // workerId is the fixed per-worker identity captured at assign(int, job)
-        // time. The continuation framework may remount this job on a peer carrier,
-        // so workerContext.carrierId() is not asserted against it here.
         return processNotifications();
     }
 
@@ -563,12 +560,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Test-only: arms a one-shot action that the fallback scan runs BETWEEN the two reads feeding
-     * the live-view-ahead guard - after the view watermark read, after which it blocks the scan,
-     * and before the base sequencer head read. The interval is what the arming test asserts on:
-     * a commit published there is visible to the base-head read but not to the already-captured
-     * watermark, which is exactly the asymmetry that distinguishes the correct read order from
-     * the racy one. Relocating this call outside the two reads leaves
+     * Test-only: arms a one-shot action that the fallback scan runs inside the live-view-ahead
+     * guard - after the view watermark read, after which it blocks the scan, and before the two
+     * base head reads (cached sequencer head and tracker writerTxn). The interval is what the
+     * arming test asserts on: a commit published there is visible to the base reads but not to
+     * the already-captured watermark, which is exactly the asymmetry that distinguishes the
+     * correct read order from the racy one. Relocating this call outside the reads leaves
      * {@code testConcurrentRefreshCannotInvalidateFromStaleBaseHead} green under a read-order
      * swap that fully restores the race.
      * <p>
@@ -7701,15 +7698,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * read). The retry would re-drain and double-advance them; rebuild from the
      * applied base so it starts clean. Returns {@code null} on success/re-arm, else
      * the rebuild error.
+     * <p>
+     * The two states recover differently, and only one of them repairs anything: the ACTIVE
+     * branch recomputes the view and rewrites the durable output, while the SEEDING branch
+     * only re-arms the next sweep turn. {@link #handleRefreshFailure} charges the flush-retry
+     * budget for the re-arm precisely because it is a retry rather than a repair, so a seed
+     * fault that never clears invalidates instead of sweeping forever.
      */
     private Throwable rebuildWindowStateAfterMidDrainFailure(LiveViewInstance instance) {
         if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING) {
             // Mid-seed: re-arm the sweep resume, which rebuilds from the surviving
             // timeline (or re-sweeps from 0 behind the skip-write floor). Idempotent.
             // Deliberately KEEP the pinned base snapshot (do not freeSeedBaseReader):
-            // the fault is transient (map/staging OOM, bad read), the snapshot is intact,
+            // a transient fault (map/staging OOM, bad read) leaves the snapshot intact,
             // and resuming the sealed data offset against the SAME snapshot stays sound. A
             // fresh snapshot would reintroduce the positional-resume hazard this fix closes.
+            // A fault that outlives the retry budget takes the view invalid, and the
+            // invalidation frees the snapshot with the rest of the runtime state.
             instance.resetSeedResumeAttempted();
             LOG.info().$("live view mid-seed refresh failure, sweep will resume [view=")
                     .$(instance.getDefinition().getViewName()).I$();
@@ -8270,12 +8275,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 simulateBaseCommitBetweenAheadGuardReadsForTest = null;
                 aheadGuardAction.run();
             }
+            // Compare against the higher of the two base heads. On a primary the cached
+            // sequencer head is authoritative: the sole appender keeps it current, and the
+            // watermark can sit above writerTxn because the notification-driven refresh
+            // consumes a commit before the apply job lands it. On an enterprise replica the
+            // downloader appends the on-disk txnlog behind the cached sequencer and reconciles
+            // it later, while WAL apply and this refresh consume the new txns from the file;
+            // there writerTxn covers the stale window. writerTxn is not monotonic
+            // (notifyWalTxnRepublisher resets it to -1; a late apply can publish an older head),
+            // so the max never drops below the cached head. Neither head can exceed the durable
+            // txnlog, so a hydrate-restored watermark past it still trips the guard.
             final long baseSeqLastTxn = engine.getTableSequencerAPI().lastTxn(baseToken);
-            if (lastProcessedSeqTxn > baseSeqLastTxn) {
+            final long baseWriterTxn = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
+            if (lastProcessedSeqTxn > Math.max(baseSeqLastTxn, baseWriterTxn)) {
                 LOG.error().$("live view is ahead of base table and cannot be synchronized [view=")
                         .$(instance.getLiveViewToken())
                         .$(", lastProcessedSeqTxn=").$(lastProcessedSeqTxn)
                         .$(", baseTableTxn=").$(baseSeqLastTxn)
+                        .$(", baseWriterTxn=").$(baseWriterTxn)
                         .I$();
                 engine.invalidateLiveView(instance, "live view is ahead of base table and cannot be synchronized");
                 didWork = true;
@@ -9015,7 +9032,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING) {
                     attempted = true;
                     runSeedSweep(instance);
-                    instance.recordRefreshSuccess();
+                    // Clear the flush-retry budget only when the turn proved the sweep got past
+                    // whatever last faulted: it completed, or it committed output past the skip-write
+                    // floor, the LV row count that was on disk when the resume derived it. A mid-seed
+                    // fault that struck after the turn fed a row re-arms the resume,
+                    // which rewinds the sweep to its newest sealed root, and that root can sit
+                    // well below the on-disk output: turns that end on the same max
+                    // timestamp seal no new root, so recovery rewinds and replays rows already on
+                    // disk. A replay turn re-feeds those rows to rebuild the window state and appends
+                    // nothing, so it is no evidence that the faulting row cleared. Recording a success
+                    // for it zeroed the count and the streak clock on every rewind, and a permanent
+                    // fault - a row the LV writer refuses, a base column that no longer reads - then
+                    // re-faulted forever with neither budget able to expire. The resume-attempted
+                    // check covers a turn that left the resume block before sweeping (the LV apply
+                    // lag return): its lvRowsTotal and floor are the stale values a re-arm leaves
+                    // behind, not a measurement of this turn.
+                    if (instance.getStateReader().getSeedState() != LiveViewState.SEED_STATE_SEEDING
+                            || (instance.isSeedResumeAttempted()
+                            && instance.getLvRowsTotal() > instance.getSeedSkipWriteFloor())) {
+                        instance.recordRefreshSuccess();
+                    }
                     return attempted;
                 }
                 // A previous turn wiped or half-advanced the accumulators and its own
@@ -9308,26 +9344,44 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (windowStateDirty
                 && !wasMetadataDrift
                 && !(t instanceof CairoException dce && dce.isTableDoesNotExist())) {
+            // Which of the two recoveries below ran decides whether this cycle still owes the
+            // budget a failure. Read the state before the call, which only re-arms or replays and
+            // never flips it, so the decision and the recovery agree on the same view.
+            final boolean seeding = instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING;
             Throwable rebuildErr = rebuildWindowStateAfterMidDrainFailure(instance);
-            if (rebuildErr == null) {
+            if (rebuildErr == null && !seeding) {
+                // The ACTIVE recovery recomputed the window state from the applied base and
+                // rewrote the durable output to match, so this cycle produced the right answer by
+                // a slower route and already recorded a refresh success. Nothing left to charge.
                 return null;
             }
-            // The rebuild replay itself failed, so the runtime is still wiped or
-            // half-advanced. Carry the debt onto the instance: this turn's field is about
-            // to go out of scope and the next turn's entry would read a clean slate,
-            // which is what lets a drain start over durable output with cold accumulators.
-            instance.setWindowStateDirty(true);
-            // The rebuild replay itself failed; account for THAT error below.
-            t = rebuildErr;
-            if (t instanceof CairoException rebuildCancelled && rebuildCancelled.isCancellation()) {
-                // Re-test after the reassignment. The replay consults the same breaker, so
-                // a shutdown or a DROP that arrived mid-rebuild surfaces here rather than at
-                // the guard above - and counting it toward the flush-retry budget is exactly
-                // what that guard exists to prevent.
-                LOG.info().$("live view refresh cancelled during mid-drain rebuild [view=")
-                        .$(instance.getDefinition().getViewName()).I$();
-                return null;
+            if (rebuildErr != null) {
+                // The rebuild replay itself failed, so the runtime is still wiped or
+                // half-advanced. Carry the debt onto the instance: this turn's field is about
+                // to go out of scope and the next turn's entry would read a clean slate,
+                // which is what lets a drain start over durable output with cold accumulators.
+                instance.setWindowStateDirty(true);
+                // The rebuild replay itself failed; account for THAT error below.
+                t = rebuildErr;
+                if (t instanceof CairoException rebuildCancelled && rebuildCancelled.isCancellation()) {
+                    // Re-test after the reassignment. The replay consults the same breaker, so
+                    // a shutdown or a DROP that arrived mid-rebuild surfaces here rather than at
+                    // the guard above - and counting it toward the flush-retry budget is exactly
+                    // what that guard exists to prevent.
+                    LOG.info().$("live view refresh cancelled during mid-drain rebuild [view=")
+                            .$(instance.getDefinition().getViewName()).I$();
+                    return null;
+                }
             }
+            // A SEEDING view falls through to the budget below. Its recovery only re-arms the
+            // sweep resume: it recomputes nothing, commits nothing, and leaves the sweep facing
+            // the very row it faulted on, so it is a retry rather than a repair. Returning here
+            // would leave a permanent seed fault - a row the LV writer refuses, a base column that
+            // no longer reads, an always-throwing projection - re-faulting every cycle forever
+            // with neither budget armed: the view pinned at 'seeding' with no invalidation reason,
+            // and refreshInstance reporting work on every call so the worker never backs off. A
+            // transient fault keeps its retries, because the sweep turn that finally succeeds
+            // calls recordRefreshSuccess, which zeroes the streak the budget measures.
         }
         long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         instance.recordRefreshFailure(nowUs);

@@ -110,7 +110,7 @@ public class LifecycleOrchestratorCloseRaceTest {
             }
         };
 
-        final LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
+        final ObservableOrchestrator orch = new ObservableOrchestrator();
         orch.register(a);
         orch.register(b);
 
@@ -129,14 +129,14 @@ public class LifecycleOrchestratorCloseRaceTest {
                     aStartedEntered.await(10, TimeUnit.SECONDS)
             );
             Assert.assertEquals(State.STARTING, orch.stateOf("a"));
-            // Close on a different thread; this should set closed=true before A unblocks.
+            // A must not unblock before closed=true is observable, or the race window is missed
             final Thread closer = new Thread(orch::close, "orch-closer");
             closer.start();
-            // Give close() time to flip the closed flag (it cannot make progress past the
-            // reverse-topo stop loop entry because the stop-loop runs after the executor
-            // shutdown reorder; either way the closed flag is set as the very first action
-            // in close()).
-            Thread.sleep(50);
+            final long closedDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (!orch.isClosed() && System.nanoTime() < closedDeadline) {
+                Thread.sleep(1);
+            }
+            Assert.assertTrue("close() did not flip the closed flag", orch.isClosed());
             aReleaseLatch.countDown();
             runner.join(10_000L);
             closer.join(10_000L);
@@ -147,6 +147,17 @@ public class LifecycleOrchestratorCloseRaceTest {
         } finally {
             aReleaseLatch.countDown();
             orch.close();
+        }
+    }
+
+    private static class ObservableOrchestrator extends LifecycleOrchestrator {
+        ObservableOrchestrator() {
+            super(null, null, null);
+        }
+
+        @Override
+        public boolean isClosed() {
+            return super.isClosed();
         }
     }
 }

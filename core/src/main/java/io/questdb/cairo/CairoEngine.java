@@ -150,7 +150,6 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.mp.continuation.TimerShards;
-import io.questdb.mp.continuation.TxnWaiter;
 import io.questdb.preferences.SettingsStore;
 import io.questdb.std.BoolList;
 import io.questdb.std.CarrierLocal;
@@ -189,7 +188,6 @@ import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import static io.questdb.griffin.CompiledQuery.*;
 
@@ -236,8 +234,8 @@ public class CairoEngine implements Closeable, WriterSource {
     // throughput across tables and protocols; the read/write exclusion is the invariant that
     // keeps a commit from slipping through the gate-read and landing on a demoting node. The
     // write side is never held across drainWriterPool. A plain OSS deployment that never flips
-    // role only ever pays an uncontended read acquire (a single CAS in the common case), so no
-    // separate "no flip path" gate is needed.
+    // role only pays one carrier-local lookup and an uncontended read acquire, so no separate
+    // "no flip path" gate is needed.
     // Test seam: when non-null, fireRoleSwitchMintObserver() runs this hook at an externalization that
     // mints replicated state, so a witness can pause the externalization there and interleave a
     // concurrent PRIMARY-to-REPLICA demote deterministically (without host load). It fires from two
@@ -255,7 +253,11 @@ public class CairoEngine implements Closeable, WriterSource {
     // a single static volatile read with no side effect when no test installed a hook.
     @TestOnly
     private static volatile Runnable roleSwitchMintObserver;
-    private final ReentrantReadWriteLock roleSwitchLock = new ReentrantReadWriteLock();
+    // The role-switch lock tracks read nesting by logical execution, so a fiber can re-enter after
+    // migration without queueing behind a writer that is waiting for its outer read hold.
+    private final RoleSwitchReadWriteLock roleSwitchLock = new RoleSwitchReadWriteLock();
+    private final Lock roleSwitchReadLock = roleSwitchLock.readLock();
+    private final Lock roleSwitchWriteLock = roleSwitchLock.writeLock();
     private final SqlExecutionContext rootExecutionContext;
     private final TxnScoreboardPool scoreboardPool;
     private final SequencerMetadataPool sequencerMetadataPool;
@@ -356,12 +358,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.copyImportContext = new CopyImportContext(this, configuration);
             this.copyExportContext = new CopyExportContext(this);
             this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
-            // Per-deadline blocking timer threads. Each parked TxnWaiter (or other
-            // DelayedFireable) sits in a shard and is woken at its precise deadline,
-            // bounding resource retention when a wait_wal_table call parks and the
-            // client disconnects or the table goes idle. Started eagerly here because
-            // the threads are independent of any worker pool. signalClose() drains,
-            // close() halts defensively.
+            // Timer waits run independently of worker pools.
             this.timerShards = new TimerShards(
                     configuration.getTimerShardCount(),
                     "questdb-timer",
@@ -1289,6 +1286,11 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @Override
     public void close() {
+        if (timerShards != null) {
+            assert closing || timerShards.size() == 0
+                    : "close() reached with parked continuations but without a prior signalClose(); they will be stranded";
+            timerShards.halt();
+        }
         // Return any base-table readers pinned by an in-flight seed sweep to the
         // reader pool before it is freed below, so the pool teardown does not report
         // a still-borrowed reader as left behind. Safe here: close() runs after the
@@ -1327,22 +1329,6 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(frameFactory);
         Misc.free(walLocker);
         Misc.free(memoryTrackerProvider);
-        // Defensive: signalClose() already shutdown timerShards in the normal path.
-        // halt() is idempotent and ensures the daemon threads are joined even if
-        // close() runs without a prior signalClose(). Null guard covers the
-        // partial-construction path where the constructor's catch block calls
-        // close() before timerShards has been assigned.
-        if (timerShards != null) {
-            // close() must be reached through signalClose() whenever there are
-            // parked continuations: signalClose() drains them while the worker
-            // pools are still RUNNING, so the bodies remount and unwind. halt()
-            // only joins the daemon threads, so a parked cont reaching here with
-            // closing == false would be stranded (never resumed, native stack
-            // abandoned). A non-empty shard set at this point is that bug.
-            assert closing || timerShards.size() == 0
-                    : "close() reached with parked continuations but without a prior signalClose(); they will be stranded";
-            timerShards.halt();
-        }
     }
 
     @TestOnly
@@ -2375,15 +2361,24 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public Lock getRoleSwitchReadLock() {
-        return roleSwitchLock.readLock();
+        return roleSwitchReadLock;
     }
 
+    /**
+     * Returns an estimate of the number of physical role-switch read-lock holds. Outside a pending
+     * write-to-read downgrade, this estimates the number of distinct logical executions holding the
+     * read fence: reentrant acquisitions by one execution share one physical hold and count once. A
+     * read acquisition by the write-lock owner remains a pending downgrade and counts zero until the
+     * final write unlock converts the physical write hold to a read hold.
+     * <p>
+     * This value is for diagnostics only and must not be used for synchronization control.
+     */
     public int getRoleSwitchReadLockCount() {
         return roleSwitchLock.getReadLockCount();
     }
 
     public Lock getRoleSwitchWriteLock() {
-        return roleSwitchLock.writeLock();
+        return roleSwitchWriteLock;
     }
 
     public TableRecordMetadata getSequencerMetadata(TableToken tableToken) {
@@ -2586,13 +2581,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return telemetryWal;
     }
 
-    /**
-     * Returns the periodic sweep that cancels {@link TxnWaiter}
-     * instances whose deadline has elapsed. Without this job assigned, parked
-     * suspending-function calls (e.g. {@code wait_wal_table}) cannot be cleaned up
-     * after a client disconnect or on idle tables, so it MUST be assigned to a worker
-     * pool for the SQL-suspend feature to be safe in production.
-     */
     public TimerShards getTimerShards() {
         return timerShards;
     }
@@ -4943,6 +4931,15 @@ public class CairoEngine implements Closeable, WriterSource {
 
     protected TableFlagResolver newTableFlagResolver(CairoConfiguration configuration) {
         return new TableFlagResolverImpl(configuration.getSystemTableNamePrefix().toString());
+    }
+
+    /**
+     * For subclass signalClose overrides that wake parked work before delegating to super:
+     * woken code classifies its abort as a benign shutdown only if {@link #isClosing()}
+     * already reads true, and super's own publish would come too late for it.
+     */
+    protected final void publishClosing() {
+        closing = true;
     }
 
     /**

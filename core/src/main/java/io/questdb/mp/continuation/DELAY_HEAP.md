@@ -1,176 +1,301 @@
-# DelayHeap (replacement for `java.util.concurrent.DelayQueue`)
+# DelayHeap
 
-Why `TimerShards` uses `io.questdb.mp.continuation.DelayHeap` instead of
-`java.util.concurrent.DelayQueue`. Read this if you are touching `DelayHeap`,
-`TimerShards`, or any code that registers timer entries from inside a raw
-`jdk.internal.vm.Continuation` body. Related reading: `CARRIER_LOCAL.md`
-(sibling C2-hoist hazard).
+`TimerShards` uses `DelayHeap` instead of
+`java.util.concurrent.DelayQueue`.
 
-## Problem
+## Continuation-safety requirement
 
-`TimerShards` is a per-shard `DelayQueue` of `DelayedFireable`s. The producers
-call `TxnWaiter.reset` -> `TimerShards.register` -> `shard.offer(entry)` while
-running inside the cont body of a SQL function (e.g., `wait_wal_table`). The
-JDK's `DelayQueue.offer` internally does:
+A timer registration can call
+`FiberTimerWaitRegistration.register()` -> `TimerShards.register()` ->
+`DelayHeap.offer()` from inside a mounted raw continuation.
 
-```java
-public boolean offer(E e) {
-    final ReentrantLock lock = this.lock;
-    lock.lock();                       // owner = Thread.currentThread()
-    try {
-        q.offer(e);
-        if (q.peek() == e) { leader = null; available.signal(); }
-        return true;
-    } finally {
-        lock.unlock();                 // checks Thread.currentThread() == owner
-    }
-}
+JDK `DelayQueue` uses `ReentrantLock` and `Condition`. Their ownership is
+expressed through Java `Thread` state. C2 can retain a stale
+`Thread.currentThread()` value across raw continuation migration, which has
+caused `IllegalMonitorStateException` in `DelayQueue.offer()` and left its
+lock permanently held.
+
+`DelayHeap` uses JVM monitors instead:
+
+- each public heap operation is `synchronized`;
+- the single consumer waits with `Object.wait()`;
+- a producer wakes it with `Object.notify()`.
+
+Monitor ownership uses the VM's executing `JavaThread`, not a Java
+`Thread.currentThread()` value cached in a continuation frame.
+
+No method may yield a continuation while holding the heap monitor. Heap
+methods may perform only private priority-queue operations, time checks, and
+monitor wait/notify.
+
+## TimerShards lifecycle
+
+Each shard has one `DelayHeap` and one daemon consumer:
+
+1. `start()` publishes all timer threads.
+2. `register()` selects a shard by registration identity and offers the entry.
+3. The consumer takes the next expired entry and calls `expire()`.
+4. `unregister()` removes a losing timer registration.
+5. `shutdown()` closes registration, wakes and joins consumers, drains every
+   unexpired entry, and calls `shutdown()` exactly once for each retained
+   entry.
+
+A late registration returns `NOT_ACCEPTED`. If heap insertion throws before
+retaining the registration, the registration must roll its state back and
+release its in-flight accounting before propagating the error.
+
+The poison sentinel wakes a consumer blocked on an empty or future-only heap.
+If shutdown races after `take()` has removed a real entry, that consumer owns
+the entry and calls its shutdown hook rather than dropping it.
+
+## Sequence: a request calling sleep() on a fiber
+
+The argument to `sleep()` is seconds. `SleepFunctionFactory` never blocks the
+carrier thread. It divides the requested duration into chunks no longer than
+`griffin.query.continuation.wake.interval`. Each chunk arms a timer and, when
+the circuit breaker exposes one, a cancellation signal. The timer drives the
+normal sleep deadline; the chunks also bound how long a cancellation or
+disconnect without a signal can go unchecked.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CL as Client
+    participant CA as Carrier A
+    participant F as Request fiber
+    participant CO as FiberWaitCoordinator
+    participant TS as TimerShards
+    participant DH as DelayHeap shard
+    participant TT as Timer thread
+    participant RQ as FiberRunQueue
+    participant CB as Carrier B
+
+    CL->>CA: execute sleep(30)
+    CA->>F: launch request task and mount
+    F->>F: execute SQL until sleep()
+    loop one chunk per wake interval, until the deadline
+        F->>F: check circuit breaker and remaining time
+        F->>F: token = tryBeginWaitBuild(1 to 3 sources)
+        opt a primary cancellation signal is available
+            F->>CO: armCancellation(token, primary, generation)
+        end
+        opt a supplemental cancellation signal is available
+            F->>CO: armCancellation(token, supplemental, generation)
+        end
+        F->>CO: armTimer(token, chunk)
+        CO->>TS: register(timerRegistration)
+        TS->>DH: offer(timerRegistration)
+        Note over TT,DH: The timer thread waits in take()
+        DH-->>TT: notify() if the registration became the heap head
+        F->>F: suspendWait(token) seals the wait
+        alt a source fired before the continuation yielded
+            CO-->>F: return the pending reason without enqueueing
+        else the fiber reached WAITING
+            F-->>CA: yield the continuation
+            Note over CA: Carrier A returns to the worker loop
+            DH-->>TT: take() returns the expired registration
+            TT->>CO: expire() fires REASON_TIMER
+            CO->>RQ: enqueue the runnable fiber
+            CB->>RQ: drain
+            CB->>F: mount and return REASON_TIMER from suspendWait()
+        end
+        F->>CO: teardownWait(token)
+    end
+    F-->>CL: return the query result
 ```
 
-`ReentrantLock` tracks ownership via `Thread.currentThread()`, the
-`_currentThread` HotSpot intrinsic - the exact intrinsic that C2 is free to
-hoist via LICM (documented in `CARRIER_LOCAL.md`). Inside a raw
-`jdk.internal.vm.Continuation` body, the carrier thread can disagree between
-the `lock()` site and the `unlock()` site:
+The wait token multiplexes every accepted source into one logical park. The
+first source wins. A source that fires while the wait is still building or
+parking records a pending resume, so `suspendWait()` returns without yielding
+or touching the run queue. A source that fires after the fiber reaches
+`WAITING` moves it to `RUNNABLE` and enqueues it. `teardownWait()` cancels the
+losing registrations. Any carrier may resume the fiber.
 
-- C2 inlines `ReentrantLock.lock()` and `ReentrantLock.unlock()` into
-  `DelayQueue.offer`, then reads `Thread.currentThread()` at each site
-  independently. If the two reads see different carriers (because the JIT did
-  not CSE them, or because something in between changed the carrier identity
-  C2 saw), `tryRelease` fires.
+### wait_wal_table() differences
 
-The unlock fails with `IllegalMonitorStateException`. Because the throw
-originates inside `finally`, the lock is **never released**. From that moment
-on, every operation on that shard's `DelayQueue` blocks forever:
+`WaitWalFunction.waitInFiber()` adds a `FiberWalWaitRegistration` to the
+sources used above. The table's `SeqTxnTracker` fires it when `writerTxn`
+reaches the requested `seqTxn`, or when the table becomes terminal. The timer
+provides a periodic circuit-breaker fallback. The loop re-checks
+`writerTxn`, table state, and the circuit breaker after every wake, then
+re-arms if the transaction is still not visible.
 
-- The shard daemon's `shard.take()` blocks on `lock.lock()`.
-- Every subsequent `register()` blocks on `lock.lock()`.
-- `TimerShards.shutdown()` -> `shard.offer(PoisonSentinel.INSTANCE)` blocks
-  on `lock.lock()`, so engine close hangs.
+```mermaid
+sequenceDiagram
+    autonumber
+    participant F as Request fiber
+    participant CO as FiberWaitCoordinator
+    participant ST as SeqTxnTracker
+    participant WQ as FiberWalWaitQueue
+    participant WA as WAL apply or table lifecycle
+    participant TT as Timer thread
+    participant CS as Cancellation signal
 
-## Observed failure
-
-Reproduced locally on `feat-productionise-wait-wal-table-func` running
-`ServerMainWaitWalTableTest.testFuzzConcurrentWaitWalTable` against
-JDK 25.0.2 on macOS / arm64. The producer-side throw inside the cont body:
-
-```
-java.lang.IllegalMonitorStateException
-    at java.util.concurrent.locks.ReentrantLock$Sync.tryRelease(ReentrantLock.java:176)
-    at java.util.concurrent.locks.AbstractQueuedSynchronizer.release(AbstractQueuedSynchronizer.java:1099)
-    at java.util.concurrent.locks.ReentrantLock.unlock(ReentrantLock.java:495)
-    at java.util.concurrent.DelayQueue.offer(DelayQueue.java:178)
-    at io.questdb.mp.continuation.TimerShards.register(TimerShards.java:124)
-    at io.questdb.mp.continuation.TxnWaiter.reset(TxnWaiter.java:171)
-    at io.questdb.griffin.engine.functions.table.WaitWalFunction.getBool(WaitWalFunction.java:116)
-    at io.questdb.cairo.sql.VirtualFunctionRecord.getBool(VirtualFunctionRecord.java:82)
-    at io.questdb.cutlass.pgwire.PGPipelineEntry.outColTxtBool(PGPipelineEntry.java:2116)
-    at io.questdb.cutlass.pgwire.PGPipelineEntry.outRecord(PGPipelineEntry.java:2610)
-    at io.questdb.cutlass.pgwire.PGPipelineEntry.outCursor(PGPipelineEntry.java:2409)
-    at io.questdb.cutlass.pgwire.PGPipelineEntry.outCursor(PGPipelineEntry.java:2386)
-    at io.questdb.cutlass.pgwire.PGPipelineEntry.msgSync(PGPipelineEntry.java:811)
-    at io.questdb.cutlass.pgwire.PGConnectionContext.syncPipeline(PGConnectionContext.java:1414)
-    at io.questdb.cutlass.pgwire.PGConnectionContext.msgSync0(PGConnectionContext.java:1160)
-    at io.questdb.cutlass.pgwire.PGConnectionContext.msgSync(PGConnectionContext.java:1156)
-    at io.questdb.cutlass.pgwire.PGConnectionContext.parseMessage(PGConnectionContext.java:1266)
-    at io.questdb.cutlass.pgwire.PGConnectionContext.handleClientOperation(PGConnectionContext.java:449)
-    at io.questdb.cutlass.pgwire.PGServer$1.lambda$new$0(PGServer.java:102)
-    at io.questdb.network.AbstractIODispatcher.processIOQueue(AbstractIODispatcher.java:222)
-    at io.questdb.cutlass.pgwire.PGServer$1.run(PGServer.java:130)
-    at io.questdb.mp.Worker.loopBody(Worker.java:289)
-    at jdk.internal.vm.Continuation.run(Continuation.java:254)
-    at io.questdb.mp.continuation.WorkerContinuation.run(WorkerContinuation.java:160)
-    at io.questdb.mp.Worker.mountForeignCont(Worker.java:390)
-    at io.questdb.mp.Worker.run(Worker.java:223)
-```
-
-The cascading hang at engine close, showing the shard's `ReentrantLock` is
-permanently held by a ghost owner:
-
-```
-at java.base/jdk.internal.misc.Unsafe.park(Native Method)
-at java.base/java.util.concurrent.locks.LockSupport.park(LockSupport.java:223)
-at java.base/java.util.concurrent.locks.AbstractQueuedSynchronizer.acquire(AbstractQueuedSynchronizer.java:790)
-at java.base/java.util.concurrent.locks.AbstractQueuedSynchronizer.acquire(AbstractQueuedSynchronizer.java:1030)
-at java.base/java.util.concurrent.locks.ReentrantLock$Sync.lock(ReentrantLock.java:154)
-at java.base/java.util.concurrent.locks.ReentrantLock.lock(ReentrantLock.java:323)
-at java.base/java.util.concurrent.DelayQueue.offer(DelayQueue.java:169)
-at io.questdb/io.questdb.mp.continuation.TimerShards.shutdown(TimerShards.java:147)
-at io.questdb/io.questdb.cairo.CairoEngine.signalClose(CairoEngine.java:1868)
-at io.questdb/io.questdb.ServerMain.close(ServerMain.java:192)
+    F->>F: observe writerTxn below target seqTxn
+    F->>F: token = tryBeginWaitBuild(2 to 4 sources)
+    opt a primary cancellation signal is available
+        F->>CO: armCancellation(token, primary, generation)
+    end
+    opt a supplemental cancellation signal is available
+        F->>CO: armCancellation(token, supplemental, generation)
+    end
+    F->>CO: acquireWal(token, targetSeqTxn)
+    F->>ST: registerWaiter(walRegistration)
+    ST->>WQ: register(walRegistration)
+    WQ-->>ST: registration accepted
+    ST-->>F: registration accepted
+    F->>CO: armTimer(token, wakeInterval)
+    F->>F: suspendWait(token)
+    par WAL progress or terminal table state
+        WA->>ST: update writerTxn or table state
+        ST->>WQ: fire(writerTxn, isTerminal)
+        WQ->>CO: fire(token, REASON_WAL)
+    and wake interval elapses
+        TT->>CO: fire(token, REASON_TIMER)
+    and cancellation, when armed
+        CS->>CO: fire(token, REASON_CANCEL)
+    end
+    Note over CO: Only the first source wins
+    CO-->>F: resume now or mark the fiber runnable
+    F->>CO: teardownWait(token)
+    F->>F: re-check state and re-arm if still behind
 ```
 
-The same failure also surfaced in CI as a 15-second timeout in
-`testFuzzConcurrentWaitWalTable`'s `helpersDone.await` - the four parked
-`wait_wal_table` continuations could not be fired because the shard daemon's
-`shard.take()` and the test thread's `setSuspended -> fireWaiters` could no
-longer touch the bricked `DelayQueue`. The waiters only unblocked when the
-test's `@Test(timeout = 240_000)` killed the JVM.
+## Sequence: parallel GROUP BY owner-inline reduction
 
-## Why `ReentrantLock` is uniquely exposed
+A parallel GROUP BY uses `UnorderedPageFrameSequence`. One place its request
+fiber can suspend is inside a reducer that it claims while work-stealing. The
+owner first releases its publication permit. This keeps quiesce from waiting
+on a permit held by a parked fiber and lets other publishers observe the queue
+slot as soon as the owner releases it.
 
-`ReentrantLock` is Java code. Its ownership check is a Java field, set and
-read through `Thread.currentThread()` - a hoistable HotSpot intrinsic that
-C2 can move out of loops via LICM. JDK's defense for its own continuation
-client (`VirtualThread`) is the boot-classpath-only annotation
-`@ChangesCurrentThread` on `VirtualThread.runContinuation`; user-space
-continuation consumers cannot apply it. So `ReentrantLock` (and every
-AQS-based primitive: `ReentrantReadWriteLock`, `StampedLock`, `Semaphore`,
-`CountDownLatch`-on-wait, etc.) is unsafe to call from inside a raw
-`Continuation` body.
+The dispatcher's progress event covers more than completed reductions. For
+an unordered task, the owner copies the task fields, releases the queue slot,
+and signals progress before it invokes the reducer. It runs the reducer on the
+already mounted request fiber; it does not launch or mount a nested PageFrame
+fiber. A deep wait unmounts that same request fiber. Reduction completion later
+counts down the claimed sequence's latch and signals progress again.
 
-`synchronized`, by contrast, is implemented in the JVM. `monitorenter` /
-`monitorexit` are bytecodes; their ownership check uses the
-`JavaThread*` pointer from HotSpot's runtime, not the Java
-`Thread.currentThread()` call, and `monitorenter` / `monitorexit` act as
-memory barriers that constrain C2's freedom to hoist surrounding identity
-reads. As long as the body inside the synchronized region never calls
-`Continuation.yield(SCOPE)`, the JVM cannot migrate the carrier between
-`monitorenter` and `monitorexit`, and the check at exit cannot disagree
-with the check at entry.
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CA as Carrier A
+    participant QF as Request fiber
+    participant PQ as Unordered reduce queue
+    participant D as PageFrameReduceDispatcher
+    participant CO as FiberWaitCoordinator
+    participant FS as PageFrame sequence
+    participant WS as Deep wait source
+    participant RQ as FiberRunQueue
+    participant CB as Carrier B
 
-`DelayHeap` exploits this by using `synchronized` on each public method and
-`Object.wait` / `Object.notify` for the consumer wakeup. No `ReentrantLock`,
-no `Condition`, no `AbstractQueuedSynchronizer` - none of which would be
-safe in a cont-body call path.
+    QF->>D: tryAcquirePublication()
+    QF->>PQ: reducePubSeq.next()
+    PQ-->>QF: -1, queue is full
+    QF->>D: releasePublication()
+    QF->>PQ: reduceSubSeq.next()
+    PQ-->>QF: return a published foreign task
+    QF->>PQ: copy fields, clear task, done(cursor)
+    QF->>D: signalProgress() after slot release
+    QF->>QF: bind claimed sequence cancellation sources
+    QF->>QF: invoke the reducer inline
+    opt reducer reaches a deep wait
+        QF->>CO: arm wait sources and seal the wait
+        QF-->>CA: suspendWait(token) yields
+        Note over CA: Carrier A returns to the worker loop
+        WS->>CO: fire the winning source
+        CO->>RQ: enqueue the request fiber
+        CB->>RQ: drain
+        CB->>QF: mount the same continuation
+        CO-->>QF: return the wake reason
+        QF->>CO: teardownWait(token)
+    end
+    QF->>FS: doneLatch.countDown()
+    QF->>FS: signalProgress()
+    QF->>QF: restore owner cancellation sources
+```
 
-## Invariant
+If no task is available to steal, the owner uses the dispatcher's progress wait
+instead. It reads the progress version before observing the full queue, arms
+both the sequence-specific and global progress events, and rechecks both
+versions before parking. This closes the lost-wakeup window and lets capacity
+released by another query wake the owner. It also arms the primary and
+supplemental cancellation signals when present, so sequence failure and target
+query cancellation wake the wait directly. The same progress wait supports
+the collect phase until the done latch reaches the queued-frame count.
 
-The single rule callers must keep:
+## Sequence: active reducer fiber waiting inside GROUP BY
 
-> **Never call `Continuation.yield(SCOPE)` from within any method of
-> `DelayHeap`.**
+A reducer may run in a worker-owned `PageFrameFiberTask` or inline on the
+request fiber. Either execution context may reach `PerWorkerLocks.acquireSlot()`
+deep inside aggregate evaluation. If every per-worker aggregate slot is busy,
+the reducer registers a slot waiter, retries acquisition to close the release
+race, and then parks. `releaseSlot()` hands the slot directly to one waiter
+without making it globally free in between.
 
-This is trivially true today: the bodies of `offer`, `take`, `size`,
-`clear`, and `toArray` only perform heap operations on a private
-`PriorityQueue` plus, at most, one `notify` or `wait` call - none of which
-yield a raw continuation. If a future change adds a callback or invokes
-something that may yield (a SQL function, a user lambda) from inside these
-methods, the IMSE failure mode returns.
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CA as Carrier A
+    participant RF as Active reducer fiber
+    participant PL as PerWorkerLocks
+    participant SQ as FiberSlotWaitQueue
+    participant CO as FiberWaitCoordinator
+    participant R2 as Other reducer
+    participant RQ as FiberRunQueue
+    participant CB as Carrier B
+
+    RF->>PL: tryAcquireSlot()
+    PL-->>RF: no slot
+    RF->>RF: token = tryBeginWaitBuild(slot and wake sources)
+    RF->>CO: acquireSlot(token)
+    RF->>SQ: register(slotRegistration)
+    SQ-->>RF: registration accepted
+    opt primary and supplemental cancellation are available
+        RF->>CO: armCancellation(token, primary, generation)
+        RF->>CO: armCancellation(token, supplemental, generation)
+    end
+    RF->>PL: retry tryAcquireSlot()
+    PL-->>RF: still no slot
+    RF-->>CA: suspendWait(token) yields
+    Note over CA: Carrier A can run unrelated jobs or fibers
+    R2->>PL: releaseSlot(slot)
+    PL->>SQ: transfer(slot)
+    SQ->>CO: fire(token, REASON_SLOT)
+    CO->>RQ: enqueue the reducer fiber
+    CB->>RQ: drain
+    CB->>RF: mount and return REASON_SLOT from suspendWait()
+    RF->>RF: takeSlot() and continue aggregation
+    RF->>PL: releaseSlot(slot) in finally
+```
+
+If cancellation wins after the queue grants a slot but before the reducer
+takes it, registration cleanup returns that granted slot through
+`releaseSlot()`. This prevents cancellation from leaking a slot for the
+lifetime of the cached GROUP BY atom.
+
+## Complexity
+
+Insert, expiry, and removal are `O(log n)`. Each entry stores its heap index,
+so cancelling a losing timer never scans the shard. A shard serializes its
+operations on one monitor; `TimerShards` spreads registrations across those
+monitors. The backing `ObjList` grows at a new high-water mark and retains
+that capacity for later registrations.
 
 ## Tests
 
-`io.questdb.test.mp.DelayHeapTest` covers, in addition to plain
-heap-ordering and blocking semantics:
+`DelayHeapTest` covers ordering, concurrent producers, single-consumer
+delivery, removal, draining, and waking a consumer when an earlier deadline
+arrives.
 
-- `testConcurrentProducersOrdering` - many producers stamp distinct
-  deadlines under contention; the single consumer must see them pop in
-  deadline order.
-- `testConcurrentProducersSingleConsumer` - producer/consumer stress with
-  a mix of already-expired and short-future entries; every entry must be
-  consumed exactly once.
-- `testTakeEarlierOfferWakesConsumer` - covers the `notify` invariant
-  (consumer parked on a far-future head must wake when a sooner entry is
-  inserted).
-
-End-to-end coverage of the original failure case is in
-`io.questdb.test.ServerMainWaitWalTableTest.testFuzzConcurrentWaitWalTable`.
+`FiberWaitRegistrationTest` covers timer cancellation, shutdown, holder reuse,
+and registration-failure rollback. Server-level sleep and
+`wait_wal_table()` tests cover the complete timer-to-fiber wake path.
 
 ## Files
 
-- `core/src/main/java/io/questdb/mp/continuation/DelayHeap.java` - the heap.
-- `core/src/main/java/io/questdb/mp/continuation/TimerShards.java` - the
-  only consumer; one `DelayHeap<DelayedFireable>` per shard.
-- `core/src/test/java/io/questdb/test/mp/DelayHeapTest.java` - tests.
-- `core/src/main/java/io/questdb/mp/continuation/CARRIER_LOCAL.md` -
-  related C2-hoist hazard for `ThreadLocal`.
+- `core/src/main/java/io/questdb/mp/continuation/DelayHeap.java`
+- `core/src/main/java/io/questdb/mp/continuation/TimerShards.java`
+- `core/src/main/java/io/questdb/mp/continuation/FiberTimerWaitRegistration.java`
+- `core/src/test/java/io/questdb/test/mp/DelayHeapTest.java`
+- `core/src/test/java/io/questdb/test/mp/FiberWaitRegistrationTest.java`

@@ -36,6 +36,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -1961,7 +1962,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10);
 
             final int workerCount = 4;
-            WorkerPool pool = new WorkerPool(() -> workerCount);
+            WorkerPool pool = new TestWorkerPool(workerCount, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
