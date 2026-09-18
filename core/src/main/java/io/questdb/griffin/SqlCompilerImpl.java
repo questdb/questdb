@@ -114,6 +114,7 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.BytecodeAssembler;
@@ -356,7 +357,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final Record record = cursor.getRecord();
         reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
         while (cursor.hasNext()) {
-            context.getCircuitBreaker().statefulThrowExceptionIfTripped();
+            context.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
             TableWriter.Row row = writer.newRow();
             copier.copy(context, record, row);
             row.append();
@@ -669,7 +670,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CommonUtils.TimestampUnitConverter converter = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType()).getTimestampUnitConverter(fromTimestampType);
         if (converter == null) {
             while (cursor.hasNext()) {
-                context.getCircuitBreaker().statefulThrowExceptionIfTripped();
+                context.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
                 TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
                 copier.copy(context, record, row);
                 row.append();
@@ -683,7 +684,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } else {
             while (cursor.hasNext()) {
-                context.getCircuitBreaker().statefulThrowExceptionIfTripped();
+                context.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
                 TableWriter.Row row = writer.newRow(converter.convert(record.getTimestamp(cursorTimestampIndex)));
                 copier.copy(context, record, row);
                 row.append();
@@ -718,7 +719,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType());
         reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
         while (cursor.hasNext()) {
-            context.getCircuitBreaker().statefulThrowExceptionIfTripped();
+            context.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
             // It's allowed to insert ISO formatted string to timestamp column
             TableWriter.Row row = writer.newRow(timestampDriver.implicitCast(record.getStrA(cursorTimestampIndex)));
             copier.copy(context, record, row);
@@ -753,7 +754,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final Record record = cursor.getRecord();
         reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
         while (cursor.hasNext()) {
-            context.getCircuitBreaker().statefulThrowExceptionIfTripped();
+            context.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
             // It's allowed to insert ISO formatted string to timestamp column
             TableWriter.Row row = writer.newRow(timestampDriver.implicitCastVarchar(record.getVarcharA(cursorTimestampIndex)));
             copier.copy(context, record, row);
@@ -4796,46 +4797,54 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         final RecordMetadata metadata = factory.getMetadata();
                         createTableOp.validateAndUpdateMetadataFromSelect(metadata, factory.getScanDirection());
                         boolean keepLock = !createTableOp.isWalEnabled();
-
-                        // todo: test create table if exists with select
-                        tableToken = engine.createTable(
-                                executionContext.getSecurityContext(),
-                                mem,
-                                path,
-                                createTableOp.ignoreIfExists(),
-                                createTableOp,
-                                keepLock,
-                                volumeAlias != null,
-                                createTableOp.getTableKind()
-                        );
-
+                        // A kept lock belongs to the carrier thread, so the copy must not suspend and resume elsewhere.
+                        final SuspensionScope.CarrierScope suspensionScope = keepLock ? SuspensionScope.scope() : null;
+                        final SuspensionScope.Mode previousMode = keepLock ? SuspensionScope.enterBlocking(suspensionScope) : null;
                         try {
-                            copyTableDataAndUnlock(
-                                    executionContext,
-                                    tableToken,
-                                    createTableOp.isWalEnabled(),
-                                    cursor,
-                                    metadata,
-                                    createTableOp.getBatchSize(),
-                                    createTableOp.getBatchO3MaxLag(),
-                                    createTableOp.getCopyDataProgressReporter()
+                            // todo: test create table if exists with select
+                            tableToken = engine.createTable(
+                                    executionContext.getSecurityContext(),
+                                    mem,
+                                    path,
+                                    createTableOp.ignoreIfExists(),
+                                    createTableOp,
+                                    keepLock,
+                                    volumeAlias != null,
+                                    createTableOp.getTableKind()
                             );
-                        } catch (Throwable e) {
-                            if (e instanceof CairoException ce) {
-                                ce.position(position);
-                                LogRecord record = LOG.error()
-                                        .$("could not create table as select [message=").$safe(ce.getFlyweightMessage());
-                                if (!ce.isCancellation()) {
-                                    record.$(", errno=").$(ce.getErrno());
+
+                            try {
+                                copyTableDataAndUnlock(
+                                        executionContext,
+                                        tableToken,
+                                        createTableOp.isWalEnabled(),
+                                        cursor,
+                                        metadata,
+                                        createTableOp.getBatchSize(),
+                                        createTableOp.getBatchO3MaxLag(),
+                                        createTableOp.getCopyDataProgressReporter()
+                                );
+                            } catch (Throwable e) {
+                                if (e instanceof CairoException ce) {
+                                    ce.position(position);
+                                    LogRecord record = LOG.error()
+                                            .$("could not create table as select [message=").$safe(ce.getFlyweightMessage());
+                                    if (!ce.isCancellation()) {
+                                        record.$(", errno=").$(ce.getErrno());
+                                    }
+                                    record.I$();
+                                } else {
+                                    LOG.error().$("could not create table as select [message=").$safe(e instanceof FlyweightMessageContainer
+                                            ? ((FlyweightMessageContainer) e).getFlyweightMessage() : e.getMessage()).I$();
                                 }
-                                record.I$();
-                            } else {
-                                LOG.error().$("could not create table as select [message=").$safe(e instanceof FlyweightMessageContainer
-                                        ? ((FlyweightMessageContainer) e).getFlyweightMessage() : e.getMessage()).I$();
+                                engine.dropTableOrViewOrMatView(path, tableToken);
+                                engine.unlockTableName(tableToken);
+                                throw e;
                             }
-                            engine.dropTableOrViewOrMatView(path, tableToken);
-                            engine.unlockTableName(tableToken);
-                            throw e;
+                        } finally {
+                            if (keepLock) {
+                                SuspensionScope.restoreMode(suspensionScope, previousMode);
+                            }
                         }
                     }
                     createTableOp.updateOperationFutureTableToken(tableToken);

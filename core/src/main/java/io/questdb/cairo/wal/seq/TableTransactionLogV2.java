@@ -204,15 +204,15 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public TransactionLogCursor getCursor(
             long txnLo,
             @Transient Path path,
-            @Nullable TableSequencerCursorPool cursorPool
+            @Nullable TableSequencerCursorHolder cursorHolder
     ) {
-        TransactionLogCursorImpl cursor = cursorPool != null
-                ? (TransactionLogCursorImpl) cursorPool.getTransactionLogCursor(WAL_SEQUENCER_FORMAT_VERSION_V2)
+        TransactionLogCursorImpl cursor = cursorHolder != null
+                ? (TransactionLogCursorImpl) cursorHolder.getTransactionLogCursor(WAL_SEQUENCER_FORMAT_VERSION_V2)
                 : tlTransactionLogCursor.get();
         if (cursor == null) {
             cursor = new TransactionLogCursorImpl(ff, configuration.getBypassWalFdCache(), txnLo, path, partTransactionCount);
-            if (cursorPool != null) {
-                cursorPool.registerTransactionLogCursor(WAL_SEQUENCER_FORMAT_VERSION_V2, cursor);
+            if (cursorHolder != null) {
+                cursorHolder.registerTransactionLogCursor(WAL_SEQUENCER_FORMAT_VERSION_V2, cursor);
             } else {
                 tlTransactionLogCursor.set(cursor);
             }

@@ -263,7 +263,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                     rowLo = slaveTimeFrame.getRowLo();
                 }
                 slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(keyedFrameIndex, keyedRowId));
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             }
         }
     }
