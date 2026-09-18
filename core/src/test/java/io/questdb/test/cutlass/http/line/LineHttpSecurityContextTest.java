@@ -57,8 +57,7 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
-import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.readChunkedBody;
-import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.readHttpHeaders;
+import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.exchange;
 
 /**
  * ILP-over-HTTP re-authenticates every HTTP request, while the per-table write object is cached
@@ -192,32 +191,6 @@ public class LineHttpSecurityContextTest extends AbstractBootstrapTest {
                 },
                 getServerMainArgs()
         ));
-    }
-
-    /**
-     * Sends one request and reads exactly one response off the same socket, so the caller can keep
-     * using the connection afterwards. That holds for the two reply shapes this endpoint produces:
-     * the bodiless 204 of a successful write, and the chunked body every error carries. A reply the
-     * helper cannot frame fails here with the header block quoted, rather than leaving unread bytes
-     * that would desynchronise the next exchange on this connection. A server-side disconnect shows
-     * up as an empty header block, which is what makes "the requests shared one connection" an
-     * assertion and not an assumption.
-     */
-    private static String exchange(OutputStream out, InputStream in, String request) throws Exception {
-        out.write(request.getBytes(StandardCharsets.UTF_8));
-        out.flush();
-
-        final String headers = readHttpHeaders(in);
-        Assert.assertFalse("server closed the connection before replying", headers.isEmpty());
-        if (!Chars.contains(headers, "Transfer-Encoding: chunked")) {
-            // the 204 carries no body, so the response ends at the header boundary
-            Assert.assertTrue(
-                    "reply is neither chunked nor a bodiless 204, so this connection cannot be reused: <<<" + headers + ">>>",
-                    headers.startsWith("HTTP/1.1 204")
-            );
-            return headers;
-        }
-        return headers + readChunkedBody(in, headers);
     }
 
     private static String writeRequest(String lines, String user) {

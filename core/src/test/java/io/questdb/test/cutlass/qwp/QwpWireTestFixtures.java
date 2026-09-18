@@ -204,6 +204,32 @@ public final class QwpWireTestFixtures {
     }
 
     /**
+     * Sends one HTTP request and reads exactly one response off the same socket, so the caller can
+     * keep using the connection afterwards. That holds for the two reply shapes the ILP {@code /write}
+     * endpoint produces: the bodiless 204 of a successful write, and the chunked body every error
+     * carries. A reply this cannot frame fails here with the header block quoted, rather than leaving
+     * unread bytes that would desynchronise the next exchange on this connection. A server-side
+     * disconnect surfaces as a failure rather than a silent pass, which is what makes "the requests
+     * shared one connection" an assertion and not an assumption.
+     */
+    public static String exchange(OutputStream out, InputStream in, String request) throws Exception {
+        out.write(request.getBytes(StandardCharsets.UTF_8));
+        out.flush();
+
+        final String headers = readHttpHeaders(in);
+        Assert.assertFalse("server closed the connection before replying", headers.isEmpty());
+        if (!headers.contains("Transfer-Encoding: chunked")) {
+            // the 204 carries no body, so the response ends at the header boundary
+            Assert.assertTrue(
+                    "reply is neither chunked nor a bodiless 204, so this connection cannot be reused: <<<" + headers + ">>>",
+                    headers.startsWith("HTTP/1.1 204")
+            );
+            return headers;
+        }
+        return headers + readChunkedBody(in, headers);
+    }
+
+    /**
      * Wraps {@code payload} in a masked client-to-server frame (FIN set) of the given
      * opcode. Client frames must be masked per RFC 6455.
      */
