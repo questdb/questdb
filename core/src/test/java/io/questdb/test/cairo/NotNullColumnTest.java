@@ -176,14 +176,14 @@ public class NotNullColumnTest extends AbstractCairoTest {
             // real null. The guard folds to StrConstant.NULL / VarcharConstant.NULL so
             // IS NULL / COALESCE / output layers keep working downstream.
             assertQuery("""
-                            SELECT cast(cast(null as int) as string) i,
-                                   cast(cast(null as long) as string) l,
-                                   cast(cast(null as double) as string) d,
-                                   cast(cast(null as float) as string) f,
-                                   cast(cast(null as date) as string) date,
-                                   cast(cast(null as timestamp) as string) ts,
-                                   cast(cast(null as ipv4) as string) ip
-                            """)
+                    SELECT cast(cast(null as int) as string) i,
+                           cast(cast(null as long) as string) l,
+                           cast(cast(null as double) as string) d,
+                           cast(cast(null as float) as string) f,
+                           cast(cast(null as date) as string) date,
+                           cast(cast(null as timestamp) as string) ts,
+                           cast(cast(null as ipv4) as string) ip
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -192,14 +192,14 @@ public class NotNullColumnTest extends AbstractCairoTest {
                             """);
 
             assertQuery("""
-                            SELECT cast(cast(null as int) as varchar) i,
-                                   cast(cast(null as long) as varchar) l,
-                                   cast(cast(null as double) as varchar) d,
-                                   cast(cast(null as float) as varchar) f,
-                                   cast(cast(null as date) as varchar) date,
-                                   cast(cast(null as timestamp) as varchar) ts,
-                                   cast(cast(null as ipv4) as varchar) ip
-                            """)
+                    SELECT cast(cast(null as int) as varchar) i,
+                           cast(cast(null as long) as varchar) l,
+                           cast(cast(null as double) as varchar) d,
+                           cast(cast(null as float) as varchar) f,
+                           cast(cast(null as date) as varchar) date,
+                           cast(cast(null as timestamp) as varchar) ts,
+                           cast(cast(null as ipv4) as varchar) ip
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1458,8 +1458,8 @@ public class NotNullColumnTest extends AbstractCairoTest {
             // Projection: (col IS NULL) — false every row for NOT NULL columns (sentinel row included).
             // Nullable columns still flag the sentinel row as null.
             assertQuery("SELECT (i IS NULL) i_is_null, (l IS NULL) l_is_null, (d IS NULL) d_is_null, " +
-                            "(f IS NULL) f_is_null, (nul_i IS NULL) nul_i_is_null, (nul_l IS NULL) nul_l_is_null " +
-                            "FROM t ORDER BY ts")
+                    "(f IS NULL) f_is_null, (nul_i IS NULL) nul_i_is_null, (nul_l IS NULL) nul_l_is_null " +
+                    "FROM t ORDER BY ts")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1559,9 +1559,9 @@ public class NotNullColumnTest extends AbstractCairoTest {
                     """);
 
             assertQuery("SELECT (ipv4_c IS NULL) ipv4_null, (uuid_c IS NULL) uuid_null, " +
-                            "(char_c IS NULL) char_null, (str_c IS NULL) str_null, " +
-                            "(vc_c IS NULL) vc_null, (sym_c IS NULL) sym_null, " +
-                            "(l256_c IS NULL) l256_null, (geo_c IS NULL) geo_null FROM t")
+                    "(char_c IS NULL) char_null, (str_c IS NULL) str_null, " +
+                    "(vc_c IS NULL) vc_null, (sym_c IS NULL) sym_null, " +
+                    "(l256_c IS NULL) l256_null, (geo_c IS NULL) geo_null FROM t")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1569,9 +1569,9 @@ public class NotNullColumnTest extends AbstractCairoTest {
                             false\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse
                             """);
             assertQuery("SELECT (ipv4_c IS NOT NULL) ipv4_nn, (uuid_c IS NOT NULL) uuid_nn, " +
-                            "(char_c IS NOT NULL) char_nn, (str_c IS NOT NULL) str_nn, " +
-                            "(vc_c IS NOT NULL) vc_nn, (sym_c IS NOT NULL) sym_nn, " +
-                            "(l256_c IS NOT NULL) l256_nn, (geo_c IS NOT NULL) geo_nn FROM t")
+                    "(char_c IS NOT NULL) char_nn, (str_c IS NOT NULL) str_nn, " +
+                    "(vc_c IS NOT NULL) vc_nn, (sym_c IS NOT NULL) sym_nn, " +
+                    "(l256_c IS NOT NULL) l256_nn, (geo_c IS NOT NULL) geo_nn FROM t")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2209,17 +2209,17 @@ public class NotNullColumnTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("k\tmin_f\tmax_f\tmin_d\tmax_d\na\tnull\tnull\tnull\tnull\nb\tnull\tnull\tnull\tnull\n");
             assertQuery("""
-                            SELECT
-                                first_not_null(i) != 2 a_first_i,
-                                first_not_null(l) != 2 a_first_l,
-                                first_not_null(f) != 2 a_first_f,
-                                first_not_null(d) != 2 a_first_d,
-                                last_not_null(i) != 5 b_last_i,
-                                last_not_null(l) != 5 b_last_l,
-                                last_not_null(f) != 5 b_last_f,
-                                last_not_null(d) != 5 b_last_d
-                            FROM t
-                            """)
+                    SELECT
+                        first_not_null(i) != 2 a_first_i,
+                        first_not_null(l) != 2 a_first_l,
+                        first_not_null(f) != 2 a_first_f,
+                        first_not_null(d) != 2 a_first_d,
+                        last_not_null(i) != 5 b_last_i,
+                        last_not_null(l) != 5 b_last_l,
+                        last_not_null(f) != 5 b_last_f,
+                        last_not_null(d) != 5 b_last_d
+                    FROM t
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
@@ -2250,7 +2250,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
             // the default rendering shows "null"; y still has a skip-null
             // semantic since it is a nullable column.
             assertQuery("SELECT first_not_null(x) first_not_null_x, first_not_null(y) first_not_null_y, " +
-                            "last_not_null(x) last_not_null_x, last_not_null(y) last_not_null_y FROM t")
+                    "last_not_null(x) last_not_null_x, last_not_null(y) last_not_null_y FROM t")
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
@@ -2873,7 +2873,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
 
             // Designated timestamp is implicitly NOT NULL and also returns "no".
             assertQuery("SELECT column_name, is_nullable FROM information_schema.columns " +
-                            "WHERE table_name = 't' ORDER BY ordinal_position")
+                    "WHERE table_name = 't' ORDER BY ordinal_position")
                     .noLeakCheck()
                     .returns("""
                             column_name\tis_nullable
