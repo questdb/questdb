@@ -212,7 +212,7 @@ public class QwpSchemaSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testStaleUuidFailureRefreshesChangedTargetBeforeNextRow() throws Exception {
+    public void testStaleUuidFailureStaysPinnedUntilAckFeedback() throws Exception {
         execute("create table schema_sender_stale "
                 + "(id uuid, marker varchar, failed_b varchar, ts timestamp) "
                 + "timestamp(ts) partition by day wal");
@@ -235,23 +235,32 @@ public class QwpSchemaSenderE2ETest extends AbstractQwpWebSocketTest {
                 execute("alter table schema_sender_stale drop column id");
                 execute("alter table schema_sender_stale add column id varchar");
 
-                LineSenderSchemaException changed = Assert.assertThrows(
+                // The pending batch keeps validating against the UUID snapshot it
+                // pinned; the rejection is local and rolls the whole row back.
+                LineSenderSchemaException invalid = Assert.assertThrows(
                         LineSenderSchemaException.class,
                         () -> sender.stringColumn("marker", "B")
                                 .stringColumn("failed_b", "must-be-rolled-back")
                                 .stringColumn("id", "not-a-uuid")
                 );
-                Assert.assertEquals(LineSenderSchemaException.Reason.SCHEMA_CHANGED, changed.getReason());
+                Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, invalid.getReason());
+                LineSenderSchemaException stillInvalid = Assert.assertThrows(
+                        LineSenderSchemaException.class,
+                        () -> sender.stringColumn("id", "not-a-uuid")
+                );
+                Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, stillInvalid.getReason());
 
-                // Refresh from B installs VARCHAR for C without another table().
-                sender.stringColumn("id", "not-a-uuid")
+                // The frame ships with the stale identity, so its ACK piggybacks the
+                // VARCHAR schema. The send loop applies that feedback before it advances
+                // the ack watermark, so the next batch adopts it with no lookup of its own.
+                long fsn = sender.flushAndGetSequence();
+                Assert.assertTrue(fsn >= 0);
+                Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));
+                sender.table("schema_sender_stale")
+                        .stringColumn("id", "not-a-uuid")
                         .stringColumn("marker", "C")
                         .atNow();
-                assertQuery("select count() from schema_sender_stale")
-                        .noLeakCheck()
-                        .returnsOnce("count\n0\n");
-
-                long fsn = sender.flushAndGetSequence();
+                fsn = sender.flushAndGetSequence();
                 Assert.assertTrue(fsn >= 0);
                 Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));
             }

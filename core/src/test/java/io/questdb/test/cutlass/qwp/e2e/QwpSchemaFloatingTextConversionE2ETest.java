@@ -138,14 +138,20 @@ public class QwpSchemaFloatingTextConversionE2ETest extends AbstractQwpWebSocket
                         .stringColumn("marker", "A").at(1_000_000, ChronoUnit.MICROS);
                 execute("alter table schema_floating_text_rebind drop column value");
                 execute("alter table schema_floating_text_rebind add column value varchar");
-                LineSenderSchemaException changed = Assert.assertThrows(
+                // The pending batch still validates against the pinned FLOAT target.
+                LineSenderSchemaException invalid = Assert.assertThrows(
                         LineSenderSchemaException.class,
                         () -> sender.stringColumn("marker", "B").stringColumn("value", "not-a-number")
                 );
-                Assert.assertEquals(LineSenderSchemaException.Reason.SCHEMA_CHANGED, changed.getReason());
-                sender.floatColumn("value", 0.1f).stringColumn("marker", "C")
-                        .at(2_000_000, ChronoUnit.MICROS);
+                Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, invalid.getReason());
                 long fsn = sender.flushAndGetSequence();
+                Assert.assertTrue(fsn >= 0);
+                Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));
+                // The stale frame's ACK carried the VARCHAR schema; the next batch
+                // adopts it and formats the native float as text.
+                sender.table("schema_floating_text_rebind").floatColumn("value", 0.1f)
+                        .stringColumn("marker", "C").at(2_000_000, ChronoUnit.MICROS);
+                fsn = sender.flushAndGetSequence();
                 Assert.assertTrue(fsn >= 0);
                 Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));
             }

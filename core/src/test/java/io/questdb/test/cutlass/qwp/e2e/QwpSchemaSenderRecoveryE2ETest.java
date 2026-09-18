@@ -98,7 +98,7 @@ public class QwpSchemaSenderRecoveryE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testPublicSenderRecoversTwoPinnedSchemaGenerations() throws Exception {
+    public void testPublicSenderRecoversStaleIdentityFrameAfterRetype() throws Exception {
         assertMemoryLeak(() -> {
             String table = TABLE + "_evolution";
             execute("create table " + table
@@ -112,6 +112,9 @@ public class QwpSchemaSenderRecoveryE2ETest extends AbstractQwpWebSocketTest {
                 try (DataGate gate = new DataGate(port, true);
                      ChildProcess child = new ChildProcess(startProducer(gate.getPort(), sfRoot, table, "evolution"))) {
                     child.awaitLine("A_READY", 15_000);
+                    // The producer's batch stays pinned to the UUID snapshot across the
+                    // retype: the withheld frame carries no ACK, so nothing can update
+                    // its cache, and the frame ships with the stale identity.
                     execute("alter table " + table + " drop column id");
                     execute("alter table " + table + " add column id varchar");
                     child.send("CONTINUE");
@@ -119,9 +122,7 @@ public class QwpSchemaSenderRecoveryE2ETest extends AbstractQwpWebSocketTest {
                     fsn = Long.parseLong(published.substring("PUBLISHED ".length()));
                     Assert.assertTrue(gate.awaitData(15, TimeUnit.SECONDS));
                     publishedFrame = gate.getDataFrame();
-                    Assert.assertEquals("expected two pinned schema blocks", 2,
-                            (publishedFrame[6] & 0xff) | ((publishedFrame[7] & 0xff) << 8));
-                    assertTwoSchemaGenerations(publishedFrame);
+                    assertStaleUuidBlock(publishedFrame, engine.verifyTableName(table).getTableId());
                     assertQuery("select count() from " + table).noLeakCheck().returnsOnce("count\n0\n");
                     child.process.destroyForcibly();
                     Assert.assertTrue(child.process.waitFor(15, TimeUnit.SECONDS));
@@ -135,11 +136,12 @@ public class QwpSchemaSenderRecoveryE2ETest extends AbstractQwpWebSocketTest {
                     Assert.assertArrayEquals(publishedFrame, recoveryGate.getDataFrame());
                 }
                 drainWalQueue();
+                // The server converts the recovered UUID wire values into the retyped column.
                 assertQuery("select marker, sym, id from " + table + " order by marker")
                         .noLeakCheck()
                         .returnsOnce("marker\tsym\tid\n"
                                 + "A\talpha\t123e4567-e89b-12d3-a456-426614174000\n"
-                                + "C\tgamma\tplain-text\n");
+                                + "C\tgamma\t223e4567-e89b-12d3-a456-426614174001\n");
             });
         });
     }
@@ -151,7 +153,7 @@ public class QwpSchemaSenderRecoveryE2ETest extends AbstractQwpWebSocketTest {
                 + "close_flush_timeout_millis=30000;");
     }
 
-    private static void assertTwoSchemaGenerations(byte[] frame) throws Exception {
+    private static void assertStaleUuidBlock(byte[] frame, int tableId) throws Exception {
         long address = Unsafe.malloc(frame.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < frame.length; i++) {
@@ -160,17 +162,11 @@ public class QwpSchemaSenderRecoveryE2ETest extends AbstractQwpWebSocketTest {
             QwpMessageCursor cursor = new QwpMessageCursor();
             cursor.of(address, frame.length, new ObjList<>());
             Assert.assertTrue(cursor.hasNextTable());
-            QwpTableBlockCursor first = cursor.nextTable();
-            int tableId = first.getSchemaTableId();
-            long firstVersion = first.getSchemaMetadataVersion();
-            Assert.assertEquals(1, first.getRowCount());
-            Assert.assertEquals(QwpConstants.TYPE_UUID, first.getColumnDef(0).getTypeCode());
-            Assert.assertTrue(cursor.hasNextTable());
-            QwpTableBlockCursor second = cursor.nextTable();
-            Assert.assertEquals(tableId, second.getSchemaTableId());
-            Assert.assertNotEquals(firstVersion, second.getSchemaMetadataVersion());
-            Assert.assertEquals(1, second.getRowCount());
-            Assert.assertEquals(QwpConstants.TYPE_VARCHAR, second.getColumnDef(0).getTypeCode());
+            QwpTableBlockCursor block = cursor.nextTable();
+            Assert.assertTrue(block.hasKnownSchemaIdentity());
+            Assert.assertEquals(tableId, block.getSchemaTableId());
+            Assert.assertEquals(2, block.getRowCount());
+            Assert.assertEquals(QwpConstants.TYPE_UUID, block.getColumnDef(0).getTypeCode());
             Assert.assertFalse(cursor.hasNextTable());
         } finally {
             Unsafe.free(address, frame.length, MemoryTag.NATIVE_DEFAULT);
@@ -219,18 +215,16 @@ public class QwpSchemaSenderRecoveryE2ETest extends AbstractQwpWebSocketTest {
                 sender.table(table)
                         .symbol("sym", "beta")
                         .stringColumn("marker", "B")
-                        .stringColumn("id", evolution ? "plain-text" : "not-a-uuid");
+                        .stringColumn("id", "not-a-uuid");
                 throw new AssertionError("expected schema rejection");
             } catch (LineSenderSchemaException expected) {
-                LineSenderSchemaException.Reason reason = evolution
-                        ? LineSenderSchemaException.Reason.SCHEMA_CHANGED
-                        : LineSenderSchemaException.Reason.INVALID_VALUE;
-                if (expected.getReason() != reason) {
+                // The batch validates against its pinned UUID snapshot either way.
+                if (expected.getReason() != LineSenderSchemaException.Reason.INVALID_VALUE) {
                     throw expected;
                 }
             }
             sender.table(table)
-                    .stringColumn("id", evolution ? "plain-text" : "223e4567-e89b-12d3-a456-426614174001")
+                    .stringColumn("id", "223e4567-e89b-12d3-a456-426614174001")
                     .symbol("sym", "gamma")
                     .stringColumn("marker", "C")
                     .at(Instant.parse("2026-01-01T00:00:01Z"));
