@@ -26,6 +26,7 @@
 package io.questdb.griffin.model;
 
 import io.questdb.std.Chars;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
@@ -57,10 +58,21 @@ import io.questdb.std.ObjectFactory;
  */
 public class ViewAuditModel implements Mutable {
     public static final ObjectFactory<ViewAuditModel> FACTORY = ViewAuditModel::new;
+    private final ObjList<CharSequence> overridableParamNames = new ObjList<>();
     private final ObjList<CharSequence> paramNames = new ObjList<>();
     private final ObjList<ExpressionNode> paramValues = new ObjList<>();
     private int viewId;
     private CharSequence viewName;
+
+    /**
+     * Notes that a caller can set the audited parameter {@code name} at this site: the view
+     * declares it {@code OVERRIDABLE} as well as {@code AUDITED}. An audited view around the site
+     * has to record every such parameter for its row to cover this read, see
+     * {@link #isCoveredBy(LowerCaseCharSequenceHashSet)}.
+     */
+    public void addOverridableParamName(CharSequence name) {
+        overridableParamNames.add(name);
+    }
 
     public void addParam(CharSequence name, ExpressionNode value) {
         paramNames.add(name);
@@ -71,6 +83,7 @@ public class ViewAuditModel implements Mutable {
     public void clear() {
         viewId = 0;
         viewName = null;
+        overridableParamNames.clear();
         paramNames.clear();
         paramValues.clear();
     }
@@ -93,6 +106,25 @@ public class ViewAuditModel implements Mutable {
 
     public CharSequence getViewName() {
         return viewName;
+    }
+
+    /**
+     * Whether the row of an audited view around this site says everything a caller could have
+     * changed about this read: each parameter a caller can set here, by name, is one that view
+     * records too. A caller's value reaches this site through the scope variable of that name,
+     * which is the variable the outer view records. A sub-query that re-declares the name between
+     * the two would hide that variable, but only the author of a view can write one there, not a
+     * caller. A view with no such parameters is always covered.
+     *
+     * @param outerAuditedDecls the names the outer view declares {@code AUDITED}, overridable or not
+     */
+    public boolean isCoveredBy(LowerCaseCharSequenceHashSet outerAuditedDecls) {
+        for (int i = 0, n = overridableParamNames.size(); i < n; i++) {
+            if (!outerAuditedDecls.contains(overridableParamNames.getQuick(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

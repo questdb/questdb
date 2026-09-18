@@ -139,8 +139,9 @@ public class SqlParser {
     private final ObjectPool<PivotForColumn> pivotQueryColumnPool;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
-    // One entry per reference to an audited view, in the order the parser expanded them. A list
-    // rather than a map: the same view read twice is two reads, and each records its own arguments.
+    // One entry per reference to an audited view, in the order the parser expanded them, less the
+    // ones an audited view around them shadows. A list rather than a map: the same view read twice
+    // is two reads, and each records its own arguments.
     private final ObjList<ViewAuditModel> recordedViewAudits = new ObjList<>();
     // Map of view definitions encountered during query compilation.
     // Using a map ensures consistent view definitions even if views are modified concurrently.
@@ -170,6 +171,8 @@ public class SqlParser {
     private final LowerCaseCharSequenceHashSet viewsBeingCompiled = new LowerCaseCharSequenceHashSet();
     private final ObjectPool<WindowExpression> windowExpressionPool;
     private final ObjectPool<WithClauseModel> withClauseModelPool;
+    // Number of audited views whose bodies are being expanded at the current parse position.
+    private int auditedViewDepth;
     private boolean copyMode = false;
     private boolean createTableMode = false;
     private boolean createViewMode = false;
@@ -629,6 +632,49 @@ public class SqlParser {
         recordedViewAudits.clear();
         viewAuditModelPool.clear();
         viewsBeingCompiled.clear();
+        auditedViewDepth = 0;
+    }
+
+    /**
+     * Expands an audited view and records the read, after dropping the reads made inside its body
+     * that its own row covers.
+     * <p>
+     * The principal asked for this view; the views it is built from are how it is built. So an
+     * audited view read inside the body records no row of its own when this view's row covers it:
+     * every parameter the inner view declares {@code OVERRIDABLE AUDITED} is one this view declares
+     * {@code AUDITED}. Those are the parameters a caller can set, and an override passes into the
+     * inner view through this one, so a read the row does not cover keeps its own row, and the
+     * value the caller chose stays in the trail. Parameters that are {@code AUDITED} but not
+     * {@code OVERRIDABLE} do not count: a caller cannot set them, and this view could not re-declare
+     * them if it wanted to.
+     * <p>
+     * Only the outermost audited view shadows. Every read inside it, however deep and through
+     * whatever views that are not audited, is checked against that view, whose row is always
+     * recorded. A view that is not audited never shadows, or wrapping an audited view in a plain
+     * one would erase its trail. The outcome follows from the view definitions alone, so a query
+     * text always records the same set of reads, whatever it binds.
+     */
+    private IQueryModel compileAuditedViewQuery(
+            TableToken viewToken,
+            ViewDefinition viewDefinition,
+            int viewPosition,
+            LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+    ) throws SqlException {
+        final boolean outermost = auditedViewDepth == 0;
+        // Everything recorded from here until the body's parse returns was read inside this view.
+        final int firstInnerAudit = recordedViewAudits.size();
+        auditedViewDepth++;
+        final IQueryModel viewModel;
+        try {
+            viewModel = compileViewQuery(viewDefinition, viewPosition, decls);
+        } finally {
+            auditedViewDepth--;
+        }
+        if (outermost) {
+            shadowCoveredViewAudits(firstInnerAudit, viewModel.getAuditedDecls());
+        }
+        recordViewAudit(viewToken, viewModel);
+        return viewModel;
     }
 
     private void compileViewQuery(IQueryModel model, TableToken viewToken, int viewPosition) throws SqlException {
@@ -652,10 +698,9 @@ public class SqlParser {
         // Track that we're compiling this view
         viewsBeingCompiled.add(viewName);
         try {
-            final IQueryModel viewModel = compileViewQuery(viewDefinition, viewPosition, model.getDecls());
-            if (viewDefinition.isAudited()) {
-                recordViewAudit(viewToken, viewModel);
-            }
+            final IQueryModel viewModel = viewDefinition.isAudited()
+                    ? compileAuditedViewQuery(viewToken, viewDefinition, viewPosition, model.getDecls())
+                    : compileViewQuery(viewDefinition, viewPosition, model.getDecls());
             viewModel.copyDeclsFrom(model, false);
             model.setNestedModel(viewModel);
             model.setNestedModelIsSubQuery(true);
@@ -6526,11 +6571,15 @@ public class SqlParser {
         final ViewAuditModel viewAudit = viewAuditModelPool.next();
         viewAudit.of(viewToken.getTableName(), viewToken.getTableId());
         final LowerCaseCharSequenceHashSet auditedDecls = viewModel.getAuditedDecls();
+        final LowerCaseCharSequenceHashSet overridableDecls = viewModel.getOverridableDecls();
         final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = viewModel.getDecls();
         for (int i = 0, n = auditedDecls.getKeyCount(); i < n; i++) {
             final CharSequence name = auditedDecls.getKey(i);
             if (name == null) {
                 continue;
+            }
+            if (overridableDecls.contains(name)) {
+                viewAudit.addOverridableParamName(name);
             }
             final ExpressionNode decl = decls.get(name);
             if (decl != null) {
@@ -7084,6 +7133,21 @@ public class SqlParser {
             throw SqlException.position(lexer.lastTokenPosition()).put("',' or ')' expected");
         }
         return exclude ? (ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL & ~mask) : mask;
+    }
+
+    /**
+     * Drops the reads recorded at {@code firstInnerAudit} and after it that the row of the audited
+     * view around them covers. See {@link #compileAuditedViewQuery}.
+     */
+    private void shadowCoveredViewAudits(int firstInnerAudit, LowerCaseCharSequenceHashSet outerAuditedDecls) {
+        int kept = firstInnerAudit;
+        for (int i = firstInnerAudit, n = recordedViewAudits.size(); i < n; i++) {
+            final ViewAuditModel viewAudit = recordedViewAudits.getQuick(i);
+            if (!viewAudit.isCoveredBy(outerAuditedDecls)) {
+                recordedViewAudits.setQuick(kept++, viewAudit);
+            }
+        }
+        recordedViewAudits.setPos(kept);
     }
 
     private int showCreateDatabaseCategory(GenericLexer lexer, CharSequence tok) throws SqlException {
