@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.security.DenyAllSecurityContext;
@@ -94,6 +95,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean clockUseNow = false;
     private boolean cloneSymbolTables;
     private boolean containsSecret;
+    private CharSequence expiryMaterializingViewName;
+    private ExpiryReadPolicy expiryReadPolicy = ExpiryReadPolicy.FILTER;
     private int intervalFunctionType;
     private long intervalPlanGeneration;
     private long intervalPlanGenerationCounter;
@@ -430,6 +433,26 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isExpiryReadFilterEnabled() {
+        return expiryReadPolicy == ExpiryReadPolicy.FILTER;
+    }
+
+    @Override
+    public CharSequence getExpiryMaterializingViewName() {
+        return expiryMaterializingViewName;
+    }
+
+    @Override
+    public ExpiryReadPolicy getExpiryReadPolicy() {
+        return expiryReadPolicy;
+    }
+
+    @Override
+    public ExpiryReadPolicy getExpiryReadPolicy(TableToken tableToken) {
+        return expiryReadPolicy;
+    }
+
+    @Override
     public boolean isLiveViewCompile() {
         return liveViewCompile;
     }
@@ -606,6 +629,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setCloneSymbolTables(boolean cloneSymbolTables) {
         this.cloneSymbolTables = cloneSymbolTables;
+    }
+
+    @Override
+    public void setExpiryReadFilterEnabled(boolean enabled) {
+        this.expiryReadPolicy = enabled ? ExpiryReadPolicy.FILTER : ExpiryReadPolicy.RAW;
+        this.expiryMaterializingViewName = null;
+    }
+
+    @Override
+    public void setExpiryReadPolicy(ExpiryReadPolicy policy, @Nullable CharSequence materializingViewName) {
+        this.expiryReadPolicy = policy;
+        this.expiryMaterializingViewName = materializingViewName;
     }
 
     @Override

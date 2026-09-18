@@ -84,6 +84,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private long batchO3MaxLag;
     private long batchSize;
     private int defaultSymbolCapacity = -1;
+    private long expiryCleanupIntervalMicros;
+    private String expiryPredicate;
     private boolean ignoreIfExists;
     private String likeTableName;
     // position of the "like" table name in the SQL text, for error reporting
@@ -176,6 +178,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int maxUncommittedRows,
             int ttlHoursOrMonths,
             int ttlPosition,
+            String expiryPredicate,
+            long expiryCleanupIntervalMicros,
             int tableFormat,
             boolean walEnabled,
             boolean autoIncludeTimestamp
@@ -220,6 +224,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.maxUncommittedRows = maxUncommittedRows;
         this.ttlHoursOrMonths = ttlHoursOrMonths;
         this.ttlPosition = ttlPosition;
+        this.expiryPredicate = expiryPredicate;
+        this.expiryCleanupIntervalMicros = expiryCleanupIntervalMicros;
         this.walEnabled = walEnabled;
 
         this.selectText = null;
@@ -271,6 +277,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int volumePosition,
             int ttlHoursOrMonths,
             int ttlPosition,
+            String expiryPredicate,
+            long expiryCleanupIntervalMicros,
             int tableFormat,
             boolean walEnabled,
             int defaultSymbolCapacity,
@@ -297,6 +305,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampColumnNamePosition = timestampColumnNamePosition;
         this.ttlHoursOrMonths = ttlHoursOrMonths;
         this.ttlPosition = ttlPosition;
+        this.expiryPredicate = expiryPredicate;
+        this.expiryCleanupIntervalMicros = expiryCleanupIntervalMicros;
         this.tableFormat = tableFormat;
         this.defaultSymbolCapacity = defaultSymbolCapacity;
         this.batchSize = batchSize;
@@ -369,6 +379,16 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             return coveringColumnIndicesList.getQuick(index);
         }
         return null;
+    }
+
+    @Override
+    public long getExpiryCleanupIntervalMicros() {
+        return expiryCleanupIntervalMicros;
+    }
+
+    @Override
+    public String getExpiryPredicate() {
+        return expiryPredicate;
     }
 
     @Override
@@ -612,6 +632,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampIndex = likeTableMetadata.getTimestampIndex();
         this.walEnabled = likeTableMetadata.isWalEnabled();
         this.ttlHoursOrMonths = likeTableMetadata.getTtlHoursOrMonths();
+        // Deliberately DO NOT inherit an EXPIRE ROWS policy: EXPIRE is materialized-view-only and CREATE
+        // TABLE (LIKE ...) always creates a plain table. Copying it would put a policy on a plain table that
+        // the read filter and cleanup job would then apply -- silently hiding and physically deleting rows on
+        // a table type the feature forbids. Leave expiryPredicate/expiryCleanupIntervalMicros at their default.
         this.tableFormat = likeTableMetadata.getTableFormat();
         columnNames.clear();
         columnBits.clear();

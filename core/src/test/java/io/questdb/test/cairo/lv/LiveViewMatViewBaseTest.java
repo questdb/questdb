@@ -25,8 +25,18 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.std.str.Path;
+import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * A materialized view is an accepted live-view base (WAL-backed, designated timestamp -
@@ -46,6 +56,61 @@ import org.junit.Test;
  * ACTIVE while doing so.
  */
 public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
+
+    @Test
+    public void testExpiryPolicyOnMatViewBaseInvalidatesLiveViewOnNextTurn() throws Exception {
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mvbase AS (SELECT * FROM base)");
+            drainWalAndMatViewQueues(engine);
+            execute("CREATE LIVE VIEW lv_on_mv FLUSH EVERY 100ms START FROM NOW AS "
+                    + "SELECT ts, k, sum(v) OVER (PARTITION BY k ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s FROM mvbase");
+
+            execute("ALTER MATERIALIZED VIEW mvbase SET EXPIRE ROWS WHEN v < 0");
+            drainWalAndMatViewQueues(engine);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+
+            assertQuery("SELECT view_status, invalidation_reason FROM live_views() WHERE view_name = 'lv_on_mv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_status\tinvalidation_reason\n"
+                            + "invalid\tcannot materialize view 'lv_on_mv': source materialized view 'mvbase' has an active EXPIRE ROWS policy\n");
+        });
+    }
+
+    @Test
+    public void testExpiryPolicySequencedBeforeApplyInvalidatesBeforeNewRows() throws Exception {
+        assertMemoryLeak(() -> {
+            createExpirySourceAndDependents();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES ('2026-01-01T00:00:00Z', 'a', 1.0)");
+                drainWalAndMatViewQueues();
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance dep = engine.getLiveViewRegistry().getViewInstance("dep");
+                execute("ALTER MATERIALIZED VIEW source SET EXPIRE ROWS WHEN v < 2");
+                Assert.assertTrue(job.processNotificationsForTest());
+                Assert.assertFalse(dep.isInvalid());
+                final long processedBefore = dep.getLastProcessedSeqTxn();
+                drainWalQueue();
+                // A caught-up idle view need not revalidate merely because apply finished.
+                driveRefreshToQuiescence(job);
+                Assert.assertFalse(dep.isInvalid());
+                assertQuery("SELECT count() FROM source").noLeakCheck().noRandomAccess().expectSize()
+                        .returns("count\n0\n");
+                execute("INSERT INTO base VALUES ('2026-01-01T00:01:00Z', 'a', 3.0)");
+                drainWalAndMatViewQueues();
+                Assert.assertTrue(job.processNotificationsForTest());
+                Assert.assertTrue(dep.isInvalid());
+                assertExpiryConflict();
+                Assert.assertEquals(processedBefore, dep.getLastProcessedSeqTxn());
+                assertQuery("SELECT s FROM dep").noLeakCheck().expectSize().returns("s\n1.0\n");
+                assertNoRefreshFaults("dep");
+            }
+        });
+    }
 
     @Test
     public void testMatViewFullRefreshInvalidatesDependentLiveView() throws Exception {
@@ -186,6 +251,21 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testPendingDropRetriesWhileUnrelatedTrafficContinues() throws Exception {
+        assertPendingPolicyRetry(true, false);
+    }
+
+    @Test
+    public void testPendingPolicyRetryPacing() throws Exception {
+        assertPendingPolicyRetry(true, true);
+    }
+
+    @Test
+    public void testPendingSetRetriesWhileUnrelatedTrafficContinues() throws Exception {
+        assertPendingPolicyRetry(false, false);
+    }
+
+    @Test
     public void testPlainBaseTruncateStillFreezesAndContinues() throws Exception {
         // The mat-view carve-out above must not disturb freeze-and-continue for a plain
         // base: a user TRUNCATE retires settled data, and the view keeps its emitted rows,
@@ -228,5 +308,154 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
                     "2026-01-01T02:00:00.000000Z\ta\t13.0\n");
             assertNoRefreshFaults("lv");
         });
+    }
+
+    private void assertExpiryConflict() throws Exception {
+        assertQuery("SELECT invalidation_reason FROM live_views() WHERE view_name = 'dep'")
+                .noLeakCheck().noRandomAccess().returns("""
+                        invalidation_reason
+                        cannot materialize view 'dep': source materialized view 'source' has an active EXPIRE ROWS policy
+                        """);
+    }
+
+    private void assertPendingPolicyRetry(boolean isDrop, boolean isCheckPacing) throws Exception {
+        assertMemoryLeak(() -> {
+            createExpirySourceAndDependents();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES ('2026-01-01T00:00:00Z', 'a', 1.0)");
+                drainWalAndMatViewQueues();
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance dep = engine.getLiveViewRegistry().getViewInstance("dep");
+                final TableToken source = engine.verifyTableName("source");
+                final long processedBefore = dep.getLastProcessedSeqTxn();
+                if (isDrop) {
+                    execute("INSERT INTO base VALUES ('2026-01-01T00:01:00Z', 'a', 3.0)");
+                    drainWalAndMatViewQueues();
+                    execute("ALTER MATERIALIZED VIEW source SET EXPIRE ROWS WHEN v < 2");
+                    drainWalQueue();
+                }
+                final CountDownLatch swapBarrierReached = new CountDownLatch(1);
+                final CountDownLatch resumeSwap = new CountDownLatch(1);
+                final AtomicReference<Throwable> applyError = new AtomicReference<>();
+                execute(isDrop ? "ALTER MATERIALIZED VIEW source DROP EXPIRE"
+                        : "ALTER MATERIALIZED VIEW source SET EXPIRE ROWS WHEN v < 2");
+                TableWriter.setExpiryMetaSwapBarrier(() -> {
+                    swapBarrierReached.countDown();
+                    try {
+                        Assert.assertTrue("timed out resuming policy publication", resumeSwap.await(30, TimeUnit.SECONDS));
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(e);
+                    }
+                });
+                // Apply and refresh must not share WAL apply's carrier-local transaction cursor.
+                final Thread applyThread = new Thread(() -> {
+                    try {
+                        drainWalQueue();
+                    } catch (Throwable th) {
+                        applyError.set(th);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }, "expire-apply");
+                try {
+                    applyThread.start();
+                    Assert.assertTrue("writer did not reach policy publication", swapBarrierReached.await(30, TimeUnit.SECONDS));
+                    Assert.assertTrue(engine.getMetadataCache().isExpiryPolicyUpdatePending(source));
+                    Assert.assertTrue(job.processNotificationsForTest());
+                    Assert.assertEquals(processedBefore, dep.getLastProcessedSeqTxn());
+                    Assert.assertFalse(dep.isInvalid());
+                    assertNoRefreshFaults("dep");
+                    if (isCheckPacing) {
+                        assertPendingRetryPacing(job, dep, processedBefore);
+                    }
+                } finally {
+                    resumeSwap.countDown();
+                    applyThread.join(TimeUnit.SECONDS.toMillis(30));
+                    TableWriter.setExpiryMetaSwapBarrier(null);
+                }
+                Assert.assertFalse("policy apply did not finish", applyThread.isAlive());
+                Assert.assertNull(applyError.get());
+                Assert.assertFalse(engine.getTableSequencerAPI().getTxnTracker(source).isSuspended());
+                Assert.assertFalse(engine.getMetadataCache().isExpiryPolicyUpdatePending(source));
+                Assert.assertTrue(engine.getTableSequencerAPI().getTxnTracker(source).getWriterTxn() > processedBefore);
+                // Every turn has a real unrelated commit. Retry must not depend on a quiet turn.
+                for (int i = 1; i <= 4; i++) {
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    insertNoiseAndRun(job);
+                }
+                if (isDrop) {
+                    Assert.assertFalse(dep.isInvalid());
+                    Assert.assertEquals(engine.getTableSequencerAPI().getTxnTracker(source).getWriterTxn(),
+                            dep.getLastProcessedSeqTxn());
+                    assertQuery("SELECT count() FROM source").noLeakCheck().noRandomAccess().expectSize()
+                            .returns("count\n2\n");
+                    assertQuery("SELECT s FROM dep ORDER BY ts").noLeakCheck().expectSize()
+                            .returns("s\n1.0\n4.0\n");
+                } else {
+                    Assert.assertTrue("pending SET must invalidate within the busy retry bound", dep.isInvalid());
+                    assertExpiryConflict();
+                    Assert.assertEquals(processedBefore, dep.getLastProcessedSeqTxn());
+                    assertQuery("SELECT s FROM dep").noLeakCheck().expectSize().returns("s\n1.0\n");
+                }
+                // SET + DROP changes the metadata version. The existing metadata-drift
+                // recovery counts one diagnostic fault when it recompiles the old plan,
+                // but consumes no flush retry budget. Pending turns above must count none.
+                Assert.assertEquals(isDrop ? 1 : 0, dep.getRefreshFaultCount());
+                Assert.assertEquals(0, dep.getFlushRetryCount());
+                assertNoRefreshFaults("noise_lv");
+            }
+        });
+    }
+
+    private void assertPendingRetryPacing(LiveViewRefreshJob job, LiveViewInstance dep, long processedBefore) throws Exception {
+        final AtomicInteger scans = new AtomicInteger();
+        try {
+            for (int interval = 1; interval <= 3; interval++) {
+                setCurrentMicros(currentMicros + 1_000_000L);
+                job.setSimulateBaseCommitBetweenAheadGuardReadsForTest(scans::incrementAndGet);
+                insertNoiseAndRun(job);
+                Assert.assertEquals(interval, scans.get());
+                // A due scan that cannot refresh must still consume its scheduling slot.
+                job.setSimulateBaseCommitBetweenAheadGuardReadsForTest(scans::incrementAndGet);
+                for (int turn = 0; turn < 100; turn++) {
+                    insertNoiseAndRun(job);
+                }
+                setCurrentMicros(currentMicros + 999_999L);
+                insertNoiseAndRun(job);
+                Assert.assertEquals(interval, scans.get());
+                Assert.assertEquals(processedBefore, dep.getLastProcessedSeqTxn());
+                Assert.assertFalse(dep.isInvalid());
+                assertNoRefreshFaults("dep");
+            }
+        } finally {
+            job.setSimulateBaseCommitBetweenAheadGuardReadsForTest(null);
+        }
+        // With no notification work, a pending refresh reports no work rather than spinning.
+        drainJob(job);
+        Assert.assertFalse(job.processNotificationsForTest());
+    }
+
+    private void createExpirySourceAndDependents() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE MATERIALIZED VIEW source AS (SELECT * FROM base)");
+        execute("CREATE TABLE noise (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        drainWalAndMatViewQueues();
+        setCurrentMicros(0L);
+        execute("""
+                CREATE LIVE VIEW dep FLUSH EVERY 100ms START FROM NOW AS
+                SELECT ts, k, sum(v) OVER (PARTITION BY k ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s
+                FROM source
+                """);
+        execute("""
+                CREATE LIVE VIEW noise_lv FLUSH EVERY 100ms START FROM NOW AS
+                SELECT ts, k, sum(v) OVER (PARTITION BY k ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s
+                FROM noise
+                """);
+    }
+
+    private void insertNoiseAndRun(LiveViewRefreshJob job) throws Exception {
+        execute("INSERT INTO noise VALUES (" + currentMicros + ", 'a', 1.0)");
+        Assert.assertTrue(job.processNotificationsForTest());
     }
 }

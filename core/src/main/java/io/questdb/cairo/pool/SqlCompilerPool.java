@@ -27,8 +27,10 @@ package io.questdb.cairo.pool;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.BatchCallback;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.ExpiryValidationResult;
 import io.questdb.griffin.ExpressionParserListener;
 import io.questdb.griffin.QueryBuilder;
 import io.questdb.griffin.SqlCompiler;
@@ -131,6 +133,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         public void close() {
             // revert any debug flags
             setFullFatJoins(false);
+            // Release what the borrow still owns. A model the caller abandoned - a generateExecutionModel()
+            // result nothing generated from - can still hold a factory, and the compiler sits idle in the
+            // pool until someone borrows it again. A full clear() would also drop the SQL text and the
+            // flyweight CompiledQuery, which the caller may still be reading.
+            freeUntransferredTableNameFunctions();
             final AbstractMultiTenantPool<C> pool = this.pool;
             if (pool != null && entry != null) {
                 if (pool.returnToPool(this)) {
@@ -153,6 +160,21 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public boolean execute(Operation op, SqlExecutionContext executionContext) throws SqlException {
             return delegate.execute(op, executionContext);
+        }
+
+        @Override
+        public long expiryTimestampThreshold(SqlExecutionContext executionContext, RecordMetadata metadata, CharSequence predicate, CharSequence timestampColumn) {
+            return delegate.expiryTimestampThreshold(executionContext, metadata, predicate, timestampColumn);
+        }
+
+        @Override
+        public void freeUntransferredTableNameFunctions() {
+            delegate.freeUntransferredTableNameFunctions();
+        }
+
+        @Override
+        public boolean isExpiryCleanupReclaiming(SqlExecutionContext executionContext, RecordMetadata metadata, CharSequence predicate) {
+            return delegate.isExpiryCleanupReclaiming(executionContext, metadata, predicate);
         }
 
         @Override
@@ -218,6 +240,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public QueryBuilder query() {
             return delegate.query();
+        }
+
+        @Override
+        public ExpiryValidationResult validateExpiryPredicateOnMetadata(SqlExecutionContext executionContext, RecordMetadata metadata, CharSequence predicate, int position) throws SqlException {
+            return delegate.validateExpiryPredicateOnMetadata(executionContext, metadata, predicate, position);
         }
 
         @Override

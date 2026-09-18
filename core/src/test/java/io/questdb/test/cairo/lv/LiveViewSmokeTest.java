@@ -21033,7 +21033,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testWorkerYieldsAtTurnBudget() throws Exception {
-        // A single refresh turn is bounded by max commits (and max duration) so a
+        // A single refreshInstance call is bounded by max commits (and max duration) so a
         // long backlog cannot monopolise the worker. With budget = 3 commits per turn
         // and a six-commit backlog, one turn cannot drain it all - the budget forces a
         // yield with the lead only partially refreshed - and repeated turns complete
@@ -21066,10 +21066,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             Assert.assertNotNull(lv);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                // One turn makes progress but cannot drain the whole six-commit
-                // backlog: the per-turn budget forces a yield with the lead only
-                // partially refreshed.
-                job.run();
+                // Drive one refresh turn directly: job.run() can refresh the same view
+                // through both notification processing and the lag scan. One refresh
+                // must yield before draining the whole six-commit backlog.
+                job.refreshInstanceForTest(lv, 6L);
                 drainWalQueue();
                 long afterOneTurn = lv.getRefreshedUpToSeqTxn();
                 Assert.assertTrue(
