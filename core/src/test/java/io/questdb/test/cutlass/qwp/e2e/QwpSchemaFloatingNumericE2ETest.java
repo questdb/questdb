@@ -369,7 +369,8 @@ public class QwpSchemaFloatingNumericE2ETest extends AbstractQwpWebSocketTest {
             }
         }
         Assert.assertEquals(350, result.size());
-        for (Input input : Input.values()) for (Target target : Target.values()) Assert.assertFalse(select(result, input, target).isEmpty());
+        for (Input input : Input.values())
+            for (Target target : Target.values()) Assert.assertFalse(select(result, input, target).isEmpty());
         return result;
     }
 
@@ -468,7 +469,10 @@ public class QwpSchemaFloatingNumericE2ETest extends AbstractQwpWebSocketTest {
     private enum Input {
         FLOAT("float"), DOUBLE("double");
         private final String suffix;
-        Input(String suffix) { this.suffix = suffix; }
+
+        Input(String suffix) {
+            this.suffix = suffix;
+        }
     }
 
     private enum Target {
@@ -482,6 +486,7 @@ public class QwpSchemaFloatingNumericE2ETest extends AbstractQwpWebSocketTest {
         private final String suffix;
         private final byte wireType;
         private final String wireName;
+
         Target(String suffix, int type, byte wireType, String wireName) {
             this.suffix = suffix;
             this.sqlType = ColumnType.nameOf(type);
@@ -496,8 +501,10 @@ public class QwpSchemaFloatingNumericE2ETest extends AbstractQwpWebSocketTest {
                 case SHORT -> Assert.assertEquals(v.caseId, (short) bits, table.getFixedWidthColumn(1).getLong());
                 case INT -> Assert.assertEquals(v.caseId, (int) bits, table.getFixedWidthColumn(1).getLong());
                 case LONG -> Assert.assertEquals(v.caseId, bits, table.getFixedWidthColumn(1).getLong());
-                case FLOAT -> Assert.assertEquals(v.caseId, (int) bits, Float.floatToRawIntBits((float) table.getFixedWidthColumn(1).getDouble()));
-                case DOUBLE -> Assert.assertEquals(v.caseId, bits, Double.doubleToRawLongBits(table.getFixedWidthColumn(1).getDouble()));
+                case FLOAT ->
+                        Assert.assertEquals(v.caseId, (int) bits, Float.floatToRawIntBits((float) table.getFixedWidthColumn(1).getDouble()));
+                case DOUBLE ->
+                        Assert.assertEquals(v.caseId, bits, Double.doubleToRawLongBits(table.getFixedWidthColumn(1).getDouble()));
             }
         }
 
@@ -517,8 +524,10 @@ public class QwpSchemaFloatingNumericE2ETest extends AbstractQwpWebSocketTest {
                 case SHORT -> Assert.assertEquals(v.caseId, Short.parseShort(v.expectedSql), record.getShort(1));
                 case INT -> Assert.assertEquals(v.caseId, Integer.parseInt(v.expectedSql), record.getInt(1));
                 case LONG -> Assert.assertEquals(v.caseId, Long.parseLong(v.expectedSql), record.getLong(1));
-                case FLOAT -> Assert.assertEquals(v.caseId, (int) Long.parseUnsignedLong(v.expectedSql.substring(5), 16), Float.floatToRawIntBits(record.getFloat(1)));
-                case DOUBLE -> Assert.assertEquals(v.caseId, Long.parseUnsignedLong(v.expectedSql.substring(5), 16), Double.doubleToRawLongBits(record.getDouble(1)));
+                case FLOAT ->
+                        Assert.assertEquals(v.caseId, (int) Long.parseUnsignedLong(v.expectedSql.substring(5), 16), Float.floatToRawIntBits(record.getFloat(1)));
+                case DOUBLE ->
+                        Assert.assertEquals(v.caseId, Long.parseUnsignedLong(v.expectedSql.substring(5), 16), Double.doubleToRawLongBits(record.getDouble(1)));
             }
         }
     }

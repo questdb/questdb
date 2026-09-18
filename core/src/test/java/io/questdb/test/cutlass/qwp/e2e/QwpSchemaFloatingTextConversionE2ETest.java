@@ -310,13 +310,17 @@ public class QwpSchemaFloatingTextConversionE2ETest extends AbstractQwpWebSocket
         return sink.toString();
     }
 
-    private enum Input { FLOAT, DOUBLE }
+    private enum Input {FLOAT, DOUBLE}
 
     private enum Target {
         STRING("STRING", "VARCHAR"), VARCHAR("VARCHAR", "VARCHAR"), SYMBOL("SYMBOL", "SYMBOL");
         private final String sqlType;
         private final String wireType;
-        Target(String sqlType, String wireType) { this.sqlType = sqlType; this.wireType = wireType; }
+
+        Target(String sqlType, String wireType) {
+            this.sqlType = sqlType;
+            this.wireType = wireType;
+        }
     }
 
     private static final class Vector {
@@ -324,9 +328,14 @@ public class QwpSchemaFloatingTextConversionE2ETest extends AbstractQwpWebSocket
         private final Input input;
         private final long rawBits;
         private final Target target;
+
         private Vector(Input input, long rawBits, Target target, String expected) {
-            this.input = input; this.rawBits = rawBits; this.target = target; this.expected = expected;
+            this.input = input;
+            this.rawBits = rawBits;
+            this.target = target;
+            this.expected = expected;
         }
+
         private void append(QwpWebSocketSender sender) {
             if (input == Input.FLOAT) sender.floatColumn("value", Float.intBitsToFloat((int) rawBits));
             else sender.doubleColumn("value", Double.longBitsToDouble(rawBits));

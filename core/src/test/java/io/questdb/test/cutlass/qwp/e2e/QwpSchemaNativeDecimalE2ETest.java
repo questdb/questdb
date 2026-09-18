@@ -281,12 +281,18 @@ public class QwpSchemaNativeDecimalE2ETest extends AbstractQwpWebSocketTest {
 
     private static int targetIndex(String type) {
         switch (type) {
-            case "DECIMAL8": return 0;
-            case "DECIMAL16": return 1;
-            case "DECIMAL32": return 2;
-            case "DECIMAL64": return 3;
-            case "DECIMAL128": return 4;
-            default: return 5;
+            case "DECIMAL8":
+                return 0;
+            case "DECIMAL16":
+                return 1;
+            case "DECIMAL32":
+                return 2;
+            case "DECIMAL64":
+                return 3;
+            case "DECIMAL128":
+                return 4;
+            default:
+                return 5;
         }
     }
 

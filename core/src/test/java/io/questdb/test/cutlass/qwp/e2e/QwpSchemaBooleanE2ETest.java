@@ -596,8 +596,10 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
                 case SHORT -> Assert.assertEquals(v.caseId, Short.parseShort(v.expectedSql), r.getShort(1));
                 case INT -> Assert.assertEquals(v.caseId, Integer.parseInt(v.expectedSql), r.getInt(1));
                 case LONG -> Assert.assertEquals(v.caseId, Long.parseLong(v.expectedSql), r.getLong(1));
-                case FLOAT -> Assert.assertEquals(v.caseId, Float.floatToRawIntBits(Float.parseFloat(v.expectedSql)), Float.floatToRawIntBits(r.getFloat(1)));
-                case DOUBLE -> Assert.assertEquals(v.caseId, Double.doubleToRawLongBits(Double.parseDouble(v.expectedSql)), Double.doubleToRawLongBits(r.getDouble(1)));
+                case FLOAT ->
+                        Assert.assertEquals(v.caseId, Float.floatToRawIntBits(Float.parseFloat(v.expectedSql)), Float.floatToRawIntBits(r.getFloat(1)));
+                case DOUBLE ->
+                        Assert.assertEquals(v.caseId, Double.doubleToRawLongBits(Double.parseDouble(v.expectedSql)), Double.doubleToRawLongBits(r.getDouble(1)));
                 case STRING -> Assert.assertEquals(v.caseId, utf16(v.expectedSql), r.getStrA(1).toString());
                 case VARCHAR -> Assert.assertEquals(v.caseId, utf16(v.expectedSql), r.getVarcharA(1).toString());
             }
@@ -605,10 +607,14 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
 
         private void assertWire(BoolVector v, QwpTableBlockCursor t) {
             switch (this) {
-                case BOOLEAN -> Assert.assertEquals(v.caseId, "1".equals(v.expectedWire), t.getBooleanColumn(1).getValue());
-                case BYTE, SHORT, INT, LONG -> Assert.assertEquals(v.caseId, Long.parseLong(v.expectedWire), t.getFixedWidthColumn(1).getLong());
-                case FLOAT -> Assert.assertEquals(v.caseId, Float.floatToRawIntBits(Float.parseFloat(v.expectedWire)), Float.floatToRawIntBits((float) t.getFixedWidthColumn(1).getDouble()));
-                case DOUBLE -> Assert.assertEquals(v.caseId, Double.doubleToRawLongBits(Double.parseDouble(v.expectedWire)), Double.doubleToRawLongBits(t.getFixedWidthColumn(1).getDouble()));
+                case BOOLEAN ->
+                        Assert.assertEquals(v.caseId, "1".equals(v.expectedWire), t.getBooleanColumn(1).getValue());
+                case BYTE, SHORT, INT, LONG ->
+                        Assert.assertEquals(v.caseId, Long.parseLong(v.expectedWire), t.getFixedWidthColumn(1).getLong());
+                case FLOAT ->
+                        Assert.assertEquals(v.caseId, Float.floatToRawIntBits(Float.parseFloat(v.expectedWire)), Float.floatToRawIntBits((float) t.getFixedWidthColumn(1).getDouble()));
+                case DOUBLE ->
+                        Assert.assertEquals(v.caseId, Double.doubleToRawLongBits(Double.parseDouble(v.expectedWire)), Double.doubleToRawLongBits(t.getFixedWidthColumn(1).getDouble()));
                 case STRING, VARCHAR -> {
                     Utf8Sequence value = t.getStringColumn(1).getUtf8Value();
                     assertUtf8(v.caseId, bytes(v.expectedWire), value);
@@ -626,13 +632,15 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
     private static byte[] bytes(String hex) {
         Assert.assertEquals(hex, 0, hex.length() & 1);
         byte[] result = new byte[hex.length() / 2];
-        for (int i = 0; i < result.length; i++) result[i] = (byte) Integer.parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+        for (int i = 0; i < result.length; i++)
+            result[i] = (byte) Integer.parseInt(hex.substring(i * 2, i * 2 + 2), 16);
         return result;
     }
 
     private static void assertUtf8(String caseId, byte[] expected, Utf8Sequence actual) {
         Assert.assertNotNull(caseId, actual);
         Assert.assertEquals(caseId, expected.length, actual.size());
-        for (int i = 0; i < expected.length; i++) Assert.assertEquals(caseId + " byte " + i, expected[i], actual.byteAt(i));
+        for (int i = 0; i < expected.length; i++)
+            Assert.assertEquals(caseId + " byte " + i, expected[i], actual.byteAt(i));
     }
 }

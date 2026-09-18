@@ -23,7 +23,9 @@ import org.junit.Test;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Characterizes existing unflagged FLOAT/DOUBLE to text ingestion only. */
+/**
+ * Characterizes existing unflagged FLOAT/DOUBLE to text ingestion only.
+ */
 public class QwpSchemaFloatingTextE2ETest extends AbstractQwpWebSocketTest {
     private static final long[] DOUBLE_BITS = {
             0x0000000000000000L,

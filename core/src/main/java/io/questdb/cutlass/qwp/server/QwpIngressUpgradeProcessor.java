@@ -1011,6 +1011,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     // pre-built 400 response for known errors, null for arbitrary text. The
     // returned byte[] is shared and read-only -- copy bytes into the response
     // buffer, do not mutate.
+
     /**
      * Largest payload a response frame may carry in a send buffer of the given
      * size, leaving room for the frame header that payload size implies.

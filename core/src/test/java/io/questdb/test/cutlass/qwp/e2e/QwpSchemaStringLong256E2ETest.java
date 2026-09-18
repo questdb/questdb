@@ -48,17 +48,27 @@ public class QwpSchemaStringLong256E2ETest extends AbstractQwpWebSocketTest {
                  QwpTableBuffer table = new QwpTableBuffer("legacy_string_l256")) {
                 QwpTableBuffer.ColumnBuffer values = table.getOrCreateColumn("value", QwpConstants.TYPE_VARCHAR, true);
                 QwpTableBuffer.ColumnBuffer timestamps = table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP);
-                values.addString("0x0123456789abcdeffedcba9876543210"); timestamps.addLong(1); table.nextRow();
-                values.addNull(); timestamps.addLong(2); table.nextRow();
-                timestamps.addLong(3); table.nextRow();
+                values.addString("0x0123456789abcdeffedcba9876543210");
+                timestamps.addLong(1);
+                table.nextRow();
+                values.addNull();
+                timestamps.addLong(2);
+                table.nextRow();
+                timestamps.addLong(3);
+                table.nextRow();
                 int length = encoder.encode(table);
                 QwpTableBlockCursor wire = parseSingleTable(encoder, length);
                 Assert.assertEquals(2, wire.getColumnCount());
                 Assert.assertEquals(QwpConstants.TYPE_VARCHAR, wire.getColumnDef(0).getTypeCode());
-                Assert.assertTrue(wire.hasNextRow()); wire.nextRow();
+                Assert.assertTrue(wire.hasNextRow());
+                wire.nextRow();
                 Assert.assertEquals("0x0123456789abcdeffedcba9876543210", Utf8s.toString(wire.getStringColumn(0).getUtf8Value()));
-                Assert.assertTrue(wire.hasNextRow()); wire.nextRow(); Assert.assertTrue(wire.isColumnNull(0));
-                Assert.assertTrue(wire.hasNextRow()); wire.nextRow(); Assert.assertTrue(wire.isColumnNull(0));
+                Assert.assertTrue(wire.hasNextRow());
+                wire.nextRow();
+                Assert.assertTrue(wire.isColumnNull(0));
+                Assert.assertTrue(wire.hasNextRow());
+                wire.nextRow();
+                Assert.assertTrue(wire.isColumnNull(0));
                 Assert.assertFalse(wire.hasNextRow());
                 client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                 assertResponse(client, true, 0, null);
@@ -183,17 +193,23 @@ public class QwpSchemaStringLong256E2ETest extends AbstractQwpWebSocketTest {
     private static void assertResponse(WebSocketClient client, boolean success, long sequence, String messagePart) {
         AtomicReference<WebSocketResponse> response = new AtomicReference<>();
         Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
-            @Override public void onBinaryMessage(long ptr, int len) {
+            @Override
+            public void onBinaryMessage(long ptr, int len) {
                 WebSocketResponse parsed = new WebSocketResponse();
                 Assert.assertTrue(parsed.readFrom(ptr, len));
                 response.set(parsed);
             }
-            @Override public void onClose(int code, String reason) { Assert.fail("unexpected close " + code + ": " + reason); }
+
+            @Override
+            public void onClose(int code, String reason) {
+                Assert.fail("unexpected close " + code + ": " + reason);
+            }
         }, 5_000));
         Assert.assertNotNull(response.get());
         Assert.assertEquals(success, response.get().isSuccess());
         Assert.assertEquals(sequence, response.get().getSequence());
-        if (messagePart != null) Assert.assertTrue(response.get().getErrorMessage(), response.get().getErrorMessage().contains(messagePart));
+        if (messagePart != null)
+            Assert.assertTrue(response.get().getErrorMessage(), response.get().getErrorMessage().contains(messagePart));
     }
 
     private static QwpTableBlockCursor parseSingleTable(QwpWebSocketEncoder encoder, int length) throws Exception {
@@ -230,14 +246,22 @@ public class QwpSchemaStringLong256E2ETest extends AbstractQwpWebSocketTest {
         return vectors;
     }
 
-    private static long hex(String value) { return Long.parseUnsignedLong(value, 16); }
+    private static long hex(String value) {
+        return Long.parseUnsignedLong(value, 16);
+    }
 
     private static final class Vector {
         final String caseId, input, outcome;
         final long l0, l1, l2, l3;
+
         Vector(String caseId, String input, String outcome, long l0, long l1, long l2, long l3) {
-            this.caseId = caseId; this.input = input; this.outcome = outcome;
-            this.l0 = l0; this.l1 = l1; this.l2 = l2; this.l3 = l3;
+            this.caseId = caseId;
+            this.input = input;
+            this.outcome = outcome;
+            this.l0 = l0;
+            this.l1 = l1;
+            this.l2 = l2;
+            this.l3 = l3;
         }
     }
 }

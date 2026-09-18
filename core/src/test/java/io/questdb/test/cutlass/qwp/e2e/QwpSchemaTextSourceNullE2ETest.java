@@ -105,7 +105,7 @@ public class QwpSchemaTextSourceNullE2ETest extends AbstractQwpWebSocketTest {
         String expected = bitmap
                 ? "case_id\tv\tn\n0\tnull\tfalse\n1\t\ttrue\n"
                 : "case_id\tv\tn\n0\t0\tfalse\n1\t-1\tfalse\n2\t1\tfalse\n"
-                + "3\t-9223372036854775807\tfalse\n4\t9223372036854775807\tfalse\n5\t\ttrue\n";
+                  + "3\t-9223372036854775807\tfalse\n4\t9223372036854775807\tfalse\n5\t\ttrue\n";
         assertQuery("select case_id, v, v is null n from " + tableName + " order by case_id")
                 .noLeakCheck()
                 .returnsOnce(expected);
@@ -154,11 +154,11 @@ public class QwpSchemaTextSourceNullE2ETest extends AbstractQwpWebSocketTest {
         long[][] values = bitmap
                 ? new long[][]{{Long.MIN_VALUE, Long.MIN_VALUE}}
                 : new long[][]{
-                        {UUID_LO, UUID_HI},
-                        {Long.MIN_VALUE, 0},
-                        {0, Long.MIN_VALUE},
-                        {Long.MIN_VALUE, Long.MIN_VALUE}
-                };
+                {UUID_LO, UUID_HI},
+                {Long.MIN_VALUE, 0},
+                {0, Long.MIN_VALUE},
+                {Long.MIN_VALUE, Long.MIN_VALUE}
+        };
         try (WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
              QwpTableBuffer table = new QwpTableBuffer(tableName)) {
@@ -188,10 +188,10 @@ public class QwpSchemaTextSourceNullE2ETest extends AbstractQwpWebSocketTest {
         String expected = bitmap
                 ? "case_id\tv\tn\n0\t80000000-0000-0000-8000-000000000000\tfalse\n1\t\ttrue\n"
                 : "case_id\tv\tn\n"
-                + "0\t123e4567-e89b-12d3-a456-426614174000\tfalse\n"
-                + "1\t00000000-0000-0000-8000-000000000000\tfalse\n"
-                + "2\t80000000-0000-0000-0000-000000000000\tfalse\n"
-                + "3\t\ttrue\n";
+                  + "0\t123e4567-e89b-12d3-a456-426614174000\tfalse\n"
+                  + "1\t00000000-0000-0000-8000-000000000000\tfalse\n"
+                  + "2\t80000000-0000-0000-0000-000000000000\tfalse\n"
+                  + "3\t\ttrue\n";
         assertQuery("select case_id, v, v is null n from " + tableName + " order by case_id")
                 .noLeakCheck()
                 .returnsOnce(expected);

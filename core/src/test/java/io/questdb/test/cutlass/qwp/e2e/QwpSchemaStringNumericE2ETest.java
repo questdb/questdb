@@ -43,6 +43,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
     private static final String CORPUS = "/io/questdb/client/cutlass/qwp/string-to-numeric.tsv";
+
     @Test
     public void testSchemaStringNumericCorpusUsesExactTargetWireAndStoredValues() throws Exception {
         List<Vector> vectors = readVectors();
@@ -315,20 +316,22 @@ public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
         QwpFixedWidthColumnCursor value = table.getFixedWidthColumn(1);
         int valueCount = 0;
         boolean hasNull = false;
-        for (Vector vector : vectors) if (!vector.invalid) {
-            hasNull |= vector.wireNull;
-            if (!vector.wireNull) valueCount++;
-        }
+        for (Vector vector : vectors)
+            if (!vector.invalid) {
+                hasNull |= vector.wireNull;
+                if (!vector.wireNull) valueCount++;
+            }
         Assert.assertEquals(hasNull, value.getNullBitmapAddress() != 0);
         Assert.assertEquals(valueCount, value.getValueCount());
         int rows = 0;
-        for (Vector vector : vectors) if (!vector.invalid) {
-            Assert.assertTrue(vector.caseId, table.hasNextRow());
-            table.nextRow();
-            Assert.assertEquals(vector.caseId, vector.wireNull, table.isColumnNull(1));
-            if (!vector.wireNull) target.assertWire(vector, value);
-            rows++;
-        }
+        for (Vector vector : vectors)
+            if (!vector.invalid) {
+                Assert.assertTrue(vector.caseId, table.hasNextRow());
+                table.nextRow();
+                Assert.assertEquals(vector.caseId, vector.wireNull, table.isColumnNull(1));
+                if (!vector.wireNull) target.assertWire(vector, value);
+                rows++;
+            }
         Assert.assertEquals(rows, table.getRowCount());
         Assert.assertFalse(table.hasNextRow());
     }
@@ -360,9 +363,14 @@ public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
         AtomicReference<QwpSchemaResponse> result = new AtomicReference<>();
         Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
             @Override
-            public void onBinaryMessage(long ptr, int len) { result.set(QwpSchemaProtocol.decodeResponse(ptr, len)); }
+            public void onBinaryMessage(long ptr, int len) {
+                result.set(QwpSchemaProtocol.decodeResponse(ptr, len));
+            }
+
             @Override
-            public void onClose(int code, String reason) { Assert.fail("unexpected close [code=" + code + ", reason=" + reason + ']'); }
+            public void onClose(int code, String reason) {
+                Assert.fail("unexpected close [code=" + code + ", reason=" + reason + ']');
+            }
         }, 5_000));
         Assert.assertEquals(requestId, result.get().getRequestId());
         return result.get();
@@ -486,6 +494,7 @@ public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
         BYTE(ColumnType.BYTE), SHORT(ColumnType.SHORT), INT(ColumnType.INT), LONG(ColumnType.LONG), FLOAT(ColumnType.FLOAT), DOUBLE(ColumnType.DOUBLE);
         private final String sqlType;
         private final byte wireType;
+
         Target(int type) {
             this.sqlType = ColumnType.nameOf(type);
             this.wireType = switch (type) {
@@ -506,7 +515,8 @@ public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
                 case SHORT -> Assert.assertEquals(vector.caseId, (short) bits, value.getLong());
                 case INT -> Assert.assertEquals(vector.caseId, (int) bits, value.getLong());
                 case LONG -> Assert.assertEquals(vector.caseId, bits, value.getLong());
-                case FLOAT -> Assert.assertEquals(vector.caseId, (int) bits, Float.floatToRawIntBits((float) value.getDouble()));
+                case FLOAT ->
+                        Assert.assertEquals(vector.caseId, (int) bits, Float.floatToRawIntBits((float) value.getDouble()));
                 case DOUBLE -> Assert.assertEquals(vector.caseId, bits, Double.doubleToRawLongBits(value.getDouble()));
             }
         }
@@ -523,12 +533,18 @@ public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
                 return;
             }
             switch (this) {
-                case BYTE -> Assert.assertEquals(vector.caseId, Byte.parseByte(vector.expectedSql), record.getByte(column));
-                case SHORT -> Assert.assertEquals(vector.caseId, Short.parseShort(vector.expectedSql), record.getShort(column));
-                case INT -> Assert.assertEquals(vector.caseId, Integer.parseInt(vector.expectedSql), record.getInt(column));
-                case LONG -> Assert.assertEquals(vector.caseId, Long.parseLong(vector.expectedSql), record.getLong(column));
-                case FLOAT -> Assert.assertEquals(vector.caseId, (int) Long.parseUnsignedLong(vector.expectedSql.substring(5), 16), Float.floatToRawIntBits(record.getFloat(column)));
-                case DOUBLE -> Assert.assertEquals(vector.caseId, Long.parseUnsignedLong(vector.expectedSql.substring(5), 16), Double.doubleToRawLongBits(record.getDouble(column)));
+                case BYTE ->
+                        Assert.assertEquals(vector.caseId, Byte.parseByte(vector.expectedSql), record.getByte(column));
+                case SHORT ->
+                        Assert.assertEquals(vector.caseId, Short.parseShort(vector.expectedSql), record.getShort(column));
+                case INT ->
+                        Assert.assertEquals(vector.caseId, Integer.parseInt(vector.expectedSql), record.getInt(column));
+                case LONG ->
+                        Assert.assertEquals(vector.caseId, Long.parseLong(vector.expectedSql), record.getLong(column));
+                case FLOAT ->
+                        Assert.assertEquals(vector.caseId, (int) Long.parseUnsignedLong(vector.expectedSql.substring(5), 16), Float.floatToRawIntBits(record.getFloat(column)));
+                case DOUBLE ->
+                        Assert.assertEquals(vector.caseId, Long.parseUnsignedLong(vector.expectedSql.substring(5), 16), Double.doubleToRawLongBits(record.getDouble(column)));
             }
         }
 

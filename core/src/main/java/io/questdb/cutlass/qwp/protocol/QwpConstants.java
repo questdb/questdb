@@ -72,9 +72,13 @@ public final class QwpConstants {
      * individually fit within the WebSocket recv buffer.
      */
     public static final byte FLAG_DEFER_COMMIT = 0x01;
-    /** Flag bit: table headers carry pinned schema identities. */
+    /**
+     * Flag bit: table headers carry pinned schema identities.
+     */
     public static final byte FLAG_SCHEMA = 0x40;
-    /** Flag bit: connection control message (currently schema discovery). */
+    /**
+     * Flag bit: connection control message (currently schema discovery).
+     */
     public static final byte FLAG_CONTROL = 0x20;
     /**
      * Flag bit: Delta symbol dictionary encoding enabled.

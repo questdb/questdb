@@ -146,7 +146,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
 
             drainWalQueue();
             assertQuery("SELECT b, b is null bn, s, s is null sn, i, i is null `in`, " +
-                            "l, l is null ln, f, f is null fn, d, d is null dn FROM tc_bool_num ORDER BY ts")
+                    "l, l is null ln, f, f is null fn, d, d is null dn FROM tc_bool_num ORDER BY ts")
                     .noLeakCheck()
                     .returnsOnce("""
                             b\tbn\ts\tsn\ti\tin\tl\tln\tf\tfn\td\tdn

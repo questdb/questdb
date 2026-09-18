@@ -58,7 +58,8 @@ public class QwpSchemaCharE2ETest extends AbstractQwpWebSocketTest {
                     Assert.assertEquals(QwpConstants.TYPE_CHAR, wire.getColumnDef(0).getTypeCode());
                     QwpFixedWidthColumnCursor chars = wire.getFixedWidthColumn(0);
                     Assert.assertEquals(0, chars.getNullBitmapAddress());
-                    Assert.assertTrue(wire.hasNextRow()); wire.nextRow();
+                    Assert.assertTrue(wire.hasNextRow());
+                    wire.nextRow();
                     Assert.assertFalse(wire.isColumnNull(0));
                     Assert.assertEquals(0xd83d, chars.getShort() & 0xffff);
                     Assert.assertFalse(wire.hasNextRow());
@@ -73,7 +74,8 @@ public class QwpSchemaCharE2ETest extends AbstractQwpWebSocketTest {
                     QwpTableBlockCursor wire = parseSingleTable(encoder, length);
                     Assert.assertEquals(2, wire.getColumnCount());
                     Assert.assertEquals(QwpConstants.TYPE_VARCHAR, wire.getColumnDef(0).getTypeCode());
-                    Assert.assertTrue(wire.hasNextRow()); wire.nextRow();
+                    Assert.assertTrue(wire.hasNextRow());
+                    wire.nextRow();
                     Assert.assertFalse(wire.isColumnNull(0));
                     assertUtf8("€tail", wire.getStringColumn(0).getUtf8Value());
                     Assert.assertFalse(wire.hasNextRow());
@@ -84,9 +86,17 @@ public class QwpSchemaCharE2ETest extends AbstractQwpWebSocketTest {
                     QwpTableBuffer.ColumnBuffer ids = table.getOrCreateColumn("case_id", QwpConstants.TYPE_LONG, true);
                     QwpTableBuffer.ColumnBuffer values = table.getOrCreateColumn("value", QwpConstants.TYPE_CHAR, true);
                     QwpTableBuffer.ColumnBuffer timestamps = table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP);
-                    ids.addLong(0); values.addShort((short) 'A'); timestamps.addLong(1); table.nextRow();
-                    ids.addLong(1); values.addShort((short) 0); timestamps.addLong(2); table.nextRow();
-                    ids.addLong(2); timestamps.addLong(3); table.nextRow();
+                    ids.addLong(0);
+                    values.addShort((short) 'A');
+                    timestamps.addLong(1);
+                    table.nextRow();
+                    ids.addLong(1);
+                    values.addShort((short) 0);
+                    timestamps.addLong(2);
+                    table.nextRow();
+                    ids.addLong(2);
+                    timestamps.addLong(3);
+                    table.nextRow();
                     int length = encoder.encode(table);
                     QwpTableBlockCursor wire = parseSingleTable(encoder, length);
                     Assert.assertEquals(3, wire.getColumnCount());
@@ -103,19 +113,38 @@ public class QwpSchemaCharE2ETest extends AbstractQwpWebSocketTest {
                     QwpTableBuffer.ColumnBuffer ids = table.getOrCreateColumn("case_id", QwpConstants.TYPE_LONG, true);
                     QwpTableBuffer.ColumnBuffer values = table.getOrCreateColumn("value", QwpConstants.TYPE_VARCHAR, true);
                     QwpTableBuffer.ColumnBuffer timestamps = table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP);
-                    ids.addLong(0); values.addString("étail"); timestamps.addLong(1); table.nextRow();
-                    ids.addLong(1); values.addString("😀"); timestamps.addLong(2); table.nextRow();
-                    ids.addLong(2); values.addNull(); timestamps.addLong(3); table.nextRow();
-                    ids.addLong(3); timestamps.addLong(4); table.nextRow();
+                    ids.addLong(0);
+                    values.addString("étail");
+                    timestamps.addLong(1);
+                    table.nextRow();
+                    ids.addLong(1);
+                    values.addString("😀");
+                    timestamps.addLong(2);
+                    table.nextRow();
+                    ids.addLong(2);
+                    values.addNull();
+                    timestamps.addLong(3);
+                    table.nextRow();
+                    ids.addLong(3);
+                    timestamps.addLong(4);
+                    table.nextRow();
                     int length = encoder.encode(table);
                     QwpTableBlockCursor wire = parseSingleTable(encoder, length);
                     Assert.assertEquals(3, wire.getColumnCount());
                     Assert.assertEquals(QwpConstants.TYPE_VARCHAR, wire.getColumnDef(1).getTypeCode());
                     QwpStringColumnCursor strings = wire.getStringColumn(1);
-                    Assert.assertTrue(wire.hasNextRow()); wire.nextRow(); assertUtf8("étail", strings.getUtf8Value());
-                    Assert.assertTrue(wire.hasNextRow()); wire.nextRow(); assertUtf8("😀", strings.getUtf8Value());
-                    Assert.assertTrue(wire.hasNextRow()); wire.nextRow(); Assert.assertTrue(wire.isColumnNull(1));
-                    Assert.assertTrue(wire.hasNextRow()); wire.nextRow(); Assert.assertTrue(wire.isColumnNull(1));
+                    Assert.assertTrue(wire.hasNextRow());
+                    wire.nextRow();
+                    assertUtf8("étail", strings.getUtf8Value());
+                    Assert.assertTrue(wire.hasNextRow());
+                    wire.nextRow();
+                    assertUtf8("😀", strings.getUtf8Value());
+                    Assert.assertTrue(wire.hasNextRow());
+                    wire.nextRow();
+                    Assert.assertTrue(wire.isColumnNull(1));
+                    Assert.assertTrue(wire.hasNextRow());
+                    wire.nextRow();
+                    Assert.assertTrue(wire.isColumnNull(1));
                     Assert.assertFalse(wire.hasNextRow());
                     client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                     assertOk(client, 3);
@@ -235,7 +264,8 @@ public class QwpSchemaCharE2ETest extends AbstractQwpWebSocketTest {
     private static void assertRows(QwpTableBlockCursor wire, int[] chars, boolean[] nulls) throws Exception {
         QwpFixedWidthColumnCursor values = wire.getFixedWidthColumn(1);
         for (int i = 0; i < chars.length; i++) {
-            Assert.assertTrue(wire.hasNextRow()); wire.nextRow();
+            Assert.assertTrue(wire.hasNextRow());
+            wire.nextRow();
             Assert.assertEquals(nulls[i], wire.isColumnNull(1));
             if (!nulls[i]) Assert.assertEquals(chars[i], values.getShort() & 0xffff);
         }
@@ -265,12 +295,17 @@ public class QwpSchemaCharE2ETest extends AbstractQwpWebSocketTest {
     private static void assertOk(WebSocketClient client, long expectedSequence) {
         AtomicReference<WebSocketResponse> response = new AtomicReference<>();
         Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
-            @Override public void onBinaryMessage(long ptr, int len) {
+            @Override
+            public void onBinaryMessage(long ptr, int len) {
                 WebSocketResponse parsed = new WebSocketResponse();
                 Assert.assertTrue(parsed.readFrom(ptr, len));
                 response.set(parsed);
             }
-            @Override public void onClose(int code, String reason) { Assert.fail("unexpected close " + code + ": " + reason); }
+
+            @Override
+            public void onClose(int code, String reason) {
+                Assert.fail("unexpected close " + code + ": " + reason);
+            }
         }, 5_000));
         Assert.assertNotNull(response.get());
         Assert.assertTrue(response.get().getErrorMessage(), response.get().isSuccess());
@@ -322,9 +357,13 @@ public class QwpSchemaCharE2ETest extends AbstractQwpWebSocketTest {
         final String value;
         final int expectedChar;
         final boolean expectedNull;
+
         Vector(String caseId, String inputKind, String value, int expectedChar, boolean expectedNull) {
-            this.caseId = caseId; this.inputKind = inputKind; this.value = value;
-            this.expectedChar = expectedChar; this.expectedNull = expectedNull;
+            this.caseId = caseId;
+            this.inputKind = inputKind;
+            this.value = value;
+            this.expectedChar = expectedChar;
+            this.expectedNull = expectedNull;
         }
     }
 }

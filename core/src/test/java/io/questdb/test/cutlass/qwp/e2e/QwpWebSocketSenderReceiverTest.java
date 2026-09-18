@@ -978,7 +978,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             execute("CREATE TABLE ws_test_date (" +
                     "event_date DATE, " +
                     "ts TIMESTAMP" +
-            ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = createSender(port)) {
                 // Row 1: 2024-01-01 00:00:00 UTC (epoch millis)

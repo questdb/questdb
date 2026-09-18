@@ -346,9 +346,11 @@ public class QwpSchemaStringTimestampE2ETest extends AbstractQwpWebSocketTest {
         int micros = 0;
         int nanos = 0;
         for (Vector vector : vectors) {
-            if (vector.invalid) invalid++; else valid++;
+            if (vector.invalid) invalid++;
+            else valid++;
             if (vector.sqlNull) nulls++;
-            if (vector.target == Target.TIMESTAMP) micros++; else nanos++;
+            if (vector.target == Target.TIMESTAMP) micros++;
+            else nanos++;
         }
         Assert.assertTrue("valid vectors", valid > 0);
         Assert.assertTrue("invalid vectors", invalid > 0);
