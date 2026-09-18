@@ -24,7 +24,10 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.LoopingRecordSink;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -185,6 +188,28 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
                 fixture.functions.cursorClosed();
             }
             parser.assertClosedOnce();
+        });
+    }
+
+    @Test
+    public void testLoopingSinkForEverySlot() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // RecordSinkFactory returns no class for the looping sink; every slot still needs a sink.
+            setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, RecordSinkFactory.SINK_TYPE_LOOPING);
+            String sql = AGGREGATES + OUTER;
+            try (Fixture fixture = new Fixture(sql)) {
+                for (int slot = -1; slot < WORKERS; slot++) {
+                    Assert.assertEquals(LoopingRecordSink.class, fixture.functions.getMapSink(slot).getClass());
+                }
+                fixture.assertResults(sql);
+            }
+            // Without grouping keys no slot copies a key.
+            try (Fixture fixture = new Fixture("select sum(r.energy_kwh) energy" + OUTER)) {
+                for (int slot = -1; slot < WORKERS; slot++) {
+                    Assert.assertNull(fixture.functions.getMapSink(slot));
+                }
+            }
         });
     }
 

@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
@@ -86,6 +87,34 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                                             + (group.isEmpty() ? "" : " order by " + group);
                                     assertDifferential(sql, context, true);
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGroupingKeysWithEveryRecordSinkType() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables(false);
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                context.changePageFrameSizes(1, 2);
+                // RecordSinkFactory returns no sink class for the looping sink, so the fused
+                // plan must instantiate the sink without branching on the class.
+                for (int sinkType : new int[]{0, RecordSinkFactory.SINK_TYPE_SINGLE_METHOD,
+                        RecordSinkFactory.SINK_TYPE_CHUNKED, RecordSinkFactory.SINK_TYPE_LOOPING}) {
+                    setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, sinkType);
+                    for (int threshold : new int[]{Integer.MAX_VALUE, 1}) {
+                        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
+                        for (String join : JOINS) {
+                            for (String on : KEYS) {
+                                assertDifferential("SELECT r.s, p.s2, r.i + p.i combined, count(*) pairs, "
+                                        + "sum(p.d) psum, avg(r.d) ravg" + from(join, on)
+                                        + " ORDER BY r.s, p.s2, combined", context, true);
+                                assertDifferential("SELECT count(*) pairs, sum(p.d) psum" + from(join, on),
+                                        context, true);
                             }
                         }
                     }

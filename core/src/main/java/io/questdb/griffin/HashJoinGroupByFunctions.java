@@ -127,12 +127,14 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
                 workerFilters = generator.compileWorkerFiltersConditionally(executionContext,
                         filter, workerCount, metadata.getPostJoinFilter(), joined);
             }
-            Class<RecordSink> sinkClass = isKeyed() ? RecordSinkFactory.getInstanceClass(configuration, asm,
+            final boolean isKeyed = isKeyed();
+            // A null class requests LoopingRecordSink, which getInstance() builds, so branch on isKeyed only.
+            Class<RecordSink> sinkClass = isKeyed ? RecordSinkFactory.getInstanceClass(configuration, asm,
                     joined, columnFilter, keyFunctions, null, null, null, null) : null;
             Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, groupByFunctions.size());
             // Index zero is the owner (slot -1); other entries are acquired worker slots.
             for (int slot = -1; slot < workerCount; slot++) {
-                mapSinks.add(sinkClass != null ? RecordSinkFactory.getInstance(sinkClass, joined, columnFilter,
+                mapSinks.add(isKeyed ? RecordSinkFactory.getInstance(sinkClass, joined, columnFilter,
                         getKeyFunctions(slot), null, null, null, null) : null);
                 updaters.add(GroupByFunctionsUpdaterFactory.getInstance(updaterClass, getGroupByFunctions(slot)));
             }
