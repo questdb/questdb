@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.qwp.protocol;
 
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8s;
@@ -48,12 +49,18 @@ import io.questdb.std.str.Utf8s;
  */
 public class QwpTableHeader {
 
+    public static final byte SCHEMA_IDENTITY_KNOWN = 1;
+    public static final byte SCHEMA_IDENTITY_UNKNOWN = 0;
+
     private final QwpVarint.DecodeResult decodeResult = new QwpVarint.DecodeResult();
     private final int maxRowCount;
     private final DirectUtf8String tableNameUtf8 = new DirectUtf8String();
     private int bytesConsumed;
     private int columnCount;
+    private boolean knownSchemaIdentity;
     private long rowCount;
+    private long schemaMetadataVersion = -1;
+    private int schemaTableId = -1;
     private String tableNameStr;  // Lazily allocated when getTableName() is called
 
     public QwpTableHeader() {
@@ -80,6 +87,18 @@ public class QwpTableHeader {
 
     public long getRowCount() {
         return rowCount;
+    }
+
+    public boolean hasKnownSchemaIdentity() {
+        return knownSchemaIdentity;
+    }
+
+    public long getSchemaMetadataVersion() {
+        return schemaMetadataVersion;
+    }
+
+    public int getSchemaTableId() {
+        return schemaTableId;
     }
 
     /**
@@ -113,6 +132,10 @@ public class QwpTableHeader {
      * @throws QwpParseException if parsing fails
      */
     public void parse(long address, int length) throws QwpParseException {
+        parse(address, length, false);
+    }
+
+    public void parse(long address, int length, boolean schemaEnabled) throws QwpParseException {
         int offset = 0;
         long limit = address + length; // Absolute end address
 
@@ -143,6 +166,38 @@ public class QwpTableHeader {
         this.tableNameUtf8.of(address + offset, address + offset + nameLenInt);
         this.tableNameStr = null;  // Clear cached String, will be lazily allocated if needed
         offset += nameLenInt;
+
+        knownSchemaIdentity = false;
+        schemaTableId = -1;
+        schemaMetadataVersion = -1;
+        if (schemaEnabled) {
+            if (offset >= length) {
+                throw QwpParseException.headerTooShort();
+            }
+            byte kind = Unsafe.getByte(address + offset++);
+            if (kind == SCHEMA_IDENTITY_KNOWN) {
+                if ((long) length - offset < Integer.BYTES + Long.BYTES) {
+                    throw QwpParseException.headerTooShort();
+                }
+                int tableId = Unsafe.getInt(address + offset);
+                long metadataVersion = Unsafe.getLong(address + offset + Integer.BYTES);
+                if (tableId < 0 || metadataVersion < 0) {
+                    throw QwpParseException.create(
+                            QwpParseException.ErrorCode.INVALID_SCHEMA_IDENTITY,
+                            "known schema identity contains a negative value"
+                    );
+                }
+                knownSchemaIdentity = true;
+                schemaTableId = tableId;
+                schemaMetadataVersion = metadataVersion;
+                offset += Integer.BYTES + Long.BYTES;
+            } else if (kind != SCHEMA_IDENTITY_UNKNOWN) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INVALID_SCHEMA_IDENTITY,
+                        "unknown schema identity kind: " + (kind & 0xff)
+                );
+            }
+        }
 
         // Parse row count
         if (offset >= length) {
@@ -185,7 +240,10 @@ public class QwpTableHeader {
         tableNameStr = null;
         rowCount = 0;
         columnCount = 0;
+        knownSchemaIdentity = false;
         bytesConsumed = 0;
+        schemaTableId = -1;
+        schemaMetadataVersion = -1;
     }
 
     @Override

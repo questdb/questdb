@@ -223,6 +223,18 @@ public class QwpTableBlockCursor implements Mutable {
         return tableHeader.getTableName();
     }
 
+    public boolean hasKnownSchemaIdentity() {
+        return tableHeader.hasKnownSchemaIdentity();
+    }
+
+    public long getSchemaMetadataVersion() {
+        return tableHeader.getSchemaMetadataVersion();
+    }
+
+    public int getSchemaTableId() {
+        return tableHeader.getSchemaTableId();
+    }
+
     /**
      * Returns the table name as a UTF-8 sequence (zero allocation).
      * <p>
@@ -323,12 +335,23 @@ public class QwpTableBlockCursor implements Mutable {
             ObjList<String> connectionSymbolDict,
             boolean deltaSymbolDictEnabled
     ) throws QwpParseException {
+        return of(dataAddress, dataLength, gorillaEnabled, connectionSymbolDict, deltaSymbolDictEnabled, false);
+    }
+
+    public int of(
+            long dataAddress,
+            int dataLength,
+            boolean gorillaEnabled,
+            ObjList<String> connectionSymbolDict,
+            boolean deltaSymbolDictEnabled,
+            boolean schemaEnabled
+    ) throws QwpParseException {
         this.gorillaEnabled = gorillaEnabled;
         this.connectionSymbolDict = connectionSymbolDict;
         this.deltaSymbolDictEnabled = deltaSymbolDictEnabled;
 
         // Parse table header
-        tableHeader.parse(dataAddress, dataLength);
+        tableHeader.parse(dataAddress, dataLength, schemaEnabled);
         int offset = tableHeader.getBytesConsumed();
 
         this.rowCount = (int) tableHeader.getRowCount();

@@ -1,0 +1,13 @@
+# case_id	input_value	target_type	expected_wire_type	expected_wire_value	expected_sql_null
+long_timestamp_min	-9223372036854775808	TIMESTAMP	TIMESTAMP	<NULL>	true
+long_timestamp_min_plus_one	-9223372036854775807	TIMESTAMP	TIMESTAMP	-9223372036854775807	false
+long_timestamp_negative_one	-1	TIMESTAMP	TIMESTAMP	-1	false
+long_timestamp_zero	0	TIMESTAMP	TIMESTAMP	0	false
+long_timestamp_one	1	TIMESTAMP	TIMESTAMP	1	false
+long_timestamp_max	9223372036854775807	TIMESTAMP	TIMESTAMP	9223372036854775807	false
+long_timestamp_nanos_min	-9223372036854775808	TIMESTAMP_NANOS	TIMESTAMP_NANOS	<NULL>	true
+long_timestamp_nanos_min_plus_one	-9223372036854775807	TIMESTAMP_NANOS	TIMESTAMP_NANOS	-9223372036854775807	false
+long_timestamp_nanos_negative_one	-1	TIMESTAMP_NANOS	TIMESTAMP_NANOS	-1	false
+long_timestamp_nanos_zero	0	TIMESTAMP_NANOS	TIMESTAMP_NANOS	0	false
+long_timestamp_nanos_one	1	TIMESTAMP_NANOS	TIMESTAMP_NANOS	1	false
+long_timestamp_nanos_max	9223372036854775807	TIMESTAMP_NANOS	TIMESTAMP_NANOS	9223372036854775807	false

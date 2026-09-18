@@ -24,27 +24,40 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.client.LineSenderSchemaException;
 import io.questdb.client.LineSenderServerException;
 import io.questdb.client.Sender;
 import io.questdb.client.SenderError;
 import io.questdb.client.SenderErrorHandler;
+import io.questdb.client.cutlass.http.client.WebSocketClient;
+import io.questdb.client.cutlass.http.client.WebSocketClientFactory;
+import io.questdb.client.cutlass.http.client.WebSocketFrameHandler;
 import io.questdb.client.cutlass.line.LineSenderException;
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
+import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.client.std.Decimal128;
 import io.questdb.client.std.Decimal256;
 import io.questdb.client.std.Decimal64;
 import io.questdb.client.std.bytes.DirectByteSlice;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.protocol.QwpFixedWidthColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
+import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.Utf8Sequence;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.reflect.Array;
 import java.time.temporal.ChronoUnit;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CyclicBarrier;
@@ -480,7 +493,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_no_auto_col";
             execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
+            assertServerRejection(port, table,
                     (s, t) -> s.table(t).longColumn("v", 1L).longColumn("extra", 2L).at(1_000_000, ChronoUnit.MICROS),
                     "new columns not allowed", "column=extra");
         });
@@ -554,22 +567,20 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
     @Test
     public void testBinaryColumnValidation() throws Exception {
-        // Client-side validation of the binaryColumn API. A null reference is
-        // rejected so the NULL contract stays explicit (callers must omit the
-        // column instead, which routes through the null bitmap). Nothing here
-        // should reach the wire.
         runInContext((port) -> {
             try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table("dummy");
-                assertThrowsContains(() -> sender.binaryColumn("b", (byte[]) null),
-                        "BINARY value cannot be null");
-                sender.cancelRow();
-                sender.table("dummy");
-                assertThrowsContains(() ->
-                                sender.binaryColumn("b", (io.questdb.client.std.bytes.DirectByteSlice) null),
-                        "BINARY slice cannot be null");
-                sender.cancelRow();
+                assertSchemaError(LineSenderSchemaException.Reason.INVALID_VALUE,
+                        () -> sender.binaryColumn("b", (byte[]) null),
+                        "table=dummy", "column=b", "inputType=BINARY", "targetType=BINARY");
+                assertSchemaError(LineSenderSchemaException.Reason.INVALID_VALUE,
+                        () -> sender.binaryColumn("b", (DirectByteSlice) null),
+                        "table=dummy", "column=b", "inputType=BINARY", "targetType=BINARY");
+                Assert.assertEquals(-1, sender.flushAndGetSequence());
             }
+            assertQuery("select count() from tables() where table_name = 'dummy'")
+                    .noLeakCheck()
+                    .returnsOnce("count\n0\n");
         });
     }
 
@@ -608,19 +619,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // as text when the target column is CHAR. Without the guard
             // QwpStringColumnCursor would route through putCharColumn and
             // pick a CHAR from the leading byte(s).
-            execute("CREATE TABLE " + table + " (v CHAR, ts TIMESTAMP) "
+            execute("CREATE TABLE " + table + " (v CHAR, marker LONG, ts TIMESTAMP) "
                     + "TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             byte[] payload = {(byte) 0x80, (byte) 0xFF, 0x00, 0x7F};
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).binaryColumn("v", payload).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from BINARY to CHAR is not supported", "[column=v]");
-
-            drainWalQueue();
-            assertQuery("SELECT count() FROM " + table)
-                    .noLeakCheck()
-                    .returnsOnce("count\n0\n");
+            assertLegacyBinaryRejectedAndPublicSenderRecovers(port, table, "CHAR", payload);
         });
     }
 
@@ -631,19 +635,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // Symmetric pin to testBinarySourceRejectedByVarcharTarget: raw
             // binary bytes must not land in a STRING column where
             // Utf8s.directUtf8ToUtf16 would reinterpret them as text.
-            execute("CREATE TABLE " + table + " (v STRING, ts TIMESTAMP) "
+            execute("CREATE TABLE " + table + " (v STRING, marker LONG, ts TIMESTAMP) "
                     + "TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             byte[] payload = {(byte) 0x80, (byte) 0xFF, 0x00, 0x7F};
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).binaryColumn("v", payload).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from BINARY to STRING is not supported", "[column=v]");
-
-            drainWalQueue();
-            assertQuery("SELECT count() FROM " + table)
-                    .noLeakCheck()
-                    .returnsOnce("count\n0\n");
+            assertLegacyBinaryRejectedAndPublicSenderRecovers(port, table, "STRING", payload);
         });
     }
 
@@ -654,19 +651,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // Symmetric pin to testBinarySourceRejectedByVarcharTarget: raw
             // binary bytes must not be interned as a symbol via
             // putStringToSymbolColumn.
-            execute("CREATE TABLE " + table + " (v SYMBOL, ts TIMESTAMP) "
+            execute("CREATE TABLE " + table + " (v SYMBOL, marker LONG, ts TIMESTAMP) "
                     + "TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             byte[] payload = {(byte) 0x80, (byte) 0xFF, 0x00, 0x7F};
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).binaryColumn("v", payload).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from BINARY to SYMBOL is not supported", "[column=v]");
-
-            drainWalQueue();
-            assertQuery("SELECT count() FROM " + table)
-                    .noLeakCheck()
-                    .returnsOnce("count\n0\n");
+            assertLegacyBinaryRejectedAndPublicSenderRecovers(port, table, "SYMBOL", payload);
         });
     }
 
@@ -674,19 +664,10 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     public void testBinarySourceRejectedByVarcharTarget() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_varchar_rejects_binary";
-            // Pre-create the table with a VARCHAR column. The client sends
-            // TYPE_BINARY via binaryColumn(...), targeting that existing
-            // VARCHAR column. QwpWalAppender's VARCHAR arm pattern-matches
-            // the cursor by class (QwpStringColumnCursor handles both
-            // BINARY and VARCHAR wire layouts since they share the same
-            // offsets + bytes encoding) without checking qwpType, so today
-            // TYPE_BINARY bytes pass through putVarcharColumn unchecked and
-            // raw (possibly non-UTF-8) bytes land in a column QuestDB
-            // treats as UTF-8. The asymmetric BINARY arm has the symmetric
-            // qwpType guard (testBinaryColumnVarcharSourceCoercesToBinary
-            // pins the accepted direction); this test pins that the
-            // opposite direction is rejected.
-            execute("CREATE TABLE " + table + " (v VARCHAR, ts TIMESTAMP) "
+            // Keep both independent observations: the server rejects a raw,
+            // unflagged TYPE_BINARY source and schema-aware Sender rejects it
+            // locally before publishing a row.
+            execute("CREATE TABLE " + table + " (v VARCHAR, marker LONG, ts TIMESTAMP) "
                     + "TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             // Non-UTF-8 bytes: 0x80 is a continuation byte without a lead,
@@ -694,14 +675,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // they break the UTF-8 invariant the rest of QuestDB assumes.
             byte[] payload = {(byte) 0x80, (byte) 0xFF, 0x00, 0x7F};
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).binaryColumn("v", payload).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from BINARY to VARCHAR is not supported", "[column=v]");
-
-            drainWalQueue();
-            assertQuery("SELECT count() FROM " + table)
-                    .noLeakCheck()
-                    .returnsOnce("count\n0\n");
+            assertLegacyBinaryRejectedAndPublicSenderRecovers(port, table, "VARCHAR", payload);
         });
     }
 
@@ -863,48 +837,35 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_coerce_boolean_err";
             execute("CREATE TABLE " + table + " (v BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).byteColumn("v", (byte) 1).at(1_000_000, ChronoUnit.MICROS),
-                    "BYTE", "BOOLEAN");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write", "BOOLEAN");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).decimalColumn("v", Decimal64.fromLong(100, 2)).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write DECIMAL64", "BOOLEAN");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).doubleColumn("v", 3.14).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write DOUBLE", "BOOLEAN");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).floatColumn("v", 1.5f).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write FLOAT", "BOOLEAN");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).intColumn("v", 1).at(1_000_000, ChronoUnit.MICROS),
-                    "INT", "BOOLEAN");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).longColumn("v", 1L).at(1_000_000, ChronoUnit.MICROS),
-                    "LONG", "BOOLEAN");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write LONG256", "BOOLEAN");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).shortColumn("v", (short) 1).at(1_000_000, ChronoUnit.MICROS),
-                    "SHORT", "BOOLEAN");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write SYMBOL", "BOOLEAN");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write TIMESTAMP", "BOOLEAN");
-            assertCoercionError(port, table,
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).byteColumn("v", (byte) 1).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).decimalColumn("v", Decimal64.fromLong(100, 2)).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).doubleColumn("v", 3.14).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).floatColumn("v", 1.5f).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).intColumn("v", 1).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).longColumn("v", 1L).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).shortColumn("v", (short) 1).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
                     (s, t) -> {
                         UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
                         s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS);
-                    },
-                    "cannot write UUID", "BOOLEAN");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).stringColumn("v", "yes").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot parse boolean from string", "cannot parse boolean from string");
+                    });
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).stringColumn("v", "yes").at(1_000_000, ChronoUnit.MICROS));
         });
     }
 
@@ -947,42 +908,31 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_coerce_byte_err";
             execute("CREATE TABLE " + table + " (v BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS),
-                    "not supported", "BYTE");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).doubleColumn("v", 200.0).at(1_000_000, ChronoUnit.MICROS),
-                    "integer value 200 out of range for BYTE", "integer value 200 out of range for BYTE");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).doubleColumn("v", 42.5).at(1_000_000, ChronoUnit.MICROS),
-                    "loses precision", "42.5");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).intColumn("v", 128).at(1_000_000, ChronoUnit.MICROS),
-                    "integer value 128 out of range for BYTE", "integer value 128 out of range for BYTE");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).longColumn("v", 128L).at(1_000_000, ChronoUnit.MICROS),
-                    "integer value 128 out of range for BYTE", "integer value 128 out of range for BYTE");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from LONG256 to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).shortColumn("v", (short) 200).at(1_000_000, ChronoUnit.MICROS),
-                    "integer value 200 out of range for BYTE", "integer value 200 out of range for BYTE");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write SYMBOL", "BYTE");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write TIMESTAMP", "BYTE");
-            assertCoercionError(port, table,
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).doubleColumn("v", 200.0).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).doubleColumn("v", 42.5).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).intColumn("v", 128).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).longColumn("v", 128L).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).shortColumn("v", (short) 200).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
                     (s, t) -> {
                         UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
                         s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS);
-                    },
-                    "type coercion from UUID to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).stringColumn("v", "abc").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot parse BYTE from string", "cannot parse BYTE from string");
+                    });
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).stringColumn("v", "abc").at(1_000_000, ChronoUnit.MICROS));
         });
     }
 
@@ -1020,42 +970,31 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_coerce_char_err";
             execute("CREATE TABLE " + table + " (v CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write BOOLEAN", "CHAR");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).byteColumn("v", (byte) 65).at(1_000_000, ChronoUnit.MICROS),
-                    "BYTE", "CHAR");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).doubleColumn("v", 3.14).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write DOUBLE", "CHAR");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).floatColumn("v", 1.5f).at(1_000_000, ChronoUnit.MICROS),
-                    "CHAR", "FLOAT");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).intColumn("v", 65).at(1_000_000, ChronoUnit.MICROS),
-                    "INT", "CHAR");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).longColumn("v", 65L).at(1_000_000, ChronoUnit.MICROS),
-                    "LONG", "CHAR");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS),
-                    "CHAR", "LONG256");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).shortColumn("v", (short) 65).at(1_000_000, ChronoUnit.MICROS),
-                    "CHAR", "SHORT");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write SYMBOL", "CHAR");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write TIMESTAMP", "CHAR");
-            assertCoercionError(port, table,
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).byteColumn("v", (byte) 65).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).doubleColumn("v", 3.14).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).floatColumn("v", 1.5f).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).intColumn("v", 65).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).longColumn("v", 65L).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).shortColumn("v", (short) 65).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
                     (s, t) -> {
                         UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
                         s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS);
-                    },
-                    "cannot write UUID", "CHAR");
+                    });
         });
     }
 
@@ -1097,39 +1036,45 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_coerce_date_err";
             execute("CREATE TABLE " + table + " (v DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write BOOLEAN", "DATE");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS),
-                    "not supported", "DATE");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).decimalColumn("v", Decimal64.fromLong(100, 2)).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write DECIMAL64", "DATE");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).doubleColumn("v", 3.14).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from DOUBLE to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).floatColumn("v", 1.5f).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from FLOAT to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from LONG256 to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write SYMBOL", "DATE");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write TIMESTAMP", "DATE");
-            assertCoercionError(port, table,
-                    (s, t) -> {
-                        UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
-                        s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS);
-                    },
-                    "type coercion from UUID to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).stringColumn("v", "not_a_date").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot parse DATE from string", "not_a_date");
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).boolColumn("v", true),
+                        "inputType=BOOLEAN", "targetType=DATE");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).charColumn("v", 'A'),
+                        "inputType=CHAR", "targetType=DATE");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).decimalColumn("v", Decimal64.fromLong(100, 2)),
+                        "inputType=DECIMAL64", "targetType=DATE");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).doubleColumn("v", 3.14),
+                        "inputType=DOUBLE", "targetType=DATE");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).floatColumn("v", 1.5f),
+                        "inputType=FLOAT", "targetType=DATE");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).long256Column("v", 1, 0, 0, 0),
+                        "inputType=LONG256", "targetType=DATE");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).symbol("v", "hello"),
+                        "inputType=SYMBOL", "targetType=DATE");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS),
+                        "inputType=TIMESTAMP", "targetType=DATE");
+                UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).uuidColumn(
+                                "v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()),
+                        "inputType=UUID", "targetType=DATE");
+                assertSchemaError(LineSenderSchemaException.Reason.INVALID_VALUE,
+                        () -> sender.table(table).stringColumn("v", "not_a_date"),
+                        "inputType=STRING", "targetType=DATE", "invalid DATE text");
+
+                sender.table(table).stringColumn("v", "1970-01-02").at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+            drainWalQueue();
+            assertQuery("select v from " + table).noLeakCheck().returnsOnce("v\n1970-01-02T00:00:00.000Z\n");
         });
     }
 
@@ -1174,12 +1119,10 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             execute("CREATE TABLE " + table + " (v DECIMAL(38,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write UUID", "DECIMAL(38,2)");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write BOOLEAN", "DECIMAL(38,2)");
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS));
         });
     }
 
@@ -1190,12 +1133,10 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             execute("CREATE TABLE " + table + " (v DECIMAL(76,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write UUID", "DECIMAL(76,2)");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write BOOLEAN", "DECIMAL(76,2)");
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS));
         });
     }
 
@@ -1206,12 +1147,10 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             execute("CREATE TABLE " + table + " (v DECIMAL(18,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write UUID", "DECIMAL(18,2)");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write BOOLEAN", "DECIMAL(18,2)");
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS));
         });
     }
 
@@ -1221,38 +1160,29 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_coerce_decimal_err";
             execute("CREATE TABLE " + table + " (v DECIMAL(2,1), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write BOOLEAN", "DECIMAL");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).doubleColumn("v", 123.456).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot be converted to", "scale=1");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).floatColumn("v", 1.25f).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot be converted to", "scale=1");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).long256Column("v", 1, 1, 1, 1).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write LONG256", "DECIMAL");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write SYMBOL", "DECIMAL");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write TIMESTAMP", "DECIMAL");
-            assertCoercionError(port, table,
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).doubleColumn("v", 123.456).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).floatColumn("v", 1.25f).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).long256Column("v", 1, 1, 1, 1).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
                     (s, t) -> {
                         UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
                         s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS);
-                    },
-                    "cannot write UUID", "DECIMAL");
+                    });
             // A value whose precision exceeds the column's is a deterministic overflow.
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).decimalColumn("v", Decimal64.fromLong(1000, 1)).at(1_000_000, ChronoUnit.MICROS),
-                    "decimal value overflows", "column=v");
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).decimalColumn("v", Decimal64.fromLong(1000, 1)).at(1_000_000, ChronoUnit.MICROS));
             // A value with more scale than the column cannot rescale without loss.
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).decimalColumn("v", Decimal64.fromLong(15, 2)).at(1_000_000, ChronoUnit.MICROS),
-                    "decimal value causes precision loss", "column=v");
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).decimalColumn("v", Decimal64.fromLong(15, 2)).at(1_000_000, ChronoUnit.MICROS));
         });
     }
 
@@ -1442,24 +1372,23 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     public void testCoercionToDoubleArrayErrors() throws Exception {
         runInContext((port) -> {
             execute("CREATE TABLE test_da_int_err (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertCoercionError(port, "test_da_int_err",
-                    (s, t) -> s.table(t).doubleArray("v", new double[]{1.0, 2.0}).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write DOUBLE_ARRAY", "INT");
-
             execute("CREATE TABLE test_da_str_err (v STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertCoercionError(port, "test_da_str_err",
-                    (s, t) -> s.table(t).doubleArray("v", new double[]{1.0, 2.0}).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write DOUBLE_ARRAY", "STRING");
-
             execute("CREATE TABLE test_da_sym_err (v SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertCoercionError(port, "test_da_sym_err",
-                    (s, t) -> s.table(t).doubleArray("v", new double[]{1.0, 2.0}).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write DOUBLE_ARRAY", "SYMBOL");
-
             execute("CREATE TABLE test_da_ts_err (v TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertCoercionError(port, "test_da_ts_err",
-                    (s, t) -> s.table(t).doubleArray("v", new double[]{1.0, 2.0}).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write DOUBLE_ARRAY", "TIMESTAMP");
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table("test_da_int_err").doubleArray("v", new double[]{1.0, 2.0}),
+                        "table=test_da_int_err", "column=v", "inputType=DOUBLE_ARRAY", "targetType=INT");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table("test_da_str_err").doubleArray("v", new double[]{1.0, 2.0}),
+                        "table=test_da_str_err", "column=v", "inputType=DOUBLE_ARRAY", "targetType=STRING");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table("test_da_sym_err").doubleArray("v", new double[]{1.0, 2.0}),
+                        "table=test_da_sym_err", "column=v", "inputType=DOUBLE_ARRAY", "targetType=SYMBOL");
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table("test_da_ts_err").doubleArray("v", new double[]{1.0, 2.0}),
+                        "table=test_da_ts_err", "column=v", "inputType=DOUBLE_ARRAY", "targetType=TIMESTAMP");
+            }
         });
     }
 
@@ -1467,9 +1396,11 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     public void testCoercionToDoubleArrayFromStringError() throws Exception {
         runInContext((port) -> {
             execute("CREATE TABLE test_da_from_str (v DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertCoercionError(port, "test_da_from_str",
-                    (s, t) -> s.table(t).stringColumn("v", "not an array").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write VARCHAR", "DOUBLE[]");
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table("test_da_from_str").stringColumn("v", "not an array"),
+                        "table=test_da_from_str", "column=v", "inputType=STRING", "targetType=DOUBLE[]");
+            }
         });
     }
 
@@ -1478,40 +1409,43 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             String table = "test_qwp_arr_dim_err";
             execute("CREATE TABLE " + table + " (v DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            // The column is 1-D; a 2-D array is a deterministic dimensionality mismatch.
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).doubleArray("v", new double[][]{{1.0, 2.0}, {3.0, 4.0}}).at(1_000_000, ChronoUnit.MICROS),
-                    "array dimensionality mismatch", "column=v");
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).doubleArray("v", new double[][]{{1.0, 2.0}, {3.0, 4.0}}),
+                        "table=" + table, "column=v", "inputType=DOUBLE_ARRAY",
+                        "sourceDims=2", "targetDims=1");
+                sender.doubleArray("v", new double[]{5.0, 6.0}).at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+            drainWalQueue();
+            assertQuery("select v from " + table).noLeakCheck().returnsOnce("v\n[5.0,6.0]\n");
         });
     }
 
     @Test
     public void testArrayBatchDimensionalityMismatchRejected() throws Exception {
         runInContext((port) -> {
-            // Rows with differing array dimensionality in one flush hit the within-batch
-            // getArrayBatchDimensionality guard, not the single-row validateArrayColumnType
-            // guard that testArrayDimensionalityMismatchRejected covers. The guard lives at
-            // two sites; which one throws depends on whether the target table exists.
-
-            // Existing table: QwpWalAppender scans the batch during WAL append.
             String existing = "test_qwp_arr_batch_dim_existing";
             execute("CREATE TABLE " + existing + " (v DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertCoercionError(port, existing,
-                    (s, t) -> {
-                        s.table(t).doubleArray("v", new double[]{1.0, 2.0}).at(1_000_000, ChronoUnit.MICROS);
-                        s.table(t).doubleArray("v", new double[][]{{3.0, 4.0}}).at(2_000_000, ChronoUnit.MICROS);
-                    },
-                    "array dimensionality mismatch in QWP batch", "column=v");
-
-            // Non-existent table: QwpTudCache scans the batch while resolving the
-            // auto-created table structure.
             String autoCreate = "test_qwp_arr_batch_dim_autocreate";
-            assertCoercionError(port, autoCreate,
-                    (s, t) -> {
-                        s.table(t).doubleArray("v", new double[]{1.0, 2.0}).at(1_000_000, ChronoUnit.MICROS);
-                        s.table(t).doubleArray("v", new double[][]{{3.0, 4.0}}).at(2_000_000, ChronoUnit.MICROS);
-                    },
-                    "array dimensionality mismatch in QWP batch", "column=v");
+            try (QwpWebSocketSender sender = connectWs(port, 0, 0,
+                    TimeUnit.MILLISECONDS.toNanos(Integer.MAX_VALUE - 1L))) {
+                sender.table(existing).doubleArray("v", new double[]{1.0, 2.0})
+                        .at(1_000_000, ChronoUnit.MICROS);
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(existing).doubleArray("v", new double[][]{{3.0, 4.0}}),
+                        "table=" + existing, "column=v", "sourceDims=2", "targetDims=1");
+
+                sender.table(autoCreate).doubleArray("v", new double[]{5.0, 6.0})
+                        .at(2_000_000, ChronoUnit.MICROS);
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(autoCreate).doubleArray("v", new double[][]{{7.0, 8.0}}),
+                        "table=" + autoCreate, "column=v", "sourceDims=2", "inferredDims=1");
+                sender.flush();
+            }
+            drainWalQueue();
+            assertQuery("select v from " + existing).noLeakCheck().returnsOnce("v\n[1.0,2.0]\n");
+            assertQuery("select v from " + autoCreate).noLeakCheck().returnsOnce("v\n[5.0,6.0]\n");
         });
     }
 
@@ -1521,27 +1455,21 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_coerce_double_err";
             execute("CREATE TABLE " + table + " (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS),
-                    "not supported", "DOUBLE");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from LONG256 to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write SYMBOL", "DOUBLE");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write TIMESTAMP", "DOUBLE");
-            assertCoercionError(port, table,
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
                     (s, t) -> {
                         UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
                         s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS);
-                    },
-                    "type coercion from UUID to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).stringColumn("v", "not_a_number").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot parse DOUBLE from string", "not_a_number");
+                    });
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).stringColumn("v", "not_a_number").at(1_000_000, ChronoUnit.MICROS));
         });
     }
 
@@ -1578,27 +1506,21 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_coerce_float_err";
             execute("CREATE TABLE " + table + " (v FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS),
-                    "not supported", "FLOAT");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from LONG256 to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write SYMBOL", "FLOAT");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write TIMESTAMP", "FLOAT");
-            assertCoercionError(port, table,
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
                     (s, t) -> {
                         UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
                         s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS);
-                    },
-                    "type coercion from UUID to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).stringColumn("v", "not_a_number").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot parse FLOAT from string", "not_a_number");
+                    });
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).stringColumn("v", "not_a_number").at(1_000_000, ChronoUnit.MICROS));
         });
     }
 
@@ -1636,45 +1558,49 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_coerce_geohash_err";
             execute("CREATE TABLE " + table + " (v GEOHASH(5c), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write BOOLEAN", "GEOHASH");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).byteColumn("v", (byte) 1).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from BYTE to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).doubleColumn("v", 3.14).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from DOUBLE to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).floatColumn("v", 1.5f).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from FLOAT to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).intColumn("v", 1).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from INT", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).longColumn("v", 1L).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from LONG to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from LONG256 to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).shortColumn("v", (short) 1).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from SHORT to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write SYMBOL", "GEOHASH");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write TIMESTAMP", "GEOHASH");
-            assertCoercionError(port, table,
-                    (s, t) -> {
-                        UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
-                        s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS);
-                    },
-                    "type coercion from UUID to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).stringColumn("v", "!!!").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot parse geohash from string", "!!!");
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                assertUnsupportedGeoHash(() -> sender.table(table).boolColumn("v", true), table, "BOOLEAN");
+                assertUnsupportedGeoHash(() -> sender.table(table).byteColumn("v", (byte) 1), table, "BYTE");
+                assertUnsupportedGeoHash(() -> sender.table(table).doubleColumn("v", 3.14), table, "DOUBLE");
+                assertUnsupportedGeoHash(() -> sender.table(table).floatColumn("v", 1.5f), table, "FLOAT");
+                assertUnsupportedGeoHash(() -> sender.table(table).intColumn("v", 1), table, "INT");
+                assertUnsupportedGeoHash(() -> sender.table(table).longColumn("v", 1L), table, "LONG");
+                assertUnsupportedGeoHash(
+                        () -> sender.table(table).long256Column("v", 1, 0, 0, 0),
+                        table,
+                        "LONG256"
+                );
+                assertUnsupportedGeoHash(() -> sender.table(table).shortColumn("v", (short) 1), table, "SHORT");
+                assertUnsupportedGeoHash(() -> sender.table(table).symbol("v", "hello"), table, "SYMBOL");
+                assertUnsupportedGeoHash(
+                        () -> sender.table(table).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS),
+                        table,
+                        "TIMESTAMP"
+                );
+                UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
+                assertUnsupportedGeoHash(
+                        () -> sender.table(table).uuidColumn(
+                                "v",
+                                uuid.getLeastSignificantBits(),
+                                uuid.getMostSignificantBits()
+                        ),
+                        table,
+                        "UUID"
+                );
+                assertSchemaError(LineSenderSchemaException.Reason.INVALID_VALUE,
+                        () -> sender.table(table).stringColumn("v", "!!!"),
+                        "table=" + table,
+                        "column=v",
+                        "inputType=STRING",
+                        "targetType=GEOHASH",
+                        "invalid GEOHASH text"
+                );
+
+                sender.table(table).stringColumn("v", "s24se").at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM " + table).noLeakCheck().returnsOnce("v\ns24se\n");
         });
     }
 
@@ -1717,36 +1643,27 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_coerce_int_err";
             execute("CREATE TABLE " + table + " (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS),
-                    "not supported", "INT");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).doubleColumn("v", 3.14).at(1_000_000, ChronoUnit.MICROS),
-                    "loses precision", "3.14");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).floatColumn("v", 3.14f).at(1_000_000, ChronoUnit.MICROS),
-                    "loses precision", "loses precision");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).longColumn("v", (long) Integer.MAX_VALUE + 1).at(1_000_000, ChronoUnit.MICROS),
-                    "integer value 2147483648 out of range for INT", "integer value 2147483648 out of range for INT");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from LONG256 to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write SYMBOL", "INT");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write TIMESTAMP", "INT");
-            assertCoercionError(port, table,
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).doubleColumn("v", 3.14).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).floatColumn("v", 3.14f).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).longColumn("v", (long) Integer.MAX_VALUE + 1).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
                     (s, t) -> {
                         UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
                         s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS);
-                    },
-                    "type coercion from UUID to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).stringColumn("v", "not_a_number").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot parse INT from string", "not_a_number");
+                    });
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).stringColumn("v", "not_a_number").at(1_000_000, ChronoUnit.MICROS));
         });
     }
 
@@ -1817,45 +1734,33 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_coerce_long256_err";
             execute("CREATE TABLE " + table + " (v LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write BOOLEAN", "LONG256");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).byteColumn("v", (byte) 1).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from BYTE to LONG256 is not supported", "type coercion from BYTE to LONG256 is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS),
-                    "not supported", "LONG256");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).doubleColumn("v", 3.14).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from DOUBLE to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).floatColumn("v", 1.5f).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from FLOAT to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).intColumn("v", 1).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from INT to LONG256 is not supported", "type coercion from INT to LONG256 is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).longColumn("v", 1L).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from LONG to LONG256 is not supported", "type coercion from LONG to LONG256 is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).shortColumn("v", (short) 1).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from SHORT to LONG256 is not supported", "type coercion from SHORT to LONG256 is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write SYMBOL", "LONG256");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write TIMESTAMP", "LONG256");
-            assertCoercionError(port, table,
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).byteColumn("v", (byte) 1).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).doubleColumn("v", 3.14).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).floatColumn("v", 1.5f).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).intColumn("v", 1).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).longColumn("v", 1L).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).shortColumn("v", (short) 1).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
                     (s, t) -> {
                         UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
                         s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS);
-                    },
-                    "type coercion from UUID to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).stringColumn("v", "not_a_long256").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot parse long256 from string", "not_a_long256");
+                    });
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).stringColumn("v", "not_a_long256").at(1_000_000, ChronoUnit.MICROS));
         });
     }
 
@@ -1865,27 +1770,21 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_coerce_long_err";
             execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS),
-                    "not supported", "LONG");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from LONG256 to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write SYMBOL", "LONG");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write TIMESTAMP", "LONG");
-            assertCoercionError(port, table,
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
                     (s, t) -> {
                         UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
                         s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS);
-                    },
-                    "type coercion from UUID to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).stringColumn("v", "not_a_number").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot parse LONG from string", "not_a_number");
+                    });
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).stringColumn("v", "not_a_number").at(1_000_000, ChronoUnit.MICROS));
         });
     }
 
@@ -1928,33 +1827,25 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_coerce_short_err";
             execute("CREATE TABLE " + table + " (v SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS),
-                    "not supported", "SHORT");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).intColumn("v", 40_000).at(1_000_000, ChronoUnit.MICROS),
-                    "integer value 40000 out of range for SHORT", "integer value 40000 out of range for SHORT");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).longColumn("v", 40_000L).at(1_000_000, ChronoUnit.MICROS),
-                    "integer value 40000 out of range for SHORT", "integer value 40000 out of range for SHORT");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from LONG256 to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write SYMBOL", "SHORT");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write TIMESTAMP", "SHORT");
-            assertCoercionError(port, table,
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).intColumn("v", 40_000).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).longColumn("v", 40_000L).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
                     (s, t) -> {
                         UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
                         s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS);
-                    },
-                    "type coercion from UUID to SHORT is not supported", "type coercion from UUID to SHORT is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).stringColumn("v", "not_a_number").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot parse SHORT from string", "not_a_number");
+                    });
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).stringColumn("v", "not_a_number").at(1_000_000, ChronoUnit.MICROS));
         });
     }
 
@@ -2009,27 +1900,36 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testCoercionToStringAndVarcharFromIPv4() throws Exception {
+    public void testCharToTextPreservesUnicode() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_char_to_text_unicode";
+            execute("CREATE TABLE " + table + " (s STRING, v VARCHAR, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .charColumn("s", '\u03a9')
+                        .charColumn("v", '\u03a9')
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT s, v FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
+                            s\tv
+                            Ω\tΩ
+                            """);
+        });
+    }
+
+    @Test
+    public void testSchemaAwareConversionToStringAndVarcharFromIPv4() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_ipv4_to_string_varchar";
-            // QwpFixedWidthColumnCursor reads TYPE_IPV4 wire data (4-byte
-            // int). When a client targets a pre-existing STRING or VARCHAR
-            // column with ipv4Column(...), appendToWalColumnar dispatches
-            // through the QwpFixedWidthColumnCursor arm of the STRING /
-            // VARCHAR switch. isIntegerWireType(qwpType) returns false for
-            // TYPE_IPV4 (the helper only covers BYTE/SHORT/INT/LONG), so
-            // the cursor falls into putFixedOtherToStringColumn /
-            // putFixedOtherToVarcharColumn, whose per-row formatter
-            // (formatFixedOtherValue) had no TYPE_IPV4 arm and threw
-            // "unsupported wire type for string conversion: 24" mid-row.
-            //
-            // After the fix, TYPE_IPV4 is formatted as a dotted-quad via
-            // Numbers.intToIPv4Sink and round-trips cleanly through both
-            // STRING and VARCHAR target columns. The IPv4 NULL sentinel
-            // (0) also round-trips as SQL NULL: the cursor's sentinel-null
-            // arm (added in the same series of fixes) classifies bit
-            // pattern 0 as null, so the per-row formatter is never called
-            // for that row.
+            // Schema mode formats IPv4 values on the client and sends native
+            // text wire data to pre-existing STRING and VARCHAR columns.
             execute("CREATE TABLE " + table + " ("
                     + "addr_str STRING, addr_vc VARCHAR, ts TIMESTAMP"
                     + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2039,8 +1939,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                         .ipv4Column("addr_str", 0xC0A80101)         // 192.168.1.1
                         .ipv4Column("addr_vc", 0xC0A80101)
                         .at(1_000_000, ChronoUnit.MICROS);
-                // Sentinel row: bit pattern 0 must surface as SQL NULL on
-                // both targets, not as "0.0.0.0".
+                // Packed zero becomes a bitmap NULL for both text targets.
                 sender.table(table)
                         .ipv4Column("addr_str", 0)
                         .ipv4Column("addr_vc", 0)
@@ -2061,22 +1960,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testCoercionToStringPreservesUuidAndLong256NullSentinels() throws Exception {
+    public void testSchemaModePreservesUuidAndLong256NullsForTextTargets() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_uuid_long256_null_to_string";
-            // The cursor's isCurrentValueSentinelNull arms for TYPE_UUID and
-            // TYPE_LONG256 (added alongside the IPv4 sentinel arm) flow
-            // through cursor.isNull() consumed by the per-row loops in
-            // WalColumnarRowAppender.putFixedOtherToStringColumn and
-            // putFixedOtherToVarcharColumn. testCoercionToString /
-            // testCoercionToVarchar already exercise the happy path for
-            // UUID and LONG256 with random non-sentinel values, but neither
-            // pins what happens when the NULL bit pattern reaches the
-            // formatter: it must round-trip as SQL NULL, not as the
-            // literal "00000000-0000-0000-0000-000000000000" /
-            // "0x000...000" hex render. This test pins all four cells of
-            // the {UUID, LONG256} x {STRING, VARCHAR} matrix for the
-            // type-specific NULL sentinel.
+            // In schema mode the client maps each native NULL sentinel to an
+            // explicit wire NULL for STRING and VARCHAR targets. This pins all
+            // four cells of the {UUID, LONG256} x {STRING, VARCHAR} matrix.
             execute("CREATE TABLE " + table + " (" +
                     "uuid_str STRING, uuid_vc VARCHAR, " +
                     "l256_str STRING, l256_vc VARCHAR, " +
@@ -2144,27 +2033,21 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_coerce_symbol_err";
             execute("CREATE TABLE " + table + " (v SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write BOOLEAN", "SYMBOL");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write", "SYMBOL");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).decimalColumn("v", Decimal64.fromLong(100, 2)).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write DECIMAL64", "SYMBOL");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write LONG256", "SYMBOL");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write TIMESTAMP", "SYMBOL");
-            assertCoercionError(port, table,
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).decimalColumn("v", Decimal64.fromLong(100, 2)).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
                     (s, t) -> {
                         UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
                         s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS);
-                    },
-                    "cannot write UUID", "SYMBOL");
+                    });
         });
     }
 
@@ -2206,36 +2089,27 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_coerce_timestamp_err";
             execute("CREATE TABLE " + table + " (v TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write BOOLEAN", "TIMESTAMP");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS),
-                    "not supported", "TIMESTAMP");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).decimalColumn("v", Decimal64.fromLong(100, 2)).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write DECIMAL64", "TIMESTAMP");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).doubleColumn("v", 3.14).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from DOUBLE to TIMESTAMP is not supported", "type coercion from DOUBLE to TIMESTAMP is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).floatColumn("v", 1.5f).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from FLOAT to TIMESTAMP is not supported", "type coercion from FLOAT to TIMESTAMP is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from LONG256 to TIMESTAMP is not supported", "type coercion from LONG256 to TIMESTAMP is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write SYMBOL", "TIMESTAMP");
-            assertCoercionError(port, table,
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).decimalColumn("v", Decimal64.fromLong(100, 2)).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).doubleColumn("v", 3.14).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).floatColumn("v", 1.5f).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
                     (s, t) -> {
                         UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
                         s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS);
-                    },
-                    "type coercion from UUID to TIMESTAMP is not supported", "type coercion from UUID to TIMESTAMP is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).stringColumn("v", "not_a_timestamp").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot parse timestamp from string", "not_a_timestamp");
+                    });
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).stringColumn("v", "not_a_timestamp").at(1_000_000, ChronoUnit.MICROS));
         });
     }
 
@@ -2273,12 +2147,10 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_coerce_ts_ns_err";
             execute("CREATE TABLE " + table + " (v TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write BOOLEAN", "TIMESTAMP");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write SYMBOL", "TIMESTAMP");
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS));
         });
     }
 
@@ -2316,42 +2188,30 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_coerce_uuid_err";
             execute("CREATE TABLE " + table + " (v UUID, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write BOOLEAN", "UUID");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).byteColumn("v", (byte) 1).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from BYTE to UUID is not supported", "type coercion from BYTE to UUID is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS),
-                    "not supported", "UUID");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).doubleColumn("v", 3.14).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from DOUBLE to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).floatColumn("v", 1.5f).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from FLOAT to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).intColumn("v", 1).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from INT to UUID is not supported", "type coercion from INT to UUID is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).longColumn("v", 1L).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from LONG to UUID is not supported", "type coercion from LONG to UUID is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from LONG256 to", "is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).shortColumn("v", (short) 1).at(1_000_000, ChronoUnit.MICROS),
-                    "type coercion from SHORT to UUID is not supported", "type coercion from SHORT to UUID is not supported");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write SYMBOL", "UUID");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write TIMESTAMP", "UUID");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).stringColumn("v", "not-a-uuid").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot parse UUID from string", "not-a-uuid");
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).byteColumn("v", (byte) 1).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).doubleColumn("v", 3.14).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).floatColumn("v", 1.5f).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).intColumn("v", 1).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).longColumn("v", 1L).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).long256Column("v", 1, 0, 0, 0).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).shortColumn("v", (short) 1).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS));
+            assertLocalSchemaError(port, table,
+                    (s, t) -> s.table(t).stringColumn("v", "not-a-uuid").at(1_000_000, ChronoUnit.MICROS));
         });
     }
 
@@ -2410,9 +2270,11 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     public void testCoercionToVarcharFromArrayError() throws Exception {
         runInContext((port) -> {
             execute("CREATE TABLE test_vc_arr_err (v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertCoercionError(port, "test_vc_arr_err",
-                    (s, t) -> s.table(t).doubleArray("v", new double[]{1.0}).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write DOUBLE_ARRAY", "VARCHAR");
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table("test_vc_arr_err").doubleArray("v", new double[]{1.0}),
+                        "table=test_vc_arr_err", "column=v", "inputType=DOUBLE_ARRAY", "targetType=VARCHAR");
+            }
         });
     }
 
@@ -2990,9 +2852,8 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testDeferredCommitSchemaMismatchRollsBack() throws Exception {
+    public void testDeferredCommitLocalSchemaErrorCancelsOnlyCurrentRow() throws Exception {
         runInContext((port) -> {
-            // Seed table_a with a DOUBLE column
             try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table("defer_mismatch_a")
                         .doubleColumn("px", 1.5)
@@ -3001,9 +2862,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
 
-            // Deferred sequence: valid rows for table_b, then schema error on table_a
-            CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
-            try (QwpWebSocketSender sender = connectWs(port, errorFut::complete)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.setDeferCommit(true);
                 for (int i = 0; i < 10; i++) {
                     sender.table("defer_mismatch_b")
@@ -3012,34 +2871,30 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 }
                 sender.flush();
 
-                // STRING value for a DOUBLE column triggers SCHEMA_MISMATCH on the server;
-                // all accumulated deferred WAL rows (including table_b) must be rolled back
-                sender.table("defer_mismatch_a")
-                        .stringColumn("px", "not-a-double")
-                        .at(2_000_000, ChronoUnit.MICROS);
-                sender.flush();
+                sender.table("defer_mismatch_a");
+                assertSchemaError(LineSenderSchemaException.Reason.INVALID_VALUE,
+                        () -> sender.stringColumn("px", "not-a-double"),
+                        "table=defer_mismatch_a", "column=px", "inputType=STRING",
+                        "targetType=DOUBLE", "detail=invalid numeric text");
+                sender.cancelRow();
 
-                SenderError err = errorFut.get(10, TimeUnit.SECONDS);
-                Assert.assertEquals(SenderError.Category.SCHEMA_MISMATCH, err.getCategory());
+                // A local row error never reached the server and therefore cannot roll back
+                // the valid deferred rows. The next committing batch publishes them.
+                sender.setDeferCommit(false);
+                sender.table("defer_mismatch_b")
+                        .longColumn("id", 10)
+                        .at(1_000_000_000_010L, ChronoUnit.MICROS);
+                sender.flush();
             }
 
             drainWalQueue();
 
-            // Original row in table_a survives; the mismatched row was not committed
             assertQuery("SELECT px FROM defer_mismatch_a")
                     .noLeakCheck()
                     .returnsOnce("px\n1.5\n");
-
-            // Deferred rows for table_b were rolled back together with the error
-            try {
-                assertQuery("SELECT count() FROM defer_mismatch_b")
-                        .noLeakCheck()
-                        .returnsOnce("count\n0\n");
-            } catch (AssertionError e) {
-                if (!e.getMessage().contains("defer_mismatch_b")) {
-                    throw e;
-                }
-            }
+            assertQuery("SELECT count(), min(id), max(id) FROM defer_mismatch_b")
+                    .noLeakCheck()
+                    .returnsOnce("count\tmin\tmax\n11\t0\t10\n");
         });
     }
 
@@ -3274,13 +3129,11 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     public void testEmptyColumnNameRejected() throws Exception {
         runInContext((port) -> {
             try (QwpWebSocketSender sender = connectWs(port)) {
-                sender.table("ws_empty_col_name")
-                        .longColumn("", 42)
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                Assert.fail("Expected LineSenderException for empty column name");
-            } catch (LineSenderException e) {
-                Assert.assertTrue("Error should mention empty column name: " + e.getMessage(),
-                        e.getMessage().contains("column name cannot be empty"));
+                sender.table("ws_empty_col_name");
+                assertSchemaError(LineSenderSchemaException.Reason.INVALID_VALUE,
+                        () -> sender.longColumn("", 42),
+                        "table=ws_empty_col_name", "inputType=LONG", "detail=invalid column name");
+                sender.cancelRow();
             }
         });
     }
@@ -3440,7 +3293,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             execute("CREATE TABLE " + table + " (col GEOHASH(5b), ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
+            assertServerRejection(port, table,
                     (s, t) -> {
                         QwpTableBuffer buf = s.getTableBuffer(t);
                         QwpTableBuffer.ColumnBuffer col = buf.getOrCreateColumn("col", TYPE_GEOHASH, true);
@@ -3495,16 +3348,10 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     public void testIntColumnIntoIPv4TranslatesNullSentinel() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_int_to_ipv4_null";
-            // The IPv4 arm of QwpWalAppender.appendToWalColumnar accepts
-            // qwpType == TYPE_INT as a legacy-client migration path (a
-            // client that predates TYPE_IPV4 can still ingest into an
-            // IPv4 column by sending int bits). But INT's NULL sentinel
-            // (Integer.MIN_VALUE = 0x80000000) is not IPv4's NULL
-            // sentinel (0 = 0.0.0.0). Without translation the bit
-            // pattern lands verbatim through putFixedColumn's no-bitmap
-            // memcpy fast path, and reads back as the valid address
-            // 128.0.0.0 -- silently changing what the user wrote (a
-            // NULL on the INT side) into a non-null IPv4 value.
+            // Schema mode converts INT input to target-native IPv4 wire data.
+            // Integer.MIN_VALUE is the INT source null sentinel, whereas IPv4
+            // stores null as zero. The client must translate the sentinel before
+            // append instead of sending the address 128.0.0.0.
             execute("CREATE TABLE " + table + " (addr IPv4, ts TIMESTAMP) "
                     + "TIMESTAMP(ts) PARTITION BY DAY WAL");
 
@@ -3551,7 +3398,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     + "SELECT val, ts, count(*) OVER (PARTITION BY val ORDER BY ts "
                     + "ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM lv_base");
 
-            assertCoercionError(port, "lv_target",
+            assertServerRejection(port, "lv_target",
                     (s, t) -> s.table(t).longColumn("val", 1).at(1_000_000, ChronoUnit.MICROS),
                     "cannot modify live view", "[view=lv_target]");
 
@@ -3633,10 +3480,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     public void testLongArrayRejected() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_long_arr";
-
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).longArray("arr", new long[]{1L, 2L, 3L}).at(1_000_000, ChronoUnit.MICROS),
-                    "long arrays are not supported", "only double arrays");
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                        () -> sender.table(table).longArray("arr", new long[]{1L, 2L, 3L}),
+                        "table=" + table, "column=arr", "inputType=LONG_ARRAY",
+                        "input conversion is not implemented");
+            }
         });
     }
 
@@ -3835,13 +3684,11 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     public void testNullColumnNameRejected() throws Exception {
         runInContext((port) -> {
             try (QwpWebSocketSender sender = connectWs(port)) {
-                sender.table("ws_null_col_name")
-                        .longColumn(null, 42)
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                Assert.fail("Expected LineSenderException for null column name");
-            } catch (LineSenderException e) {
-                Assert.assertTrue("Error should mention empty column name: " + e.getMessage(),
-                        e.getMessage().contains("column name cannot be empty"));
+                sender.table("ws_null_col_name");
+                assertSchemaError(LineSenderSchemaException.Reason.INVALID_VALUE,
+                        () -> sender.longColumn(null, 42),
+                        "table=ws_null_col_name", "inputType=LONG", "detail=invalid column name");
+                sender.cancelRow();
             }
         });
     }
@@ -4552,7 +4399,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testStringValueForDoubleColumnReturnsSchemaMismatchStatus() throws Exception {
+    public void testStringValueForDoubleColumnRejectedLocally() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_string_to_double_status";
 
@@ -4564,50 +4411,13 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
 
-            // NACK policy v2: the server-side parse failure is
-            // SCHEMA_MISMATCH -- deterministic under byte-identical replay,
-            // so the client latches a TERMINAL on the first NACK (no drop,
-            // no replay). The rejection arrives asynchronously through the
-            // error handler; the latched terminal surfaces loudly on close
-            // unless the handler already owns it.
-            CompletableFuture<SenderError> firstErrFut = new CompletableFuture<>();
-            CompletableFuture<SenderError> terminalFut = new CompletableFuture<>();
-            QwpWebSocketSender errSender = connectWs(port, err -> {
-                if (err.getAppliedPolicy() == SenderError.Policy.TERMINAL) {
-                    terminalFut.complete(err);
-                }
-                firstErrFut.complete(err);
-            });
-            SenderError.Category expectedTerminalCategory = null;
-            try {
-                errSender.table(table)
-                        .stringColumn("px", "not-a-double")
-                        .at(2_000_000, ChronoUnit.MICROS);
-                try {
-                    errSender.flush();
-                } catch (LineSenderServerException ignored) {
-                    // the I/O thread latched the terminal before flush()'s
-                    // own error poll ran
-                }
-
-                SenderError err = firstErrFut.get(10, TimeUnit.SECONDS);
-                Assert.assertEquals(SenderError.Category.SCHEMA_MISMATCH, err.getCategory());
-                Assert.assertSame(SenderError.Policy.TERMINAL, err.getAppliedPolicy());
-                String msg = err.getServerMessage();
-                Assert.assertNotNull("server message must not be null", msg);
-                Assert.assertTrue(
-                        "Expected parse details, got: " + msg,
-                        msg.contains("cannot parse DOUBLE from string")
-                                && msg.contains("not-a-double")
-                                && msg.contains("column=px]")
-                );
-                expectedTerminalCategory = SenderError.Category.SCHEMA_MISMATCH;
-            } finally {
-                assertRejectionTerminalOnClose(errSender, terminalFut, expectedTerminalCategory,
-                        "cannot parse DOUBLE from string", "not-a-double");
-            }
-
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table);
+                assertSchemaError(LineSenderSchemaException.Reason.INVALID_VALUE,
+                        () -> sender.stringColumn("px", "not-a-double"),
+                        "table=" + table, "column=px", "inputType=STRING",
+                        "targetType=DOUBLE", "detail=invalid numeric text");
+                sender.cancelRow();
                 sender.table(table)
                         .doubleColumn("px", 2.5)
                         .at(3_000_000, ChronoUnit.MICROS);
@@ -4778,9 +4588,14 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // Send a micros timestamp that overflows when converted to nanos.
             // The threshold is Long.MAX_VALUE / 1000 = 9_223_372_036_854_775.
             long overflowMicros = Long.MAX_VALUE / 1000 + 1;
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).longColumn("v", 1L).at(overflowMicros, ChronoUnit.MICROS),
-                    "timestamp overflow converting micros to nanos", "9223372036854776");
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table).longColumn("v", 1L);
+                assertSchemaError(LineSenderSchemaException.Reason.INVALID_VALUE,
+                        () -> sender.at(overflowMicros, ChronoUnit.MICROS),
+                        "table=" + table, "inputType=TIMESTAMP", "targetType=TIMESTAMP_NS",
+                        "detail=value is outside target timestamp range");
+                sender.cancelRow();
+            }
         });
     }
 
@@ -4881,6 +4696,68 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testTypedUuidPreservesCompletedRowAfterLocalError() throws Exception {
+        runInContext((port) -> {
+            String table = "schema_aware_sender_baseline";
+            execute("CREATE TABLE " + table + " (id UUID, marker STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            UUID uuid1 = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
+            UUID uuid2 = UUID.fromString("11111111-2222-3333-4444-555555555555");
+
+            // WebSocket requires the interval trigger to remain enabled. Keep it
+            // at its largest supported value, disable the byte
+            // trigger, and set the row trigger above this pre-flush row count.
+            // Thus row A remains buffered until the explicit flush below.
+            try (Sender sender = connectWs(
+                    port,
+                    2,
+                    0,
+                    TimeUnit.MILLISECONDS.toNanos(Integer.MAX_VALUE - 1L)
+            )) {
+                sender.table(table)
+                        .uuidColumn("id", uuid1.getLeastSignificantBits(), uuid1.getMostSignificantBits())
+                        .stringColumn("marker", "before-error")
+                        .at(1_000_000, ChronoUnit.MICROS);
+
+                try {
+                    sender.table(table)
+                            .stringColumn("marker", "rolled-back")
+                            .longColumn("id", 42);
+                    Assert.fail("Expected schema-directed UUID/LONG rejection");
+                } catch (LineSenderSchemaException e) {
+                    Assert.assertEquals(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE, e.getReason());
+                    Assert.assertTrue(e.getMessage(), e.getMessage().contains("table=" + table));
+                    Assert.assertTrue(e.getMessage(), e.getMessage().contains("column=id"));
+                    Assert.assertTrue(e.getMessage(), e.getMessage().contains("inputType=LONG"));
+                    Assert.assertTrue(e.getMessage(), e.getMessage().contains("targetType=UUID"));
+                }
+
+                // The failed setter cancels only its partial row. This flush must still
+                // publish the completed row buffered before the failure.
+                long firstFsn = sender.flushAndGetSequence();
+                Assert.assertTrue("First explicit flush must publish row A", firstFsn >= 0);
+
+                sender.table(table)
+                        .uuidColumn("id", uuid2.getLeastSignificantBits(), uuid2.getMostSignificantBits())
+                        .at(2_000_000, ChronoUnit.MICROS);
+                long secondFsn = sender.flushAndGetSequence();
+                Assert.assertTrue("Second explicit flush must publish a later frame", secondFsn > firstFsn);
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT id, marker, ts FROM " + table + " ORDER BY ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tmarker\tts
+                            a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\tbefore-error\t1970-01-01T00:00:01.000000Z
+                            11111111-2222-3333-4444-555555555555\t\t1970-01-01T00:00:02.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testUuid() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_uuid";
@@ -4963,18 +4840,123 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         });
     }
 
-    private static void assertCoercionError(
+    @Test
+    public void testFloatingToIntegerNaNDependsOnBlockNullBitmap() throws Exception {
+        runInContext(port -> {
+            String[] sources = {"float", "double"};
+            String[] targets = {"byte", "short", "int", "long"};
+            for (String source : sources) {
+                for (String target : targets) {
+                    String plain = source + "_nan_plain_" + target;
+                    String bitmap = source + "_nan_bitmap_" + target;
+                    execute("create table " + plain + " (v " + target + ", ts timestamp) timestamp(ts) partition by day wal");
+                    execute("create table " + bitmap + " (v " + target + ", ts timestamp) timestamp(ts) partition by day wal");
+                    sendLegacyNaN(port, plain, source, false, target.toUpperCase(Locale.ROOT));
+                    sendLegacyNaN(port, bitmap, source, true, target.toUpperCase(Locale.ROOT));
+                    drainWalQueue();
+                    String expected = target.equals("byte") || target.equals("short")
+                            ? "v\tn\n0\tfalse\n"
+                            : "v\tn\nnull\ttrue\n";
+                    assertQuery("select v, v is null n from " + plain).noLeakCheck().returnsOnce(expected);
+                    assertQuery("select count() from " + bitmap).noLeakCheck().returnsOnce("count\n0\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFloatingPositiveTwoToThe63ClampsToLongMax() throws Exception {
+        runInContext(port -> {
+            execute("create table float_long_edge (source symbol, v long, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create table double_long_edge (source symbol, v long, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create table float_long_above (v long, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create table double_long_above (v long, ts timestamp) timestamp(ts) partition by day wal");
+            sendLegacyFloatingLongEdges(port, "float_long_edge", true,
+                    Float.floatToRawIntBits(Math.nextDown(0x1.0p63f)), Float.floatToRawIntBits(0x1.0p63f));
+            sendLegacyFloatingLongEdges(port, "double_long_edge", false,
+                    Double.doubleToRawLongBits(Math.nextDown(0x1.0p63)), Double.doubleToRawLongBits(0x1.0p63));
+            sendLegacyFloatingLongAbove(port, "float_long_above", true,
+                    Float.floatToRawIntBits(Math.nextUp(0x1.0p63f)));
+            sendLegacyFloatingLongAbove(port, "double_long_above", false,
+                    Double.doubleToRawLongBits(Math.nextUp(0x1.0p63)));
+            drainWalQueue();
+            assertQuery("select source, v from float_long_edge order by source")
+                    .noLeakCheck().returnsOnce("source\tv\nat\t9223372036854775807\nbelow\t9223371487098961920\n");
+            assertQuery("select source, v from double_long_edge order by source")
+                    .noLeakCheck().returnsOnce("source\tv\nat\t9223372036854775807\nbelow\t9223372036854774784\n");
+            assertQuery("select count() from float_long_above").noLeakCheck().returnsOnce("count\n0\n");
+            assertQuery("select count() from double_long_above").noLeakCheck().returnsOnce("count\n0\n");
+        });
+    }
+
+    @Test
+    public void testSchemaFloatingNaNAndPositiveTwoToThe63Rules() throws Exception {
+        runInContext(port -> {
+            execute("create table schema_nan_public (v long, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create table schema_long_edge_public (marker long, v long, ts timestamp) timestamp(ts) partition by day wal");
+            try (QwpWebSocketSender sender = connectWs(port, 0, 0,
+                    TimeUnit.MILLISECONDS.toNanos(Integer.MAX_VALUE - 1L))) {
+                sender.table("schema_nan_public").floatColumn("v", Float.NaN)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+                sender.doubleColumn("v", Double.NaN).at(1_000_001, ChronoUnit.MICROS);
+                sender.at(1_000_002, ChronoUnit.MICROS);
+
+                sender.table("schema_long_edge_public").longColumn("marker", 1).longColumn("v", 1)
+                        .at(2_000_000, ChronoUnit.MICROS);
+                sender.longColumn("marker", 2);
+                assertSchemaError(LineSenderSchemaException.Reason.INVALID_VALUE,
+                        () -> sender.floatColumn("v", 0x1.0p63f),
+                        "table=schema_long_edge_public", "column=v", "inputType=FLOAT", "targetType=LONG");
+                sender.longColumn("marker", 3);
+                assertSchemaError(LineSenderSchemaException.Reason.INVALID_VALUE,
+                        () -> sender.doubleColumn("v", 0x1.0p63),
+                        "table=schema_long_edge_public", "column=v", "inputType=DOUBLE", "targetType=LONG");
+                sender.longColumn("marker", 4).longColumn("v", 4)
+                        .at(2_000_001, ChronoUnit.MICROS);
+                sender.flush();
+            }
+            drainWalQueue();
+            assertQuery("select v, v is null n from schema_nan_public order by ts")
+                    .noLeakCheck().returnsOnce("v\tn\nnull\ttrue\nnull\ttrue\nnull\ttrue\n");
+            assertQuery("select marker, v from schema_long_edge_public order by ts")
+                    .noLeakCheck().returnsOnce("marker\tv\n1\t1\n4\t4\n");
+        });
+    }
+
+    private static void assertLocalSchemaError(
+            int port,
+            String table,
+            java.util.function.BiConsumer<QwpWebSocketSender, String> write
+    ) {
+        try (QwpWebSocketSender sender = connectWs(port)) {
+            LineSenderSchemaException error = Assert.assertThrows(
+                    LineSenderSchemaException.class,
+                    () -> write.accept(sender, table));
+            Assert.assertTrue("unexpected local schema error reason: " + error.getMessage(),
+                    error.getReason() == LineSenderSchemaException.Reason.INVALID_VALUE
+                            || error.getReason() == LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE);
+            Assert.assertFalse(error.isRetryable());
+            Assert.assertTrue(error.getMessage(), error.getMessage().startsWith(
+                    "schema row error [reason=" + error.getReason().name()));
+            Assert.assertTrue(error.getMessage(), error.getMessage().contains("table=" + table));
+            Assert.assertTrue(error.getMessage(), error.getMessage().contains("column=v"));
+            Assert.assertTrue(error.getMessage(), error.getMessage().contains("inputType="));
+            Assert.assertTrue(error.getMessage(), error.getMessage().contains("targetType="));
+            Assert.assertTrue(error.getMessage(), error.getMessage().contains(", detail="));
+
+            sender.cancelRow();
+            sender.flush();
+        }
+    }
+
+    private static void assertServerRejection(
             int port, String table,
             java.util.function.BiConsumer<QwpWebSocketSender, String> sendAction,
-            String expectedMsgPart1, String expectedMsgPart2
+            String expectedServerMsgPart1, String expectedServerMsgPart2
     ) {
-        // A rejection that repeats under byte-identical replay - a wire-value/column-type
-        // mismatch, or a target that is not a writable table - is a terminal SCHEMA_MISMATCH:
-        // the client latches TERMINAL on the first strike, no replay. We assert both
-        // observables: the first handler dispatch carries the server's rejection message,
-        // and the latched terminal surfaces loudly -- through the handler or, when the
-        // producer thread's error poll wins the race, from flush()/close() (close()
-        // suppresses the double-signal once the handler owns the terminal).
+        // The client cannot decide server-owned constraints such as target writability.
+        // These cases must reach the server and return a terminal NACK.
         CompletableFuture<SenderError> firstErrFut = new CompletableFuture<>();
         CompletableFuture<SenderError> terminalFut = new CompletableFuture<>();
         SenderErrorHandler handler = err -> {
@@ -5014,15 +4996,16 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                         publishedFsn >= err.getFromFsn() && publishedFsn <= err.getToFsn());
             }
             String msg = err.getServerMessage();
-            Assert.assertTrue("Expected error containing '" + expectedMsgPart1 +
-                            "' and '" + expectedMsgPart2 + "' but got: " + msg,
-                    msg != null && msg.contains(expectedMsgPart1) && msg.contains(expectedMsgPart2));
+            Assert.assertTrue("Expected error containing '" + expectedServerMsgPart1 +
+                            "' and '" + expectedServerMsgPart2 + "' but got: " + msg,
+                    msg != null && msg.contains(expectedServerMsgPart1) && msg.contains(expectedServerMsgPart2));
             // only arm the close-time terminal assertion once the body
             // passed -- a body assertion propagating out of this try must
             // not be masked by close-path signals
             expectedTerminalCategory = terminalCategory;
         } finally {
-            assertRejectionTerminalOnClose(sender, terminalFut, expectedTerminalCategory, expectedMsgPart1, expectedMsgPart2);
+            assertRejectionTerminalOnClose(sender, terminalFut, expectedTerminalCategory,
+                    expectedServerMsgPart1, expectedServerMsgPart2);
         }
     }
 
@@ -5040,7 +5023,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String expectedMsgPart1,
             String expectedMsgPart2
     ) throws Exception {
-        assertCoercionError(port, table, sendAction, expectedMsgPart1, expectedMsgPart2);
+        assertServerRejection(port, table, sendAction, expectedMsgPart1, expectedMsgPart2);
 
         try (QwpWebSocketSender sender = connectWs(port)) {
             sender.table(table).longColumn("v", 2L).at(1_000_000L, ChronoUnit.MICROS);
@@ -5051,6 +5034,264 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 .noLeakCheck()
                 .expectSize()
                 .returns("v\n2\n");
+    }
+
+    private void assertLegacyBinaryRejectedAndPublicSenderRecovers(
+            int port,
+            String tableName,
+            String targetType,
+            byte[] payload
+    ) throws Exception {
+        WebSocketResponse response;
+        try (WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
+             QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+             QwpTableBuffer table = new QwpTableBuffer(tableName)) {
+            client.connect("127.0.0.1", port);
+            client.upgrade("/write/v4", null);
+            Assert.assertFalse(client.isQwpSchemaEnabled());
+            table.getOrCreateColumn("v", io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_BINARY, true)
+                    .addBinary(payload);
+            table.nextRow();
+            int length = encoder.encode(table);
+            Assert.assertEquals(0, Unsafe.getByte(encoder.getBuffer().getBufferPtr()
+                    + QwpConstants.HEADER_OFFSET_FLAGS) & QwpConstants.FLAG_SCHEMA);
+            QwpMessageCursor message = new QwpMessageCursor();
+            message.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
+            Assert.assertTrue(message.hasNextTable());
+            QwpTableBlockCursor wire = message.nextTable();
+            Assert.assertFalse(message.hasNextTable());
+            Assert.assertEquals(1, wire.getColumnCount());
+            Assert.assertEquals("v", wire.getColumnDef(0).getName());
+            Assert.assertEquals(QwpConstants.TYPE_BINARY, wire.getColumnDef(0).getTypeCode());
+            Assert.assertTrue(wire.hasNextRow());
+            wire.nextRow();
+            assertBytes(payload, wire.getStringColumn(0).getUtf8Value());
+            Assert.assertFalse(wire.hasNextRow());
+            client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
+            response = receiveResponse(client);
+        }
+        Assert.assertEquals(WebSocketResponse.STATUS_SCHEMA_MISMATCH, response.getStatus());
+        Assert.assertTrue(response.getErrorMessage(), response.getErrorMessage().contains(
+                "type coercion from BINARY to " + targetType + " is not supported"));
+        Assert.assertTrue(response.getErrorMessage(), response.getErrorMessage().contains("column=v"));
+        drainWalQueue();
+        assertQuery("select count() from " + tableName).noLeakCheck().returnsOnce("count\n0\n");
+
+        try (QwpWebSocketSender sender = connectWs(port)) {
+            sender.table(tableName).longColumn("marker", 1);
+            assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                    () -> sender.binaryColumn("v", payload),
+                    "table=" + tableName, "column=v", "inputType=BINARY", "targetType=" + targetType);
+            sender.longColumn("marker", 2).at(2_000_000, ChronoUnit.MICROS);
+            sender.flush();
+        }
+        drainWalQueue();
+        assertQuery("select marker from " + tableName).noLeakCheck().returnsOnce("marker\n2\n");
+    }
+
+    private static void assertBytes(byte[] expected, Utf8Sequence actual) {
+        Assert.assertNotNull(actual);
+        Assert.assertEquals(expected.length, actual.size());
+        for (int i = 0; i < expected.length; i++) {
+            Assert.assertEquals("byte " + i, expected[i], actual.byteAt(i));
+        }
+    }
+
+    private static void assertSchemaError(
+            LineSenderSchemaException.Reason reason,
+            Runnable action,
+            String... messageParts
+    ) {
+        LineSenderSchemaException error = Assert.assertThrows(LineSenderSchemaException.class, action::run);
+        Assert.assertEquals(reason, error.getReason());
+        Assert.assertFalse(error.isRetryable());
+        for (String messagePart : messageParts) {
+            Assert.assertTrue(error.getMessage(), error.getMessage().contains(messagePart));
+        }
+    }
+
+    private static void assertUnsupportedGeoHash(Runnable action, String table, String inputType) {
+        assertSchemaError(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE,
+                action,
+                "table=" + table, "column=v", "inputType=" + inputType, "targetType=GEOHASH");
+    }
+
+    private static WebSocketResponse receiveResponse(WebSocketClient client) {
+        AtomicReference<WebSocketResponse> result = new AtomicReference<>();
+        Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
+            @Override
+            public void onBinaryMessage(long ptr, int len) {
+                WebSocketResponse response = new WebSocketResponse();
+                Assert.assertTrue(response.readFrom(ptr, len, false));
+                result.set(response);
+            }
+
+            @Override
+            public void onClose(int code, String reason) {
+                Assert.fail("unexpected close [code=" + code + ", reason=" + reason + ']');
+            }
+        }, 5_000));
+        Assert.assertNotNull(result.get());
+        return result.get();
+    }
+
+    private static void sendLegacyNaN(int port, String tableName, String source, boolean withBitmap, String target) throws Exception {
+        long rawBits = source.equals("float") ? 0x7fc00000L : 0x7ff8000000000000L;
+        WebSocketResponse response;
+        try (WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
+             QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+             QwpTableBuffer table = new QwpTableBuffer(tableName)) {
+            client.connect("127.0.0.1", port);
+            client.upgrade("/write/v4", null);
+            Assert.assertFalse(client.isQwpSchemaEnabled());
+            byte wireType = source.equals("float") ? QwpConstants.TYPE_FLOAT : QwpConstants.TYPE_DOUBLE;
+            QwpTableBuffer.ColumnBuffer value = table.getOrCreateColumn("v", wireType, withBitmap);
+            if (source.equals("float")) {
+                value.addFloat(Float.intBitsToFloat((int) rawBits));
+            } else {
+                value.addDouble(Double.longBitsToDouble(rawBits));
+            }
+            table.nextRow();
+            if (withBitmap) {
+                table.nextRow();
+            }
+            int length = encoder.encode(table);
+            QwpTableBlockCursor wire = assertLegacyFloatingWire(encoder, length, wireType, withBitmap ? 2 : 1);
+            QwpFixedWidthColumnCursor cursor = wire.getFixedWidthColumn(0);
+            Assert.assertEquals(withBitmap, cursor.getNullBitmapAddress() != 0);
+            if (withBitmap) {
+                Assert.assertEquals(2, Unsafe.getByte(cursor.getNullBitmapAddress()) & 0xff);
+            }
+            Assert.assertEquals(1, cursor.getValueCount());
+            Assert.assertTrue(wire.hasNextRow());
+            wire.nextRow();
+            Assert.assertEquals(!withBitmap, wire.isColumnNull(0));
+            if (source.equals("float")) {
+                Assert.assertEquals((int) rawBits, Unsafe.getInt(cursor.getValuesAddress()));
+            } else {
+                Assert.assertEquals(rawBits, Unsafe.getLong(cursor.getValuesAddress()));
+            }
+            if (withBitmap) {
+                Assert.assertTrue(wire.hasNextRow());
+                wire.nextRow();
+                Assert.assertTrue(wire.isColumnNull(0));
+            }
+            Assert.assertFalse(wire.hasNextRow());
+            client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
+            response = receiveResponse(client);
+        }
+        if (withBitmap) {
+            Assert.assertEquals(WebSocketResponse.STATUS_SCHEMA_MISMATCH, response.getStatus());
+            Assert.assertTrue(response.getErrorMessage(), response.getErrorMessage().contains("double value NaN loses precision"));
+            Assert.assertTrue(response.getErrorMessage(), response.getErrorMessage().contains(target));
+            Assert.assertTrue(response.getErrorMessage(), response.getErrorMessage().contains("column=v"));
+        } else {
+            Assert.assertTrue(response.getErrorMessage(), response.isSuccess());
+        }
+    }
+
+    private static void sendLegacyFloatingLongEdges(
+            int port, String tableName, boolean floatSource, long belowBits, long atBits
+    ) throws Exception {
+        try (WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
+             QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+             QwpTableBuffer table = new QwpTableBuffer(tableName)) {
+            client.connect("127.0.0.1", port);
+            client.upgrade("/write/v4", null);
+            Assert.assertFalse(client.isQwpSchemaEnabled());
+            QwpTableBuffer.ColumnBuffer source = table.getOrCreateColumn("source", QwpConstants.TYPE_VARCHAR, true);
+            QwpTableBuffer.ColumnBuffer value = table.getOrCreateColumn("v",
+                    floatSource ? QwpConstants.TYPE_FLOAT : QwpConstants.TYPE_DOUBLE, false);
+            source.addString("below");
+            if (floatSource) value.addFloat(Float.intBitsToFloat((int) belowBits));
+            else value.addDouble(Double.longBitsToDouble(belowBits));
+            table.nextRow();
+            source.addString("at");
+            if (floatSource) value.addFloat(Float.intBitsToFloat((int) atBits));
+            else value.addDouble(Double.longBitsToDouble(atBits));
+            table.nextRow();
+            int length = encoder.encode(table);
+            QwpTableBlockCursor wire = assertLegacyFloatingWire(encoder, length,
+                    floatSource ? QwpConstants.TYPE_FLOAT : QwpConstants.TYPE_DOUBLE, 2, 1);
+            QwpFixedWidthColumnCursor raw = wire.getFixedWidthColumn(1);
+            Assert.assertEquals(0, raw.getNullBitmapAddress());
+            Assert.assertEquals(2, raw.getValueCount());
+            Assert.assertTrue(wire.hasNextRow());
+            wire.nextRow();
+            assertBytes(new byte[]{'b', 'e', 'l', 'o', 'w'}, wire.getStringColumn(0).getUtf8Value());
+            if (floatSource) Assert.assertEquals((int) belowBits, Unsafe.getInt(raw.getValuesAddress()));
+            else Assert.assertEquals(belowBits, Unsafe.getLong(raw.getValuesAddress()));
+            Assert.assertTrue(wire.hasNextRow());
+            wire.nextRow();
+            assertBytes(new byte[]{'a', 't'}, wire.getStringColumn(0).getUtf8Value());
+            if (floatSource) Assert.assertEquals((int) atBits, Unsafe.getInt(raw.getValuesAddress() + Float.BYTES));
+            else Assert.assertEquals(atBits, Unsafe.getLong(raw.getValuesAddress() + Double.BYTES));
+            Assert.assertFalse(wire.hasNextRow());
+            client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
+            WebSocketResponse response = receiveResponse(client);
+            Assert.assertTrue(response.getErrorMessage(), response.isSuccess());
+        }
+    }
+
+    private static void sendLegacyFloatingLongAbove(int port, String tableName, boolean floatSource, long bits) throws Exception {
+        WebSocketResponse response;
+        try (WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
+             QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+             QwpTableBuffer table = new QwpTableBuffer(tableName)) {
+            client.connect("127.0.0.1", port);
+            client.upgrade("/write/v4", null);
+            Assert.assertFalse(client.isQwpSchemaEnabled());
+            byte wireType = floatSource ? QwpConstants.TYPE_FLOAT : QwpConstants.TYPE_DOUBLE;
+            QwpTableBuffer.ColumnBuffer value = table.getOrCreateColumn("v", wireType, false);
+            if (floatSource) value.addFloat(Float.intBitsToFloat((int) bits));
+            else value.addDouble(Double.longBitsToDouble(bits));
+            table.nextRow();
+            int length = encoder.encode(table);
+            QwpTableBlockCursor wire = assertLegacyFloatingWire(encoder, length, wireType, 1);
+            QwpFixedWidthColumnCursor cursor = wire.getFixedWidthColumn(0);
+            Assert.assertEquals(0, cursor.getNullBitmapAddress());
+            Assert.assertEquals(1, cursor.getValueCount());
+            Assert.assertTrue(wire.hasNextRow());
+            wire.nextRow();
+            if (floatSource) Assert.assertEquals((int) bits, Unsafe.getInt(cursor.getValuesAddress()));
+            else Assert.assertEquals(bits, Unsafe.getLong(cursor.getValuesAddress()));
+            Assert.assertFalse(wire.hasNextRow());
+            client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
+            response = receiveResponse(client);
+        }
+        Assert.assertEquals(WebSocketResponse.STATUS_SCHEMA_MISMATCH, response.getStatus());
+        Assert.assertTrue(response.getErrorMessage(), response.getErrorMessage().contains("loses precision when converted to LONG"));
+        Assert.assertTrue(response.getErrorMessage(), response.getErrorMessage().contains("LONG"));
+        Assert.assertTrue(response.getErrorMessage(), response.getErrorMessage().contains("column=v"));
+    }
+
+    private static QwpTableBlockCursor assertLegacyFloatingWire(
+            QwpWebSocketEncoder encoder, int length, byte valueType, int rowCount, int valueColumnIndex
+    ) throws Exception {
+        Assert.assertEquals(0, Unsafe.getByte(encoder.getBuffer().getBufferPtr()
+                + QwpConstants.HEADER_OFFSET_FLAGS) & QwpConstants.FLAG_SCHEMA);
+        QwpMessageCursor message = new QwpMessageCursor();
+        message.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
+        Assert.assertTrue(message.hasNextTable());
+        QwpTableBlockCursor wire = message.nextTable();
+        Assert.assertFalse(message.hasNextTable());
+        Assert.assertEquals(valueColumnIndex + 1, wire.getColumnCount());
+        Assert.assertEquals(rowCount, wire.getRowCount());
+        if (valueColumnIndex == 1) {
+            Assert.assertEquals("source", wire.getColumnDef(0).getName());
+            Assert.assertEquals(QwpConstants.TYPE_VARCHAR, wire.getColumnDef(0).getTypeCode());
+        }
+        Assert.assertEquals("v", wire.getColumnDef(valueColumnIndex).getName());
+        Assert.assertEquals(valueType, wire.getColumnDef(valueColumnIndex).getTypeCode());
+        QwpFixedWidthColumnCursor value = wire.getFixedWidthColumn(valueColumnIndex);
+        Assert.assertEquals(valueType == QwpConstants.TYPE_FLOAT ? Float.BYTES : Double.BYTES, value.getValueSize());
+        return wire;
+    }
+
+    private static QwpTableBlockCursor assertLegacyFloatingWire(
+            QwpWebSocketEncoder encoder, int length, byte valueType, int rowCount
+    ) throws Exception {
+        return assertLegacyFloatingWire(encoder, length, valueType, rowCount, 0);
     }
 
     private static void assertThrowsContains(Runnable action, String expectedMsgPart) {

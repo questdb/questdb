@@ -24,6 +24,10 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.FactoryProvider;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.client.LineSenderServerException;
 import io.questdb.client.Sender;
 import io.questdb.client.SenderError;
@@ -49,6 +53,7 @@ import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -268,26 +273,44 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
     }
 
     protected void runInContext(QwpTestContext r) throws Exception {
-        runInContext(r, 65_536);
+        runInContext(r, 65_536, recvChunk, sendChunk, true, null);
+    }
+
+    protected void runInContext(QwpTestContext r, SecurityContext securityContext) throws Exception {
+        runInContext(r, 65_536, recvChunk, sendChunk, true, securityContext);
     }
 
     protected void runInContext(QwpTestContext r, int recvBufferSize) throws Exception {
-        runInContext(r, recvBufferSize, recvChunk);
+        runInContext(r, recvBufferSize, recvChunk, sendChunk, true, null);
     }
 
     protected void runInContext(QwpTestContext r, int recvBufferSize, int forceRecvFragmentationChunkSize) throws Exception {
-        runInContext(r, recvBufferSize, forceRecvFragmentationChunkSize, sendChunk, true);
+        runInContext(r, recvBufferSize, forceRecvFragmentationChunkSize, sendChunk, true, null);
     }
 
     protected void runInContext(QwpTestContext r, int recvBufferSize, int forceRecvFragmentationChunkSize, int forceSendFragmentationChunkSize) throws Exception {
-        runInContext(r, recvBufferSize, forceRecvFragmentationChunkSize, forceSendFragmentationChunkSize, true);
+        runInContext(r, recvBufferSize, forceRecvFragmentationChunkSize, forceSendFragmentationChunkSize, true, null);
+    }
+
+    protected void runInContext(QwpTestContext r, int recvBufferSize, int forceRecvFragmentationChunkSize, int forceSendFragmentationChunkSize, int sendBufferSize, SecurityContext securityContext) throws Exception {
+        runInContext(r, recvBufferSize, forceRecvFragmentationChunkSize, forceSendFragmentationChunkSize, true, securityContext, sendBufferSize);
     }
 
     protected void runInContextNoAutoCreate(QwpTestContext r) throws Exception {
-        runInContext(r, 65_536, recvChunk, sendChunk, false);
+        runInContext(r, 65_536, recvChunk, sendChunk, false, null);
     }
 
-    private void runInContext(QwpTestContext r, int recvBufferSize, int forceRecvFragmentationChunkSize, int forceSendFragmentationChunkSize, boolean autoCreateNewColumns) throws Exception {
+    private void runInContext(QwpTestContext r, int recvBufferSize, int forceRecvFragmentationChunkSize, int forceSendFragmentationChunkSize, boolean autoCreateNewColumns, SecurityContext securityContext) throws Exception {
+        runInContext(r, recvBufferSize, forceRecvFragmentationChunkSize, forceSendFragmentationChunkSize, autoCreateNewColumns, securityContext, -1);
+    }
+
+    private void runInContext(QwpTestContext r, int recvBufferSize, int forceRecvFragmentationChunkSize, int forceSendFragmentationChunkSize, boolean autoCreateNewColumns, SecurityContext securityContext, int sendBufferSize) throws Exception {
+        final FactoryProvider factoryProvider = securityContext == null ? null : new DefaultFactoryProvider() {
+            @Override
+            public @NotNull SecurityContextFactory getSecurityContextFactory() {
+                return (principalContext, interfaceId) -> securityContext;
+            }
+        };
         final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(
                 configuration,
                 new DefaultHttpContextConfiguration() {
@@ -302,6 +325,11 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
                     }
                 }
         ) {
+            @Override
+            public FactoryProvider getFactoryProvider() {
+                return factoryProvider == null ? super.getFactoryProvider() : factoryProvider;
+            }
+
             @Override
             public int getBindPort() {
                 return 0;
@@ -323,6 +351,11 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
             @Override
             public int getRecvBufferSize() {
                 return recvBufferSize;
+            }
+
+            @Override
+            public int getSendBufferSize() {
+                return sendBufferSize > 0 ? sendBufferSize : super.getSendBufferSize();
             }
         };
 

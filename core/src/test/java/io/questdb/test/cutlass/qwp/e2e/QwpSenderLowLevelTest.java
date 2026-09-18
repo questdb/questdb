@@ -47,19 +47,16 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = connectWs(port)) {
-                QwpTableBuffer buf = sender.getTableBuffer("test_date");
-                QwpTableBuffer.ColumnBuffer dateCol = buf.getOrCreateColumn("event_date", TYPE_DATE, false);
-
                 // Row 1: 2024-01-01 00:00:00 UTC (epoch millis)
-                dateCol.addLong(1_704_067_200_000L);
+                column(sender, "test_date", "event_date", TYPE_DATE, false).addLong(1_704_067_200_000L);
                 sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
 
                 // Row 2: 2024-06-15 12:30:00 UTC (epoch millis)
-                dateCol.addLong(1_718_454_600_000L);
+                column(sender, "test_date", "event_date", TYPE_DATE, false).addLong(1_718_454_600_000L);
                 sender.at(1_000_000_000_001L, ChronoUnit.MICROS);
 
                 // Row 3: 1970-01-01 00:00:00 UTC (epoch zero)
-                dateCol.addLong(0L);
+                column(sender, "test_date", "event_date", TYPE_DATE, false).addLong(0L);
                 sender.at(1_000_000_000_002L, ChronoUnit.MICROS);
             }
 
@@ -77,18 +74,14 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
     public void testNullLong256() throws Exception {
         runInContext((port) -> {
             try (QwpWebSocketSender sender = connectWs(port)) {
-                // Use fast-path API to send null LONG256 via null bitmap
-                QwpTableBuffer buf = sender.getTableBuffer("test_null_long256");
-                QwpTableBuffer.ColumnBuffer col = buf.getOrCreateColumn("value", TYPE_LONG256, true);
-
                 // Row 1: non-null value
-                col.addLong256(1L, 2L, 3L, 4L);
+                column(sender, "test_null_long256", "value", TYPE_LONG256, true).addLong256(1L, 2L, 3L, 4L);
                 sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
                 // Row 2: null
-                col.addNull();
+                column(sender, "test_null_long256", "value", TYPE_LONG256, true).addNull();
                 sender.at(1_000_000_000_001L, ChronoUnit.MICROS);
                 // Row 3: non-null value
-                col.addLong256(5L, 6L, 7L, 8L);
+                column(sender, "test_null_long256", "value", TYPE_LONG256, true).addLong256(5L, 6L, 7L, 8L);
                 sender.at(1_000_000_000_002L, ChronoUnit.MICROS);
             }
 
@@ -106,18 +99,14 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
     public void testNullTimestamp() throws Exception {
         runInContext((port) -> {
             try (QwpWebSocketSender sender = connectWs(port)) {
-                // Use fast-path API to send null timestamp via null bitmap
-                QwpTableBuffer buf = sender.getTableBuffer("test_null_ts");
-                QwpTableBuffer.ColumnBuffer tsCol = buf.getOrCreateColumn("event_time", TYPE_TIMESTAMP, true);
-
                 // Row 1: non-null timestamp
-                tsCol.addLong(1_609_459_200_000_000L);
+                column(sender, "test_null_ts", "event_time", TYPE_TIMESTAMP, true).addLong(1_609_459_200_000_000L);
                 sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
                 // Row 2: null timestamp
-                tsCol.addNull();
+                column(sender, "test_null_ts", "event_time", TYPE_TIMESTAMP, true).addNull();
                 sender.at(1_000_000_000_001L, ChronoUnit.MICROS);
                 // Row 3: non-null timestamp
-                tsCol.addLong(1_609_459_200_000_001L);
+                column(sender, "test_null_ts", "event_time", TYPE_TIMESTAMP, true).addLong(1_609_459_200_000_001L);
                 sender.at(1_000_000_000_002L, ChronoUnit.MICROS);
             }
 
@@ -135,18 +124,16 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
     public void testNullUuid() throws Exception {
         runInContext((port) -> {
             try (QwpWebSocketSender sender = connectWs(port)) {
-                // Use fast-path API to send null UUID via null bitmap
-                QwpTableBuffer buf = sender.getTableBuffer("test_null_uuid");
-                QwpTableBuffer.ColumnBuffer col = buf.getOrCreateColumn("id", TYPE_UUID, true);
-
                 // Row 1: non-null UUID
-                col.addUuid(0x0123456789ABCDEFL, 0xFEDCBA9876543210L);
+                column(sender, "test_null_uuid", "id", TYPE_UUID, true)
+                        .addUuid(0x0123456789ABCDEFL, 0xFEDCBA9876543210L);
                 sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
                 // Row 2: null UUID
-                col.addNull();
+                column(sender, "test_null_uuid", "id", TYPE_UUID, true).addNull();
                 sender.at(1_000_000_000_001L, ChronoUnit.MICROS);
                 // Row 3: non-null UUID
-                col.addUuid(0xAAAABBBBCCCCDDDDL, 0x1111222233334444L);
+                column(sender, "test_null_uuid", "id", TYPE_UUID, true)
+                        .addUuid(0xAAAABBBBCCCCDDDDL, 0x1111222233334444L);
                 sender.at(1_000_000_000_002L, ChronoUnit.MICROS);
             }
 
@@ -169,25 +156,22 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = connectWs(port)) {
-                QwpTableBuffer buf = sender.getTableBuffer("omit_date");
-                QwpTableBuffer.ColumnBuffer col = buf.getOrCreateColumn("col", TYPE_DATE, true);
-
                 // 2024-01-01T00:00:00Z in millis
-                col.addLong(1_704_067_200_000L);
+                column(sender, "omit_date", "col", TYPE_DATE, true).addLong(1_704_067_200_000L);
                 sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
 
-                col.addNull();
+                column(sender, "omit_date", "col", TYPE_DATE, true).addNull();
                 sender.at(1_000_000_000_001L, ChronoUnit.MICROS);
 
                 // 2023-06-15T00:00:00Z in millis
-                col.addLong(1_686_787_200_000L);
+                column(sender, "omit_date", "col", TYPE_DATE, true).addLong(1_686_787_200_000L);
                 sender.at(1_000_000_000_002L, ChronoUnit.MICROS);
 
-                col.addNull();
+                column(sender, "omit_date", "col", TYPE_DATE, true).addNull();
                 sender.at(1_000_000_000_003L, ChronoUnit.MICROS);
 
                 // 2025-12-31T00:00:00Z in millis
-                col.addLong(1_767_139_200_000L);
+                column(sender, "omit_date", "col", TYPE_DATE, true).addLong(1_767_139_200_000L);
                 sender.at(1_000_000_000_004L, ChronoUnit.MICROS);
             }
 
@@ -210,22 +194,19 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = connectWs(port)) {
-                QwpTableBuffer buf = sender.getTableBuffer("omit_geohash");
-                QwpTableBuffer.ColumnBuffer col = buf.getOrCreateColumn("col", TYPE_GEOHASH, true);
-
-                col.addGeoHash(0b10110L, 5);
+                column(sender, "omit_geohash", "col", TYPE_GEOHASH, true).addGeoHash(0b10110L, 5);
                 sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
 
-                col.addNull();
+                column(sender, "omit_geohash", "col", TYPE_GEOHASH, true).addNull();
                 sender.at(1_000_000_000_001L, ChronoUnit.MICROS);
 
-                col.addGeoHash(0b11111L, 5);
+                column(sender, "omit_geohash", "col", TYPE_GEOHASH, true).addGeoHash(0b11111L, 5);
                 sender.at(1_000_000_000_002L, ChronoUnit.MICROS);
 
-                col.addNull();
+                column(sender, "omit_geohash", "col", TYPE_GEOHASH, true).addNull();
                 sender.at(1_000_000_000_003L, ChronoUnit.MICROS);
 
-                col.addGeoHash(0b01010L, 5);
+                column(sender, "omit_geohash", "col", TYPE_GEOHASH, true).addGeoHash(0b01010L, 5);
                 sender.at(1_000_000_000_004L, ChronoUnit.MICROS);
             }
 
@@ -237,5 +218,17 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
                     .noLeakCheck()
                     .returnsOnce("count\n3\n");
         });
+    }
+
+    private static QwpTableBuffer.ColumnBuffer column(
+            QwpWebSocketSender sender,
+            String table,
+            String name,
+            byte type,
+            boolean useNullBitmap
+    ) {
+        // Schema discovery may replace the sender's active table buffer after a
+        // completed row, so low-level tests reacquire it for each row.
+        return sender.getTableBuffer(table).getOrCreateColumn(name, type, useNullBitmap);
     }
 }
