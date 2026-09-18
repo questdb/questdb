@@ -29,6 +29,8 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.lv.LiveViewRefreshSqlExecutionContext;
+import io.questdb.cairo.mv.MatViewRefreshSqlExecutionContext;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewGraph;
 import io.questdb.griffin.SqlCompiler;
@@ -282,6 +284,24 @@ public class ViewAuditTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOnlyJobContextsAreBackgroundJobs() throws Exception {
+        assertMemoryLeak(() -> {
+            // Enterprise records nothing for a read made under a context that says it belongs to a
+            // job, so the flag has to be set on the refresh contexts and on nothing a principal
+            // runs queries under. The WAL apply context is package-private; the Enterprise tests
+            // cover it through the rows it does not record.
+            assertFalse(sqlExecutionContext.isBackgroundJob());
+            try (
+                    MatViewRefreshSqlExecutionContext matViewContext = new MatViewRefreshSqlExecutionContext(engine, 1);
+                    LiveViewRefreshSqlExecutionContext liveViewContext = new LiveViewRefreshSqlExecutionContext(engine, 1)
+            ) {
+                assertTrue(matViewContext.isBackgroundJob());
+                assertTrue(liveViewContext.isBackgroundJob());
+            }
+        });
+    }
+
+    @Test
     public void testQueryReadingNoAuditedViewRecordsNothing() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (ts TIMESTAMP, symbol SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -447,13 +467,16 @@ public class ViewAuditTest extends AbstractCairoTest {
             execute("CREATE TABLE dest (s SYMBOL, l LONG)");
             markViewAudited("v");
             assertRecordsOneAuditOf("v", "UPDATE dest SET l = 1 FROM v WHERE dest.s = v.s");
+            // A sub-query is the one way a WAL table's UPDATE can read a view, so it has to carry
+            // the audit as well as the FROM clause does.
+            assertRecordsOneAuditOf("v", "UPDATE dest SET l = 1 WHERE l < (SELECT count() FROM v)");
         });
     }
 
     private static void assertRecordsNoAudit(String sql) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             final ExecutionModel model = compiler.generateExecutionModel(sql, sqlExecutionContext);
-            final IQueryModel queryModel = model.getQueryModel();
+            final IQueryModel queryModel = readModelOf(model);
             assertNotNull("no query model for [" + sql + "]", queryModel);
             assertEquals("wrong audit count for [" + sql + "]", 0, queryModel.getViewAudits().size());
         }
@@ -462,7 +485,7 @@ public class ViewAuditTest extends AbstractCairoTest {
     private static void assertRecordsOneAuditOf(String viewName, String sql) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             final ExecutionModel model = compiler.generateExecutionModel(sql, sqlExecutionContext);
-            final IQueryModel queryModel = model.getQueryModel();
+            final IQueryModel queryModel = readModelOf(model);
             assertNotNull("no query model for [" + sql + "]", queryModel);
             assertEquals("wrong audit count for [" + sql + "]", 1, queryModel.getViewAudits().size());
             final ViewAuditModel audit = queryModel.getViewAudits().getQuick(0);
@@ -515,6 +538,16 @@ public class ViewAuditTest extends AbstractCairoTest {
             ViewDefinition.readFrom(definition, reader, path, path.size(), viewToken);
         }
         return definition;
+    }
+
+    /**
+     * The model code generation compiles into the cursor that reads the statement's rows, which is
+     * the model Enterprise takes the audits from. An UPDATE compiles its nested model: the top one
+     * only carries the SET expressions.
+     */
+    private static IQueryModel readModelOf(ExecutionModel model) {
+        final IQueryModel queryModel = model.getQueryModel();
+        return model.getModelType() == ExecutionModel.UPDATE ? queryModel.getNestedModel() : queryModel;
     }
 
     private static void writeDefinitionFile(TableToken viewToken, ViewDefinition definition) {

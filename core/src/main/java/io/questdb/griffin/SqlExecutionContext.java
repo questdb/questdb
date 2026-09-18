@@ -269,6 +269,20 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void initNow();
 
+    /**
+     * Returns true for the contexts the engine's own jobs run SQL under: a materialized view
+     * refresh, a live view refresh and WAL apply. No principal is reading data through such a
+     * context. The job runs the query on the engine's behalf, under a security context that names
+     * no real user, so view auditing records nothing for it: a row would credit the read to
+     * nobody, once per refresh, or once per node that replays the WAL.
+     * <p>
+     * Unlike {@link #isMetadataProbe()}, which a caller raises around a single cursor open, this
+     * is a fixed property of the context's type.
+     */
+    default boolean isBackgroundJob() {
+        return false;
+    }
+
     boolean isCacheHit();
 
     // Returns false only for materialized view refresh contexts when the
