@@ -24,10 +24,10 @@
 
 package io.questdb.cairo.lv;
 
+import io.questdb.cairo.ColumnTypes;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 /**
@@ -46,6 +46,7 @@ public final class LiveViewCheckpointFunctionIdentity {
     private static final int STRING_FIELD_COUNT = 5;
     private final String canonicalWindowName;
     private final byte[] encoded;
+    private final byte[] encodedKeySchema;
     private final String factorySignature;
     private final String orderSignature;
     private final int outputPosition;
@@ -60,6 +61,19 @@ public final class LiveViewCheckpointFunctionIdentity {
             @NotNull CharSequence orderSignature,
             @NotNull CharSequence stateCodecIdentity
     ) {
+        this(canonicalWindowName, factorySignature, outputPosition, partitionSignature,
+                orderSignature, stateCodecIdentity, null);
+    }
+
+    public LiveViewCheckpointFunctionIdentity(
+            @NotNull CharSequence canonicalWindowName,
+            @NotNull CharSequence factorySignature,
+            int outputPosition,
+            @NotNull CharSequence partitionSignature,
+            @NotNull CharSequence orderSignature,
+            @NotNull CharSequence stateCodecIdentity,
+            @Nullable ColumnTypes checkpointKeyColumnTypes
+    ) {
         if (outputPosition < 0) {
             throw new IllegalArgumentException("negative live view checkpoint function output position");
         }
@@ -73,6 +87,7 @@ public final class LiveViewCheckpointFunctionIdentity {
             throw new IllegalArgumentException("live view checkpoint function signature or codec identity is empty");
         }
         this.encoded = encode();
+        this.encodedKeySchema = LiveViewCheckpointMetadata.encodeKeySchema(checkpointKeyColumnTypes);
         LiveViewCheckpointMetadata.validateByteArrayLength(encoded.length, "function identity");
     }
 
@@ -81,7 +96,7 @@ public final class LiveViewCheckpointFunctionIdentity {
     }
 
     /**
-     * Returns an owned copy suitable for passing to a persistent root builder.
+     * Returns a defensive copy of the encoded identity.
      */
     public byte[] getEncoded() {
         return Arrays.copyOf(encoded, encoded.length);
@@ -107,29 +122,48 @@ public final class LiveViewCheckpointFunctionIdentity {
         return stateCodecIdentity;
     }
 
+    /**
+     * Borrows the compiler-owned identity bytes. The compiled function owns this array
+     * for its complete lifetime; package-internal checkpoint code must not mutate it or
+     * retain it beyond the function/compiled-factory lifetime.
+     */
+    byte[] borrowEncoded() {
+        return encoded;
+    }
+
+    /**
+     * Borrows the compiler-owned partition-key schema. The compiled function owns this
+     * array for its complete lifetime; package-internal checkpoint code must not mutate
+     * it or retain it beyond the function/compiled-factory lifetime.
+     */
+    byte[] borrowEncodedKeySchema() {
+        return encodedKeySchema;
+    }
+
     private byte[] encode() {
-        final byte[][] fields = {
-                canonicalWindowName.getBytes(StandardCharsets.UTF_8),
-                factorySignature.getBytes(StandardCharsets.UTF_8),
-                partitionSignature.getBytes(StandardCharsets.UTF_8),
-                orderSignature.getBytes(StandardCharsets.UTF_8),
-                stateCodecIdentity.getBytes(StandardCharsets.UTF_8)
-        };
         long size = 3L * Integer.BYTES + (long) STRING_FIELD_COUNT * Integer.BYTES;
-        for (int i = 0; i < fields.length; i++) {
-            size += fields[i].length;
-        }
+        size += LiveViewCheckpointMetadata.utf8Bytes(canonicalWindowName);
+        size += LiveViewCheckpointMetadata.utf8Bytes(factorySignature);
+        size += LiveViewCheckpointMetadata.utf8Bytes(partitionSignature);
+        size += LiveViewCheckpointMetadata.utf8Bytes(orderSignature);
+        size += LiveViewCheckpointMetadata.utf8Bytes(stateCodecIdentity);
         if (size > Integer.MAX_VALUE) {
             throw new IllegalArgumentException("live view checkpoint function identity is too large");
         }
-        final ByteBuffer buffer = ByteBuffer.allocate((int) size);
-        buffer.putInt(MAGIC);
-        buffer.putInt(FORMAT_VERSION);
-        buffer.putInt(outputPosition);
-        for (int i = 0; i < fields.length; i++) {
-            buffer.putInt(fields[i].length);
-            buffer.put(fields[i]);
-        }
-        return buffer.array();
+        final byte[] encoded = new byte[(int) size];
+        int offset = LiveViewCheckpointMetadata.putInt(encoded, 0, MAGIC);
+        offset = LiveViewCheckpointMetadata.putInt(encoded, offset, FORMAT_VERSION);
+        offset = LiveViewCheckpointMetadata.putInt(encoded, offset, outputPosition);
+        offset = putField(encoded, offset, canonicalWindowName);
+        offset = putField(encoded, offset, factorySignature);
+        offset = putField(encoded, offset, partitionSignature);
+        offset = putField(encoded, offset, orderSignature);
+        putField(encoded, offset, stateCodecIdentity);
+        return encoded;
+    }
+
+    private static int putField(byte[] sink, int offset, CharSequence value) {
+        offset = LiveViewCheckpointMetadata.putInt(sink, offset, LiveViewCheckpointMetadata.utf8Bytes(value));
+        return LiveViewCheckpointMetadata.putUtf8(sink, offset, value);
     }
 }

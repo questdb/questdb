@@ -25,20 +25,46 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.util.Arrays;
 
 /**
  * Logarithmic reader for a generation-pinned persistent partition map.
  */
 public class LiveViewCheckpointPartitionMapReader implements Closeable {
 
+    /**
+     * Key and scalar image bytes the decode pool of one node may keep once
+     * {@link #detach()} ends an operation; a pool holding more drops every array.
+     * <p>
+     * While an operation runs, a pool keeps every array it lends: for every width, the
+     * most arrays of that width a single page needed. A seal probes the previous root
+     * in the order it walks its own keys rather than in key order, so it decodes a
+     * different leaf on nearly every lookup, and the pool settles at the union of every
+     * leaf's widths, which is more than any one page needs. A limit that applied within
+     * the operation would make every decode past it allocate, so the pool only answers
+     * to this limit when the operation ends: a view whose union exceeds it allocates
+     * that union once per operation rather than on every decode.
+     * <p>
+     * The readers of a refresh worker live as long as the worker, so this, and not the
+     * widths of the views the worker served before, bounds what an idle node keeps. A
+     * seal over 32,768 keys of 32 to 512 characters pools about 8 MiB in one node.
+     */
+    public static final long MAX_NODE_RETAINED_BYTES = 16_777_216;
+    /**
+     * State page references the decode pool of one node may keep once {@link #detach()}
+     * ends an operation, about 15 MiB with their array slots. A ring view over 1,024 keys
+     * whose chunk counts spread from 1 to 256 pools about 214,000 references in one node.
+     * {@link #MAX_NODE_RETAINED_BYTES} describes the policy.
+     */
+    public static final long MAX_NODE_RETAINED_STATE_PAGE_REFS = 262_144;
     /**
      * Levels the memo covers. Every tree a production capacity builds is far
      * shallower, but the writer accepts capacities as low as two, where a split
@@ -79,10 +105,10 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
      * outlive it - {@link #find} drops the memo as soon as another root is asked
      * for.
      */
-    private LiveViewCheckpointPartitionMapNode[] nodeCache = new LiveViewCheckpointPartitionMapNode[0];
-    private long[] nodeCacheOffset = new long[0];
-    private long[] nodeCacheSegmentId = new long[0];
-    private LiveViewCheckpointPartitionMapNode[] nodePool = new LiveViewCheckpointPartitionMapNode[0];
+    private final ObjList<LiveViewCheckpointPartitionMapNode> nodeCache = new ObjList<>();
+    private final LongList nodeCacheOffset = new LongList();
+    private final LongList nodeCacheSegmentId = new LongList();
+    private final ObjList<LiveViewCheckpointPartitionMapNode> nodePool = new ObjList<>();
     private int segmentClock;
 
     public LiveViewCheckpointPartitionMapReader(@NotNull CairoConfiguration configuration) {
@@ -100,14 +126,17 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
             segmentIds[i] = -1;
         }
         clearNodeCache();
-        Arrays.fill(nodeCache, null);
+        nodeCache.clear();
+        nodePool.clear();
         Misc.free(checkpointsDir);
     }
 
     /**
      * Unmaps every cached metadata segment while keeping the readers themselves,
      * so a reader that outlives one restore holds no mapping into files a later
-     * retire, repair or compaction deletes.
+     * retire, repair or compaction deletes. An owner that outlives its operations
+     * calls this when each one ends, so it also trims the decode pools of every node
+     * and the width caches of the scratch entry to what an idle reader may keep.
      */
     public void detach() {
         for (int i = 0; i < SEGMENT_CACHE_SIZE; i++) {
@@ -118,6 +147,15 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
         }
         segmentClock = 0;
         clearNodeCache();
+        deepNode.trimDecodePools();
+        navNode.trimDecodePools();
+        for (int i = 0, n = nodeCache.size(); i < n; i++) {
+            nodeCache.getQuick(i).trimDecodePools();
+        }
+        for (int i = 0, n = nodePool.size(); i < n; i++) {
+            nodePool.getQuick(i).trimDecodePools();
+        }
+        scratchEntry.trimWidthCaches();
     }
 
     public boolean find(
@@ -159,6 +197,49 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
         }
     }
 
+    boolean adjustStateRefCounts(
+            @NotNull LiveViewCheckpointPageRef rootRef,
+            @NotNull LiveViewCheckpointMutationArena arena,
+            int mutationIndex,
+            @NotNull io.questdb.std.LongList counts,
+            int delta
+    ) {
+        if (rootRef.isNull()) {
+            return false;
+        }
+        long segmentId = rootRef.getSegmentId();
+        long offset = rootRef.getOffset();
+        int length = rootRef.getLength();
+        if (boundRootSegmentId != segmentId || boundRootOffset != offset) {
+            clearNodeCache();
+            boundRootSegmentId = segmentId;
+            boundRootOffset = offset;
+        }
+        int depth = 0;
+        while (true) {
+            final LiveViewCheckpointPartitionMapNode node = decodedNode(segmentId, offset, length, depth++);
+            if (node.isLeaf()) {
+                final int index = node.find(arena, mutationIndex);
+                if (index < 0) {
+                    return false;
+                }
+                for (int i = 0, n = node.statePageRefs[index].length; i < n; i++) {
+                    LiveViewCheckpointMetadata.adjustSegmentUseCount(
+                            counts,
+                            node.statePageRefs[index][i].getSegmentId(),
+                            delta
+                    );
+                }
+                return true;
+            }
+            final int child = node.childIndex(arena, mutationIndex);
+            final LiveViewCheckpointPageRef ref = node.childRefs[child];
+            segmentId = ref.getSegmentId();
+            offset = ref.getOffset();
+            length = ref.getLength();
+        }
+    }
+
     /**
      * @return how many pages this reader has decoded since it was constructed. A
      * descent that the memo cannot serve decodes one page per level, so this is what
@@ -168,6 +249,64 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
     @TestOnly
     public long getDecodedPageCount() {
         return decodedPageCount;
+    }
+
+    /**
+     * @return image bytes of the largest single key or scalar pool this reader keeps for
+     * reuse, headers excluded: the decode pool of one node, or the key or the scalar width
+     * cache of its scratch entry
+     */
+    @TestOnly
+    public long getLargestRetainedBufferBytesForTest() {
+        long bytes = Math.max(
+                Math.max(deepNode.getRetainedDecodedBytesForTest(), navNode.getRetainedDecodedBytesForTest()),
+                scratchEntry.getLargestRetainedBufferBytesForTest()
+        );
+        for (int i = 0, n = nodeCache.size(); i < n; i++) {
+            bytes = Math.max(bytes, nodeCache.getQuick(i).getRetainedDecodedBytesForTest());
+        }
+        for (int i = 0, n = nodePool.size(); i < n; i++) {
+            bytes = Math.max(bytes, nodePool.getQuick(i).getRetainedDecodedBytesForTest());
+        }
+        return bytes;
+    }
+
+    /**
+     * @return image bytes of every key and scalar array this reader keeps for reuse,
+     * headers excluded: the decode pools of every node it owns and the width caches of
+     * its scratch entry
+     */
+    @TestOnly
+    public long getRetainedBufferBytesForTest() {
+        long bytes = deepNode.getRetainedDecodedBytesForTest()
+                + navNode.getRetainedDecodedBytesForTest()
+                + scratchEntry.getRetainedBufferBytesForTest();
+        for (int i = 0, n = nodeCache.size(); i < n; i++) {
+            bytes += nodeCache.getQuick(i).getRetainedDecodedBytesForTest();
+        }
+        for (int i = 0, n = nodePool.size(); i < n; i++) {
+            bytes += nodePool.getQuick(i).getRetainedDecodedBytesForTest();
+        }
+        return bytes;
+    }
+
+    /**
+     * @return state page references of every reference array this reader keeps for
+     * reuse: the decode pools of every node it owns and the reference cache of its
+     * scratch entry
+     */
+    @TestOnly
+    public long getRetainedStatePageRefCountForTest() {
+        long refs = deepNode.getRetainedDecodedStatePageRefCountForTest()
+                + navNode.getRetainedDecodedStatePageRefCountForTest()
+                + scratchEntry.getRetainedStatePageRefCountForTest();
+        for (int i = 0, n = nodeCache.size(); i < n; i++) {
+            refs += nodeCache.getQuick(i).getRetainedDecodedStatePageRefCountForTest();
+        }
+        for (int i = 0, n = nodePool.size(); i < n; i++) {
+            refs += nodePool.getQuick(i).getRetainedDecodedStatePageRefCountForTest();
+        }
+        return refs;
     }
 
     public void iterateAll(@NotNull LiveViewCheckpointPageRef rootRef, @NotNull Visitor visitor) {
@@ -213,9 +352,23 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
         decodedPageCount++;
     }
 
+    void openAndDecode(
+            long segmentId,
+            long offset,
+            int length,
+            LiveViewCheckpointPartitionMapNode node,
+            LiveViewCheckpointMutationArena arena,
+            LiveViewCheckpointPageRefPool pageRefPool
+    ) {
+        final LiveViewCheckpointMetaSegmentReader reader = readerFor(segmentId);
+        reader.openPageAt(offset, length);
+        node.decode(reader, arena, pageRefPool);
+        decodedPageCount++;
+    }
+
     private void clearNodeCache() {
-        Arrays.fill(nodeCacheSegmentId, -1);
-        Arrays.fill(nodeCacheOffset, -1);
+        nodeCacheSegmentId.setAll(nodeCacheSegmentId.size(), -1);
+        nodeCacheOffset.setAll(nodeCacheOffset.size(), -1);
         boundRootSegmentId = -1;
         boundRootOffset = -1;
     }
@@ -232,34 +385,27 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
             return deepNode;
         }
         ensureNodeCacheCapacity(depth + 1);
-        if (nodeCacheSegmentId[depth] == segmentId && nodeCacheOffset[depth] == offset) {
-            return nodeCache[depth];
-        }
-        if (nodeCache[depth] == null) {
-            nodeCache[depth] = new LiveViewCheckpointPartitionMapNode();
+        final LiveViewCheckpointPartitionMapNode cached = nodeCache.getQuick(depth);
+        if (nodeCacheSegmentId.getQuick(depth) == segmentId && nodeCacheOffset.getQuick(depth) == offset) {
+            return cached;
         }
         // A rejected page leaves the slot holding a half-decoded node, so drop the
         // slot's identity before the decode rather than let a throw leave a memo
         // entry claiming a page it does not hold.
-        nodeCacheSegmentId[depth] = -1;
-        nodeCacheOffset[depth] = -1;
-        openAndDecode(segmentId, offset, length, nodeCache[depth]);
-        nodeCacheSegmentId[depth] = segmentId;
-        nodeCacheOffset[depth] = offset;
-        return nodeCache[depth];
+        nodeCacheSegmentId.setQuick(depth, -1);
+        nodeCacheOffset.setQuick(depth, -1);
+        openAndDecode(segmentId, offset, length, cached);
+        nodeCacheSegmentId.setQuick(depth, segmentId);
+        nodeCacheOffset.setQuick(depth, offset);
+        return cached;
     }
 
     private void ensureNodeCacheCapacity(int capacity) {
-        if (capacity <= nodeCache.length) {
-            return;
+        while (nodeCache.size() < capacity) {
+            nodeCache.add(new LiveViewCheckpointPartitionMapNode());
+            nodeCacheOffset.add(-1);
+            nodeCacheSegmentId.add(-1);
         }
-        final int newCapacity = Math.min(MAX_MEMO_DEPTH, Math.max(capacity, Math.max(4, nodeCache.length * 2)));
-        final int oldLength = nodeCache.length;
-        nodeCache = Arrays.copyOf(nodeCache, newCapacity);
-        nodeCacheOffset = Arrays.copyOf(nodeCacheOffset, newCapacity);
-        nodeCacheSegmentId = Arrays.copyOf(nodeCacheSegmentId, newCapacity);
-        Arrays.fill(nodeCacheOffset, oldLength, newCapacity, -1);
-        Arrays.fill(nodeCacheSegmentId, oldLength, newCapacity, -1);
     }
 
     private void iterate(LiveViewCheckpointPageRef ref, Visitor visitor, int depth) {
@@ -278,15 +424,10 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
     }
 
     private LiveViewCheckpointPartitionMapNode nodeAt(int depth) {
-        if (depth >= nodePool.length) {
-            final LiveViewCheckpointPartitionMapNode[] grown = new LiveViewCheckpointPartitionMapNode[depth + 1];
-            System.arraycopy(nodePool, 0, grown, 0, nodePool.length);
-            nodePool = grown;
+        while (nodePool.size() <= depth) {
+            nodePool.add(new LiveViewCheckpointPartitionMapNode());
         }
-        if (nodePool[depth] == null) {
-            nodePool[depth] = new LiveViewCheckpointPartitionMapNode();
-        }
-        return nodePool[depth];
+        return nodePool.getQuick(depth);
     }
 
     private LiveViewCheckpointMetaSegmentReader readerFor(long segmentId) {

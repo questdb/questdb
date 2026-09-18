@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -51,18 +52,40 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
     private static final RecordMetadata METADATA;
     protected final int tokenPosition;
     protected final TableToken viewToken;
+    private final boolean isTokenRebindingEnabled;
     private final ShowCreateLiveViewCursor cursor = new ShowCreateLiveViewCursor();
 
     public ShowCreateLiveViewRecordCursorFactory(TableToken viewToken, int tokenPosition) {
+        this(viewToken, tokenPosition, true);
+    }
+
+    ShowCreateLiveViewRecordCursorFactory(
+            TableToken viewToken,
+            int tokenPosition,
+            boolean isTokenRebindingEnabled
+    ) {
         super(METADATA);
         this.viewToken = viewToken;
         this.tokenPosition = tokenPosition;
+        this.isTokenRebindingEnabled = isTokenRebindingEnabled;
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
-        return cursor.of(executionContext, viewToken, tokenPosition);
+        final TableToken currentViewToken = executionContext.getCairoEngine().getTableTokenIfExists(
+                viewToken.getTableName()
+        );
+        if (!isTokenRebindingEnabled && !viewToken.equals(currentViewToken)) {
+            throw TableReferenceOutOfDateException.of(viewToken);
+        }
+        if (currentViewToken == null) {
+            throw SqlException.$(tokenPosition, "live view does not exist [view=").put(viewToken.getTableName()).put(']');
+        }
+        if (!currentViewToken.isLiveView()) {
+            throw SqlException.$(tokenPosition, "live view name expected, got table name");
+        }
+        return cursor.of(executionContext, currentViewToken, tokenPosition);
     }
 
     @Override

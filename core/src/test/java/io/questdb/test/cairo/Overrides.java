@@ -179,9 +179,15 @@ public class Overrides {
                 }
             }
             properties.setProperty(propertyPath, value);
-            changed = !Chars.equalsNc(value, existing);
+            // OR rather than assign. getConfiguration() rebuilds only while this flag is
+            // set, so assigning it lets a later write that changes nothing - a property
+            // re-set to the value it already holds - discard an earlier write that did,
+            // and the test then runs against the previous configuration. It is invisible
+            // when something read the configuration in between, which is what made it an
+            // intermittent failure rather than a reproducible one.
+            changed |= !Chars.equalsNc(value, existing);
         } else {
-            changed = properties.remove(propertyPath) != null;
+            changed |= properties.remove(propertyPath) != null;
         }
     }
 

@@ -69,7 +69,7 @@ package io.questdb.cairo.lv;
  *     trees at a time, and a publication knows exactly which pages its path copy
  *     replaced, so pages are both maintainable and the finest unit available.</li>
  *     <li>{@link #SEGMENT_KIND_BOUNDARY} counts logical roots again, like a data
- *     segment. Boundary metadata - checkpoint roots, anchor roots, function roots
+ *     segment. Boundary metadata - checkpoint roots, window roots, function roots
  *     and the partition-map pages below them - has one live version per surviving
  *     boundary rather than one in total, and boundaries retire in bulk, so the
  *     unit that matters is "does any surviving boundary reach this file". Each
@@ -158,7 +158,7 @@ public final class LiveViewCheckpointSegmentDirectory {
     public static final long RETIRE_GENERATION_NONE = -1;
     /**
      * A {@code meta/m.<segmentId>} file holding one boundary's metadata: a
-     * checkpoint root and its function directory, an anchor root, or a function
+     * checkpoint root and its function directory, a window root, or a function
      * root and the partition-map pages its build path-copied. Its
      * {@code referenceCount} is the number of current logical roots whose closure
      * names it, exactly as a data segment's is, and it moves through
