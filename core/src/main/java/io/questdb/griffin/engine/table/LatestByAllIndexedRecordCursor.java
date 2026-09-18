@@ -412,16 +412,17 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                         null,
                         frameMemory.getSourceRowResolver()
                 )) {
-                    while (cursor.hasNext()) {
+                    if (cursor.hasNext()) {
                         final long row = cursor.next();
                         recordA.setRowIndex(row);
                         if (matchesPrefixes()) {
                             rows.add(Rows.toRowID(invertedFrameIndex, row) + 1);
-                            final int last = remainingKeys.size() - 1;
-                            remainingKeys.setQuick(i, remainingKeys.getQuick(last));
-                            remainingKeys.setPos(last);
-                            break;
                         }
+                        // Resolve the latest row before filtering, as in the native scan.
+                        // A rejected row must not expose an older row from this or another frame.
+                        final int last = remainingKeys.size() - 1;
+                        remainingKeys.setQuick(i, remainingKeys.getQuick(last));
+                        remainingKeys.setPos(last);
                     }
                 }
             }
