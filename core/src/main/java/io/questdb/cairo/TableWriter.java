@@ -340,6 +340,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private BlockFileWriter blockFileWriter;
     private int columnCount;
     private long commitRowCount;
+    private long committedActivePartitionFloor;
     private long committedMasterRef;
     private ConvertOperatorImpl convertOperatorImpl;
     private DedupColumnCommitAddresses dedupColumnCommitAddresses;
@@ -369,6 +370,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private LifecycleManager lifecycleManager;
     private long lockFd = -2;
     private long masterRef = 0L;
+    private long maxTimestampSinceLastCommit = Long.MIN_VALUE;
     // A flag that during WAL processing o3MemColumns1 or o3MemColumns2 were
     // set to a "shifted" state and the state has to be cleaned.
     private boolean memColumnShifted;
@@ -400,6 +402,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private byte parquetRewriteIndexerType = IndexType.NONE;
     private RowGroupBuffers parquetRewriteRowGroupBuffers;
     private long partitionTimestampHi;
+    private long pendingRowTimestamp = Long.MIN_VALUE;
     private boolean performRecovery;
     private boolean processingQueue;
     private PurgingOperator purgingOperator;
@@ -522,6 +525,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
             this.partitionBy = metadata.getPartitionBy();
             this.txWriter.initPartitionBy(timestampType, metadata.getPartitionBy());
+            this.committedActivePartitionFloor = txWriter.getMaxTimestamp() != Long.MIN_VALUE
+                    ? txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())
+                    : Long.MIN_VALUE;
+            if (txWriter.getLagRowCount() > 0) {
+                maxTimestampSinceLastCommit = txWriter.getLagMaxTimestamp();
+            }
 
             this.txnScoreboard = txnScoreboardPool.getTxnScoreboard(tableToken);
             path.trimTo(pathSize);
@@ -1212,7 +1221,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     public void bumpPartitionTableVersion() {
         txWriter.bumpPartitionTableVersion();
+        final long activePartitionFloor = prepareActivePartitionFloorCommit();
         txWriter.commit(denseSymbolMapWriters);
+        committedActivePartitionFloor = activePartitionFloor;
     }
 
     @Override
@@ -1630,6 +1641,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         dedupRowsRemovedSinceLastCommit.reset();
         hasTtlEvictedPartitionsSinceLastCommit = false;
         txWriter.beginPartitionSizeUpdate();
+        final long firstSeqTxn = seqTxn;
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
         int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
         // Capture wall clock once to reduce syscalls. Used for:
@@ -1689,11 +1701,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (committed) {
             assert txWriter.getLagRowCount() == 0;
 
+            for (long committedSeqTxn = firstSeqTxn; committedSeqTxn <= seqTxn; committedSeqTxn++) {
+                maxTimestampSinceLastCommit = Math.max(
+                        maxTimestampSinceLastCommit,
+                        walTxnDetails.getMaxTimestamp(committedSeqTxn)
+                );
+            }
             txWriter.setSeqTxn(seqTxn);
             txWriter.setLagTxnCount(0);
             txWriter.setLagOrdered(true);
 
+            prepareDataCommit(wallClockMicros);
             commit00();
+            dataCommitSucceeded();
             lastWalCommitTimestampMicros = wallClockMicros;
             housekeep(wallClockMicros);
             shrinkO3Mem();
@@ -1702,6 +1722,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.debug().$("table ranges after the commit [table=").$(tableToken)
                     .$(", minTs=").$ts(timestampDriver, txWriter.getMinTimestamp())
                     .$(", maxTs=").$ts(timestampDriver, txWriter.getMaxTimestamp()).I$();
+        }
+
+        if (txWriter.getLagRowCount() > 0) {
+            maxTimestampSinceLastCommit = Math.max(maxTimestampSinceLastCommit, txWriter.getLagMaxTimestamp());
         }
 
         // Sometimes nothing is committed to the table, only copied to LAG.
@@ -1730,7 +1754,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
         if (partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
             if (!tableToken.isWal()) {
-                // The partition is active; conversion is unsupported for non-WAL tables.
+                // Direct conversion of an active partition remains unsupported for non-WAL tables.
+                // Storage policies use the guarded generate-and-switch path instead.
                 LOG.info()
                         .$("skipping active partition as it cannot be converted to parquet format [table=")
                         .$(tableToken)
@@ -2416,7 +2441,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 columnVersionWriter.truncate();
                 freeColumns(false);
                 releaseIndexerWriters();
-                txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+                truncateTxWriter();
             }
 
             // Call O3 methods to remove check TxnScoreboard and remove partition directly
@@ -2582,7 +2607,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public long getPartitionRowCountByPartitionTimestamp(long partitionTimestamp) {
-        return txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        return partitionIndex > -1 ? getPartitionSize(partitionIndex) : -1L;
     }
 
     public long getPartitionSize(int partitionIndex) {
@@ -2881,6 +2907,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.bumpPartitionTableVersion();
     }
 
+    public void markPartitionDataActivity(int partitionIndex) {
+        if (partitionIndex < 0 || partitionIndex >= txWriter.getPartitionCount()) {
+            throw CairoException.nonCritical().put("bad partition index ").put(partitionIndex);
+        }
+        maxTimestampSinceLastCommit = Math.max(
+                maxTimestampSinceLastCommit,
+                txWriter.getPartitionTimestampByIndex(partitionIndex)
+        );
+    }
+
     public void markPartitionDataChanged(int partitionIndex) {
         if (partitionIndex < 0 || partitionIndex >= txWriter.getPartitionCount()) {
             throw CairoException.nonCritical().put("bad partition index ").put(partitionIndex);
@@ -2964,6 +3000,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public Row newRow(long timestamp) {
         if (rowAction != ROW_ACTION_NO_TIMESTAMP) {
             timestampDriver.validateBounds(timestamp);
+            pendingRowTimestamp = timestamp;
         }
         switch (rowAction) {
             case ROW_ACTION_NO_PARTITION:
@@ -3003,6 +3040,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     masterRef--;
                     noOpRowCount++;
                     return NOOP_ROW;
+                }
+                if (isLastPartitionParquet()) {
+                    // The active native files were removed by a storage-policy switch. Resume writes
+                    // through O3 so the committed parquet body is merged instead of dereferencing the
+                    // intentionally closed native append columns.
+                    return newRowO3(timestamp);
                 }
                 updateMaxTimestamp(timestamp);
                 break;
@@ -3052,15 +3095,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
-        if (partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
-            // The partition is active; conversion is currently unsupported.
-            LOG.info()
-                    .$("skipping active partition as it cannot be converted to parquet format [table=")
-                    .$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                    .I$();
-            return -1L;
-        }
 
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
         if (partitionIndex < 0) {
@@ -3478,6 +3512,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public void rollback() {
         checkDistressed();
+        maxTimestampSinceLastCommit = Long.MIN_VALUE;
+        pendingRowTimestamp = Long.MIN_VALUE;
         if (o3InError || inTransaction()) {
             try {
                 LOG.info().$("tx rollback [name=").$(tableToken).I$();
@@ -3512,6 +3548,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // If it's a manual rollback call, throw exception to indicate that the rollback was not successful
             // and the writer must be closed.
             checkDistressed();
+        }
+        if (txWriter.getLagRowCount() > 0) {
+            maxTimestampSinceLastCommit = txWriter.getLagMaxTimestamp();
         }
     }
 
@@ -3672,8 +3711,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return false;
     }
 
-    // Returns SWITCH_OK (0) on successful switch, SWITCH_SKIPPED (-2) if the partition was
-    // skipped (active or already parquet), SWITCH_NO_PARQUET (-1) if there is no parquet file to switch to.
+    // Returns SWITCH_OK (0) on successful switch, SWITCH_SKIPPED (-2) if the partition is already
+    // parquet, SWITCH_NO_PARQUET (-1) if there is no parquet file to switch to.
     public int switchNativePartitionWithParquet(long partitionTimestamp, long parquetFileSize) {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
@@ -3689,10 +3728,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
-        if (partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
-            // The partition is active; conversion is currently unsupported.
-            return SWITCH_SKIPPED;
-        }
+        final boolean activePartition = partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp());
 
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
         if (partitionIndex < 0) {
@@ -3709,6 +3745,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // parquet file has not been generated yet
             return SWITCH_NO_PARQUET;
         }
+        if (activePartition) {
+            closeActivePartition(false);
+        }
 
         int partitionCount = txWriter.getPartitionCount();
         squashPartitionForce(partitionIndex);
@@ -3721,6 +3760,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$("skipping switch to parquet, due to partition squash [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                     .I$();
+            if (activePartition && isLastPartitionClosed()) {
+                openLastPartition();
+            }
             return SWITCH_NO_PARQUET;
         }
 
@@ -3794,6 +3836,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
+            if (activePartition && !txWriter.isPartitionParquet(partitionIndex) && isLastPartitionClosed()) {
+                openLastPartition();
+            }
         }
 
         // Post-commit: the switch is logically complete. Everything below is
@@ -5566,7 +5611,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Capture wall clock once for TTL wall clock comparison in housekeep()
             final long wallClockMicros = configuration.getMicrosecondClock().getTicks();
 
+            prepareDataCommit(wallClockMicros);
             commit00();
+            dataCommitSucceeded();
             housekeep(wallClockMicros);
             metrics.tableWriterMetrics().addCommittedRows(rowsAdded);
             if (!o3) {
@@ -5619,12 +5666,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void commitTxWriter() {
+        final long activePartitionFloor = prepareActivePartitionFloorCommit();
         txWriter.commit(denseSymbolMapWriters);
+        committedActivePartitionFloor = activePartitionFloor;
         publishDeferredPostingSealPurges(txWriter.getTxn(), false);
     }
 
     private void commitTxWriterAndPublishPendingPostingSealPurges() {
+        final long activePartitionFloor = prepareActivePartitionFloorCommit();
         txWriter.commit(denseSymbolMapWriters);
+        committedActivePartitionFloor = activePartitionFloor;
         long currentTableTxn = txWriter.getTxn();
         publishPendingPostingSealPurges(currentTableTxn);
         publishDeferredPostingSealPurges(currentTableTxn, false);
@@ -6767,6 +6818,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void dataCommitSucceeded() {
+        maxTimestampSinceLastCommit = txWriter.getLagRowCount() > 0
+                ? txWriter.getLagMaxTimestamp()
+                : Long.MIN_VALUE;
+        pendingRowTimestamp = Long.MIN_VALUE;
+    }
+
     private long deduplicateSortedIndex(long longIndexLength, long indexSrcAddr, long indexDstAddr, long tempIndexAddr, long lagRows) {
         int dedupKeyIndex = 0;
         long dedupCommitAddr = 0;
@@ -7885,8 +7943,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // reads column data through the Parquet decoder and wires up the covering
         // sidecars. The native path below assumes native column files; for a
         // Parquet partition the covering seal would dereference a null FilesFacade.
-        // Non-WAL tables cannot have a Parquet active partition (see
-        // convertPartitionNativeToParquet), so this only fires for WAL tables.
+        // Storage policies may convert the active partition on WAL and non-WAL tables.
         final int lastPartitionIndex = txWriter.getPartitionCount() - 1;
         if (lastPartitionIndex >= 0 && txWriter.isPartitionParquet(lastPartitionIndex)) {
             try {
@@ -9148,7 +9205,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.resetTimestamp();
 
                 columnVersionWriter.truncate();
-                txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+                truncateTxWriter();
             }
             txWriter.bumpPartitionTableVersion();
         } else {
@@ -9824,6 +9881,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.hasPostingIndexers = hasPostingIndexers;
     }
 
+    private long prepareActivePartitionFloorCommit() {
+        final long activeTimestamp = txWriter.getMaxTimestamp();
+        final long activePartitionFloor = activeTimestamp != Long.MIN_VALUE
+                ? txWriter.getLogicalPartitionTimestamp(activeTimestamp)
+                : Long.MIN_VALUE;
+        if (activePartitionFloor != committedActivePartitionFloor) {
+            txWriter.setActivePartitionLastCommitMicros(configuration.getMicrosecondClock().getTicks());
+        }
+        return activePartitionFloor;
+    }
+
     /**
      * Opens mmap-backed temp files for each covered column and populates
      * the combined parquet decode column list. Returns the number of
@@ -9951,6 +10019,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         path.trimTo(plen);
         return includedCount;
+    }
+
+    private void prepareDataCommit(long commitMicros) {
+        final long activeTimestamp = txWriter.getMaxTimestamp();
+        final long activePartitionFloor = activeTimestamp != Long.MIN_VALUE
+                ? txWriter.getLogicalPartitionTimestamp(activeTimestamp)
+                : Long.MIN_VALUE;
+        if (maxTimestampSinceLastCommit != Long.MIN_VALUE
+                && txWriter.getLogicalPartitionTimestamp(maxTimestampSinceLastCommit) == activePartitionFloor) {
+            txWriter.setActivePartitionLastCommitMicros(commitMicros);
+        }
     }
 
     private void processAsyncWriterCommand(
@@ -13381,6 +13460,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         maxTimestamp,
                         denseSymbolMapWriters
                 );
+                committedActivePartitionFloor = maxTimestamp != Long.MIN_VALUE
+                        ? txWriter.getLogicalPartitionTimestamp(maxTimestamp)
+                        : Long.MIN_VALUE;
                 return maxTimestamp;
             }
         }
@@ -13419,7 +13501,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void repairTruncate() {
         LOG.info().$("repairing abnormally terminated truncate on ").$substr(pathRootSize, path).$();
         scheduleRemoveAllPartitions();
-        txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+        truncateTxWriter();
         clearTodoLog();
         processPartitionRemoveCandidates();
     }
@@ -13863,6 +13945,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     activeNullSetters.getQuick(i).run();
                 }
             }
+            maxTimestampSinceLastCommit = Math.max(maxTimestampSinceLastCommit, pendingRowTimestamp);
             masterRef++;
         }
     }
@@ -14954,7 +15037,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (hasNonEmptySymbolTables) {
                 txWriter.resetTimestamp();
                 columnVersionWriter.truncate();
-                txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+                truncateTxWriter();
             }
             return;
         }
@@ -14984,7 +15067,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         txWriter.resetTimestamp();
         columnVersionWriter.truncate();
-        txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+        truncateTxWriter();
         clearTodoLog();
         this.minSplitPartitionTimestamp = Long.MAX_VALUE;
         processPartitionRemoveCandidates();
@@ -15013,6 +15096,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
         }
+    }
+
+    private void truncateTxWriter() {
+        txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+        committedActivePartitionFloor = Long.MIN_VALUE;
     }
 
     /**
@@ -15552,6 +15640,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
+        pendingRowTimestamp = Long.MIN_VALUE;
         if (hasO3()) {
             final long o3RowCount = getO3RowCount0();
             if (o3RowCount > 0) {

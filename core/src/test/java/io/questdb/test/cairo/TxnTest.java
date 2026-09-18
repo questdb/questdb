@@ -42,6 +42,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -65,6 +66,10 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+import static io.questdb.cairo.TableUtils.TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC;
+import static io.questdb.cairo.TableUtils.TX_BASE_HEADER_SIZE;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32;
 
 public class TxnTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(TxnTest.class);
@@ -374,6 +379,32 @@ public class TxnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLegacyPaddingIsNotReadAsActivePartitionActivity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE legacy_activity (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final FilesFacade ff = configuration.getFilesFacade();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            final TableToken tableToken = engine.verifyTableName("legacy_activity");
+            try (Path path = new Path().of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME)) {
+                try (MemoryCMARW txnMem = Vm.getCMARWInstance()) {
+                    txnMem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
+                    txnMem.putLong(TX_BASE_HEADER_SIZE + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64, 123_456);
+                    txnMem.putInt(TX_BASE_HEADER_SIZE + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32, 0x12345678);
+                    txnMem.close(false);
+                }
+
+                try (TxReader txReader = new TxReader(ff)) {
+                    txReader.ofRO(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+                    Assert.assertTrue(txReader.unsafeLoadAll());
+                    Assert.assertEquals(Numbers.LONG_NULL, txReader.getActivePartitionLastCommitMicros());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLoadAllFrom() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = engine.getConfiguration().getFilesFacade();
@@ -394,6 +425,7 @@ public class TxnTest extends AbstractCairoTest {
                         }
                         txWriter.updateMaxTimestamp(testPartitionCount * Micros.DAY_MICROS + 1);
                         txWriter.finishPartitionSizeUpdate();
+                        txWriter.setActivePartitionLastCommitMicros(1_234);
                         txWriter.commit(new ObjList<>());
                     }
 
@@ -406,6 +438,7 @@ public class TxnTest extends AbstractCairoTest {
                         txReader.ofRO(path.$(), TableUtils.getTimestampType(model), PartitionBy.DAY);
 
                         txReader.unsafeLoadAll();
+                        Assert.assertEquals(1_234, txReader.getActivePartitionLastCommitMicros());
                         final String expected = """
                                 {txn: 1, attachedPartitions: [
                                 {ts: '1970-01-01T00:00:00.000000Z', rowCount: 1, nameTxn: -1},
@@ -414,6 +447,7 @@ public class TxnTest extends AbstractCairoTest {
                         Assert.assertEquals(expected, txReader.toString());
 
                         txCopyReader.loadAllFrom(txReader);
+                        Assert.assertEquals(1_234, txCopyReader.getActivePartitionLastCommitMicros());
                         Assert.assertEquals(expected, txCopyReader.toString());
 
                         Assert.assertTrue(txReader.getRecordSize() > 0);
@@ -427,6 +461,14 @@ public class TxnTest extends AbstractCairoTest {
 
                         txReader.dumpTo(dumpMem);
                         txCopyReader.dumpTo(dumpCopyMem);
+                        Assert.assertEquals(
+                                1_234,
+                                dumpMem.getLong(TX_BASE_HEADER_SIZE + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64)
+                        );
+                        Assert.assertEquals(
+                                TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC,
+                                dumpMem.getInt(TX_BASE_HEADER_SIZE + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32)
+                        );
                         Assert.assertTrue(Vect.memeq(dumpMem.addressOf(0), dumpCopyMem.addressOf(0), txReader.getRecordSize()));
                     }
                 }
