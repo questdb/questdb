@@ -81,8 +81,6 @@ public class TableUpdateDetails implements Closeable {
     private final CairoEngine engine;
     private final ThreadLocalDetails[] localDetailsArray;
     private final MillisecondClock millisecondClock;
-    // Set only for WAL tables, i.e. when writerThreadId == -1.
-    private final SecurityContext ownSecurityContext;
     private final Utf8String tableNameUtf8;
     private final TimestampDriver timestampDriver;
     private final int timestampIndex;
@@ -98,6 +96,10 @@ public class TableUpdateDetails implements Closeable {
     private MetadataService metadataService;
     private int networkIOOwnerCount = 0;
     private long nextCommitTime;
+    // Set only for WAL tables, i.e. when writerThreadId == -1. Identifies who the commit is
+    // authorized as; rebound by updateSecurityContext() on paths where one cached entry can
+    // serve requests that authenticate separately (ILP over HTTP).
+    private SecurityContext ownSecurityContext;
     private TableToken tableToken;
     private volatile boolean writerInError;
     private int writerThreadId;
@@ -405,6 +407,22 @@ public class TableUpdateDetails implements Closeable {
         if (metadataService != null) {
             metadataService.tick();
         }
+    }
+
+    /**
+     * Rebinds the identity this entry's commits are authorized as. ILP-over-HTTP caches one
+     * entry per table for the lifetime of a keep-alive TCP connection, while every HTTP
+     * request on that connection authenticates on its own, so the identity captured when the
+     * entry was created can differ from the identity whose rows are about to be written.
+     * Without this rebind, {@link #authorizeCommit()} would keep checking the first identity
+     * and let a later, possibly less privileged, request inherit its INSERT permission.
+     * <p>
+     * Safe to call only when the entry holds no uncommitted rows from another identity, which
+     * is what the ILP-over-HTTP lifecycle guarantees: rows are committed when the request
+     * completes, and anything left over is rolled back before the next request starts.
+     */
+    public void updateSecurityContext(@Nullable SecurityContext securityContext) {
+        this.ownSecurityContext = securityContext;
     }
 
     /**
