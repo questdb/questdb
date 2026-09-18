@@ -34,7 +34,7 @@ import java.io.Closeable;
 import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
 import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V2;
 
-public final class TableSequencerCursorPool implements Closeable {
+public final class TableSequencerCursorHolder implements Closeable {
     private final Path path = new Path();
     private TableMetadataChangeLog metadataChangeLog;
     private TransactionLogCursor transactionLogCursorV1;

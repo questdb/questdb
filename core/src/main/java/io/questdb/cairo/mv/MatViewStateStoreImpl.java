@@ -32,10 +32,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.Queue;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.tasks.TelemetryMatViewTask;
 import org.jetbrains.annotations.NotNull;
@@ -48,7 +49,7 @@ import java.util.function.Function;
 
 public class MatViewStateStoreImpl implements MatViewStateStore {
     private static final Log LOG = LogFactory.getLog(MatViewStateStoreImpl.class);
-    private static final CarrierLocal<MatViewTimerTask> tlTimerTask = new CarrierLocal<>(MatViewTimerTask::new);
+    private static final FiberLocal<MatViewTimerTask> tlTimerTask = new FiberLocal<>(MatViewTimerTask::new);
     private final Function<CharSequence, AtomicLong> createLastNotifiedTxn;
     private final CairoEngine engine;
     private final AtomicBoolean isPendingTaskReenqueueRequested = new AtomicBoolean();

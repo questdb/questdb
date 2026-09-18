@@ -40,11 +40,17 @@ import io.questdb.std.Rnd;
 public class FuzzAddCoveringIndexOperation implements FuzzTransactionOperation {
 
     private final IntList includeColumnIndices;
+    // SQL name of the posting kind this operation indexes with: "POSTING", "POSTING DELTA" or
+    // "POSTING EF". Drawn from the generator's Rnd, not here, so a seed replays the same kind.
+    // The row-id encoding is a property of the index type, and the covering decoder reads it
+    // back per kind; fuzzing only the default left the delta and EF layouts untested.
+    private final String indexTypeName;
     private final int symbolColumnIndex;
 
-    public FuzzAddCoveringIndexOperation(int symbolColumnIndex, IntList includeColumnIndices) {
+    public FuzzAddCoveringIndexOperation(int symbolColumnIndex, IntList includeColumnIndices, String indexTypeName) {
         this.symbolColumnIndex = symbolColumnIndex;
         this.includeColumnIndices = includeColumnIndices;
+        this.indexTypeName = indexTypeName;
     }
 
     @Override
@@ -94,7 +100,7 @@ public class FuzzAddCoveringIndexOperation implements FuzzTransactionOperation {
 
             String sql = "ALTER TABLE \"" + tableName
                     + "\" ALTER COLUMN \"" + symColName
-                    + "\" ADD INDEX TYPE POSTING INCLUDE (" + includeList + ")";
+                    + "\" ADD INDEX TYPE " + indexTypeName + " INCLUDE (" + includeList + ")";
 
             try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1)) {
                 context.with(AllowAllSecurityContext.INSTANCE);
