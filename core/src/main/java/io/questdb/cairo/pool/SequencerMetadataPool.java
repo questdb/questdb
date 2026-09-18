@@ -26,7 +26,6 @@ package io.questdb.cairo.pool;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
@@ -107,6 +106,7 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
                 boolean isDedupKey,
                 boolean symbolIsCached,
                 int symbolCapacity,
+                @Transient IntList coveringColumnIndices,
                 boolean isNotNull
         ) {
             if (columnType > -1L) {
@@ -123,15 +123,11 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
                         symbolIsCached,
                         symbolCapacity
                 );
+                if (coveringColumnIndices != null) {
+                    colMeta.setCoveringColumnIndices(new IntList(coveringColumnIndices));
+                }
                 colMeta.setNotNullFlag(isNotNull);
                 add(colMeta);
-            }
-        }
-
-        @Override
-        public void setColumnCovering(int columnIndex, @Transient IntList coveringColumnIndices) {
-            if (coveringColumnIndices != null && columnIndex >= 0 && columnIndex < columnMetadata.size()) {
-                columnMetadata.getQuick(columnIndex).setCoveringColumnIndices(new IntList(coveringColumnIndices));
             }
         }
 

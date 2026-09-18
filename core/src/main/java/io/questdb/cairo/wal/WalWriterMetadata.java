@@ -27,7 +27,6 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.AbstractRecordMetadata;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.IndexType;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -106,6 +105,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             boolean isDedupKey,
             boolean symbolIsCached,
             int symbolCapacity,
+            @Transient IntList coveringColumnIndices,
             boolean isNotNull
     ) {
         if (fullSequencerMetadata) {
@@ -119,10 +119,12 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
                     isDedupKey,
                     symbolIsCached,
                     symbolCapacity,
-                    null,
+                    coveringColumnIndices,
                     isNotNull
             );
         } else {
+            // WAL segment _meta stays lightweight; the covering list is only
+            // persisted by the fullSequencerMetadata (checkpoint) sink.
             addColumn0(
                     columnName,
                     columnType,
@@ -131,13 +133,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
                     isDedupKey,
                     isNotNull
             );
-        }
-    }
-
-    @Override
-    public void setColumnCovering(int columnIndex, @Transient IntList coveringColumnIndices) {
-        if (fullSequencerMetadata && coveringColumnIndices != null) {
-            columnMetadata.getQuick(columnIndex).setCoveringColumnIndices(new IntList(coveringColumnIndices));
         }
     }
 

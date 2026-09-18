@@ -56,10 +56,19 @@ public interface TableRecordMetadataSink extends Mutable {
                 isDedupKey,
                 symbolIsCached,
                 symbolCapacity,
+                coveringColumnIndices,
                 false
         );
     }
 
+    /**
+     * Primary overload. Covering-index metadata is attached to the column being
+     * added, so each sink stores it against its own notion of the column - there
+     * is no shared index space between the sequencer (writer slots, deleted
+     * columns included) and compressed sinks (live columns only). The default
+     * delegates to the legacy overload so pre-NOT-NULL sinks keep receiving the
+     * covering list exactly as before.
+     */
     default void addColumn(
             String columnName,
             int columnType,
@@ -70,6 +79,7 @@ public interface TableRecordMetadataSink extends Mutable {
             boolean isDedupKey,
             boolean symbolIsCached,
             int symbolCapacity,
+            @Transient IntList coveringColumnIndices,
             boolean isNotNull
     ) {
         addColumn(
@@ -82,15 +92,8 @@ public interface TableRecordMetadataSink extends Mutable {
                 isDedupKey,
                 symbolIsCached,
                 symbolCapacity,
-                null
+                coveringColumnIndices
         );
-    }
-
-    /**
-     * Supplies covering-index metadata when the source sequencer exposes it.
-     * Older sinks may ignore it; the default keeps the sink API compatible.
-     */
-    default void setColumnCovering(int columnIndex, @Transient IntList coveringColumnIndices) {
     }
 
     default boolean requiresFullReadColumnOrder() {

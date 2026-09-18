@@ -305,12 +305,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final LongAdder physicallyWrittenRowsSinceLastCommit = new LongAdder();
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
-    // Cached boolean[] parallel to columnCount: true when the column is
-    // enforceable NOT NULL. Built on demand from metadata and invalidated
-    // whenever the metadata changes (set to null). The hot path in rowAppend
-    // reads from this instead of resolving metadata.getColumnType(i) +
-    // metadata.isNotNull(i) per row per column.
-    private boolean[] enforceableNotNullCache;
+    // Cached indices of enforceable NOT NULL columns. Built on demand from
+    // metadata and invalidated whenever the metadata changes (set to null).
+    // The hot path in rowAppend validates only these columns per row - the
+    // list is empty for tables without NOT NULL columns - instead of resolving
+    // metadata.getColumnType(i) + metadata.isNotNull(i) per row per column.
+    private int[] enforceableNotNullColumnIndexes;
+    // columnCount enforceableNotNullColumnIndexes was built for; a mismatch
+    // marks the cache stale even without an explicit invalidation.
+    private int enforceableNotNullColumnIndexesColumnCount = -1;
     private final TableWriterSegmentCopyInfo segmentCopyInfo = new TableWriterSegmentCopyInfo();
     private final TableWriterSegmentFileCache segmentFileCache;
     private final TxReader slaveTxReader;
@@ -13935,15 +13938,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void rowAppend(ObjList<Runnable> activeNullSetters) {
         if ((masterRef & 1) != 0) {
-            final boolean[] enforceableNotNull = enforceableNotNullCache();
+            // Reject missing NOT NULL columns BEFORE any null setter runs: a null
+            // setter appends the column's default to storage, and rowCancel() must
+            // be able to treat a rejected row as never written (its rowChanged
+            // shortcut skips the append-position rewind when no column was set).
+            final int[] requiredColumnIndexes = enforceableNotNullColumnIndexes();
+            for (int i = 0, n = requiredColumnIndexes.length; i < n; i++) {
+                final int columnIndex = requiredColumnIndexes[i];
+                if (rowValueIsNotNull.getQuick(columnIndex) < masterRef) {
+                    throw CairoException.nonCritical()
+                            .put("NOT NULL constraint violation, column is required [column=")
+                            .put(metadata.getColumnName(columnIndex))
+                            .put(']');
+                }
+            }
             for (int i = 0; i < columnCount; i++) {
                 if (rowValueIsNotNull.getQuick(i) < masterRef) {
-                    if (enforceableNotNull[i]) {
-                        throw CairoException.nonCritical()
-                                .put("NOT NULL constraint violation, column is required [column=")
-                                .put(metadata.getColumnName(i))
-                                .put(']');
-                    }
                     activeNullSetters.getQuick(i).run();
                 }
             }
@@ -13951,21 +13961,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private boolean[] enforceableNotNullCache() {
-        final boolean[] cache = enforceableNotNullCache;
-        if (cache != null && cache.length == columnCount) {
+    private int[] enforceableNotNullColumnIndexes() {
+        final int[] cache = enforceableNotNullColumnIndexes;
+        if (cache != null && enforceableNotNullColumnIndexesColumnCount == columnCount) {
             return cache;
         }
-        final boolean[] rebuilt = new boolean[columnCount];
+        int requiredColumnCount = 0;
         for (int i = 0; i < columnCount; i++) {
-            rebuilt[i] = TableUtils.isEnforceableNotNull(metadata.getColumnType(i), metadata.isNotNull(i));
+            if (TableUtils.isEnforceableNotNull(metadata.getColumnType(i), metadata.isNotNull(i))) {
+                requiredColumnCount++;
+            }
         }
-        enforceableNotNullCache = rebuilt;
+        final int[] rebuilt = new int[requiredColumnCount];
+        for (int i = 0, k = 0; i < columnCount; i++) {
+            if (TableUtils.isEnforceableNotNull(metadata.getColumnType(i), metadata.isNotNull(i))) {
+                rebuilt[k++] = i;
+            }
+        }
+        enforceableNotNullColumnIndexesColumnCount = columnCount;
+        enforceableNotNullColumnIndexes = rebuilt;
         return rebuilt;
     }
 
     private void invalidateEnforceableNotNullCache() {
-        enforceableNotNullCache = null;
+        enforceableNotNullColumnIndexes = null;
     }
 
     private void runFragile(FragileCode fragile, CairoException e) {
