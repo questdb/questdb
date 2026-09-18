@@ -3192,7 +3192,7 @@ public class SqlOptimiser implements Mutable {
             if (isGroupBy && groupByColumnName != null) {
                 // there is already a key referencing the column in the group-by model;
                 // to minimize the number of group-by keys, we simply refer to the key in the outer models
-                translatedColumn = nextColumn(columnName, groupByColumnName, includeIntoWildcard);
+                translatedColumn = nextColumn(createColumnAlias(columnName, outerVirtualModel), groupByColumnName, includeIntoWildcard);
                 translatedColumn.setGenerated(isGenerated);
                 outerColumn = translatedColumn;
             } else {
@@ -3346,7 +3346,7 @@ public class SqlOptimiser implements Mutable {
                     token = name;
                 }
                 createSelectColumn(
-                        name,
+                        createColumnAlias(name, outerModel),
                         nextLiteral(token, wildcardPosition),
                         isGroupBy,
                         true, // already filtered by isIncludeIntoWildcard() check above
@@ -9337,10 +9337,12 @@ public class SqlOptimiser implements Mutable {
             // column instance. We also check if we should abandon the rewrite
             // in case we find it counterproductive
             boolean abandonRewrite = false;
+            boolean hasWildcard = false;
             for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
                 final QueryColumn qc = bottomUpColumns.getQuick(i);
                 final ExpressionNode ast = qc.getAst();
                 final CharSequence alias = qc.getAlias();
+                hasWildcard |= ast.type == LITERAL && Chars.endsWith(ast.token, '*');
                 if (qc.isWindowExpression() || (ast.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(ast.token))) {
                     abandonRewrite = true;
                     break;
@@ -9353,6 +9355,13 @@ public class SqlOptimiser implements Mutable {
             }
 
             if (!abandonRewrite) {
+                if (hasWildcard) {
+                    // The inner projection expands the original wildcards. Repeating them
+                    // in the wrapper would select the explicit columns a second time.
+                    // The synthetic count column below is excluded from wildcard expansion.
+                    wrapperModel.clearColumnMapStructs();
+                    wrapperModel.addBottomUpColumn(nextColumn("*"));
+                }
                 // remove the distinct flag, model is no longer that
                 model.setDistinct(false);
 
