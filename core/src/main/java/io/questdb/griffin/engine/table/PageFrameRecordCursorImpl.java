@@ -141,7 +141,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
                 // cursor once per master row, so an un-throttled per-frame probe becomes ~one syscall per
                 // master row. The time-throttled variant still checks cancellation/timeout every frame (cheap)
                 // while bounding the connection probe to once per wall-clock window for the whole query.
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
                 if (frameCount >= Rows.MAX_SAFE_PARTITION_INDEX) {
                     throw CairoException.nonCritical()
                             .put("too many page frames for a single query [limit=").put(Rows.MAX_SAFE_PARTITION_INDEX)
@@ -190,7 +190,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         // not the query's first breaker consultation. The time-throttled variant checks cancellation/timeout
         // unconditionally (so the count-throttle window can't skip it, unlike statefulThrowExceptionIfTripped())
         // while bounding the connection probe to once per wall-clock window, matching the per-frame check above.
-        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         areCursorsPrepared = false;
         isExhausted = false;
         rowCursor = Misc.free(rowCursor);

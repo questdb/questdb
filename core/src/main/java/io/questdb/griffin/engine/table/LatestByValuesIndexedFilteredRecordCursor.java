@@ -81,7 +81,7 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
 
     @Override
     public boolean hasNext() {
-        circuitBreaker.statefulThrowExceptionIfTripped();
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         if (!isTreeMapBuilt) {
             buildTreeMap();
             isTreeMapBuilt = true;
@@ -199,7 +199,7 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
 
         PageFrame frame;
         while (remainingKeys.size() > 0 && (frame = frameCursor.next()) != null) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
             final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
             final long partitionLo = frame.getPartitionLo();

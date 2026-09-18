@@ -504,7 +504,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     rowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi() - 1);
                 }
                 slaveTimeFrameCursor.recordAt(slaveRecB, rowId);
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             }
         }
     }

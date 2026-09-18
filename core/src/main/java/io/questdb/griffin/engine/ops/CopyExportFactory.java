@@ -209,6 +209,8 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
             final MPSequence copyRequestPubSeq = messageBus.getCopyExportRequestPubSeq();
             long processingCursor;
 
+            entry.setContainsSecret(executionContext.containsSecret());
+
             copyContext.updateStatus(
                     CopyExportRequestTask.Phase.WAITING,
                     CopyExportRequestTask.Status.STARTED,

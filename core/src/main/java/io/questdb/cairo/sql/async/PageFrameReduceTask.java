@@ -34,7 +34,6 @@ import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntHashSet;
@@ -469,5 +468,14 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
             // Never keep parquet buffers around to avoid OOM even if there is an ongoing query.
             releaseFrameMemory();
         }
+    }
+
+    long getTaskRowCount() {
+        // Scheduling budgets cover the whole run; reducers still read one subframe at a time.
+        long rowCount = 0;
+        for (int i = 0; i < subFrameCount; i++) {
+            rowCount += frameSequence.getFrameRowCount(firstFrameIndex + i);
+        }
+        return rowCount;
     }
 }

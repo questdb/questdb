@@ -25,8 +25,8 @@
 package io.questdb.cutlass.http.ex;
 
 import io.questdb.cutlass.http.HttpException;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -34,7 +34,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class NotEnoughLinesException extends HttpException implements Sinkable, FlyweightMessageContainer {
-    private static final CarrierLocal<NotEnoughLinesException> tlException = new CarrierLocal<>(NotEnoughLinesException::new);
+    private static final FiberLocal<NotEnoughLinesException> tlException = new FiberLocal<>(NotEnoughLinesException::new);
     private final StringSink message = new StringSink();
 
     public static NotEnoughLinesException $(CharSequence message) {
