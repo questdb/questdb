@@ -132,6 +132,21 @@ public class MetricsTest {
         Assert.assertTrue("Metrics with non-unique names: " + notUniqueMetrics, notUniqueMetrics.isEmpty());
     }
 
+    @Test
+    public void testScrapeExposure() {
+        final Metrics disabled = new Metrics(false, new NullMetricsRegistry());
+        Assert.assertFalse(disabled.isEnabled());
+        Assert.assertFalse(disabled.isScrapeEnabled());
+
+        final Metrics enabled = new Metrics(true, new NullMetricsRegistry());
+        Assert.assertTrue(enabled.isEnabled());
+        Assert.assertTrue(enabled.isScrapeEnabled());
+
+        final Metrics persistOnly = new Metrics(true, false, new NullMetricsRegistry());
+        Assert.assertTrue(persistOnly.isEnabled());
+        Assert.assertFalse(persistOnly.isScrapeEnabled());
+    }
+
     private static class SpyingMetricsRegistry implements MetricsRegistry {
         private final MetricsRegistry delegate = new NullMetricsRegistry();
         private final Set<CharSequence> labelNames = new HashSet<>();

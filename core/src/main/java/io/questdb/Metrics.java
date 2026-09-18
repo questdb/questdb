@@ -34,6 +34,7 @@ import io.questdb.cutlass.qwp.server.egress.QwpEgressMetrics;
 import io.questdb.metrics.FiberMetrics;
 import io.questdb.metrics.GCMetrics;
 import io.questdb.metrics.HealthMetricsImpl;
+import io.questdb.metrics.MetricSnapshotVisitor;
 import io.questdb.metrics.MetricsRegistry;
 import io.questdb.metrics.MetricsRegistryImpl;
 import io.questdb.metrics.NullMetricsRegistry;
@@ -67,9 +68,15 @@ public class Metrics implements Target, Mutable {
     private final WalMetrics walMetrics;
     private final WorkerMetrics workerMetrics;
     private boolean enabled;
+    private boolean scrapeEnabled;
 
     public Metrics(boolean enabled, MetricsRegistry metricsRegistry) {
+        this(enabled, enabled, metricsRegistry);
+    }
+
+    public Metrics(boolean enabled, boolean scrapeEnabled, MetricsRegistry metricsRegistry) {
         this.enabled = enabled;
+        this.scrapeEnabled = scrapeEnabled;
         this.gcMetrics = new GCMetrics();
         this.jsonQueryMetrics = new JsonQueryMetrics(metricsRegistry);
         this.httpMetrics = new HttpMetrics(metricsRegistry);
@@ -100,10 +107,12 @@ public class Metrics implements Target, Mutable {
         workerMetrics.clear();
         httpMetrics.clear();
         enabled = true;
+        scrapeEnabled = true;
     }
 
     public void disable() {
         enabled = false;
+        scrapeEnabled = false;
     }
 
     public FiberMetrics fiberMetrics() {
@@ -124,6 +133,10 @@ public class Metrics implements Target, Mutable {
 
     public boolean isEnabled() {
         return enabled;
+    }
+
+    public boolean isScrapeEnabled() {
+        return scrapeEnabled;
     }
 
     public JsonQueryMetrics jsonQueryMetrics() {
@@ -147,6 +160,14 @@ public class Metrics implements Target, Mutable {
         metricsRegistry.scrapeIntoPrometheus(sink);
         if (enabled) {
             gcMetrics.scrapeIntoPrometheus(sink);
+        }
+    }
+
+    @Override
+    public void snapshot(MetricSnapshotVisitor visitor) {
+        metricsRegistry.snapshot(visitor);
+        if (enabled) {
+            gcMetrics.snapshot(visitor);
         }
     }
 

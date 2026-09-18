@@ -430,6 +430,12 @@ public class PropServerConfigurationTest {
         Assert.assertEquals("unknown", configuration.getCairoConfiguration().getBuildInformation().getCommitHash());
 
         Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
+        Assert.assertFalse(configuration.getMetricsConfiguration().isPersistEnabled());
+        Assert.assertFalse(configuration.getMetrics().isScrapeEnabled());
+        Assert.assertEquals(1_000_000, configuration.getMetricsConfiguration().getPersistIntervalMicros());
+        Assert.assertEquals(60_000_000, configuration.getMetricsConfiguration().getPersistVirtualIntervalMicros());
+        Assert.assertTrue(configuration.getMetricsConfiguration().isPersistParquetEnabled());
+        TestUtils.assertEquals("1 WEEK", configuration.getMetricsConfiguration().getPersistTtl());
         Assert.assertTrue(configuration.getMemoryConfiguration().isMemoryUsageLogEnabled());
         Assert.assertEquals(60_000, configuration.getMemoryConfiguration().getMemoryUsageLogInterval());
         Assert.assertFalse(configuration.getCairoConfiguration().isQueryTracingEnabled());
@@ -2043,6 +2049,28 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testMetricsPersistenceConfiguration() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("metrics.persist.enabled", "true");
+        properties.setProperty("metrics.persist.exclude", "foo.*");
+        properties.setProperty("metrics.persist.interval", "2s");
+        properties.setProperty("metrics.persist.parquet.enabled", "false");
+        properties.setProperty("metrics.persist.ttl", "2 DAYS");
+        properties.setProperty("metrics.persist.virtual.interval", "3m");
+
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
+        Assert.assertTrue(configuration.getMetrics().isEnabled());
+        Assert.assertFalse(configuration.getMetrics().isScrapeEnabled());
+        Assert.assertTrue(configuration.getMetricsConfiguration().isPersistEnabled());
+        Assert.assertFalse(configuration.getMetricsConfiguration().isPersistParquetEnabled());
+        Assert.assertEquals(2_000_000, configuration.getMetricsConfiguration().getPersistIntervalMicros());
+        Assert.assertEquals(180_000_000, configuration.getMetricsConfiguration().getPersistVirtualIntervalMicros());
+        TestUtils.assertEquals("foo.*", configuration.getMetricsConfiguration().getPersistExclude());
+        TestUtils.assertEquals("2 DAYS", configuration.getMetricsConfiguration().getPersistTtl());
+    }
+
+    @Test
     public void testMemoryUsageLogIntervalAcceptsMax() throws Exception {
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "86_400_000");
@@ -2297,6 +2325,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1.5, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
 
             Assert.assertTrue(configuration.getMetricsConfiguration().isEnabled());
+            Assert.assertTrue(configuration.getMetrics().isScrapeEnabled());
 
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
             Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());

@@ -24,20 +24,9 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.BorrowableUtf8Sink;
-
-/**
- * Anything that can be scraped for Prometheus metrics.
- */
-public interface Target {
-
-    /**
-     * Visits this target's metrics without serializing them to Prometheus text. Targets that only
-     * perform scrape-time bookkeeping may keep the default no-op implementation.
-     */
-    default void snapshot(MetricSnapshotVisitor visitor) {
-    }
-
-    // We need a sink that we can borrow from and append to in native code.
-    void scrapeIntoPrometheus(BorrowableUtf8Sink sink);
+public enum MetricType {
+    COUNTER,
+    DOUBLE_GAUGE,
+    LONG_GAUGE,
+    VIRTUAL_LONG_GAUGE
 }
