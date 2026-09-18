@@ -95,9 +95,15 @@ public class LiveViewTimeZoneAnchorServerTest extends AbstractBootstrapTest {
     private static final String ANCHOR_TIME = "00:00";
     private static final String ANCHOR_ZONE = "Europe/Berlin";
     private static final String BASE = "payments";
-    // A root every 16 view rows, so a few hundred rows build a ladder a million-row cadence
-    // would not. It is the one production value this case moves, and it is a cadence rather
-    // than a price: every switch the repair route consults stays at its shipped default.
+    // The row trigger of the seal cadence: a root every 16 view rows, so a few hundred rows
+    // build a ladder a million-row cadence would not. The trigger alone does not place the
+    // roots. A view seals at most one root per flush, at the flush's last row, once this many
+    // rows have landed since the previous root, so the running case commits hours 1..9 of the
+    // anchor day 16 rows at a time and waits for each commit's flush. Hour 0 is the exception:
+    // it lands as one 32-row seed commit, so its only root sits at 00:32 and the ladder reads
+    // 00:32, 01:16, 01:32, ..., 09:32. It is the one production value this case moves, and it
+    // is a cadence rather than a price: every switch the repair route consults stays at its
+    // shipped default.
     private static final int CHECKPOINT_ROWS = 16;
     private static final int FIRST_HOUR = 0;
     private static final int HOURS = 10;
@@ -368,7 +374,7 @@ public class LiveViewTimeZoneAnchorServerTest extends AbstractBootstrapTest {
                             + "account_id SYMBOL NOCACHE INDEX CAPACITY 4, "
                             + "amount DOUBLE"
                             + ") TIMESTAMP(created_at) PARTITION BY HOUR WAL");
-                    execute(conn, "INSERT INTO " + BASE + " VALUES " + hourRows(FIRST_HOUR));
+                    execute(conn, "INSERT INTO " + BASE + " VALUES " + hourRows(FIRST_HOUR, 1, HEAD_MINUTE));
                     awaitRowCount(conn, BASE, rowsPerHour());
 
                     // The view under test, and the plain UTC-wall-time anchor as its control.
@@ -387,14 +393,36 @@ public class LiveViewTimeZoneAnchorServerTest extends AbstractBootstrapTest {
                     assertGates(conn, VIEW_ZONED, "available", "available");
                     assertGates(conn, VIEW_PLAIN, "available", "available");
 
-                    // The rest of the anchor day, one commit per hourly base partition, so
-                    // the cadence seals roots inside the segment and the refresh frontier
-                    // ends up standing in it.
+                    // The rest of the anchor day, so the cadence seals roots inside the
+                    // segment and the refresh frontier ends up standing in it. Each hour lands
+                    // as two commits of CHECKPOINT_ROWS rows, minutes 1..16 and 17..32, and
+                    // each commit waits for both views to flush it before the next one lands.
+                    //
+                    // A view seals at most one root per flush, at the flush's last row, so
+                    // commits that share a flush share a root. Under FLUSH EVERY 100ms the
+                    // commits arrive faster than the flushes do, and waiting on the base alone
+                    // let one flush take hours 2..9 at once: the ladder then held roots at
+                    // 01:32 and 09:32 only, and every correction resumed from 01:32. Waiting
+                    // for the flush gives every commit a flush of its own, and each of those
+                    // carries the CHECKPOINT_ROWS rows the row trigger needs. That puts a root
+                    // at minutes 16 and 32 of hours 1..9. Hour 0 landed above as the single
+                    // 32-row seed commit, so its only root sits at 00:32 and the ladder reads
+                    // 00:32, 01:16, 01:32, ..., 09:32.
+                    long baseRows = rowsPerHour();
                     for (int hour = FIRST_HOUR + 1; hour < FIRST_HOUR + HOURS; hour++) {
-                        execute(conn, "INSERT INTO " + BASE + " VALUES " + hourRows(hour));
-                        awaitRowCount(conn, BASE, (long) rowsPerHour() * (hour - FIRST_HOUR + 1));
+                        for (int minute = 1; minute < HEAD_MINUTE; minute += CHECKPOINT_ROWS) {
+                            execute(conn, "INSERT INTO " + BASE + " VALUES "
+                                    + hourRows(hour, minute, minute + CHECKPOINT_ROWS - 1));
+                            baseRows += CHECKPOINT_ROWS;
+                            awaitRowCount(conn, BASE, baseRows);
+                            final long commitSeqTxn = queryLong(
+                                    conn,
+                                    "SELECT sequencerTxn FROM wal_tables() WHERE name = '" + BASE + "'"
+                            );
+                            awaitFlushed(conn, VIEW_ZONED, commitSeqTxn);
+                            awaitFlushed(conn, VIEW_PLAIN, commitSeqTxn);
+                        }
                     }
-                    long baseRows = (long) rowsPerHour() * HOURS;
                     awaitRowCount(conn, VIEW_ZONED, baseRows);
                     awaitRowCount(conn, VIEW_PLAIN, baseRows);
 
@@ -402,10 +430,15 @@ public class LiveViewTimeZoneAnchorServerTest extends AbstractBootstrapTest {
                     // head of the last batch, which is the reported symptom's own shape - a
                     // row a minute or two late, forever, with no sealed root below it.
                     final StringSink readings = new StringSink();
-                    // The counters the settled window opened on, so what follows measures the
-                    // window rather than the whole run.
-                    long rebuiltAtSettle = -1;
-                    long scannedAtSettle = -1;
+                    // The latest published reading of each view, which the next pass waits
+                    // to see its repair move. Before the first pass it is what the in-order
+                    // ladder left, which no repair has touched.
+                    Reading zonedLast = read(conn, VIEW_ZONED);
+                    Reading plainLast = read(conn, VIEW_PLAIN);
+                    // The reading the settled window opened on: the one published before its
+                    // first pass, so what follows measures exactly the window's repairs rather
+                    // than the whole run or all but the first of them.
+                    Reading zonedAtSettle = null;
                     int settled = 0;
                     for (int pass = 1; pass <= TRICKLE_PASSES; pass++) {
                         execute(conn, "INSERT INTO " + BASE + " VALUES "
@@ -415,8 +448,8 @@ public class LiveViewTimeZoneAnchorServerTest extends AbstractBootstrapTest {
                         awaitRowCount(conn, VIEW_ZONED, baseRows);
                         awaitRowCount(conn, VIEW_PLAIN, baseRows);
 
-                        final Reading zoned = read(conn, VIEW_ZONED);
-                        final Reading plain = read(conn, VIEW_PLAIN);
+                        final Reading zoned = awaitRepairReading(conn, VIEW_ZONED, zonedLast);
+                        final Reading plain = awaitRepairReading(conn, VIEW_PLAIN, plainLast);
                         readings.put("pass ").put(pass)
                                 .put(": zoned=").put(zoned.toString())
                                 .put(" plain=").put(plain.toString()).put('\n');
@@ -436,13 +469,14 @@ public class LiveViewTimeZoneAnchorServerTest extends AbstractBootstrapTest {
 
                         if ("resume from anchor".equals(zoned.disposition)) {
                             if (settled == 0) {
-                                rebuiltAtSettle = zoned.boundaryReplayRows;
-                                scannedAtSettle = zoned.replayScanRows;
+                                zonedAtSettle = zonedLast;
                             }
                             settled++;
                         } else {
                             settled = 0;
                         }
+                        zonedLast = zoned;
+                        plainLast = plain;
                         if (settled == SETTLED_PASSES) {
                             break;
                         }
@@ -454,32 +488,42 @@ public class LiveViewTimeZoneAnchorServerTest extends AbstractBootstrapTest {
                             settled
                     );
 
-                    final Reading zoned = read(conn, VIEW_ZONED);
-                    final Reading plain = read(conn, VIEW_PLAIN);
                     // The control settles the same way. That is the second half of the claim:
                     // the zoned shape costs what the plain shape costs at the reading an
                     // operator takes, rather than merely costing less than it used to.
                     Assert.assertEquals(
                             "the no-zone control must settle the same way, readings:\n" + readings,
-                            zoned.disposition,
-                            plain.disposition
+                            zonedLast.disposition,
+                            plainLast.disposition
                     );
                     Assert.assertTrue(
                             "a localized resume must have replayed rows, readings:\n" + readings,
-                            zoned.resumeReplayRows > 0
+                            zonedLast.resumeReplayRows > zonedAtSettle.resumeReplayRows
                     );
                     // No rebuild ran across the settled window, so nothing below re-read the
                     // segment: the boundary-replay counter has not moved.
                     Assert.assertEquals(
                             "the settled passes must take the resume, not the rebuild, readings:\n" + readings,
-                            rebuiltAtSettle,
-                            zoned.boundaryReplayRows
+                            zonedAtSettle.boundaryReplayRows,
+                            zonedLast.boundaryReplayRows
                     );
-                    // And the scan is the tail above the newest root rather than the view. The
-                    // cadence seals a root every CHECKPOINT_ROWS view rows, so each pass reads
-                    // that tail plus the rows the earlier passes inserted into it - a bound the
-                    // view's own size does not enter.
-                    final long scanned = zoned.replayScanRows - scannedAtSettle;
+                    // And the scan stays a tail rather than the view. The anchor day left the
+                    // 00:32 seed root and then a root every CHECKPOINT_ROWS view rows from 01:16
+                    // on, and the corrections all land in the last hour above its minute-16
+                    // root, since TRICKLE_PASSES is below CHECKPOINT_ROWS. A resume from that
+                    // root reads at most the CHECKPOINT_ROWS rows above it plus the corrections
+                    // the trickle has inserted there, which is what a whole-range resume reads;
+                    // a keyed one reads only the corrected account's share of them. The window
+                    // holds SETTLED_PASSES such repairs - a bound the view's own size, HOURS,
+                    // does not enter. The bound rejects a window whose passes all resume
+                    // whole-range from an older root, though one mixing a single such pass from
+                    // 08:32 with two from that root can fit. It also rejects a rebuild, a
+                    // whole-view scan and a keyed resume from the roots the day opened with: one
+                    // from 01:32 reads at least 102 rows, and one from the 00:32 seed root at
+                    // least 114. It does not pin the keyed route to that root, though: a keyed
+                    // resume from a root up to five hours stale (04:16, when the window opens at
+                    // pass 1) still fits.
+                    final long scanned = zonedLast.replayScanRows - zonedAtSettle.replayScanRows;
                     Assert.assertTrue(
                             "the settled passes scanned " + scanned + " of a " + baseRows
                                     + "-row view, expected the tail above the anchor, readings:\n" + readings,
@@ -676,6 +720,29 @@ public class LiveViewTimeZoneAnchorServerTest extends AbstractBootstrapTest {
     }
 
     /**
+     * Polls until {@code view} has flushed the base up to {@code baseSeqTxn}. The flush that
+     * gets it there seals the cadence's root, when one is due, at its own last row before the
+     * view refreshes anything newer. The view's row count cannot say that: a read serves the
+     * in-memory lead as well as the table, so the count matches the base up to a whole FLUSH
+     * EVERY interval before the flush lands.
+     */
+    private static void awaitFlushed(Connection conn, String view, long baseSeqTxn) throws Exception {
+        TestUtils.assertEventually(
+                () -> {
+                    final long consumed = queryLong(
+                            conn,
+                            "SELECT lv_consumed_seqtxn FROM live_views() WHERE view_name = '" + view + "'"
+                    );
+                    Assert.assertTrue(
+                            view + " must flush base seqTxn " + baseSeqTxn + ", flushed " + consumed,
+                            consumed >= baseSeqTxn
+                    );
+                },
+                60
+        );
+    }
+
+    /**
      * Polls until {@code table} holds {@code expected} rows. Ingestion is asynchronous on a
      * running server twice over - the WAL apply job for the base, the refresh pool for a view -
      * so every count this case reads is a poll rather than a snapshot.
@@ -714,17 +781,18 @@ public class LiveViewTimeZoneAnchorServerTest extends AbstractBootstrapTest {
     }
 
     /**
-     * The rows of one anchor day's {@code hour}, every account, as one INSERT tuple list.
+     * The rows of one anchor day's {@code hour} from {@code firstMinute} to {@code lastMinute}
+     * inclusive, as one INSERT tuple list. One row lands per minute and the accounts take the
+     * minutes in turn, so minutes 1 to {@link #HEAD_MINUTE} hold {@link #ROWS_PER_ACCOUNT_PER_HOUR}
+     * rows of every account.
      */
-    private static String hourRows(int hour) {
+    private static String hourRows(int hour, int firstMinute, int lastMinute) {
         final StringBuilder rows = new StringBuilder();
-        for (int i = 0; i < ROWS_PER_ACCOUNT_PER_HOUR; i++) {
-            for (int account = 1; account <= ACCOUNT_COUNT; account++) {
-                if (rows.length() > 0) {
-                    rows.append(", ");
-                }
-                rows.append(row(hour, account + i * ACCOUNT_COUNT, account));
+        for (int minute = firstMinute; minute <= lastMinute; minute++) {
+            if (rows.length() > 0) {
+                rows.append(", ");
             }
+            rows.append(row(hour, minute, (minute - 1) % ACCOUNT_COUNT + 1));
         }
         return rows.toString();
     }
@@ -873,6 +941,36 @@ public class LiveViewTimeZoneAnchorServerTest extends AbstractBootstrapTest {
                     plan.getSegmentEndExclusive(ts) != Numbers.LONG_NULL
             );
         }
+    }
+
+    /**
+     * Reads {@code view} once the repair of the latest correction has published its counters,
+     * which the view's row count cannot say either. The repair applies its rows first and
+     * bumps the {@code o3_*} counters only after it has advanced the consumed seqTxn, sealed
+     * the head and cleared its marker, so a reading taken the moment the count matches can
+     * still carry the previous repair's counters and disposition. Every correction here
+     * replays at least the row it inserted, so both the scan counter and the replayed rows
+     * moving past {@code previous} are that repair's own publication.
+     */
+    private Reading awaitRepairReading(Connection conn, String view, Reading previous) throws Exception {
+        TestUtils.assertEventually(
+                () -> {
+                    final Reading reading = read(conn, view);
+                    Assert.assertTrue(
+                            view + " must publish the latest correction's repair, previous: " + previous
+                                    + " current: " + reading,
+                            reading.replayScanRows > previous.replayScanRows
+                                    && reading.resumeReplayRows + reading.boundaryReplayRows
+                                    > previous.resumeReplayRows + previous.boundaryReplayRows
+                    );
+                },
+                60
+        );
+        // Read again rather than keep the poll's row. read() takes the disposition ahead of the
+        // counters, so the row that showed them moving read its disposition before they moved;
+        // this one reads it after, and the repair publishes it in the statement that follows
+        // its last counter bump.
+        return read(conn, view);
     }
 
     private String createLiveView(String view, String anchorZone) {
