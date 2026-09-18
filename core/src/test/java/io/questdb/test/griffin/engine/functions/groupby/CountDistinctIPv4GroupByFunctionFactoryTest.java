@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -40,6 +41,125 @@ public class CountDistinctIPv4GroupByFunctionFactoryTest extends AbstractCairoTe
                 .noRandomAccess()
                 .expectSize()
                 .returns(expected);
+    }
+
+    @Test
+    public void testNotNullSentinelCountedOnceGlobal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (v ipv4 not null)");
+            execute("insert into tab values ('0.0.0.0'), ('192.168.0.1'), ('0.0.0.0')");
+            // count() alongside defeats the optimizer's count_distinct-to-
+            // distinct-subquery rewrite, pinning the accumulator path
+            assertQuery("select count_distinct(v), count() from tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count_distinct\tcount
+                            2\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testNotNullSentinelCountedOnceGrouped() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (g symbol, v ipv4 not null)");
+            execute("""
+                    insert into tab values
+                        ('a', '0.0.0.0'),
+                        ('a', '192.168.0.1'),
+                        ('a', '0.0.0.0'),
+                        ('b', '0.0.0.0'),
+                        ('b', '0.0.0.0')
+                    """);
+            assertQuery("select g, count_distinct(v) from tab order by g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\tcount_distinct
+                            a\t2
+                            b\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testNotNullSentinelCountedOnceOrderPermutations() throws Exception {
+        assertMemoryLeak(() -> {
+            // the repeated sentinel must dedup no matter where the accumulator
+            // transitions from the inlined value to the hash set
+            execute("create table tab1 (v ipv4 not null)");
+            execute("insert into tab1 values ('192.168.0.1'), ('0.0.0.0'), ('0.0.0.0')");
+            execute("create table tab2 (v ipv4 not null)");
+            execute("insert into tab2 values ('0.0.0.0'), ('0.0.0.0'), ('192.168.0.1')");
+            String expected = """
+                    count_distinct\tcount
+                    2\t3
+                    """;
+            assertQuery("select count_distinct(v), count() from tab1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select count_distinct(v), count() from tab2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testNotNullSentinelCountedOnceParallel() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 2);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 2);
+        assertMemoryLeak(() -> {
+            execute("create table tab (g symbol, v ipv4 not null, ts timestamp not null) timestamp(ts) partition by day bypass wal");
+            execute("""
+                    insert into tab values
+                        ('a', '0.0.0.0', '2024-01-01'),
+                        ('a', '192.168.0.1', '2024-01-02'),
+                        ('a', '0.0.0.0', '2024-01-03'),
+                        ('a', '192.168.0.2', '2024-01-04'),
+                        ('a', '0.0.0.0', '2024-01-05'),
+                        ('b', '0.0.0.0', '2024-01-06')
+                    """);
+            assertQuery("select g, count_distinct(v) from tab order by g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\tcount_distinct
+                            a\t3
+                            b\t1
+                            """);
+            assertQuery("select count_distinct(v), count() from tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count_distinct\tcount
+                            3\t6
+                            """);
+        });
+    }
+
+    @Test
+    public void testNullableSentinelStaysNull() throws Exception {
+        assertMemoryLeak(() -> {
+            // control: without NOT NULL the same bit pattern reads as SQL NULL
+            // and stays excluded from count_distinct
+            execute("create table tab (v ipv4)");
+            execute("insert into tab values ('0.0.0.0'), ('192.168.0.1'), ('0.0.0.0')");
+            assertQuery("select count_distinct(v), count() from tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count_distinct\tcount
+                            1\t3
+                            """);
+        });
     }
 
     @Test

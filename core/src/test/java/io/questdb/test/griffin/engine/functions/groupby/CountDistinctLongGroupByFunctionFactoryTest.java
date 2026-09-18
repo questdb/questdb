@@ -269,6 +269,30 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractCairoTe
     }
 
     @Test
+    public void testNotNullSentinelDateAndTimestampRouteToLongVariant() throws Exception {
+        assertMemoryLeak(() -> {
+            // there is no count_distinct(M)/count_distinct(N) factory; DATE and
+            // TIMESTAMP arguments resolve to count_distinct(L) via the overload
+            // matrix, so the flag-aware long accumulator must cover them too
+            execute("create table tab (t timestamp not null, d date not null)");
+            execute("""
+                    insert into tab values
+                        (cast(CAST(-9223372036854775807 AS LONG) - 1 as timestamp), cast(CAST(-9223372036854775807 AS LONG) - 1 as date)),
+                        (cast(1 as timestamp), cast(1 as date)),
+                        (cast(CAST(-9223372036854775807 AS LONG) - 1 as timestamp), cast(CAST(-9223372036854775807 AS LONG) - 1 as date))
+                    """);
+            assertQuery("select count_distinct(t), count_distinct(d), count() from tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count_distinct\tcount_distinct1\tcount
+                            2\t2\t3
+                            """);
+        });
+    }
+
+    @Test
     public void testNullConstant() throws Exception {
         String expected = """
                 a\tcount_distinct
