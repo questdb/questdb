@@ -61,6 +61,19 @@ public class GrowOnlyTableNameRegistryStore implements Closeable {
         tableNameMemory.sync(false);
     }
 
+    /**
+     * Atomically records a table swap: drops {@code oldToken} and registers {@code newToken} under
+     * the same logical name in a SINGLE durable step. Both records are appended and then made durable
+     * by one {@code sync}, so a crash can never persist the drop without the add (the failure mode that
+     * would otherwise force startup orphan-adoption of the new dir). REMOVE is written first so replay
+     * folds it before the ADD, matching {@code reloadFromTablesFile}'s same-name repoint order.
+     */
+    public synchronized void logSwapTable(final TableToken oldToken, final TableToken newToken) {
+        writeEntry(oldToken, OPERATION_REMOVE);
+        writeEntry(newToken, OPERATION_ADD);
+        tableNameMemory.sync(false);
+    }
+
     public GrowOnlyTableNameRegistryStore of(Path rootPath, int version) {
         rootPath.concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(version);
         tableNameMemory.smallFile(ff, rootPath.$(), MemoryTag.MMAP_DEFAULT);

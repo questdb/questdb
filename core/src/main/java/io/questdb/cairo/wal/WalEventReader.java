@@ -42,6 +42,7 @@ import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalEventReader implements Closeable {
     private final WalEventCursor eventCursor;
+    private final MemoryCMR eventChecksumMem;
     private final MemoryCMR eventIndexMem;
     private final MemoryCMR eventMem;
     private final FilesFacade ff;
@@ -49,15 +50,17 @@ public class WalEventReader implements Closeable {
     public WalEventReader(CairoConfiguration configuration) {
         this.ff = configuration.getFilesFacade();
         boolean bypassFdCache = configuration.getBypassWalFdCache();
+        eventChecksumMem = Vm.getCMRInstance(bypassFdCache);
         eventIndexMem = Vm.getCMRInstance(bypassFdCache);
         eventMem = Vm.getCMRInstance(bypassFdCache);
-        eventCursor = new WalEventCursor(eventMem);
+        eventCursor = new WalEventCursor(eventMem, eventChecksumMem);
     }
 
     @Override
     public void close() {
         // WalEventReader is re-usable after close, don't assign nulls.
         // Closing is also idempotent.
+        Misc.free(eventChecksumMem);
         Misc.free(eventIndexMem);
         Misc.free(eventMem);
     }
@@ -83,6 +86,86 @@ public class WalEventReader implements Closeable {
                     CairoConfiguration.O_NONE,
                     -1
             );
+
+            // Check only lower short to match the version
+            // Higher short can be used to make a forward compatible change
+            // by adding more data at the footer of each record
+            final int version = eventMem.getInt(WAL_FORMAT_OFFSET_32);
+            final short formatVersion = Numbers.decodeLowShort(version);
+            if (formatVersion != WALE_FORMAT_VERSION
+                    && formatVersion != WALE_MAT_VIEW_FORMAT_VERSION
+                    && formatVersion != WALE_VIEW_FORMAT_VERSION
+                    && formatVersion != WALE_LIVE_VIEW_FORMAT_VERSION) {
+                throw TableUtils.validationException()
+                        .put("WAL events file version does not match runtime version [expected=")
+                        .put(WALE_FORMAT_VERSION).put(", ").put(WALE_MAT_VIEW_FORMAT_VERSION)
+                        .put(", ").put(WALE_VIEW_FORMAT_VERSION).put(" or ").put(WALE_LIVE_VIEW_FORMAT_VERSION)
+                        .put(", actual=").put(formatVersion).put(']');
+            }
+            // The sidecar's own presence is the capability. Nothing in _event promises one exists, because
+            // such a promise is exactly what a copy of this segment cannot keep: a backup that skipped the
+            // file, or a replica whose uploader enumerates segment files from a fixed list, would arrive
+            // with the promise intact and the file gone, and the table would suspend on data that is fine.
+            // Verification is therefore best-effort by construction -- present and valid means verify,
+            // absent means read unverified, and a sidecar that IS present still has to be well-formed.
+            final boolean checksumRequired;
+            path.trimTo(pathLen).concat(EVENT_CHECKSUM_FILE_NAME);
+            // Presence probe ONLY. This stat must not size the mapping: the writer preallocates the
+            // sidecar and truncates it down to its used size when it finalises the segment, so a size
+            // captured here is stale the moment that truncation lands.
+            if (ff.length(path.$()) >= WALE_CHECKSUM_HEADER_SIZE) {
+                // Size from the OPEN fd (size < 0), so the length used is the one the file has once this
+                // reader holds it open. Passing the stat above instead asks to map more than the file
+                // holds, which Linux allows -- the reader never touches past the valid entries, so it
+                // goes unnoticed -- while Windows rejects it outright: CreateFileMapping cannot extend a
+                // file under PAGE_READONLY, and ApplyWal2TableJob suspends the table. See
+                // WalEventChecksumTest#testSidecarMappingIsSizedFromTheOpenFdNotAStalePathStat.
+                try {
+                    eventChecksumMem.of(
+                            ff,
+                            path.$(),
+                            ff.getPageSize(),
+                            -1,
+                            MemoryTag.MMAP_TABLE_WAL_READER,
+                            CairoConfiguration.O_NONE,
+                            Files.POSIX_MADV_RANDOM
+                    );
+                } catch (CairoException _couldNotMapSidecar) {
+                    // Sizing from the open fd narrows the window but does not close it: of() reads the
+                    // length and maps on the next line, and a truncation landing between the two asks
+                    // Windows to map past EOF again. Measure and map once more -- the segment is finalised
+                    // only once, so the second attempt sees a file that is no longer shrinking. Same
+                    // bounded retry as the _event.i mapping below, for the same platform reason. A second
+                    // failure propagates, so this cannot mask a persistent fault.
+                    eventChecksumMem.of(
+                            ff,
+                            path.$(),
+                            ff.getPageSize(),
+                            -1,
+                            MemoryTag.MMAP_TABLE_WAL_READER,
+                            CairoConfiguration.O_NONE,
+                            Files.POSIX_MADV_RANDOM
+                    );
+                }
+                // Re-validate against what was actually mapped, not what the stat promised.
+                final long checksumSize = eventChecksumMem.size();
+                if (checksumSize < WALE_CHECKSUM_HEADER_SIZE) {
+                    throw TableUtils.validationException()
+                            .put("WAL event checksum sidecar is truncated [path=").put(path)
+                            .put(", size=").put(checksumSize).put(']');
+                }
+                checksumRequired = true;
+                if (eventChecksumMem.getLong(0) != WALE_CHECKSUM_MAGIC
+                        || eventChecksumMem.getInt(Long.BYTES) != WALE_CHECKSUM_FILE_VERSION
+                        || eventChecksumMem.getInt(Long.BYTES + Integer.BYTES) != WALE_CHECKSUM_ENTRY_SIZE) {
+                    throw TableUtils.validationException().put("invalid WAL event checksum sidecar header [path=").put(path).put(']');
+                }
+            } else {
+                checksumRequired = false;
+                eventChecksumMem.close();
+            }
+            eventCursor.setChecksumRequired(checksumRequired);
+            path.trimTo(pathLen).concat(EVENT_FILE_NAME);
 
             if (segmentTxn > -1) {
                 final int maxTxn = eventMem.getInt(WALE_MAX_TXN_OFFSET_32);
@@ -183,22 +266,6 @@ public class WalEventReader implements Closeable {
                 eventCursor.openOffset(-1);
             }
 
-            // Check only lower short to match the version
-            // Higher short can be used to make a forward compatible change
-            // by adding more data at the footer of each record
-            final int version = eventMem.getInt(WAL_FORMAT_OFFSET_32);
-            final short formatVersion = Numbers.decodeLowShort(version);
-            if (formatVersion != WALE_FORMAT_VERSION
-                    && formatVersion != WALE_MAT_VIEW_FORMAT_VERSION
-                    && formatVersion != WALE_VIEW_FORMAT_VERSION
-                    && formatVersion != WALE_LIVE_VIEW_FORMAT_VERSION) {
-                throw TableUtils.validationException()
-                        .put("WAL events file version does not match runtime version [expected=")
-                        .put(WALE_FORMAT_VERSION).put(", ").put(WALE_MAT_VIEW_FORMAT_VERSION)
-                        .put(", ").put(WALE_VIEW_FORMAT_VERSION).put(" or ").put(WALE_LIVE_VIEW_FORMAT_VERSION)
-                        .put(", actual=").put(formatVersion)
-                        .put(']');
-            }
             return eventCursor;
         } catch (Throwable e) {
             close();

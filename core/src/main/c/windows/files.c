@@ -370,6 +370,50 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsync(JNIEnv *e, jclass cl, jin
     return -1;
 }
 
+/* Windows has no ordering-only barrier; FlushFileBuffers is the durable one, so the split is a no-op. */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_barrierFsync0(JNIEnv *e, jclass cl, jint fd) {
+    if (FlushFileBuffers(FD_TO_HANDLE(fd))) {
+        return 0;
+    }
+    SaveLastError();
+    return -1;
+}
+
+/* FlushFileBuffers already flushes the device write cache, so fsync's contract is met as-is here. */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsyncDurable0(JNIEnv *e, jclass cl, jint fd) {
+    if (FlushFileBuffers(FD_TO_HANDLE(fd))) {
+        return 0;
+    }
+    SaveLastError();
+    return -1;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fdatasync0(JNIEnv *e, jclass cl, jint fd) {
+    /* Windows has no fdatasync; FlushFileBuffers is the equivalent primitive */
+    if (FlushFileBuffers(FD_TO_HANDLE(fd))) {
+        return 0;
+    }
+    SaveLastError();
+    return -1;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncfs0(JNIEnv *e, jclass cl, jint fd) {
+    /* Windows has no syncfs (whole-filesystem flush bound to an fd); FlushFileBuffers on this fd is the
+     * closest single-file equivalent, same as fsync. The batched SYNC path is Linux-only anyway. */
+    if (FlushFileBuffers(FD_TO_HANDLE(fd))) {
+        return 0;
+    }
+    SaveLastError();
+    return -1;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncFileRange0(JNIEnv *e, jclass cl, jint fd, jlong offset, jlong nbytes, jint flags) {
+    /* Windows has no sync_file_range; return 0 (no-op). Java callers MUST fall back to a full
+     * fsync/fdatasync for durability rather than relying on this. */
+    (void) e; (void) cl; (void) fd; (void) offset; (void) nbytes; (void) flags;
+    return 0;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_sync(JNIEnv *e, jclass cl) {
     // Windows does not seem to have sync.
     return -1;
@@ -964,7 +1008,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
     return -1;
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_std_Files_rename(JNIEnv *e, jclass cl, jlong lpszOld, jlong lpszNew) {
+static jint rename0(jlong lpszOld, jlong lpszNew, DWORD flags) {
     int len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (LPCCH) lpszOld, -1, NULL, 0);
     if (len > 0) {
         wchar_t buf1[len];
@@ -976,13 +1020,30 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_rename(JNIEnv *e, jclass cl, jl
             wchar_t buf2[len];
             MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszNew, -1, buf2, len);
 
-            if (MoveFileW(buf1, buf2)) {
+            /* MoveFileExW without MOVEFILE_REPLACE_EXISTING behaves exactly as MoveFileW: it FAILS with
+             * ERROR_ALREADY_EXISTS when the destination is present. Callers depend on that (see
+             * TableWriter's Files.WINDOWS_ERROR_FILE_EXISTS branch), so the flag must never be added here. */
+            if (MoveFileExW(buf1, buf2, flags)) {
                 return FILES_RENAME_ERR_OK;
             }
         }
     }
     SaveLastError();
     return ERROR_NOT_SAME_DEVICE == GetLastError() ? FILES_RENAME_ERR_EXDEV : FILES_RENAME_ERR_OTHER;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_rename(JNIEnv *e, jclass cl, jlong lpszOld, jlong lpszNew) {
+    return rename0(lpszOld, lpszNew, 0);
+}
+
+/* The durable publish-by-rename. POSIX makes a rename durable by fsync'ing the parent directory afterwards;
+ * Windows has no directory handle to flush (FlushFileBuffers takes files only), so without this flag the
+ * rename that PUBLISHES an already-fsynced file had no barrier at all -- a power cut could keep the _txn
+ * commit that points at the new name while losing the name itself, inverting data-before-pointer.
+ * MOVEFILE_WRITE_THROUGH is documented not to return until the move is flushed to disk, which is the
+ * barrier the POSIX directory fsync buys. */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_renameDurable0(JNIEnv *e, jclass cl, jlong lpszOld, jlong lpszNew) {
+    return rename0(lpszOld, lpszNew, MOVEFILE_WRITE_THROUGH);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getDiskSize(JNIEnv *e, jclass cl, jlong lpszPath) {

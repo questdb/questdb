@@ -148,8 +148,16 @@ public class IDGeneratorFactory {
                 synchronized (this) {
                     // Check if new batch allocation still needed
                     if (base.get() > end) {
-                        // Allocate new batch
-                        long newEnd = end + step;
+                        // Allocate the new batch from the persisted watermark, not merely from the one this
+                        // instance cached at open(). The file is not private to this generator: a replica's
+                        // _wal_index.d advances by replication, recording ids the PRIMARY allocated, while
+                        // this generator was opened earlier against a file that still read 0. Promote that
+                        // replica and a cached watermark reissues ids the old primary already used -- the
+                        // promoted node writes into a WAL directory that still exists on its peer, its wal
+                        // lock is refused, and replication stalls a transaction short indefinitely. The
+                        // non-batching generator re-reads the mapping on every call and never had this
+                        // problem; taking the larger of the two restores the same guarantee here.
+                        long newEnd = Math.max(end, Unsafe.getLong(uniqueIdMem)) + step;
                         Unsafe.putLong(uniqueIdMem, newEnd);
                         configuration.getFilesFacade().msync(uniqueIdMem, uniqueIdMemSize, configuration.getCommitMode() == CommitMode.ASYNC);
                         base.set(newEnd - step);

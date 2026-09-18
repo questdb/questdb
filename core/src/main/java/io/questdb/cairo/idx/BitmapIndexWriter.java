@@ -55,6 +55,9 @@ public class BitmapIndexWriter implements IndexWriter {
     private int blockCapacity;
     private int blockValueCountMod;
     private int keyCount = -1;
+    // The commit mode this indexer flushes under. Seeded from the instance-global cairo.commit.mode and
+    // overridden via setCommitMode() while the owning table is not yet enrolled in adaptive.
+    private int indexCommitMode;
     private long seekValueBlockOffset;
     private long seekValueCount;
     private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seek;
@@ -69,6 +72,7 @@ public class BitmapIndexWriter implements IndexWriter {
     public BitmapIndexWriter(CairoConfiguration configuration) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
+        this.indexCommitMode = configuration.getCommitMode();
     }
 
     public static void initKeyMemory(MemoryMA keyMem, int blockValueCount) {
@@ -165,10 +169,19 @@ public class BitmapIndexWriter implements IndexWriter {
     }
 
     public void commit() {
-        int commitMode = configuration.getCommitMode();
-        if (commitMode != CommitMode.NOSYNC) {
+        // appliesColumnSync (SYNC/ASYNC only) rather than `!= NOSYNC`: the .k/.v files are re-derivable
+        // from the durable WAL just like the column they index, so under ADAPTIVE they stay lazy on the
+        // apply path and are made durable by the epoch (TableWriter.fsyncMaterializedState forces
+        // sync(false) on every indexer, then one filesystem-wide syncfs). See IndexWriter.setCommitMode.
+        final int commitMode = indexCommitMode;
+        if (CommitMode.appliesColumnSync(commitMode)) {
             sync(commitMode == CommitMode.ASYNC);
         }
+    }
+
+    @Override
+    public void setCommitMode(int commitMode) {
+        this.indexCommitMode = commitMode;
     }
 
     public RowCursor getCursor(int key) {
@@ -261,6 +274,14 @@ public class BitmapIndexWriter implements IndexWriter {
                     throw CairoException.critical(ff.errno()).put("Could not truncate [fd=").put(valueFd).put(']');
                 }
             } else {
+                if (this.valueMemSize > 0) {
+                    long vActual = ff.length(valueFd);
+                    if (this.valueMemSize > vActual) {
+                        throw CairoException.critical(0)
+                                .put("bitmap index value file too short [expected=").put(this.valueMemSize)
+                                .put(", actual=").put(vActual).put(", fd=").put(valueFd).put(']');
+                    }
+                }
                 vFdUnassigned = false;
                 valueMem.of(ff, valueFd, false, null, valueAppendPageSize, valueMemSize, MemoryTag.MMAP_INDEX_WRITER);
             }
@@ -333,6 +354,15 @@ public class BitmapIndexWriter implements IndexWriter {
             }
 
             this.valueMemSize = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
+            if (this.valueMemSize > 0) {
+                LPSZ vName = BitmapIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn);
+                long vActual = ff.length(vName);
+                if (this.valueMemSize > vActual) {
+                    throw CairoException.critical(0)
+                            .put("bitmap index value file too short [expected=").put(this.valueMemSize)
+                            .put(", actual=").put(vActual).put(", path=").put(vName).put(']');
+                }
+            }
             valueMem.of(
                     ff,
                     BitmapIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn),
@@ -393,6 +423,18 @@ public class BitmapIndexWriter implements IndexWriter {
             // do we have anything for the key?
             if (valueCount > 0) {
                 long blockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
+                // The header guards at open time only validate the key file as a whole; a torn or corrupt
+                // per-key entry can point past the mapped value extent. The seek below dereferences the
+                // offset without a bounds check, so on a production build that is a wild read, not an
+                // exception. Refuse it here, by name, so recovery fails cleanly instead of crashing.
+                if (blockOffset < 0 || blockOffset + blockCapacity > valueMemSize) {
+                    throw CairoException.critical(0)
+                            .put("bitmap index value block offset is out of bounds [key=").put(k)
+                            .put(", valueBlockOffset=").put(blockOffset)
+                            .put(", blockCapacity=").put(blockCapacity)
+                            .put(", valueMemSize=").put(valueMemSize)
+                            .put(", fd=").put(valueMem.getFd()).put(']');
+                }
                 BitmapIndexUtils.seekValueBlockRTL(valueCount, blockOffset, valueMem, maxValue, blockValueCountMod, SEEKER);
 
                 if (valueCount != seekValueCount || blockOffset != seekValueBlockOffset) {
@@ -422,8 +464,54 @@ public class BitmapIndexWriter implements IndexWriter {
     }
 
     public void sync(boolean async) {
-        keyMem.sync(async);
+        // valueMem (.v, data) before keyMem (.k, pointer): a crash must never leave the key file
+        // referencing value-block offsets that are not yet durable. Matches PostingIndexWriter.sync.
         valueMem.sync(async);
+        keyMem.sync(async);
+    }
+
+    /**
+     * fsync the index files after {@link #sync(boolean)}'s msync, in the same value-before-key order.
+     * Lets the adaptive epoch's single trailing device barrier cover them: fcntl(2) words that guarantee
+     * as applying to data "fsync'd on the same device before".
+     */
+    public void fsyncFiles() {
+        fsyncIfOpen(valueMem.getFd());
+        fsyncIfOpen(keyMem.getFd());
+    }
+
+    private void fsyncIfOpen(long fd) {
+        if (fd != -1) {
+            ff.fsync(fd);
+        }
+    }
+
+    /**
+     * Batched SYNC stage 1 (Linux): push both index files' dirty pages to the page cache. Kicks are
+     * order-free (no device flush, no durability ordering yet), so value/key order does not matter here.
+     */
+    public void syncFlushKick() {
+        valueMem.syncFlushKick();
+        keyMem.syncFlushKick();
+    }
+
+    /**
+     * Batched SYNC stage 2 (Linux): write both index files' pages back to the device cache (WAIT_AFTER).
+     * Drains are order-free for the same reason as kicks.
+     */
+    public void syncFlushDrain() {
+        valueMem.syncFlushDrain();
+        keyMem.syncFlushDrain();
+    }
+
+    /**
+     * Batched SYNC stage 3: fdatasync only the index file(s) that EXTENDED. The value-before-key ordering
+     * matters here because these fdatasyncs are the durability points: persist the .v (data) extend before
+     * the .k (pointer) extend so a crash can never expose a key block beyond the durable value data.
+     */
+    public void syncFlushFinishIfExtended() {
+        valueMem.syncFlushFinishIfExtended();
+        keyMem.syncFlushFinishIfExtended();
     }
 
     public void truncate() {

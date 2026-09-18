@@ -158,7 +158,12 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
 
         boolean safe;
         try {
-            safe = txnScoreboard.isRangeAvailable(task.getFromTableTxn(), task.getToTableTxn());
+            safe = txnScoreboard.isRangeAvailable(task.getFromTableTxn(), task.getToTableTxn())
+                    && (!liveToken.isWal()
+                    || engine.getTableSequencerAPI().getTxnTracker(liveToken).isRangeAvailableToEpoch(
+                    task.getFromTableTxn(),
+                    task.getToTableTxn()
+            ));
         } catch (CairoException ex) {
             LOG.error().$("posting seal purge: scoreboard query failed, retrying [table=")
                     .$(liveToken.getTableName())
