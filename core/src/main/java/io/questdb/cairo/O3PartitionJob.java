@@ -396,6 +396,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     schemaDesc.clear();
                 }
 
+                // Synchronise the CURRENT logical nullability into the footer
+                // metadata. A nullability-only ALTER (SET NULL / SET NOT NULL)
+                // changes no physical schema, so it does not reach the
+                // setTargetSchema branch above; without this sync the Rust side
+                // would carry the old footer's stale not_null flag forward. The
+                // parquet Repetition, definition levels and null-count statistics
+                // are untouched, so the sync is truthful in both ALTER directions.
+                syncColumnNullability(partitionUpdater, tableWriterMetadata);
+
                 // Build row group bounds for merge strategy computation.
                 // Use the parquet-side column index (not the table-side index)
                 // because the decoder resolves columns by their position in the
@@ -3700,6 +3709,40 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         if (!ff.rmdir(path)) {
             // This is not critical, the read error will be transient
             LOG.error().$("could not remove phantom partition dir, it may cause transient missing file read errors [errno=").$(ff.errno()).$(", path=").$(path).I$();
+        }
+    }
+
+    private static void syncColumnNullability(
+            PartitionUpdater partitionUpdater,
+            TableRecordMetadata tableWriterMetadata
+    ) {
+        // Build the nullability descriptor in native memory: pairs of
+        // [columnId (long), notNull (long, 0 or 1)] per live column. The
+        // columnId is the original writer index, matching the field_id
+        // stamped into the parquet file and its QdbMeta.
+        final int columnCount = tableWriterMetadata.getColumnCount();
+        int liveColCount = 0;
+        for (int i = 0; i < columnCount; i++) {
+            if (tableWriterMetadata.getColumnType(i) >= 0) {
+                liveColCount++;
+            }
+        }
+        final long descSize = (long) liveColCount * 2 * Long.BYTES;
+        final long descAddr = Unsafe.malloc(descSize, MemoryTag.NATIVE_O3);
+        try {
+            int descIdx = 0;
+            for (int i = 0; i < columnCount; i++) {
+                if (tableWriterMetadata.getColumnType(i) < 0) {
+                    continue; // deleted column, not in target schema
+                }
+                final int colId = tableWriterMetadata.getColumnMetadata(i).getOriginalWriterIndex();
+                Unsafe.putLong(descAddr + (long) descIdx * Long.BYTES, colId);
+                Unsafe.putLong(descAddr + (long) (descIdx + 1) * Long.BYTES, tableWriterMetadata.isNotNull(i) ? 1 : 0);
+                descIdx += 2;
+            }
+            partitionUpdater.syncColumnNullability(descAddr, liveColCount);
+        } finally {
+            Unsafe.free(descAddr, descSize, MemoryTag.NATIVE_O3);
         }
     }
 

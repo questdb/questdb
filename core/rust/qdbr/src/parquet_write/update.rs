@@ -137,6 +137,15 @@ pub struct ParquetUpdater {
     /// Keying by id rather than by partition position guarantees end() looks up
     /// the right column even if the partition layout drifts across calls.
     written_ascii: RapidHashMap<i32, bool>,
+    /// The table's CURRENT logical NOT NULL flag per column, keyed by parquet
+    /// field_id (== QuestDB's original writer index). Populated by
+    /// `sync_column_nullability` (JNI `PartitionUpdater.syncColumnNullability`);
+    /// `end()` stamps these values into the footer's `QdbMetaCol::not_null`.
+    /// Needed because a nullability-only ALTER changes no physical schema, so
+    /// Java never calls `set_target_schema` and both `end()` branches would
+    /// otherwise carry the old footer's stale flag. Empty when Java did not
+    /// sync (e.g. older callers): the old behaviour is preserved.
+    logical_not_null: RapidHashMap<i32, bool>,
     parquet_meta_fd: Option<File>,
     parquet_meta_file_size: u64,
     // The append base: the `_pm` offset-0 header (the reader's getFileSize()),
@@ -468,6 +477,7 @@ impl ParquetUpdater {
             target_col_id_to_pos: None,
             old_ascii,
             written_ascii: RapidHashMap::default(),
+            logical_not_null: RapidHashMap::default(),
             parquet_meta_fd,
             parquet_meta_file_size,
             append_base,
@@ -859,6 +869,22 @@ impl ParquetUpdater {
 
         self.target_qdb_meta = Some(qdb_meta);
         Ok(())
+    }
+
+    /// Records the table's current logical NOT NULL flag per column, keyed by
+    /// parquet field_id. `end()` stamps these values into the footer's
+    /// `QdbMetaCol::not_null` so a nullability-only ALTER (which bypasses
+    /// `set_target_schema`) still reaches the footer. Truthful in both ALTER
+    /// directions: the parquet Repetition stays Optional and the pages'
+    /// definition levels and null-count statistics are untouched, so setting
+    /// `not_null = true` over a file with physically-present NULL entries only
+    /// reclassifies those entries as the type's sentinel bit pattern read as
+    /// data - the in-place semantics of `ALTER COLUMN ... SET NOT NULL`.
+    pub fn sync_column_nullability(&mut self, columns: &[(i32, bool)]) {
+        self.logical_not_null.clear();
+        for &(field_id, not_null) in columns {
+            self.logical_not_null.insert(field_id, not_null);
+        }
     }
 
     /// Copies an existing row group from the input file and appends null column
@@ -1385,6 +1411,23 @@ impl ParquetUpdater {
             }
             meta
         };
+
+        // Stamp the CURRENT logical nullability into the footer, keyed by
+        // field_id like written_ascii. Both branches above start from a schema
+        // snapshot that predates a nullability-only ALTER (the old footer, or a
+        // target schema built before Java's sync call would matter), so the
+        // synced values are authoritative. Empty map = no sync call, keep the
+        // carried-over flags.
+        if !self.logical_not_null.is_empty() {
+            let fields = self.parquet_file.schema().fields();
+            for (i, col) in qdb_meta.schema.iter_mut().enumerate() {
+                let field_id = fields.get(i).and_then(|f| f.get_field_info().id);
+                let id = resolve_column_id(col.id, field_id);
+                if let Some(&not_null) = self.logical_not_null.get(&id) {
+                    col.not_null = not_null;
+                }
+            }
+        }
 
         qdb_meta.seq_txn = self.seq_txn.get();
 
@@ -2591,6 +2634,81 @@ mod tests {
             .expect("rewritten file must carry qdb_meta");
         let qdb_meta = QdbMeta::deserialize(qdb_raw)?;
         assert!(!qdb_meta.schema[0].not_null);
+        Ok(())
+    }
+
+    #[test]
+    fn sync_column_nullability_stamps_current_logical_flags() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+
+        // (source not_null_hint, synced (field_id, flag) or None, expected
+        // footer flag) covers: SET NULL direction, SET NOT NULL direction,
+        // the no-sync control that must keep the carried-over footer flag,
+        // and a sync payload whose field_id does not match the column (the
+        // flag must also stay carried over).
+        for (source_not_null, synced, expected) in [
+            (true, Some((1, false)), false),
+            (false, Some((1, true)), true),
+            (true, None, true),
+            (true, Some((99, false)), true),
+        ] {
+            let values = [1i32, 2, 3];
+            let mut source_column =
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &values);
+            source_column.not_null_hint = source_not_null;
+            let source_partition = Partition {
+                table: "t".to_string(),
+                columns: vec![source_column],
+            };
+            let source = NamedTempFile::new()?;
+            ParquetWriter::new(source.reopen()?).finish(source_partition)?;
+            let source_len = source.as_file().metadata()?.len();
+
+            let output = NamedTempFile::new()?;
+            let allocator = TestAllocatorState::new();
+            let mut updater = super::ParquetUpdater::new(
+                allocator.allocator(),
+                source.reopen()?,
+                source_len,
+                output.reopen()?,
+                0,
+                None,
+                true,
+                false,
+                CompressionOptions::Uncompressed,
+                None,
+                None,
+                DEFAULT_BLOOM_FILTER_FPP,
+                0.0,
+                None,
+                0,
+                0,
+                -1,
+                SeqTxn::UNSET,
+            )?;
+            // No set_target_schema call: a nullability-only ALTER has no
+            // physical schema change, so end() takes the old-footer branch.
+            if let Some((field_id, not_null)) = synced {
+                updater.sync_column_nullability(&[(field_id, not_null)]);
+            }
+            updater.copy_row_group(0)?;
+            updater.end(None)?;
+
+            let file = output.reopen()?;
+            let len = file.metadata()?.len();
+            let metadata = read_metadata_with_size(&mut &file, len)?;
+            let qdb_raw = metadata
+                .key_value_metadata
+                .as_ref()
+                .and_then(|entries| entries.iter().find(|entry| entry.key == QDB_META_KEY))
+                .and_then(|entry| entry.value.as_ref())
+                .expect("updated file must carry qdb_meta");
+            let qdb_meta = QdbMeta::deserialize(qdb_raw)?;
+            assert_eq!(
+                qdb_meta.schema[0].not_null, expected,
+                "source_not_null={source_not_null}, synced={synced:?}"
+            );
+        }
         Ok(())
     }
 

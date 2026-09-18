@@ -44,6 +44,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
@@ -675,7 +676,17 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     // before the OR, clobbering writerIdx in the upper 32 bits.
                     columnMetadata.add((long) writerIdx << 32 | (symbolColumnType & 0xFFFFFFFFL));
                 } else {
-                    columnMetadata.add((long) writerIdx << 32 | (columnType & 0xFFFFFFFFL));
+                    // Same high-bit channel the symbol branch uses: bit 31 of the packed
+                    // type is the write-time not-null hint. Rust's Column::from_raw_data
+                    // derives not_null_hint from it for every column kind, so a NOT NULL
+                    // column's sentinel bit patterns encode as parquet data, not NULL,
+                    // and the footer QdbMeta preserves the NOT NULL constraint. The
+                    // writer-index packing in the upper 32 bits is unchanged.
+                    int encodeColumnType = columnType;
+                    if (meta.isNotNull(i)) {
+                        encodeColumnType |= PartitionDescriptor.NOT_NULL_HINT_BIT;
+                    }
+                    columnMetadata.add((long) writerIdx << 32 | (encodeColumnType & 0xFFFFFFFFL));
                 }
                 // Per-column parquet encoding config (third long); the JNI side reads it
                 // and stores it in Column::parquet_encoding_config so the writer can honour

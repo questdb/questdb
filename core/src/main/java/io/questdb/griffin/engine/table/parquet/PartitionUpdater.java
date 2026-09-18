@@ -218,6 +218,22 @@ public class PartitionUpdater implements QuietCloseable {
         );
     }
 
+    /**
+     * Synchronises the table's CURRENT logical NOT NULL flags into the footer
+     * metadata written by {@link #updateFileMetadata()}. Call this after
+     * {@link #of} on every O3 update: a nullability-only ALTER changes no
+     * physical schema, so it bypasses {@link #setTargetSchema} and the footer
+     * would otherwise carry the old file's stale flag.
+     *
+     * @param colDescAddr native address of a flat array of pairs of
+     *                    [columnId (long), notNull (long, 0 or 1)] per column
+     * @param colCount    number of pairs
+     */
+    public void syncColumnNullability(long colDescAddr, int colCount) {
+        assert ptr != 0;
+        syncColumnNullability(ptr, colDescAddr, colCount);
+    }
+
     // call to this method will update file metadata
     // MUST be called after all row groups have been updated
     // returns the final file size
@@ -331,6 +347,12 @@ public class PartitionUpdater implements QuietCloseable {
             long colDataPtr,
             long colDataLen,
             int timestampIndex
+    ) throws CairoException;
+
+    private static native void syncColumnNullability(
+            long impl,
+            long colDescAddr,
+            int colCount
     ) throws CairoException;
 
     // throws CairoException on error, returns file size
