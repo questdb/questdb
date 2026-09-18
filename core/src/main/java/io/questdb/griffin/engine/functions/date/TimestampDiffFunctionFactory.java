@@ -82,7 +82,7 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
                 }
                 return new DiffVarVarFunction(start, end, driver, diffMethod, startType, endType, period);
             }
-            return driver.getTimestampConstantNull();
+            return LongConstant.NULL;
         }
         return new DateDiffFunc(args.getQuick(0), args.getQuick(1), args.getQuick(2), driver, startType, endType);
     }
