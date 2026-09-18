@@ -57,6 +57,7 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
+import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.readChunkedBody;
 import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.readHttpHeaders;
 
 /**
@@ -216,38 +217,7 @@ public class LineHttpSecurityContextTest extends AbstractBootstrapTest {
             );
             return headers;
         }
-
-        final StringBuilder body = new StringBuilder();
-        while (true) {
-            final StringBuilder sizeLine = new StringBuilder();
-            while (!sizeLine.toString().endsWith("\r\n")) {
-                final int b = in.read();
-                if (b < 0) {
-                    throw new AssertionError(
-                            "server closed the connection inside a chunk size line, so this connection"
-                                    + " cannot be reused: <<<" + headers + body + sizeLine + ">>>"
-                    );
-                }
-                sizeLine.append((char) b);
-            }
-            final int size = Integer.parseInt(sizeLine.toString().trim(), 16);
-            // chunk payload plus its trailing CRLF
-            for (int i = 0; i < size + 2; i++) {
-                final int b = in.read();
-                if (b < 0) {
-                    throw new AssertionError(
-                            "server closed the connection inside a chunk, so this connection cannot be"
-                                    + " reused: <<<" + headers + body + ">>>"
-                    );
-                }
-                if (i < size) {
-                    body.append((char) b);
-                }
-            }
-            if (size == 0) {
-                return headers + body;
-            }
-        }
+        return headers + readChunkedBody(in, headers);
     }
 
     private static String writeRequest(String lines, String user) {

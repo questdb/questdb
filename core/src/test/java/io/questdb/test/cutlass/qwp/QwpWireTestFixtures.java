@@ -299,6 +299,32 @@ public final class QwpWireTestFixtures {
     }
 
     /**
+     * Reads one chunked HTTP body off {@code in} and leaves the stream on the
+     * byte after its terminating chunk, so a keep-alive caller can issue the
+     * next request on the same socket. {@code response} is the already-read
+     * header block, quoted in the failure messages.
+     * <p>
+     * Plain HTTP rather than QWP, and lives here for the same reason
+     * {@link #readHttpHeaders} does: both the QWP upgrade-refusal tests and the
+     * ILP-over-HTTP tests in either module read this reply shape off a raw
+     * socket, and a second copy is how the two drift apart on chunk framing.
+     */
+    public static String readChunkedBody(InputStream in, String response) throws Exception {
+        StringBuilder body = new StringBuilder();
+        for (; ; ) {
+            int size = readChunkSize(in, response);
+            if (size == 0) {
+                readCrLf(in, response);
+                return body.toString();
+            }
+            byte[] chunk = in.readNBytes(size);
+            Assert.assertEquals("truncated HTTP chunk in the response body", size, chunk.length);
+            body.append(new String(chunk, StandardCharsets.UTF_8));
+            readCrLf(in, response);
+        }
+    }
+
+    /**
      * Reads an HTTP response up to and including the {@code \r\n\r\n} header
      * boundary and returns it as US-ASCII, leaving the body -- or, on a
      * successful upgrade, the pushed WebSocket frames -- unconsumed in the
@@ -386,5 +412,60 @@ public final class QwpWireTestFixtures {
         int b = in.read();
         Assert.assertNotEquals("unexpected end of stream while reading a server frame", -1, b);
         return b;
+    }
+
+    /**
+     * Reads one chunk-size line, rejecting the first byte that cannot belong to
+     * one. This fails immediately instead of blocking until the socket timeout,
+     * and for the QWP callers it is also the protocol-switch detector: a
+     * switched connection puts a WebSocket frame here, whose first byte is
+     * {@code 0x82} and therefore not a hex digit.
+     * <p>
+     * A {@code ;}-delimited chunk extension is discarded: no QuestDB endpoint
+     * emits one today, but it is legal HTTP and parsing it as part of the size
+     * would fail confusingly if one ever appeared.
+     */
+    private static int readChunkSize(InputStream in, String response) throws Exception {
+        StringBuilder line = new StringBuilder();
+        int value;
+        while ((value = in.read()) >= 0) {
+            if (value == '\n') {
+                Assert.assertFalse("empty HTTP chunk size line: <<<" + response + ">>>", line.isEmpty());
+                return Integer.parseInt(line.toString(), 16);
+            }
+            if (value == '\r') {
+                continue;
+            }
+            if (value == ';') {
+                // chunk extension: skip to the end of the line
+                while ((value = in.read()) >= 0 && value != '\n') {
+                    // discard
+                }
+                Assert.assertFalse("empty HTTP chunk size line: <<<" + response + ">>>", line.isEmpty());
+                return Integer.parseInt(line.toString(), 16);
+            }
+            if (Character.digit((char) value, 16) < 0) {
+                throw new AssertionError(
+                        "expected an HTTP chunk size after the response headers, got byte 0x"
+                                + Integer.toHexString(value)
+                                + " -- this is not a chunk size byte, so the peer did not send a chunked"
+                                + " HTTP body; after a QWP upgrade that is what a connection switched to"
+                                + " WebSocket looks like: <<<" + response + ">>>"
+                );
+            }
+            line.append((char) value);
+        }
+        throw new AssertionError(
+                "the response body ended before its terminating chunk: <<<" + response + ">>>"
+        );
+    }
+
+    private static void readCrLf(InputStream in, String response) throws Exception {
+        byte[] crLf = in.readNBytes(2);
+        Assert.assertEquals(
+                "the response body is not well-formed chunked HTTP: <<<" + response + ">>>",
+                2,
+                crLf.length
+        );
     }
 }
