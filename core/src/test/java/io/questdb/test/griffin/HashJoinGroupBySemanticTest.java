@@ -471,12 +471,17 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
             try (SqlExecutionContextImpl context = context(engine, 4)) {
                 for (String join : JOINS) {
                     for (String side : new String[]{"r", "p"}) {
-                        for (String aggregate : new String[]{"sum(" + side + ".i)", "sum(" + side + ".l)",
-                                "avg(" + side + ".i)", "avg(" + side + ".l)", "count(" + side + ".t)",
-                                "min(" + side + ".d)", "max(" + side + ".d)", "first(" + side + ".d)",
-                                "last(" + side + ".d)", "count_distinct(" + side + ".s)", "ksum(" + side + ".d)", "count(" + side + ".i::short)"}) {
+                        for (String aggregate : new String[]{"count(" + side + ".t)", "first(" + side + ".d)",
+                                "last(" + side + ".d)", "count_distinct(" + side + ".s)", "count(" + side + ".i::short)"}) {
                             assertDifferential("select " + aggregate + from(join), context, false);
                             assertDifferential("select r.s,p.s," + aggregate + from(join) + " order by r.s,p.s", context, false);
+                        }
+                        // HashJoinGroupByAggregatesTest covers every admitted class; these flipped from excluded.
+                        for (String aggregate : new String[]{"sum(" + side + ".i)", "sum(" + side + ".l)",
+                                "avg(" + side + ".i)", "avg(" + side + ".l)", "min(" + side + ".d)", "max(" + side + ".d)",
+                                "ksum(" + side + ".d)"}) {
+                            assertDifferential("select " + aggregate + from(join), context, true);
+                            assertDifferential("select r.s,p.s," + aggregate + from(join) + " order by r.s,p.s", context, true);
                         }
                     }
                     // PostgreSQL-style ::float means DOUBLE (SqlParser.rewritePgCast),
@@ -506,9 +511,13 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                 }
                 for (String join : JOINS) {
                     for (String side : new String[]{"r", "p"}) {
-                        assertDifferential("select sum(" + side + ".v) from a r" + join + "b p on r.id=p.id", context, false);
-                        assertDifferential("select r.s,p.s,sum(" + side + ".v) from a r" + join
-                                + "b p on r.id=p.id order by r.s,p.s", context, false);
+                        // sum(FLOAT) is SumFloat; avg(FLOAT) passes the FLOAT argument to AvgDouble.
+                        for (String aggregate : new String[]{"sum(" + side + ".v)", "avg(" + side + ".v)"}) {
+                            boolean isFused = aggregate.startsWith("sum");
+                            assertDifferential("select " + aggregate + " from a r" + join + "b p on r.id=p.id", context, isFused);
+                            assertDifferential("select r.s,p.s," + aggregate + " from a r" + join
+                                    + "b p on r.id=p.id order by r.s,p.s", context, isFused);
+                        }
                     }
                     // SYMBOL keys against text keys with the same values keep the ordinary plan.
                     for (String on : new String[]{"r.s=p.str", "r.str=p.s", "r.s=p.vc", "r.vc=p.s"}) {

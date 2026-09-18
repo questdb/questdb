@@ -274,11 +274,11 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             try (SqlExecutionContextImpl context = enabledContext()) {
                 for (String sql : new String[]{
                         "select first(r.energy_kwh), last(r.energy_kwh)" + JOINS[0],
-                        "select sum(r.plant_id), avg(r.plant_id)" + JOINS[0],
+                        "select arg_min(r.energy_kwh, r.plant_id), arg_max(r.energy_kwh, r.plant_id)" + JOINS[0],
                         "select count(distinct p.country)" + JOINS[1],
-                        "select min(r.energy_kwh), max(r.energy_kwh)" + JOINS[2],
+                        "select mode(r.energy_kwh), approx_percentile(r.energy_kwh, 0.5)" + JOINS[2],
                         "select p.country, first(r.energy_kwh), last(r.energy_kwh)" + JOINS[0] + " order by country",
-                        "select p.country, sum(r.plant_id)" + JOINS[0] + " order by country",
+                        "select p.country, sum(r.plant_id), mode(r.energy_kwh)" + JOINS[0] + " order by country",
                         SELECT + " from r join p on r.plant_id::long=p.plant_id::long order by country,yr,mo",
                         SELECT + JOINS[0] + " and r.energy_kwh=p.installed_kwp order by country,yr,mo",
                         SELECT + JOINS[1] + " and r.energy_kwh > 0 order by country,yr,mo",

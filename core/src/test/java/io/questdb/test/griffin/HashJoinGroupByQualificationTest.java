@@ -88,7 +88,8 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                         }
                     }
                 }
-                assertDifferential("select min(r.d) from r join p on r.id=p.id where r.s like 's%'", context, false);
+                assertDifferential("select min(r.d) from r join p on r.id=p.id where r.s like 's%'", context, true);
+                assertDifferential("select mode(r.d) from r join p on r.id=p.id where r.s like 's%'", context, false);
             }
         });
     }

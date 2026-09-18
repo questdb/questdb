@@ -33,15 +33,10 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunction;
-import io.questdb.griffin.engine.functions.groupby.CountDoubleGroupByFunction;
-import io.questdb.griffin.engine.functions.groupby.CountIntGroupByFunction;
-import io.questdb.griffin.engine.functions.groupby.CountLongConstGroupByFunction;
-import io.questdb.griffin.engine.functions.groupby.CountLongGroupByFunction;
-import io.questdb.griffin.engine.functions.groupby.CountSymbolGroupByFunction;
-import io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.HashJoinGroupByAggregates;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
@@ -147,28 +142,21 @@ public final class HashJoinGroupByCandidate {
         return isSymbolKey;
     }
 
-    /** Exact implementations, not SQL names or supportsParallelism() alone. */
+    /** Exact implementations from HashJoinGroupByAggregates, not SQL names or supportsParallelism() alone. */
     public static boolean supportsAggregate(Function function) {
-        if (!function.supportsParallelism() || !function.isStableWithinExecution()) {
+        if (!isParallelSafe(function)) {
             return false;
         }
         Class<?> type = function.getClass();
-        if (type == CountLongConstGroupByFunction.class) {
-            return true;
+        if (function instanceof UnaryFunction unary) {
+            Function arg = unary.getArg();
+            return isParallelSafe(arg) && HashJoinGroupByAggregates.isSupportedUnary(type, arg.getType());
         }
-        if (!(function instanceof UnaryFunction unary)) {
-            return false;
+        if (function instanceof BinaryFunction binary) {
+            return isParallelSafe(binary.getLeft()) && isParallelSafe(binary.getRight())
+                    && HashJoinGroupByAggregates.isSupportedBinary(type);
         }
-        Function arg = unary.getArg();
-        if (!arg.supportsParallelism() || !arg.isStableWithinExecution()) {
-            return false;
-        }
-        int argType = ColumnType.tagOf(arg.getType());
-        return ((type == SumDoubleGroupByFunction.class || type == AvgDoubleGroupByFunction.class
-                || type == CountDoubleGroupByFunction.class) && argType == ColumnType.DOUBLE)
-                || (type == CountIntGroupByFunction.class && argType == ColumnType.INT)
-                || (type == CountLongGroupByFunction.class && argType == ColumnType.LONG)
-                || (type == CountSymbolGroupByFunction.class && argType == ColumnType.SYMBOL);
+        return HashJoinGroupByAggregates.isSupportedNullary(type);
     }
 
     /** The fused scan reads page frames directly and does not support covering-index frame descriptors or their decode caches. */
@@ -414,6 +402,10 @@ public final class HashJoinGroupByCandidate {
             }
         }
         return false;
+    }
+
+    private static boolean isParallelSafe(Function function) {
+        return function.supportsParallelism() && function.isStableWithinExecution();
     }
 
     private static boolean isProjection(IQueryModel model) {

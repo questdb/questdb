@@ -62,12 +62,14 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             metadata.add(new TableColumnMetadata("s", ColumnType.SYMBOL, IndexType.NONE, 0, true, null));
             FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                for (String expression : new String[]{"sum(d)", "avg(d)", "count()", "count(i)", "count(l)", "count(d)", "count(s)", "sum(coalesce(d, 0.0))"}) {
+                for (String expression : new String[]{"sum(d)", "avg(d)", "count()", "count(i)", "count(l)", "count(d)", "count(s)",
+                        "sum(coalesce(d, 0.0))", "sum(i)", "avg(l)", "min(d)", "ksum(d)", "stddev(d)", "corr(d, l)", "weighted_avg(i, l)"}) {
                     try (Function function = parser.parseFunction(compiler.testParseExpression(expression, QueryModel.FACTORY.newInstance()), metadata, sqlExecutionContext)) {
                         Assert.assertTrue(expression, HashJoinGroupByCandidate.supportsAggregate(function));
                     }
                 }
-                for (String expression : new String[]{"first(d)", "last(d)", "sum(i)", "avg(l)", "min(d)", "count_distinct(i)", "sum(rnd_double())"}) {
+                for (String expression : new String[]{"first(d)", "last(d)", "count_distinct(i)", "sum(rnd_double())", "mode(d)",
+                        "arg_min(d, l)", "corr(d, rnd_double())", "count(i::short)"}) {
                     try (Function function = parser.parseFunction(compiler.testParseExpression(expression, QueryModel.FACTORY.newInstance()), metadata, sqlExecutionContext)) {
                         Assert.assertFalse(expression, HashJoinGroupByCandidate.supportsAggregate(function));
                     }
@@ -291,8 +293,8 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                     "select country, sum(e) from (select distinct p.country country, r.energy_kwh e" + JOIN + ")",
                     "select p.country, first(r.energy_kwh)" + JOIN,
                     "select p.country, last(r.energy_kwh)" + JOIN,
-                    "select p.country, sum(r.plant_id)" + JOIN,
-                    "select p.country, min(r.energy_kwh)" + JOIN,
+                    "select p.country, mode(r.energy_kwh)" + JOIN,
+                    "select p.country, arg_min(r.energy_kwh, r.plant_id)" + JOIN,
                     "select p.country, count_distinct(r.plant_id)" + JOIN,
                     "select p.country, sum(rnd_double())" + JOIN
             }) {

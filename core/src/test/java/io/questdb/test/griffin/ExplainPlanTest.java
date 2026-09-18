@@ -3542,18 +3542,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select max(i) from (select * from a join a b on i )")
                 .ddl("create table a (i int, d double)")
                 .assertsPlan("""
-                        GroupBy vectorized: false
-                          values: [max(i)]
-                            SelectedRecord
-                                Hash Join Light
-                                  condition: b.i=a.i
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
+                        Async Hash Join Group By workers: 1
+                          logicalJoinType: inner
+                          physicalJoinType: inner
+                          inputSwapped: false
+                          condition: a.i=b.i
+                          buildStrategy: shared
+                          aggregation: scalar
+                          values: [max(a.i)]
+                            Probe
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            Build
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
                         """);
     }
 
@@ -7258,18 +7262,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [sum,sum1,sum+COUNT*10,sum1+COUNT1*10]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1),count(x),count(x1)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: taba.id=tabb.id
+                                  buildStrategy: shared
+                                  aggregation: scalar
+                                  values: [sum(taba.x),sum(tabb.x),count(taba.x),count(tabb.x)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: taba
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
                             """);
 
             assertQuery("SELECT sum(tabb.x),sum(taba.x),sum(10+taba.x), sum(10+tabb.x) " + "FROM taba " + "join tabb on (id)")
@@ -7277,18 +7285,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [sum,sum1,COUNT*10+sum1,COUNT1*10+sum]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1),count(x1),count(x)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: taba.id=tabb.id
+                                  buildStrategy: shared
+                                  aggregation: scalar
+                                  values: [sum(tabb.x),sum(taba.x),count(taba.x),count(tabb.x)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: taba
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
                             """);
         });
     }
@@ -7576,18 +7588,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [sum,sum1,sum*10,sum1*10]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: taba.id=tabb.id
+                                  buildStrategy: shared
+                                  aggregation: scalar
+                                  values: [sum(taba.x),sum(tabb.x)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: taba
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
                             """);
 
             assertQuery("SELECT sum(taba.x),sum(tabb.x),sum(10*taba.x), sum(10*tabb.x) " + "FROM taba " + "join tabb on (id)")
@@ -7595,18 +7611,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [sum,sum1,10*sum,10*sum1]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: taba.id=tabb.id
+                                  buildStrategy: shared
+                                  aggregation: scalar
+                                  values: [sum(taba.x),sum(tabb.x)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: taba
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
                             """);
         });
     }
@@ -7758,18 +7778,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [sum,sum1,sum-COUNT*10,sum1-COUNT1*10]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1),count(x),count(x1)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: taba.id=tabb.id
+                                  buildStrategy: shared
+                                  aggregation: scalar
+                                  values: [sum(taba.x),sum(tabb.x),count(taba.x),count(tabb.x)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: taba
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
                             """);
 
             assertQuery("SELECT sum(taba.x),sum(tabb.x),sum(10-taba.x), sum(10-tabb.x) " + "FROM taba " + "join tabb on (id)")
@@ -7777,18 +7801,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [sum,sum1,COUNT*10-sum,COUNT1*10-sum1]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1),count(x),count(x1)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: taba.id=tabb.id
+                                  buildStrategy: shared
+                                  aggregation: scalar
+                                  values: [sum(taba.x),sum(tabb.x),count(taba.x),count(tabb.x)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: taba
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
                             """);
         });
     }
@@ -7831,18 +7859,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [sum,count,SUM1,SUM1+count1,sum+count*1,SUM1*2,sum,count1]
-                                GroupBy vectorized: false
-                                  values: [sum(resolutIONWidth),count(resolutIONWidth),sum(ResolutionWidth1),count(*)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: h2.id=h1.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: hits1
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: hits2
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: h1.id=h2.id
+                                  buildStrategy: shared
+                                  aggregation: scalar
+                                  values: [sum(h1.ResolutionWidth),count(h1.ResolutionWidth),sum(h2.ResolutionWidth),count(*)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits1
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits2
                             """);
         });
     }

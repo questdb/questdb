@@ -74,13 +74,17 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * and {@code count(x.k)} counts the null-extended side's key, so a match that turns into a
  * null-extended row changes it. FLOAT and DOUBLE aggregates compare within the runner's
  * floating-point tolerance, and the counts cannot absorb a dropped or duplicated pair the way
- * that tolerance can. The integer {@code sum} / {@code avg} arguments are cast to DOUBLE, which
- * the fused plan requires; the fuzz integers are small, so those sums stay exact.
+ * that tolerance can. The tolerance is relative to the result, so the generator leaves out the
+ * aggregates whose result can cancel to near zero while their inputs stay large (covariance,
+ * correlation, regression, skewness, kurtosis, weighted stddev): their reduction-order noise
+ * would exceed it. HashJoinGroupByAggregatesTest covers them. The fuzz integers are small, so
+ * integer sums, averages and variances stay exact or nearly so.
  */
 public final class HashJoinGroupByClause {
+    private static final String[] BOOLEAN_DDLS = {"BOOLEAN"};
     // count() arguments whose count class the fused plan accepts: CountInt, CountLong,
-    // CountDouble and CountSymbol, each for its own argument type only.
-    private static final String[] COUNT_ARGUMENT_DDLS = {"INT", "LONG", "DOUBLE", "SYMBOL"};
+    // CountFloat, CountDouble and CountSymbol, each for its own argument type only.
+    private static final String[] COUNT_ARGUMENT_DDLS = {"INT", "LONG", "FLOAT", "DOUBLE", "SYMBOL"};
     // The optimiser moves a constant conjunct into the join model's constant WHERE clause,
     // which the fused planner must refuse. Only a false one makes a planner that accepts it
     // visible, so three in four are false.
@@ -100,10 +104,16 @@ public final class HashJoinGroupByClause {
     private static final String INT_KEY = "k";
     private static final String[] JOIN_KINDS = {"JOIN", "LEFT JOIN", "RIGHT JOIN"};
     private static final String LEFT_ALIAS = "l";
+    // min() and max() arguments. The fused plan accepts every type but BOOLEAN and BYTE, which the
+    // parser passes to classes registered for other argument types, so those two keep the ordinary plan.
+    private static final String[] MIN_MAX_DDLS = {
+            "BOOLEAN", "BYTE", "SHORT", "CHAR", "INT", "LONG", "DATE", "TIMESTAMP", "FLOAT", "DOUBLE"
+    };
     private static final String RIGHT_ALIAS = "r";
     // The fuzz tables span 30 to 75 hours, so every interval yields several buckets.
     private static final String[] SAMPLE_BY_INTERVALS = {"1h", "6h", "1d"};
     private static final String SYMBOL_KEY = "sym";
+    private static final String[] VARIANCE_FUNCTIONS = {"stddev", "stddev_samp", "stddev_pop", "variance", "var_samp", "var_pop"};
 
     private HashJoinGroupByClause() {
     }
@@ -241,25 +251,48 @@ public final class HashJoinGroupByClause {
 
     /**
      * Emits one aggregate over {@code input}. Most draws land in the fused allowlist
-     * ({@code HashJoinGroupByCandidate.supportsAggregate()}); one in forty emits {@code min},
-     * {@code max} or {@code sum} over an integer column, which the allowlist does not hold today,
-     * so the query keeps the ordinary plan. Every table carries the INT key {@code k} and the
-     * SYMBOL key {@code sym}, so the integer and count arguments always find a column.
+     * ({@code HashJoinGroupByAggregates}); sum and avg over BYTE and min and max over BOOLEAN or
+     * BYTE pass their argument to a class registered for another type, so the query keeps the
+     * ordinary plan. Every table carries the INT key {@code k} and the SYMBOL key {@code sym}, so
+     * the integer and count arguments always find a column.
      */
     private static void appendAggregate(StringSink sql, Rnd rnd, Input input, String alias) {
         final int pick = rnd.nextInt(40);
-        if (pick < 6) {
+        if (pick < 5) {
             sql.put("count(*)");
-        } else if (pick < 18) {
+        } else if (pick < 13) {
             appendColumnAggregate(sql, rnd, "count(", input, alias, COUNT_ARGUMENT_DDLS, ")");
-        } else if (pick < 30) {
+        } else if (pick < 17) {
             appendColumnAggregate(sql, rnd, rnd.nextBoolean() ? "sum(" : "avg(", input, alias, INTEGER_DDLS, "::DOUBLE)");
-        } else if (pick < 39) {
+        } else if (pick < 21) {
             // FLOAT and DOUBLE partial sums round differently with the merge order.
             appendColumnAggregate(sql, rnd, rnd.nextBoolean() ? "sum(" : "avg(", input, alias, FLOATING_DDLS, "::DOUBLE)");
+        } else if (pick < 26) {
+            appendColumnAggregate(sql, rnd, rnd.nextBoolean() ? "sum(" : "avg(", input, alias, INTEGER_DDLS, ")");
+        } else if (pick < 31) {
+            appendColumnAggregate(sql, rnd, rnd.nextBoolean() ? "min(" : "max(", input, alias, MIN_MAX_DDLS, ")");
+        } else if (pick < 34) {
+            final int fn = rnd.nextInt(5);
+            if (fn < 3) {
+                appendColumnAggregate(sql, rnd, fn == 0 ? "bit_and(" : fn == 1 ? "bit_or(" : "bit_xor(", input, alias, INTEGER_DDLS, ")");
+            } else {
+                appendColumnAggregate(sql, rnd, fn == 3 ? "bool_and(" : "bool_or(", input, alias, BOOLEAN_DDLS, ")");
+            }
+        } else if (pick < 36) {
+            appendColumnAggregate(sql, rnd, rnd.nextBoolean() ? "ksum(" : "nsum(", input, alias, FLOATING_DDLS, "::DOUBLE)");
+        } else if (pick < 39) {
+            appendColumnAggregate(sql, rnd, VARIANCE_FUNCTIONS[rnd.nextInt(VARIANCE_FUNCTIONS.length)] + "(", input, alias, INTEGER_DDLS, "::DOUBLE)");
         } else {
-            final int fn = rnd.nextInt(3);
-            appendColumnAggregate(sql, rnd, fn == 0 ? "min(" : fn == 1 ? "max(" : "sum(", input, alias, INTEGER_DDLS, ")");
+            // Two-argument aggregates take any numeric argument types. Integer sums stay exact.
+            final FuzzColumn value = pickColumn(rnd, input.columns, INTEGER_DDLS);
+            final FuzzColumn weight = pickColumn(rnd, input.columns, INTEGER_DDLS);
+            if (value == null || weight == null) {
+                sql.put("count(*)");
+                return;
+            }
+            sql.put(rnd.nextBoolean() ? "weighted_avg(" : "vwap(")
+                    .put(alias).put('.').put(FuzzNames.column(rnd, value.getName())).put(", ")
+                    .put(alias).put('.').put(FuzzNames.column(rnd, weight.getName())).put(')');
         }
     }
 

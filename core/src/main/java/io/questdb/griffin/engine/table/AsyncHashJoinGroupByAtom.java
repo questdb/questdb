@@ -200,6 +200,10 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         return frozen;
     }
 
+    public HashJoinGroupByFunctions getFunctions() {
+        return functions;
+    }
+
     @Override
     @TestOnly
     public PerWorkerLocks getPerWorkerLocks() {
@@ -298,10 +302,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
 
     GroupByMapFragment getFragment(int slot) {
         return shardingContext != null ? shardingContext.getFragment(slot) : null;
-    }
-
-    HashJoinGroupByFunctions getFunctions() {
-        return functions;
     }
 
     long getPairsPerCheck() {
