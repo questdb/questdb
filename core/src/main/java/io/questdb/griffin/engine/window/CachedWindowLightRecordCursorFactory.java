@@ -58,7 +58,7 @@ import java.util.function.UnaryOperator;
 public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final int SELECTION_CHECK_MASK = 1023;
     private static final int SMALL_SELECTION_SORT_THRESHOLD = 16;
-    // Keep the sequential bitmap path for dense selections. At most one selected row per
+    // Keep the bitmap path for dense selections. At most one selected row per
     // 64 input rows leaves ample room for the sparse path's O(K log K) merge work.
     private static final int SPARSE_SELECTION_DENSITY_SHIFT = 6;
     private final ObjList<WindowFunction> backwardUnorderedFunctions;
@@ -907,9 +907,11 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             final boolean isForward = orderedGroup < 0 && containsFunction(forwardUnorderedFunctions, selectingFunction);
             selectingFunction.getSelectedRows(isForward ? selectedRowIds : selectedTraversalRows);
             if (orderedGroup >= 0) {
-                if (selectedTraversalRows.size() <= (size >>> SPARSE_SELECTION_DENSITY_SHIFT)
-                        && sortBuffers.getQuick(orderedGroup) instanceof EncodedWindowSortBuffer encoded) {
-                    mapSparseSelectedRows(encoded, selectedTraversalRows.size());
+                // The LIGHT factory constructs only encoded sort buffers.
+                final EncodedWindowSortBuffer group = (EncodedWindowSortBuffer) sortBuffers.getQuick(orderedGroup);
+                final long selectedCount = selectedTraversalRows.size();
+                if (selectedCount <= (size >>> SPARSE_SELECTION_DENSITY_SHIFT)) {
+                    mapSparseSelectedRows(group, selectedCount);
                     return;
                 }
                 // The sorted traversal visits every buffered row exactly once, so the selected
@@ -923,34 +925,29 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                     }
                     Vect.memset(selectedRowBits.getAddress(), wordCount << 3, 0);
                 }
-                final WindowSortBuffer group = sortBuffers.getQuick(orderedGroup);
-                group.toTop();
-                long traversalOrdinal = 0;
-                long selectedIndex = 0;
-                final long selectedCount = selectedTraversalRows.size();
-                while (group.hasNext() && selectedIndex < selectedCount) {
+                // Translate only the selected ordinals; do not replay discarded sort entries.
+                long prevOrdinal = -1;
+                for (long selectedIndex = 0; selectedIndex < selectedCount; selectedIndex++) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
-                    final long absoluteRow = group.next();
-                    final long wantedOrdinal = selectedTraversalRows.get(selectedIndex);
-                    if (wantedOrdinal == traversalOrdinal) {
-                        if (absoluteRow < 0 || absoluteRow >= size) {
-                            throw CairoException.nonCritical().put("row-selecting traversal index out of bounds");
-                        }
-                        final long word = absoluteRow >>> 6;
-                        final long bits = selectedRowBits.get(word);
-                        final long mask = 1L << (absoluteRow & 63);
-                        if ((bits & mask) != 0) {
-                            throw CairoException.nonCritical().put("invalid row-selecting traversal order");
-                        }
-                        selectedRowBits.set(word, bits | mask);
-                        selectedIndex++;
-                    } else if (wantedOrdinal < traversalOrdinal) {
+                    final long ordinal = selectedTraversalRows.get(selectedIndex);
+                    if (ordinal < 0 || ordinal >= size) {
+                        throw CairoException.nonCritical().put("row-selecting traversal index out of bounds");
+                    }
+                    if (ordinal <= prevOrdinal) {
                         throw CairoException.nonCritical().put("invalid row-selecting traversal order");
                     }
-                    traversalOrdinal++;
-                }
-                if (selectedIndex != selectedCount) {
-                    throw CairoException.nonCritical().put("row-selecting traversal index out of bounds");
+                    final long absoluteRow = group.getRowIdAt(ordinal);
+                    if (absoluteRow < 0 || absoluteRow >= size) {
+                        throw CairoException.nonCritical().put("row-selecting traversal index out of bounds");
+                    }
+                    final long word = absoluteRow >>> 6;
+                    final long bits = selectedRowBits.get(word);
+                    final long mask = 1L << (absoluteRow & 63);
+                    if ((bits & mask) != 0) {
+                        throw CairoException.nonCritical().put("invalid row-selecting traversal order");
+                    }
+                    selectedRowBits.set(word, bits | mask);
+                    prevOrdinal = ordinal;
                 }
                 // Emit each flagged row once, ascending: word order times bit order.
                 selectedRowIds.ensureCapacity(selectedCount);

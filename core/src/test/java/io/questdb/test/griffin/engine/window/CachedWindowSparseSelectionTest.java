@@ -51,6 +51,51 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class CachedWindowSparseSelectionTest extends AbstractCairoTest {
     @Test
+    public void testDenseMappingCancellationThenReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(4096);
+            final SqlExecutionCircuitBreaker originalBreaker = sqlExecutionContext.getCircuitBreaker();
+            try (RecordCursorFactory factory = select(uniformQuery(true))) {
+                // uniform(65) enumerates at checkpoint 1, translates at 2..66 and emits
+                // bitmap words at 67..130. Cancel in both loops, including their last checks.
+                for (int cancelAt : new int[]{2, 33, 66, 67, 99, 130}) {
+                    final CountingBreaker breaker = new CountingBreaker(0);
+                    ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                    MemoryTracker tracker = null;
+                    try {
+                        bindVariableService.setLong(0, 65);
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            tracker = sqlExecutionContext.getMemoryTracker();
+                            Assert.assertTrue(cursor.hasNext());
+                            breaker.checks = 0;
+                            breaker.cancelAt = cancelAt;
+                            try {
+                                mapSelectedRows(field(findLight(factory), "cursor"));
+                                Assert.fail("expected cancellation at checkpoint " + cancelAt);
+                            } catch (CairoException e) {
+                                Assert.assertTrue(e.isCancellation());
+                                Assert.assertEquals(cancelAt, breaker.checks);
+                                assertFailureMethod(e, "mapSelectedRows");
+                            }
+                        }
+                        Assert.assertEquals(0, tracker.getUsed());
+                        Assert.assertEquals(0, engine.getBusyReaderCount());
+                        breaker.setCancelledFlag(new AtomicBoolean(true));
+                        Assert.assertTrue(breaker.checkIfTripped());
+                        ((SqlExecutionContextImpl) sqlExecutionContext).with(originalBreaker);
+                        assertUniformSelection(factory, 4096, 65, true);
+                    } finally {
+                        ((SqlExecutionContextImpl) sqlExecutionContext).with(originalBreaker);
+                        if (tracker != null) {
+                            Assert.assertEquals(0, tracker.getUsed());
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testDenseMappingDoesNotScanInput() throws Exception {
         assertMemoryLeak(() -> {
             createTable(4096);
@@ -80,6 +125,11 @@ public class CachedWindowSparseSelectionTest extends AbstractCairoTest {
                 ((SqlExecutionContextImpl) sqlExecutionContext).with(originalBreaker);
             }
         });
+    }
+
+    @Test
+    public void testDenseMappingRejectsInvalidIndices() throws Exception {
+        assertMappingRejectsInvalidIndices(65);
     }
 
     @Test
@@ -118,7 +168,7 @@ public class CachedWindowSparseSelectionTest extends AbstractCairoTest {
                 try (RecordCursorFactory factory = select(uniformQuery(isPermuted))) {
                     // Insertion/merge boundary, odd merge tails and both sides of the density
                     // cutoff. Reuse the same factory across dense, identity and sparse modes.
-                    for (int target : new int[]{2, 3, 16, 17, 31, 32, 33, 63, 64, 65, 4096, 3, 65, 17}) {
+                    for (int target : new int[]{2, 3, 16, 17, 31, 32, 33, 63, 64, 65, 2048, 4095, 4096, 3, 65, 17}) {
                         bindVariableService.setLong(0, target);
                         assertUniformSelection(factory, 4096, target, isPermuted);
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -247,7 +297,7 @@ public class CachedWindowSparseSelectionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSparseMappingMatchesFullWindowWithNullsTiesAndPayloads() throws Exception {
+    public void testMappingMatchesFullWindowWithNullsTiesAndPayloads() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE tab AS (
@@ -259,14 +309,21 @@ public class CachedWindowSparseSelectionTest extends AbstractCairoTest {
                       FROM long_sequence(4096)
                     )
                     """);
-            for (int method = 0; method < 6; method++) {
+            for (int method = 0; method < 12; method++) {
+                final boolean isDense = method >= 6;
                 final String selection = switch (method) {
                     case 0 -> "uniform(3)";
                     case 1 -> "uniform(17)";
                     case 2 -> "cadence(128)";
                     case 3 -> "lttb(v, 17)";
                     case 4 -> "m4(v, 17)";
-                    default -> "minmax(v, 17)";
+                    case 5 -> "minmax(v, 17)";
+                    case 6 -> "uniform(65)";
+                    case 7 -> "uniform(4095)";
+                    case 8 -> "cadence(2)";
+                    case 9 -> "lttb(v, 129)";
+                    case 10 -> "m4(v, 129)";
+                    default -> "minmax(v, 129)";
                 };
                 final String sql = "SELECT ts, v, s, vc, id FROM (SELECT * FROM tab TIMESTAMP(ts) ORDER BY id DESC) SUBSAMPLE " + selection;
                 // The full window materializes every keep flag and filters separately. Use it
@@ -282,8 +339,8 @@ public class CachedWindowSparseSelectionTest extends AbstractCairoTest {
                     Assert.assertTrue(cursor.hasNext());
                     final Object lightCursor = field(findLight(factory), "cursor");
                     final DirectLongList ids = (DirectLongList) field(lightCursor, "selectedRowIds");
-                    Assert.assertTrue(ids.size() > 0 && ids.size() <= 64);
-                    Assert.assertEquals(16, ((DirectLongList) field(lightCursor, "selectedRowBits")).getCapacity());
+                    Assert.assertTrue(isDense ? ids.size() > 64 && ids.size() < 4096 : ids.size() > 0 && ids.size() <= 64);
+                    Assert.assertEquals(isDense ? 64 : 16, ((DirectLongList) field(lightCursor, "selectedRowBits")).getCapacity());
                 }
             }
         });
@@ -323,41 +380,7 @@ public class CachedWindowSparseSelectionTest extends AbstractCairoTest {
 
     @Test
     public void testSparseMappingRejectsInvalidIndices() throws Exception {
-        assertMemoryLeak(() -> {
-            createTable(4096);
-            try (RecordCursorFactory factory = select(uniformQuery(false));
-                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Assert.assertTrue(cursor.hasNext());
-                final CachedWindowLightRecordCursorFactory light = findLight(factory);
-                final Object lightCursor = field(light, "cursor");
-                final DirectLongList selected = (DirectLongList) field(light.getSingleRowSelectingFunction(), "selected");
-                final long savedOrdinal = selected.get(1);
-                for (long ordinal : new long[]{-1, 4096, Long.MAX_VALUE, selected.get(0), selected.get(2)}) {
-                    try {
-                        selected.set(1, ordinal);
-                        assertMappingFailure(lightCursor, ordinal < 0 || ordinal >= 4096
-                                ? "traversal index out of bounds" : "invalid row-selecting traversal order");
-                    } finally {
-                        selected.set(1, savedOrdinal);
-                    }
-                }
-                final Object group = sortBuffer(lightCursor);
-                final long entry = (long) field(group, "startAddr");
-                final int entrySize = (int) field(group, "entrySize");
-                final long savedRow = Unsafe.getLong(entry);
-                final long duplicateRow = Unsafe.getLong(entry + savedOrdinal * entrySize);
-                for (long row : new long[]{-1, 4096, duplicateRow}) {
-                    try {
-                        Unsafe.putLong(entry, row);
-                        assertMappingFailure(lightCursor, row == duplicateRow
-                                ? "invalid row-selecting traversal order" : "traversal index out of bounds");
-                    } finally {
-                        Unsafe.putLong(entry, savedRow);
-                    }
-                }
-                mapSelectedRows(lightCursor);
-            }
-        });
+        assertMappingRejectsInvalidIndices(3);
     }
 
     @Test
@@ -392,6 +415,56 @@ public class CachedWindowSparseSelectionTest extends AbstractCairoTest {
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), message);
         }
+    }
+
+    private void assertMappingRejectsInvalidIndices(int target) throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(4096);
+            bindVariableService.setLong(0, target);
+            try (RecordCursorFactory factory = select(uniformQuery(false));
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(cursor.hasNext());
+                final CachedWindowLightRecordCursorFactory light = findLight(factory);
+                final Object lightCursor = field(light, "cursor");
+                final DirectLongList selected = (DirectLongList) field(light.getSingleRowSelectingFunction(), "selected");
+                final long savedOrdinal = selected.get(1);
+                for (long ordinal : new long[]{-1, 4096, Long.MAX_VALUE, selected.get(0), selected.get(2)}) {
+                    try {
+                        selected.set(1, ordinal);
+                        assertMappingFailure(lightCursor, ordinal < 0 || ordinal >= 4096
+                                ? "traversal index out of bounds" : "invalid row-selecting traversal order");
+                    } finally {
+                        selected.set(1, savedOrdinal);
+                    }
+                }
+                final long nextOrdinal = selected.get(2);
+                try {
+                    // Swap distinct ordinals: the bitmap's duplicate check alone cannot
+                    // reject a selection that violates the ascending-order contract.
+                    selected.set(1, nextOrdinal);
+                    selected.set(2, savedOrdinal);
+                    assertMappingFailure(lightCursor, "invalid row-selecting traversal order");
+                } finally {
+                    selected.set(1, savedOrdinal);
+                    selected.set(2, nextOrdinal);
+                }
+                final Object group = sortBuffer(lightCursor);
+                final long entry = (long) field(group, "startAddr");
+                final int entrySize = (int) field(group, "entrySize");
+                final long savedRow = Unsafe.getLong(entry);
+                final long duplicateRow = Unsafe.getLong(entry + savedOrdinal * entrySize);
+                for (long row : new long[]{-1, 4096, duplicateRow}) {
+                    try {
+                        Unsafe.putLong(entry, row);
+                        assertMappingFailure(lightCursor, row == duplicateRow
+                                ? "invalid row-selecting traversal order" : "traversal index out of bounds");
+                    } finally {
+                        Unsafe.putLong(entry, savedRow);
+                    }
+                }
+                mapSelectedRows(lightCursor);
+            }
+        });
     }
 
     private void assertUniformSelection(RecordCursorFactory factory, int rowCount, int target, boolean isPermuted) throws Exception {
@@ -498,7 +571,11 @@ public class CachedWindowSparseSelectionTest extends AbstractCairoTest {
         private long checks;
 
         CountingBreaker() {
-            super(engine, 2_000_000);
+            this(2_000_000);
+        }
+
+        CountingBreaker(int throttle) {
+            super(engine, throttle);
         }
 
         @Override
