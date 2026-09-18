@@ -578,9 +578,14 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         }
         try {
             if (isActive()) {
-                localRecord.of(getSymbolTableSource());
-                reduceStartedCounter.incrementAndGet();
-                reducer.reduce(-1, localRecord, frameIndex, workStealCircuitBreaker, this, this);
+                UnorderedPageFrameReduceJob.reduce(
+                        -1,
+                        localRecord,
+                        workStealCircuitBreaker,
+                        frameIndex,
+                        this,
+                        this
+                );
             }
         } catch (Throwable th) {
             if (isReducerFailureReportable(th)) {

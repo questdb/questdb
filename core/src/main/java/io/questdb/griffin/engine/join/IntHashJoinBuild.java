@@ -1,0 +1,664 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.join;
+
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.engine.CompressedOffsets;
+import io.questdb.std.Hash;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
+
+import java.io.Closeable;
+
+/**
+ * Owner-built INT lookup for fused hash join aggregation. No native memory is
+ * allocated by construction. {@link #open} binds the execution's tracker before
+ * allocation; any append/build failure closes the entire partial build.
+ * <p>
+ * Linear probing at a maximum load of 1/2. An eight-byte slot holds an INT key
+ * and an unsigned compressed payload offset. References encode an eight-byte
+ * aligned row offset divided by eight plus one; zero marks an unused slot.
+ * Zero, negative and INT_NULL keys need no special representation and null keys
+ * match each other. Rows retain eight-byte previous-match links (byte offset
+ * plus eight, zero for chain end), followed by naturally aligned typed payloads.
+ * Widening a slot head only scales its unsigned value; duplicate advances need
+ * no offset decoding. The row heap is bounded by
+ * {@link CompressedOffsets#MAX_ALIGNED8_HEAP_SIZE} before allocation or encoding.
+ * Duplicate iteration is in reverse input order, as in the light join's LongChain.
+ * <p>
+ * SYMBOL payloads store the source's symbol keys, like INT payloads. Frozen views
+ * resolve them through the source's symbol tables. The build borrows that source
+ * until close, so the caller keeps it open while any probe or output reads symbols.
+ * A SYMBOL join key arrives already translated by {@link SymbolKeyTranslator}.
+ * Hash tables and rows use tracked native buffers. Growth accounts for both old and
+ * new allocations and is cancellable. Frozen views borrow these buffers until close;
+ * see {@link FrozenHashJoinBuild}.
+ */
+public final class IntHashJoinBuild implements Closeable {
+    // Growth loops (rehash, clear, copy) are not bounded by a row; they check the breaker once per MiB they touch.
+    private static final long COPY_CHUNK_SIZE = 1024 * 1024;
+    private static final int MAX_SLOTS = 1 << 30;
+    private static final long MAX_BUFFER_SIZE = 1L << 48;
+    private static final int SLOT_SIZE = 8;
+    private static final int KEY_SLOTS_PER_CHECK = (int) (COPY_CHUNK_SIZE / SLOT_SIZE);
+    private final int initialSlots;
+    private final long initialRowCapacity;
+    private final Buffer keys = new Buffer();
+    private final int[] offsets;
+    private final Buffer rows = new Buffer();
+    private final Buffer scratch = new Buffer();
+    private final Frozen reusableFrozen;
+    private final int rowSize;
+    private final int[] sourceColumns;
+    private final int[] types;
+    private SqlExecutionCircuitBreaker circuitBreaker;
+    private Frozen frozen;
+    private int keyCount;
+    private int keySlotCount;
+    @Nullable
+    private MemoryTracker memoryTracker;
+    private boolean open;
+    private long nextHandleBase;
+    private long rowBytes;
+
+    /** Payload types/indexes are in the same order; indexes address the source record. */
+    @TestOnly
+    public IntHashJoinBuild(ColumnTypes payloadTypes, IntList sourceColumns, int initialSlots, long initialRowCapacity) {
+        this(payloadTypes, sourceColumns, initialSlots, initialRowCapacity, false);
+    }
+
+    /**
+     * Reusable mode is for a factory that drains all consumers before reopening.
+     * Its snapshot is a flyweight; retained probes must explicitly reopen for each
+     * execution. The ordinary constructor keeps execution-specific snapshots.
+     */
+    public IntHashJoinBuild(ColumnTypes payloadTypes, IntList sourceColumns, int initialSlots, long initialRowCapacity, boolean reusable) {
+        if (initialSlots < 2 || initialSlots > MAX_SLOTS || Integer.bitCount(initialSlots) != 1
+                || initialRowCapacity < 1 || initialRowCapacity > CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE
+                || payloadTypes.getColumnCount() != sourceColumns.size()) {
+            throw new IllegalArgumentException("invalid hash join build capacity or payload mapping");
+        }
+        this.initialSlots = initialSlots;
+        this.initialRowCapacity = initialRowCapacity;
+        int columnCount = payloadTypes.getColumnCount();
+        this.offsets = new int[columnCount];
+        this.sourceColumns = new int[columnCount];
+        this.types = new int[columnCount];
+        long offset = Long.BYTES;
+        for (int i = 0; i < columnCount; i++) {
+            int type = ColumnType.tagOf(payloadTypes.getColumnType(i));
+            int size = switch (type) {
+                case ColumnType.BOOLEAN, ColumnType.BYTE -> 1;
+                case ColumnType.SHORT, ColumnType.CHAR -> 2;
+                case ColumnType.INT, ColumnType.FLOAT, ColumnType.SYMBOL -> 4;
+                case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.DOUBLE -> 8;
+                default -> throw new IllegalArgumentException("unsupported hash join payload type: " + ColumnType.nameOf(type));
+            };
+            offset = (offset + size - 1) & -size;
+            if (offset + size > Integer.MAX_VALUE - 7 || sourceColumns.getQuick(i) < 0) {
+                throw new IllegalArgumentException("invalid hash join payload layout");
+            }
+            offsets[i] = (int) offset;
+            this.sourceColumns[i] = sourceColumns.getQuick(i);
+            types[i] = type;
+            offset += size;
+        }
+        rowSize = (int) ((offset + 7) & -8L);
+        reusableFrozen = reusable ? new Frozen() : null;
+    }
+
+    /** Copies one row. On failure all execution allocations are released. */
+    public void append(int key, Record record) {
+        requireBuilding();
+        try {
+            appendRow(key, record);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
+    /** Consumes a borrowed INT-keyed cursor once. The caller retains ownership of the cursor. */
+    public FrozenHashJoinBuild build(RecordCursor cursor, int keyColumn) {
+        return build(cursor, keyColumn, -1, null);
+    }
+
+    /**
+     * Consumes a borrowed cursor once and resolves SYMBOL payloads through it until close,
+     * so the caller keeps the cursor open until then. A nonnegative hint is the remaining
+     * row count of a freshly acquired cursor. A translator maps SYMBOL keys into the probe
+     * key domain; rows whose key the probe dictionary lacks cannot match and are skipped.
+     */
+    public FrozenHashJoinBuild build(RecordCursor cursor, int keyColumn, long rowCountHint, @Nullable SymbolKeyTranslator keyTranslator) {
+        requireBuilding();
+        try {
+            if (rowCountHint > 0) {
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                if (rowCountHint > (CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE - rowBytes) / rowSize) {
+                    throw CairoException.nonCritical().put("hash join build buffer overflow");
+                }
+                rows.ensure(rowBytes + rowCountHint * rowSize, initialRowCapacity);
+            }
+            final Record record = cursor.getRecord();
+            // The source cursor checks the breaker at its frame boundaries.
+            if (keyTranslator == null) {
+                while (cursor.hasNext()) {
+                    appendRow(record.getInt(keyColumn), record);
+                }
+            } else {
+                while (cursor.hasNext()) {
+                    final int key = keyTranslator.translate(record.getInt(keyColumn));
+                    if (key != SymbolTable.VALUE_NOT_FOUND) {
+                        appendRow(key, record);
+                    }
+                }
+            }
+            return freeze(cursor);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
+    /** Only call after every probe is drained and aggregate output is finished. */
+    @Override
+    public void close() {
+        if (frozen != null) {
+            // Do not retain the borrowed source past its execution.
+            frozen.symbols = null;
+            frozen = null;
+        }
+        open = false;
+        keys.close();
+        rows.close();
+        rowBytes = 0;
+        keyCount = keySlotCount = 0;
+        memoryTracker = null;
+        circuitBreaker = null;
+    }
+
+    /** Ends mutation of a build without SYMBOL payloads. */
+    public FrozenHashJoinBuild freeze() {
+        return freeze(null);
+    }
+
+    /**
+     * Ends mutation. Views resolve SYMBOL payloads through the borrowed source until close.
+     * Publication to probe workers is the caller's responsibility.
+     */
+    public FrozenHashJoinBuild freeze(@Nullable SymbolTableSource symbolSource) {
+        requireBuilding();
+        try {
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            if (symbolSource == null) {
+                for (int type : types) {
+                    if (type == ColumnType.SYMBOL) {
+                        throw new IllegalArgumentException("hash join build with SYMBOL payload requires a symbol source");
+                    }
+                }
+            }
+            frozen = reusableFrozen != null ? reusableFrozen : new Frozen();
+            frozen.of(symbolSource);
+            return frozen;
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
+    public long getSizeInBytes() {
+        return keys.capacity + rows.capacity;
+    }
+
+    /** Reopens a closed skeleton for a fresh execution. */
+    public void open(@Nullable MemoryTracker memoryTracker, SqlExecutionCircuitBreaker circuitBreaker) {
+        if (open) {
+            throw new IllegalStateException("hash join build is already open");
+        }
+        this.memoryTracker = memoryTracker;
+        this.circuitBreaker = circuitBreaker;
+        try {
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            keys.allocate((long) initialSlots * SLOT_SIZE, true);
+            keySlotCount = initialSlots;
+            open = true;
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
+    private static long findKeySlot(long base, int slots, int key) {
+        int index = (int) Hash.hashInt64(key) & (slots - 1);
+        long address = base + (long) index * SLOT_SIZE;
+        while (Unsafe.getInt(address + 4) != 0 && Unsafe.getInt(address) != key) {
+            index = (index + 1) & (slots - 1);
+            address = base + (long) index * SLOT_SIZE;
+        }
+        return address;
+    }
+
+    // The caller owns failure cleanup. Growth checks the breaker per MiB of rehashed or copied memory.
+    private void appendRow(int key, Record record) {
+        long slot = findKeySlot(keys.address, keySlotCount, key);
+        int previous = Unsafe.getInt(slot + 4);
+        if (previous == 0 && keyCount == keySlotCount / 2) {
+            growKeyTable();
+            keySlotCount *= 2;
+            slot = findKeySlot(keys.address, keySlotCount, key);
+        }
+        final long offset = rowBytes;
+        final long required = offset + rowSize;
+        rows.ensure(required, initialRowCapacity);
+        long address = rows.address + offset;
+        for (int i = 0; i < types.length; i++) {
+            long dest = address + offsets[i];
+            int column = sourceColumns[i];
+            switch (types[i]) {
+                case ColumnType.BOOLEAN -> Unsafe.putByte(dest, (byte) (record.getBool(column) ? 1 : 0));
+                case ColumnType.BYTE -> Unsafe.putByte(dest, record.getByte(column));
+                case ColumnType.SHORT -> Unsafe.putShort(dest, record.getShort(column));
+                case ColumnType.CHAR -> Unsafe.putChar(dest, record.getChar(column));
+                // A SYMBOL payload keeps the source key; views resolve it through the source.
+                case ColumnType.INT, ColumnType.SYMBOL -> Unsafe.putInt(dest, record.getInt(column));
+                case ColumnType.LONG -> Unsafe.putLong(dest, record.getLong(column));
+                case ColumnType.DATE -> Unsafe.putLong(dest, record.getDate(column));
+                case ColumnType.TIMESTAMP -> Unsafe.putLong(dest, record.getTimestamp(column));
+                case ColumnType.FLOAT -> Unsafe.putFloat(dest, record.getFloat(column));
+                case ColumnType.DOUBLE -> Unsafe.putDouble(dest, record.getDouble(column));
+                default -> throw new AssertionError();
+            }
+        }
+        Unsafe.putLong(address, toRowLink(previous));
+        Unsafe.putInt(slot, key);
+        Unsafe.putInt(slot + 4, CompressedOffsets.compressBiased8(offset));
+        if (previous == 0) {
+            keyCount++;
+        }
+        rowBytes = required;
+    }
+
+    private void growKeyTable() {
+        final Buffer table = keys;
+        final int slots = keySlotCount;
+        if (slots == MAX_SLOTS) {
+            throw CairoException.nonCritical().put("hash join build capacity overflow");
+        }
+        // Separate destination keeps both allocations charged throughout rehashing.
+        Buffer dest = scratch;
+        try {
+            dest.allocate((long) slots * 2 * SLOT_SIZE, true);
+            for (int i = 0; i < slots; i++) {
+                if ((i & (KEY_SLOTS_PER_CHECK - 1)) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                }
+                long src = table.address + (long) i * SLOT_SIZE;
+                int value = Unsafe.getInt(src + 4);
+                if (value != 0) {
+                    int key = Unsafe.getInt(src);
+                    int index = (int) Hash.hashInt64(key) & (slots * 2 - 1);
+                    long target = dest.address + (long) index * SLOT_SIZE;
+                    while (Unsafe.getInt(target + 4) != 0) {
+                        index = (index + 1) & (slots * 2 - 1);
+                        target = dest.address + (long) index * SLOT_SIZE;
+                    }
+                    Unsafe.putInt(target, key);
+                    Unsafe.putInt(target + 4, value);
+                }
+            }
+            table.close();
+            table.take(dest);
+        } finally {
+            dest.close();
+        }
+    }
+
+    private void requireBuilding() {
+        if (!open || frozen != null) {
+            throw new IllegalStateException("hash join build is not mutable");
+        }
+    }
+
+    private static long toRowLink(int head) {
+        return CompressedOffsets.uncompressAligned8(head);
+    }
+
+    private class Buffer implements Closeable {
+        private long address;
+        private long capacity;
+
+        public void allocate(long size, boolean clear) {
+            address = Unsafe.malloc(size, MemoryTag.NATIVE_JOIN_MAP, memoryTracker);
+            capacity = size;
+            if (clear) {
+                for (long offset = 0; offset < size; offset += COPY_CHUNK_SIZE) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                    Vect.memset(address + offset, Math.min(size - offset, COPY_CHUNK_SIZE), 0);
+                }
+            }
+        }
+
+        @Override
+        public void close() {
+            if (address != 0) {
+                address = Unsafe.free(address, capacity, MemoryTag.NATIVE_JOIN_MAP, memoryTracker);
+                capacity = 0;
+            }
+        }
+
+        public void ensure(long required, long initialCapacity) {
+            final long limit = this == rows ? CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE : MAX_BUFFER_SIZE;
+            if (required > limit || required < 0) {
+                throw CairoException.nonCritical().put("hash join build buffer overflow");
+            }
+            if (required <= capacity) {
+                return;
+            }
+            Buffer dest = scratch;
+            try {
+                dest.allocate(Math.max(required, Math.min(limit, Math.max(initialCapacity, capacity * 2))), false);
+                for (long offset = 0; offset < capacity; offset += COPY_CHUNK_SIZE) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                    Unsafe.copyMemory(address + offset, dest.address + offset, Math.min(capacity - offset, COPY_CHUNK_SIZE));
+                }
+                close();
+                take(dest);
+            } finally {
+                dest.close();
+            }
+        }
+
+        public void take(Buffer other) {
+            address = other.address;
+            capacity = other.capacity;
+            other.address = other.capacity = 0;
+        }
+    }
+
+    private class Frozen implements FrozenHashJoinBuild {
+        private long keysAddress;
+        private int keysCount;
+        private int slots;
+        private long rowsAddress;
+        private long rowsCount;
+        private long size;
+        private SymbolTableSource symbols;
+        private long generation;
+        private long handleBase;
+
+        private void of(SymbolTableSource symbolSource) {
+            if (nextHandleBase > Long.MAX_VALUE - rowBytes - 1) {
+                throw CairoException.nonCritical().put("hash join handle capacity overflow");
+            }
+            handleBase = nextHandleBase;
+            nextHandleBase += rowBytes + 1;
+            keysAddress = keys.address;
+            keysCount = keyCount;
+            slots = keySlotCount;
+            rowsAddress = rows.address;
+            rowsCount = rowBytes / rowSize;
+            size = IntHashJoinBuild.this.getSizeInBytes();
+            symbols = symbolSource;
+            generation++;
+        }
+
+        @Override
+        public long getKeyCount() {
+            return keysCount;
+        }
+
+        @Override
+        public long getRowCount() {
+            return rowsCount;
+        }
+
+        @Override
+        public long getSizeInBytes() {
+            return size;
+        }
+
+        @Override
+        public Probe newProbe() {
+            if (frozen != this) {
+                throw new IllegalStateException("hash join build has expired");
+            }
+            return new View();
+        }
+
+        private class View implements Probe {
+            private final PayloadRecord record = new PayloadRecord();
+            private final SymbolTable[] symbolTables = new SymbolTable[types.length];
+            private int lookupMask;
+            private long lookupKeysAddress;
+            private long payloadRowsAddress;
+            private long probeGeneration;
+            private long next;
+
+            private View() {
+                reopen();
+            }
+
+            @Override
+            public void reopen() {
+                if (frozen != Frozen.this) {
+                    throw new IllegalStateException("hash join build has expired");
+                }
+                probeGeneration = generation;
+                // This view is rebound after the previous execution drains. Cache the
+                // immutable native lookup metadata for its entire acquired lifetime.
+                lookupMask = slots - 1;
+                lookupKeysAddress = keysAddress;
+                payloadRowsAddress = rowsAddress;
+                next = 0;
+                record.address = 0;
+                // Views of the previous execution's source expired with it. Each slot needs
+                // independent flyweights, which only the source can provide.
+                for (int i = 0; i < types.length; i++) {
+                    if (types[i] == ColumnType.SYMBOL) {
+                        symbolTables[i] = symbols.newSymbolTable(sourceColumns[i]);
+                    }
+                }
+            }
+
+            @Override
+            public void find(int key) {
+                assert frozen == Frozen.this && probeGeneration == generation;
+                long slot = findKeySlot(keysAddress, slots, key);
+                next = toRowLink(Unsafe.getInt(slot + 4));
+                record.address = 0;
+            }
+
+            @Override
+            public boolean findSingleUnchecked(int key) {
+                assert keysCount == rowsCount;
+                if (rowsCount == 0) {
+                    assert frozen == Frozen.this && probeGeneration == generation;
+                    next = 0;
+                    return false;
+                }
+                final int head = findHead(key);
+                next = 0;
+                if (head == 0) {
+                    return false;
+                }
+                record.address = payloadRowsAddress + CompressedOffsets.uncompressBiased8(head);
+                return true;
+            }
+
+            @Override
+            public void findUnchecked(int key) {
+                next = toRowLink(findHead(key));
+            }
+
+            @Override
+            public Record getRecord() {
+                return record;
+            }
+
+            @Override
+            public SymbolTable getSymbolTable(int columnIndex) {
+                assert frozen == Frozen.this && probeGeneration == generation && types[columnIndex] == ColumnType.SYMBOL;
+                return symbolTables[columnIndex];
+            }
+
+            @Override
+            public boolean hasNext() {
+                return next != 0;
+            }
+
+            @Override
+            public SymbolTable newSymbolTable(int columnIndex) {
+                assert frozen == Frozen.this && probeGeneration == generation && types[columnIndex] == ColumnType.SYMBOL;
+                return symbols.newSymbolTable(sourceColumns[columnIndex]);
+            }
+
+            @Override
+            public long next() {
+                assert frozen == Frozen.this && probeGeneration == generation;
+                if (next == 0) {
+                    throw new IllegalStateException("hash join probe is exhausted");
+                }
+                long handle = handleBase + next - 8;
+                record.address = payloadRowsAddress + next - 8;
+                next = Unsafe.getLong(record.address);
+                return handle;
+            }
+
+            @Override
+            public void recordAt(long handle) {
+                assert frozen == Frozen.this && probeGeneration == generation;
+                long offset = handle - handleBase;
+                assert offset >= 0 && offset % rowSize == 0 && offset / rowSize < rowsCount;
+                record.address = rowsAddress + offset;
+            }
+
+            private int findHead(int key) {
+                assert frozen == Frozen.this && probeGeneration == generation;
+                final int mask = lookupMask;
+                final long base = lookupKeysAddress;
+                long address = base + ((long) ((int) Hash.hashInt64(key) & mask)) * SLOT_SIZE;
+                int head = Unsafe.getInt(address + 4);
+                if (head != 0 && Unsafe.getInt(address) != key) {
+                    head = findCollision(key, address);
+                }
+                return head;
+            }
+
+            private int findCollision(int key, long address) {
+                final long base = lookupKeysAddress;
+                final long limit = base + ((long) lookupMask + 1) * SLOT_SIZE;
+                int head;
+                do {
+                    address += SLOT_SIZE;
+                    if (address == limit) {
+                        address = base;
+                    }
+                } while ((head = Unsafe.getInt(address + 4)) != 0 && Unsafe.getInt(address) != key);
+                return head;
+            }
+
+            private class PayloadRecord implements Record {
+                private long address;
+
+                @Override
+                public boolean getBool(int col) {
+                    return Unsafe.getByte(at(col)) != 0;
+                }
+
+                @Override
+                public byte getByte(int col) {
+                    return Unsafe.getByte(at(col));
+                }
+
+                @Override
+                public char getChar(int col) {
+                    return Unsafe.getChar(at(col));
+                }
+
+                @Override
+                public long getDate(int col) {
+                    return getLong(col);
+                }
+
+                @Override
+                public double getDouble(int col) {
+                    return Unsafe.getDouble(at(col));
+                }
+
+                @Override
+                public float getFloat(int col) {
+                    return Unsafe.getFloat(at(col));
+                }
+
+                @Override
+                public int getInt(int col) {
+                    return Unsafe.getInt(at(col));
+                }
+
+                @Override
+                public long getLong(int col) {
+                    return Unsafe.getLong(at(col));
+                }
+
+                @Override
+                public short getShort(int col) {
+                    return Unsafe.getShort(at(col));
+                }
+
+                @Override
+                public CharSequence getSymA(int col) {
+                    return symbolTables[col].valueOf(getInt(col));
+                }
+
+                @Override
+                public CharSequence getSymB(int col) {
+                    return symbolTables[col].valueBOf(getInt(col));
+                }
+
+                @Override
+                public long getTimestamp(int col) {
+                    return getLong(col);
+                }
+
+                private long at(int col) {
+                    assert frozen == Frozen.this && probeGeneration == generation && address != 0;
+                    return address + offsets[col];
+                }
+            }
+        }
+    }
+}
