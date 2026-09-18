@@ -128,7 +128,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
         try {
             final int slotId = ctx.maybeAcquire(carrierId, owner, circuitBreaker);
             try {
-                if (!circuitBreaker.checkIfTripped()) {
+                if (!circuitBreaker.checkIfTrippedOrYield()) {
                     ctx.mergeShard(slotId, shardIndex);
                 }
             } finally {
@@ -147,14 +147,14 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
                 failure = Misc.foldCleanupFailure(failure, cleanupFailure);
             }
             try {
-                doneLatch.countDown();
+                doneLatch.detachResourceMemoryAndCountDown();
             } catch (Throwable cleanupFailure) {
                 failure = Misc.foldCleanupFailure(failure, cleanupFailure);
             }
             CairoException.rethrowCleanupFailure(failure);
             return;
         }
-        doneLatch.countDown();
+        doneLatch.detachResourceMemoryAndCountDown();
     }
 
     @Override

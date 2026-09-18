@@ -140,7 +140,7 @@ public class NestedLoopRightJoinRecordCursorFactory extends AbstractJoinRecordCu
         @Override
         public boolean hasNext() {
             while (true) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (isSlaveHasNextPending) {
                     slaveHasNext = slaveCursor.hasNext();
                     isSlaveHasNextPending = false;
@@ -151,7 +151,7 @@ public class NestedLoopRightJoinRecordCursorFactory extends AbstractJoinRecordCu
                 }
 
                 while (masterCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     if (filter.getBool(record)) {
                         isMatch = true;
                         return true;

@@ -269,7 +269,7 @@ public class SleepFunctionFactory implements FunctionFactory {
                             throw CairoException.nonCritical().put("sleep aborted, connection closing");
                         }
                         if (reason == FiberWaitCoordinator.REASON_CANCEL) {
-                            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottleOrYield();
                             throw CairoException.queryCancelled();
                         }
                     } finally {
@@ -280,7 +280,7 @@ public class SleepFunctionFactory implements FunctionFactory {
 
             // Legacy polling fallback.
             while (clock.getTicks() < deadline) {
-                executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+                executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
                 Os.sleep(1);
             }
         }
@@ -292,7 +292,7 @@ public class SleepFunctionFactory implements FunctionFactory {
                 @Nullable FiberCancellationSignal supplementalCancellationSignal,
                 long supplementalCancellationSignalGeneration
         ) {
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottleOrYield();
             if ((cancellationSignal != null && cancellationSignal.isCancelled(cancellationSignalGeneration))
                     || (supplementalCancellationSignal != null
                     && supplementalCancellationSignal.isCancelled(supplementalCancellationSignalGeneration))) {
