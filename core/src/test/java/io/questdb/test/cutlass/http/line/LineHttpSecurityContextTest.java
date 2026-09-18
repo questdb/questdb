@@ -57,6 +57,8 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
+import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.readHttpHeaders;
+
 /**
  * ILP-over-HTTP re-authenticates every HTTP request, while the per-table write object is cached
  * for the lifetime of the keep-alive TCP connection. These tests pin down that the insert
@@ -193,23 +195,25 @@ public class LineHttpSecurityContextTest extends AbstractBootstrapTest {
 
     /**
      * Sends one request and reads exactly one response off the same socket, so the caller can keep
-     * using the connection afterwards. A server-side disconnect shows up in the returned text,
-     * which is what makes "the requests shared one connection" an assertion and not an assumption.
+     * using the connection afterwards. That holds for the two reply shapes this endpoint produces:
+     * the bodiless 204 of a successful write, and the chunked body every error carries. A reply the
+     * helper cannot frame fails here with the header block quoted, rather than leaving unread bytes
+     * that would desynchronise the next exchange on this connection. A server-side disconnect shows
+     * up as an empty header block, which is what makes "the requests shared one connection" an
+     * assertion and not an assumption.
      */
     private static String exchange(OutputStream out, InputStream in, String request) throws Exception {
         out.write(request.getBytes(StandardCharsets.UTF_8));
         out.flush();
 
-        final StringBuilder head = new StringBuilder();
-        while (!head.toString().endsWith("\r\n\r\n")) {
-            final int b = in.read();
-            if (b < 0) {
-                return head + "<server disconnected>";
-            }
-            head.append((char) b);
-        }
-        final String headers = head.toString();
+        final String headers = readHttpHeaders(in);
+        Assert.assertFalse("server closed the connection before replying", headers.isEmpty());
         if (!Chars.contains(headers, "Transfer-Encoding: chunked")) {
+            // the 204 carries no body, so the response ends at the header boundary
+            Assert.assertTrue(
+                    "reply is neither chunked nor a bodiless 204, so this connection cannot be reused: <<<" + headers + ">>>",
+                    headers.startsWith("HTTP/1.1 204")
+            );
             return headers;
         }
 
@@ -219,7 +223,10 @@ public class LineHttpSecurityContextTest extends AbstractBootstrapTest {
             while (!sizeLine.toString().endsWith("\r\n")) {
                 final int b = in.read();
                 if (b < 0) {
-                    return headers + body + "<server disconnected>";
+                    throw new AssertionError(
+                            "server closed the connection inside a chunk size line, so this connection"
+                                    + " cannot be reused: <<<" + headers + body + sizeLine + ">>>"
+                    );
                 }
                 sizeLine.append((char) b);
             }
@@ -228,7 +235,10 @@ public class LineHttpSecurityContextTest extends AbstractBootstrapTest {
             for (int i = 0; i < size + 2; i++) {
                 final int b = in.read();
                 if (b < 0) {
-                    return headers + body + "<server disconnected>";
+                    throw new AssertionError(
+                            "server closed the connection inside a chunk, so this connection cannot be"
+                                    + " reused: <<<" + headers + body + ">>>"
+                    );
                 }
                 if (i < size) {
                     body.append((char) b);
