@@ -75,6 +75,14 @@ public class UnionRecordCursorFactory extends AbstractSetRecordCursorFactory {
     }
 
     @Override
+    public int getScanDirection() {
+        // UNION de-duplicates through a hash set, so rows emerge in hash-iteration order, unrelated to
+        // either input's scan order. Reporting a forward scan would let generateOrderBy() elide an
+        // ORDER BY timestamp ASC over a timestamp()-re-designated union result.
+        return SCAN_DIRECTION_OTHER;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
