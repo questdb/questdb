@@ -51,7 +51,7 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * SELECT [key AS e0[, key AS e1],] agg AS a0[, ...], count() AS aN, count(x.k) AS aN+1
  * FROM input l (JOIN | LEFT JOIN | RIGHT JOIN) input r ON l.key = r.key [AND (one-side predicate)]
  * [WHERE conjunct [AND ...]]
- * [GROUP BY e0[, e1] | SAMPLE BY interval [FILL(...)] [ALIGN TO CALENDAR]]
+ * [GROUP BY e0[, e1] | SAMPLE BY interval [FILL(...)] [ALIGN TO CALENDAR | ALIGN TO FIRST OBSERVATION]]
  * [ORDER BY ...]
  * [LIMIT N]
  * </pre>
@@ -133,10 +133,9 @@ public final class HashJoinGroupByClause {
         StringSink sql = new StringSink();
         sql.put("SELECT ");
         final int keyCount = rnd.nextBoolean() ? 0 : 1 + rnd.nextInt(2);
-        boolean isEveryKeyColumn = true;
         for (int i = 0; i < keyCount; i++) {
             final boolean isLeft = rnd.nextBoolean();
-            isEveryKeyColumn &= appendGroupingKey(sql, rnd, isLeft ? l : r, isLeft ? LEFT_ALIAS : RIGHT_ALIAS, ctx);
+            appendGroupingKey(sql, rnd, isLeft ? l : r, isLeft ? LEFT_ALIAS : RIGHT_ALIAS, ctx);
             sql.put(" AS e").put(i).put(", ");
         }
         int aggCount = 1 + rnd.nextInt(3);
@@ -201,28 +200,28 @@ public final class HashJoinGroupByClause {
             }
         }
 
-        // SAMPLE BY over a join resolves the designated timestamp only when both inputs are
-        // tables: with a sub-query input the ordinary plan fails with "Ambiguous column
-        // [name=ts]" or "TIMESTAMP column is required but not provided", and so does ALIGN TO
-        // FIRST OBSERVATION, so the generator emits neither.
-        if (l.isTable && r.isTable && rnd.nextInt(7) == 0) {
-            // The optimiser rewrites SAMPLE BY aligned to calendar without fill values into a
-            // GROUP BY, which fuses. The fused planner refuses a filled one.
+        // SAMPLE BY buckets on the master's designated timestamp, l.ts. The optimiser learns a
+        // sub-query's designated timestamp only at code generation, so over a sub-query master
+        // SAMPLE BY skips the GROUP BY rewrite, and the path without it fails with "base query
+        // does not provide designated TIMESTAMP column" unless the query selects l.ts. Only a
+        // table master gets a SAMPLE BY.
+        if (l.isTable && rnd.nextInt(7) == 0) {
+            // The optimiser rewrites SAMPLE BY aligned to calendar into a GROUP BY, which fuses
+            // unless it fills. A RIGHT JOIN null-extends l.ts; the NULL-timestamp group comes
+            // out ahead of the filled grid.
             sql.put(" SAMPLE BY ").put(SAMPLE_BY_INTERVALS[rnd.nextInt(SAMPLE_BY_INTERVALS.length)]);
-            // SAMPLE BY buckets on l.ts, which a RIGHT JOIN null-extends. The ordinary plan's
-            // fill cursor fails on a NULL timestamp ("sample by fill: data row timestamp null
-            // precedes next bucket", SampleByFillRecordCursorFactory), on master as well, so
-            // only INNER and LEFT joins get a FILL.
-            if (!isRightJoin && rnd.nextInt(3) == 0) {
+            if (rnd.nextInt(3) == 0) {
                 appendFill(sql, rnd, aggCount);
             }
-            if (rnd.nextBoolean()) {
+            // ALIGN TO FIRST OBSERVATION skips the rewrite and needs l.ts in order, which a
+            // RIGHT JOIN does not keep ("TIMESTAMP column is required but not provided").
+            final int align = rnd.nextInt(3);
+            if (align == 1) {
                 sql.put(" ALIGN TO CALENDAR");
+            } else if (align == 2 && !isRightJoin) {
+                sql.put(" ALIGN TO FIRST OBSERVATION");
             }
-        } else if (keyCount > 0 && isEveryKeyColumn && rnd.nextBoolean()) {
-            // An explicit GROUP BY over an expression key that reads a column name both tables
-            // carry fails in the optimiser with "Ambiguous column", however the reference is
-            // qualified (addMissingTablePrefixesForGroupByQueries), so only column keys get one.
+        } else if (keyCount > 0 && rnd.nextBoolean()) {
             sql.put(" GROUP BY ");
             for (int i = 0; i < keyCount; i++) {
                 if (i > 0) {
@@ -323,16 +322,15 @@ public final class HashJoinGroupByClause {
 
     /**
      * Emits a grouping key over {@code input}: a column reference on three draws in four, a
-     * generated expression otherwise, and returns whether it emitted a column reference. The
-     * expression's kind is one the fused plan reads unless the query may reference any column;
-     * a key of another type keeps the ordinary plan.
+     * generated expression otherwise. The expression's kind is one the fused plan reads unless
+     * the query may reference any column; a key of another type keeps the ordinary plan.
      */
-    private static boolean appendGroupingKey(StringSink sql, Rnd rnd, Input input, String alias, BindContext ctx) {
+    private static void appendGroupingKey(StringSink sql, Rnd rnd, Input input, String alias, BindContext ctx) {
         if (rnd.nextInt(4) != 0) {
             final FuzzColumn column = pickGroupableColumn(rnd, input.columns);
             if (column != null) {
                 new ColumnRefExpr(rnd, column, alias).appendSql(sql, ctx);
-                return true;
+                return;
             }
         }
         final ExpressionGenerator gen = new ExpressionGenerator(rnd, input.columns, alias, 1);
@@ -340,7 +338,6 @@ public final class HashJoinGroupByClause {
                 ? FUSABLE_KEY_KINDS[rnd.nextInt(FUSABLE_KEY_KINDS.length)]
                 : GroupByClause.pickGroupableKind(rnd, gen);
         gen.generateOfKind(kind).appendSql(sql, ctx);
-        return false;
     }
 
     // Both operand orders: the join context records the key per model either way.

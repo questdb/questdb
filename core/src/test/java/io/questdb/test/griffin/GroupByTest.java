@@ -1248,6 +1248,90 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByExpressionKeyOnJoinWithSharedColumnName() throws Exception {
+        // An explicit GROUP BY that names an expression key by alias or position used to fail
+        // with "Ambiguous column" when the expression read a column that both joined tables
+        // carry, however qualified: emitting the key's literals stripped the table prefixes
+        // from the projection column's AST, which the GROUP BY key shared.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (sym SYMBOL, k INT, c1 DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b (sym SYMBOL, k INT, c1 DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO a VALUES
+                        ('x', 1, 1.5, '2024-01-01T00:00'),
+                        ('y', 1, 2.5, '2024-01-01T01:00'),
+                        ('x', 2, 3.5, '2024-01-01T02:00'),
+                        ('y', 3, 4.5, '2024-01-01T03:00')
+                    """);
+            execute("""
+                    INSERT INTO b VALUES
+                        ('x', 1, 10.0, '2024-01-01T00:30'),
+                        ('y', 2, 20.0, '2024-01-01T01:30'),
+                        ('x', 2, 20.0, '2024-01-01T02:30'),
+                        ('y', 4, 40.0, '2024-01-01T03:30')
+                    """);
+            final String[] joins = {"JOIN", "LEFT JOIN", "RIGHT JOIN"};
+            final String[] arithmeticKeyResults = {
+                    """
+                    e0\tc
+                    20.0\t2
+                    40.0\t2
+                    """,
+                    """
+                    e0\tc
+                    20.0\t2
+                    40.0\t2
+                    null\t1
+                    """,
+                    """
+                    e0\tc
+                    20.0\t2
+                    40.0\t2
+                    80.0\t1
+                    """
+            };
+            final String[] functionKeyResults = {
+                    """
+                    e0\tk\tc
+                    X\t1\t2
+                    X\t2\t1
+                    Y\t2\t1
+                    """,
+                    """
+                    e0\tk\tc
+                    \t3\t1
+                    X\t1\t2
+                    X\t2\t1
+                    Y\t2\t1
+                    """,
+                    """
+                    e0\tk\tc
+                    X\t1\t2
+                    X\t2\t1
+                    Y\tnull\t1
+                    Y\t2\t1
+                    """
+            };
+            for (boolean isFusedEnabled : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelHashJoinGroupByEnabled(isFusedEnabled);
+                for (int i = 0; i < joins.length; i++) {
+                    for (String input : new String[]{"b", "(SELECT * FROM b)"}) {
+                        final String from = " FROM a l " + joins[i] + ' ' + input + " r ON l.k = r.k";
+                        for (String key : new String[]{"e0", "1"}) {
+                            assertQuery("SELECT (r.c1 * 2) AS e0, count() c" + from + " GROUP BY " + key + " ORDER BY e0")
+                                    .expectSize()
+                                    .returns(arithmeticKeyResults[i]);
+                        }
+                        assertQuery("SELECT upper(r.sym) e0, l.k, count() c" + from + " GROUP BY e0, 2 ORDER BY e0, l.k")
+                                .expectSize()
+                                .returns(functionKeyResults[i]);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testGroupByIndexOutsideSelectList() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab as (select x, x%2 as y from long_sequence(2))");

@@ -375,6 +375,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private final IntList fixedPrevSrcCols;
         private final IntList fixedPrevTypeTags;
         private final Function fromFunc;
+        // FROM evaluated by initialize(), or LONG_NULL when absent; anchorGrid() reads it.
+        private long fromTs;
         private boolean hasDataForCurrentBucket;
         private boolean hasExplicitTo;
         private boolean hasPendingRow;
@@ -383,8 +385,15 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private boolean hasSimplePrev;
         private boolean isBaseCursorExhausted;
         private boolean isEmittingFills;
+        // True while hasNext() returns the data rows whose timestamp is NULL. A RIGHT
+        // or FULL join null-extends the timestamp that SAMPLE BY buckets on; the
+        // ascending sort puts such rows first, and they pass through unchanged ahead
+        // of the grid, which anchors on the first row with a timestamp.
+        private boolean isEmittingNullTimestampRows;
         private boolean isInitialized;
         private final boolean isKeyed;
+        // True when baseRecord holds a NULL-timestamp row that hasNext() has not returned yet.
+        private boolean isNullTimestampRowPending;
         // Starts closed: the keyed keysMap is built lazily (openOnInit=false), so the
         // first of() must reopen it under the bound MemoryTracker. close() flips this
         // back to false and frees the map, so the next of() reopens again.
@@ -544,6 +553,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 isInitialized = true;
             }
 
+            if (isEmittingNullTimestampRows && hasNextNullTimestampRow()) {
+                return true;
+            }
+
             if (isEmittingFills) {
                 if (emitNextFillRow()) {
                     return true;
@@ -696,11 +709,83 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             hasExplicitTo = false;
             hasDataForCurrentBucket = false;
             isEmittingFills = false;
+            isEmittingNullTimestampRows = false;
+            isNullTimestampRowPending = false;
             hasPrevForCurrentGap = false;
             // Drop the previous baseCursor's recordB so a stale-pointer read
             // can't survive cursor reuse. initialize() reassigns it on the
             // next run when the new base has rows.
             prevRecord = null;
+        }
+
+        // Sets up the grid when the base has no row with a timestamp. Keys come only
+        // from such rows, so a keyed query has none left to fill; a non-keyed one
+        // fills the FROM-TO range, if it has one.
+        private void anchorEmptyGrid() {
+            if (!isKeyed && fromTs != Numbers.LONG_NULL && maxTimestamp != Numbers.LONG_NULL) {
+                // Same anchor rule as the non-empty-base branch, fromTs path
+                // only (no firstTs). effectiveOffset is local-grid space;
+                // setLocalAnchor forwards untranslated and localAnchorAsUtc
+                // lifts back so Math.max clamps in UTC.
+                final long effectiveOffset = fromTs + calendarOffset;
+                timestampSampler.setLocalAnchor(effectiveOffset);
+                final long anchorUtc = timestampSampler.localAnchorAsUtc(effectiveOffset);
+                currentBucketTimestamp = Math.max(anchorUtc, timestampSampler.round(fromTs));
+            } else {
+                maxTimestamp = Long.MIN_VALUE;
+                currentBucketTimestamp = Long.MAX_VALUE;
+            }
+            isBaseCursorExhausted = true;
+        }
+
+        // Anchors the grid on the first row with a timestamp, which baseRecord holds.
+        private void anchorGrid(long firstTs) {
+            final boolean currentBucketIsFirstTs = (fromTs == Numbers.LONG_NULL || firstTs < fromTs);
+            currentBucketTimestamp = currentBucketIsFirstTs ? firstTs : fromTs;
+            if (calendarOffset != 0 && fromTs == Numbers.LONG_NULL) {
+                // No FROM but offset exists: align grid to offset so round()
+                // matches timestamp_floor_utc buckets.
+                timestampSampler.setOffset(calendarOffset);
+                currentBucketTimestamp = timestampSampler.round(currentBucketTimestamp);
+            } else if (calendarOffset != 0 && currentBucketIsFirstTs) {
+                // firstTs already sits on the floor grid (anchored at
+                // fromTs+calendarOffset). setLocalAnchor forwards untranslated
+                // because fromTs+calendarOffset is local-grid space (matches
+                // timestamp_floor_utc's raw-modulus treatment).
+                timestampSampler.setLocalAnchor(fromTs + calendarOffset);
+            } else {
+                // firstTs path (calendarOffset == 0) OR fromTs path (any offset).
+                // Anchor at effectiveOffset = currentBucketTimestamp + calendarOffset
+                // to match timestamp_floor_utc's grid.
+                //
+                // Math.max clamps a positive-offset case where effectiveOffset
+                // > seed: GROUP BY's Micros.floor* clamps up; round() doesn't.
+                //
+                // setStart vs setLocalAnchor tracks the origin of currentBucketTimestamp:
+                //  - firstTs path: a GROUP BY bucket label on the local grid;
+                //    setStart applies UTC->local conversion. (Here calendarOffset
+                //    is 0, so effectiveOffset == firstTs.)
+                //  - fromTs path: a raw user FROM in local-grid space;
+                //    setLocalAnchor forwards untranslated, and localAnchorAsUtc
+                //    lifts back to UTC for the Math.max comparison.
+                //  Using setStart on the fromTs path would shift the grid by
+                //  tzOffset and trip the grid-drift guard on super-day strides.
+                final long effectiveOffset = currentBucketTimestamp + calendarOffset;
+                final long anchorUtc;
+                if (currentBucketIsFirstTs) {
+                    timestampSampler.setStart(effectiveOffset);
+                    anchorUtc = effectiveOffset;
+                } else {
+                    timestampSampler.setLocalAnchor(effectiveOffset);
+                    anchorUtc = timestampSampler.localAnchorAsUtc(effectiveOffset);
+                }
+                currentBucketTimestamp = Math.max(anchorUtc, timestampSampler.round(currentBucketTimestamp));
+            }
+            hasPendingRow = true;
+            pendingTs = firstTs;
+            if (maxTimestamp == Numbers.LONG_NULL) {
+                maxTimestamp = Long.MAX_VALUE;
+            }
         }
 
         private void compileDispatchPlan(int columnCount) {
@@ -814,6 +899,29 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
         }
 
+        // Returns the data rows whose timestamp is NULL. The ascending sort puts them
+        // ahead of every bucket, and they reach the output unchanged. They neither
+        // seed the grid nor feed FILL(PREV). Once hasNext() reaches a row with a
+        // timestamp, or runs out of rows, the grid anchors and this method returns false.
+        private boolean hasNextNullTimestampRow() {
+            if (!isNullTimestampRowPending) {
+                if (!baseCursor.hasNext()) {
+                    isEmittingNullTimestampRows = false;
+                    anchorEmptyGrid();
+                    return false;
+                }
+                final long ts = baseRecord.getTimestamp(timestampIndex);
+                if (ts != Numbers.LONG_NULL) {
+                    isEmittingNullTimestampRows = false;
+                    anchorGrid(ts);
+                    return false;
+                }
+            }
+            isNullTimestampRowPending = false;
+            currentDispatchCode = dataDispatchCode;
+            return true;
+        }
+
         // Writes per-type null sentinels into every fixed-size PREV cache slot.
         // Pre-filling means PREV_CACHE_SLOT getters can read unconditionally on
         // the gap-emit hot path -- no per-row hasPrev branch.
@@ -853,7 +961,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
         private void initialize() {
             TimestampDriver driver = timestampDriver;
-            long fromTs = fromFunc == driver.getTimestampConstantNull() ? Numbers.LONG_NULL
+            fromTs = fromFunc == driver.getTimestampConstantNull() ? Numbers.LONG_NULL
                     : driver.from(fromFunc.getTimestamp(null), ColumnType.getTimestampType(fromFunc.getType()));
             hasExplicitTo = toFunc != driver.getTimestampConstantNull();
             maxTimestamp = hasExplicitTo
@@ -870,8 +978,18 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             if (keysMap != null) {
                 keysMap.clear();
                 int keyIdx = 0;
+                // NULL-timestamp rows pass through ahead of the grid, so their keys
+                // get no fill rows unless a timestamped row carries them too. The
+                // ascending sort puts them first, so only the leading rows need the check.
+                boolean isNullTimestampPrefix = true;
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
+                    if (isNullTimestampPrefix) {
+                        if (baseRecord.getTimestamp(timestampIndex) == Numbers.LONG_NULL) {
+                            continue;
+                        }
+                        isNullTimestampPrefix = false;
+                    }
                     MapKey key = keysMap.withKey();
                     keySink.copy(baseRecord, key);
                     MapValue value = key.createValue();
@@ -888,14 +1006,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     }
                 }
                 keyCount = keyIdx;
-                if (keyCount == 0) {
-                    // Empty GROUP BY output -- no keys to fill, emit zero rows.
-                    isBaseCursorExhausted = true;
-                    maxTimestamp = Long.MIN_VALUE;
-                    currentBucketTimestamp = Long.MAX_VALUE;
-                    return;
-                }
                 toEmitCnt = keyCount;
+                // Rewind even without keys: NULL-timestamp rows still pass through.
                 baseCursor.toTop();
                 MapRecord mapRecord = keysMap.getRecord();
                 mapRecord.setSymbolTableResolver(baseCursor, symbolTableColIndices);
@@ -930,68 +1042,17 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (isPrevPositioningNeeded) {
                     prevRecord = baseCursor.getRecordB();
                 }
-                long firstTs = baseRecord.getTimestamp(timestampIndex);
-                final boolean currentBucketIsFirstTs = (fromTs == Numbers.LONG_NULL || firstTs < fromTs);
-                currentBucketTimestamp = currentBucketIsFirstTs ? firstTs : fromTs;
-                if (calendarOffset != 0 && fromTs == Numbers.LONG_NULL) {
-                    // No FROM but offset exists: align grid to offset so round()
-                    // matches timestamp_floor_utc buckets.
-                    timestampSampler.setOffset(calendarOffset);
-                    currentBucketTimestamp = timestampSampler.round(currentBucketTimestamp);
-                } else if (calendarOffset != 0 && currentBucketIsFirstTs) {
-                    // firstTs already sits on the floor grid (anchored at
-                    // fromTs+calendarOffset). setLocalAnchor forwards untranslated
-                    // because fromTs+calendarOffset is local-grid space (matches
-                    // timestamp_floor_utc's raw-modulus treatment).
-                    timestampSampler.setLocalAnchor(fromTs + calendarOffset);
-                } else {
-                    // firstTs path (calendarOffset == 0) OR fromTs path (any offset).
-                    // Anchor at effectiveOffset = currentBucketTimestamp + calendarOffset
-                    // to match timestamp_floor_utc's grid.
-                    //
-                    // Math.max clamps a positive-offset case where effectiveOffset
-                    // > seed: GROUP BY's Micros.floor* clamps up; round() doesn't.
-                    //
-                    // setStart vs setLocalAnchor tracks the origin of currentBucketTimestamp:
-                    //  - firstTs path: a GROUP BY bucket label on the local grid;
-                    //    setStart applies UTC->local conversion. (Here calendarOffset
-                    //    is 0, so effectiveOffset == firstTs.)
-                    //  - fromTs path: a raw user FROM in local-grid space;
-                    //    setLocalAnchor forwards untranslated, and localAnchorAsUtc
-                    //    lifts back to UTC for the Math.max comparison.
-                    //  Using setStart on the fromTs path would shift the grid by
-                    //  tzOffset and trip the grid-drift guard on super-day strides.
-                    final long effectiveOffset = currentBucketTimestamp + calendarOffset;
-                    final long anchorUtc;
-                    if (currentBucketIsFirstTs) {
-                        timestampSampler.setStart(effectiveOffset);
-                        anchorUtc = effectiveOffset;
-                    } else {
-                        timestampSampler.setLocalAnchor(effectiveOffset);
-                        anchorUtc = timestampSampler.localAnchorAsUtc(effectiveOffset);
-                    }
-                    currentBucketTimestamp = Math.max(anchorUtc, timestampSampler.round(currentBucketTimestamp));
+                final long firstTs = baseRecord.getTimestamp(timestampIndex);
+                if (firstTs == Numbers.LONG_NULL) {
+                    // hasNextNullTimestampRow() returns this row and anchors the
+                    // grid once it reaches a row with a timestamp.
+                    isEmittingNullTimestampRows = true;
+                    isNullTimestampRowPending = true;
+                    return;
                 }
-                hasPendingRow = true;
-                pendingTs = firstTs;
-                if (maxTimestamp == Numbers.LONG_NULL) {
-                    maxTimestamp = Long.MAX_VALUE;
-                }
+                anchorGrid(firstTs);
             } else {
-                if (fromTs != Numbers.LONG_NULL && maxTimestamp != Numbers.LONG_NULL) {
-                    // Same anchor rule as the non-empty-base branch, fromTs path
-                    // only (no firstTs). effectiveOffset is local-grid space;
-                    // setLocalAnchor forwards untranslated and localAnchorAsUtc
-                    // lifts back so Math.max clamps in UTC.
-                    final long effectiveOffset = fromTs + calendarOffset;
-                    timestampSampler.setLocalAnchor(effectiveOffset);
-                    final long anchorUtc = timestampSampler.localAnchorAsUtc(effectiveOffset);
-                    currentBucketTimestamp = Math.max(anchorUtc, timestampSampler.round(fromTs));
-                } else {
-                    maxTimestamp = Long.MIN_VALUE;
-                    currentBucketTimestamp = Long.MAX_VALUE;
-                }
-                isBaseCursorExhausted = true;
+                anchorEmptyGrid();
             }
         }
 

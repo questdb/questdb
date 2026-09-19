@@ -2584,6 +2584,19 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
+     * Returns a copy of a projection column's AST for use as an explicit GROUP BY
+     * key that names the column by alias or position. The GROUP BY loop in
+     * rewriteSelectClause0() hands the key to emitLiterals(), which rewrites its
+     * literals to translating model aliases in place. Without the copy, that
+     * rewrite would also strip the table prefixes from the projection column,
+     * and rewriteSelect0HandleOperation() would then fail to resolve an
+     * unqualified name that more than one joined table carries.
+     */
+    private ExpressionNode cloneProjectionAstForGroupBy(QueryColumn qc) {
+        return deepClone(expressionNodePool, qc.getAst());
+    }
+
+    /**
      * Choose models are required in 3 specific cases:
      * - Column duplicating.
      * - Column reordering.
@@ -5425,6 +5438,34 @@ public class SqlOptimiser implements Mutable {
             int index = -1;
             for (int i = 0, n = joinModels.size(); i < n; i++) {
                 if (joinModels.getQuick(i).getColumnNameToAliasMap().excludes(columnName)) {
+                    continue;
+                }
+                if (index != -1) {
+                    return true;
+                }
+                index = i;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns true when more than one join model may expose the unqualified column
+     * name. Unlike isAmbiguousColumn(), it reads the alias-to-column maps, which
+     * validateColumnAndGetModelIndex() resolves names against and which are the only
+     * maps that rewriteSelectClause() fills for a sub-query join model. Before that
+     * rewrite, as in rewriteSampleBy(), a sub-query join model has no columns yet and
+     * counts as exposing every name.
+     */
+    private boolean isAmbiguousJoinColumn(IQueryModel model, CharSequence columnName) {
+        final int dot = Chars.indexOfLastUnquoted(columnName, '.');
+        if (dot == -1) {
+            final ObjList<IQueryModel> joinModels = model.getJoinModels();
+            int index = -1;
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final LowerCaseCharSequenceObjHashMap<QueryColumn> columns = joinModels.getQuick(i).getAliasToColumnMap();
+                final boolean isUnexpanded = joinModels.getQuick(i).getNestedModel() != null && columns.size() == 0;
+                if (!isUnexpanded && columns.excludes(columnName)) {
                     continue;
                 }
                 if (index != -1) {
@@ -10328,7 +10369,7 @@ public class SqlOptimiser implements Mutable {
                     }
                 }
 
-                if (timestampAlias == null && nested.getJoinModels().size() > 1 && isAmbiguousColumn(nested, timestampColumn)) {
+                if (timestampAlias == null && nested.getJoinModels().size() > 1 && isAmbiguousJoinColumn(nested, timestampColumn)) {
                     // We're dealing with a join, let's check if the timestamp needs a prefix.
                     final CharSequence tableAlias = nested.getAlias() != null ? nested.getAlias().token : nested.getTableName();
                     final CharacterStoreEntry e = characterStore.newEntry();
@@ -10685,8 +10726,13 @@ public class SqlOptimiser implements Mutable {
                 // this is to handle cases where we use system tables, which are prefixed
                 // downstream code cannot handle `"sys.telemetry.wal".created`
                 // it will break in `where` optimization and later metadata lookups
-                final CharSequence tableName = toAddWhereClause.getTableName();
+                CharSequence tableName = toAddWhereClause.getTableName();
                 if (tableName != null) {
+                    // an aliased table is visible under its alias only, which a join requires
+                    final ExpressionNode tableAlias = toAddWhereClause.getAlias();
+                    if (tableAlias != null) {
+                        tableName = tableAlias.token;
+                    }
                     CharacterStoreEntry e = characterStore.newEntry();
                     if (Chars.indexOf(tableName, '.') != -1) {
                         // Table name has . in the name, quote it
@@ -10903,19 +10949,14 @@ public class SqlOptimiser implements Mutable {
             final int beforeSplit = groupByModel.getBottomUpColumns().size();
 
             final ExpressionNode originalNode = qc.getAst();
-            // if the alias is in groupByAliases, it means that we've already seen
-            // the column in the GROUP BY clause and emitted literals for it to
-            // the inner models; in this case, if we add a missing table prefix to
-            // column's nodes, it may break the references; to avoid that, clone the node
-            ExpressionNode node = groupByAliases.indexOf(qc.getAlias()) != -1
-                    ? deepClone(expressionNodePool, originalNode)
-                    : originalNode;
-
-            // add table or alias prefix to the literal arguments of this function or operator
-            addMissingTablePrefixesForGroupByQueries(node, baseModel, innerVirtualModel);
+            // add table or alias prefix to the literal arguments of this function or operator;
+            // a GROUP BY key that names this column by alias or position has its own copy of
+            // the AST (see cloneProjectionAstForGroupBy()), so the prefixes cannot break the
+            // key's inner model references
+            addMissingTablePrefixesForGroupByQueries(originalNode, baseModel, innerVirtualModel);
 
             // if there is explicit GROUP BY clause then we've to replace matching expressions with aliases in outer virtual model
-            node = rewriteGroupBySelectExpression(node, groupByModel, groupByNodes, groupByAliases);
+            final ExpressionNode node = rewriteGroupBySelectExpression(originalNode, groupByModel, groupByNodes, groupByAliases);
             if (originalNode == node) {
                 rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
             } else {
@@ -11403,7 +11444,7 @@ public class SqlOptimiser implements Mutable {
                     QueryColumn qc = model.getAliasToColumnMap().get(node.token);
                     if (qc != null && (qc.getAst().type != LITERAL || !Chars.equals(node.token, qc.getAst().token))) {
                         originalNodePosition = node.position;
-                        node = qc.getAst();
+                        node = cloneProjectionAstForGroupBy(qc);
                         alias = qc.getAlias();
                     }
                 } else if (node.type == CONSTANT) { // group by column index
@@ -11418,7 +11459,7 @@ public class SqlOptimiser implements Mutable {
                         QueryColumn qc = columns.getQuick(columnIdx);
 
                         originalNodePosition = node.position;
-                        node = qc.getAst();
+                        node = cloneProjectionAstForGroupBy(qc);
                         alias = qc.getAlias();
                     } catch (NumericException e) {
                         // ignore
@@ -11837,6 +11878,11 @@ public class SqlOptimiser implements Mutable {
             CharSequence timestamp = baseModel.getTimestamp().token;
             // does model already select timestamp column?
             if (innerVirtualModel.getColumnNameToAliasMap().excludes(timestamp)) {
+                // An ambiguous name resolves only when qualified with the master's alias,
+                // and the translating model then renames it, so it is no longer redundant.
+                if (translationIsRedundant && isAmbiguousJoinColumn(baseModel, timestamp)) {
+                    translationIsRedundant = false;
+                }
                 // no, do we rename columns? does model select timestamp under a new name?
                 if (translationIsRedundant) {
                     // columns were not renamed
@@ -11856,7 +11902,8 @@ public class SqlOptimiser implements Mutable {
                         e.put(baseModel.getName()).put('.').put(timestamp);
                         final CharSequence prefixedTimestampName = e.toImmutable();
                         if (translatingModel.getColumnNameToAliasMap().excludes(prefixedTimestampName)) {
-                            if (baseModel.getJoinModels().size() > 0 && isAmbiguousColumn(baseModel, baseModel.getTimestamp().token)) {
+                            final boolean isTimestampAmbiguous = isAmbiguousJoinColumn(baseModel, timestamp);
+                            if (isTimestampAmbiguous) {
                                 // add prefixed column since the name is ambiguous
                                 addTimestampToProjection(
                                         prefixedTimestampName,
@@ -11875,6 +11922,13 @@ public class SqlOptimiser implements Mutable {
                                         innerVirtualModel,
                                         windowModel
                                 );
+                            }
+                            if (baseModel.getJoinModels().size() > 1) {
+                                // The SAMPLE BY model reads only its aggregate arguments from the
+                                // translating model, so top-down column pruning would drop the
+                                // timestamp, and with it the master's timestamp from the join.
+                                // A declared timestamp keeps both in the projection.
+                                translatingModel.setTimestamp(nextLiteral(isTimestampAmbiguous ? prefixedTimestampName : timestamp));
                             }
                         }
                     }

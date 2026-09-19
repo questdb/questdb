@@ -103,6 +103,10 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
 
     @Override
     public boolean hasNext() {
+        // initializeMap() rebuilds the map for the grid
+        if (hasNextNullTimestampRow(map, keyMapSink, mapCursor, true)) {
+            return true;
+        }
         initializeMap();
         initTimestamps();
 
@@ -214,8 +218,11 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
         // we sample we return same set of key values with different
         // aggregation results and timestamp.
 
+        // Drop the NULL-timestamp group, whose keys take no part in filling. Key
+        // discovery starts after the group, so it reads timestamped rows only.
+        map.clear();
         int n = groupByFunctions.size();
-        while (baseCursor.hasNext()) {
+        while (nextBaseRow()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             MapKey key = map.withKey();
             keyMapSink.copy(baseRecord, key);

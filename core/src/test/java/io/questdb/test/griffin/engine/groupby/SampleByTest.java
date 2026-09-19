@@ -7995,6 +7995,368 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByNullTimestampRowsFromSubQuery() throws Exception {
+        // A sub-query can declare a nullable expression as its designated timestamp. Ascending
+        // order puts the NULL-timestamp rows first, and the SAMPLE BY cursors that do not rewrite
+        // to GROUP BY used to round them into a bucket at 294247-01-10. They now return those
+        // rows as one group per key with a NULL timestamp, ahead of the grid, as the GROUP BY
+        // rewrite does. The grid, the fill keys and the fill values cover the timestamped rows
+        // alone: key c only occurs with a NULL timestamp and gets no fill rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE e (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO e VALUES
+                        ('a', 1.0, '2024-01-01T00:00'),
+                        ('c', 2.0, '2024-01-01T00:30'),
+                        ('a', 2.5, '2024-01-01T00:40'),
+                        ('a', 3.0, '2024-01-01T01:10'),
+                        ('b', 4.0, '2024-01-01T01:20'),
+                        ('a', 5.0, '2024-01-01T03:10'),
+                        ('b', 6.0, '2024-01-01T04:10'),
+                        ('a', 7.0, '2024-01-01T04:20')
+                    """);
+            final String from = " FROM (SELECT k, v, CASE WHEN v < 3 THEN NULL ELSE ts END ts FROM e) timestamp(ts) SAMPLE BY 1h";
+            final String[] fills = {"", " FILL(NULL)", " FILL(PREV)", " FILL(10, 10)", " FILL(LINEAR)"};
+            // expected rows with ALIGN TO FIRST OBSERVATION, which anchors the grid at 01:10
+            final String[] notKeyed = {
+                    """
+                    ts\tc\ts
+                    \t3\t5.5
+                    2024-01-01T01:10:00.000000Z\t2\t7.0
+                    2024-01-01T03:10:00.000000Z\t1\t5.0
+                    2024-01-01T04:10:00.000000Z\t2\t13.0
+                    """,
+                    """
+                    ts\tc\ts
+                    \t3\t5.5
+                    2024-01-01T01:10:00.000000Z\t2\t7.0
+                    2024-01-01T02:10:00.000000Z\tnull\tnull
+                    2024-01-01T03:10:00.000000Z\t1\t5.0
+                    2024-01-01T04:10:00.000000Z\t2\t13.0
+                    """,
+                    """
+                    ts\tc\ts
+                    \t3\t5.5
+                    2024-01-01T01:10:00.000000Z\t2\t7.0
+                    2024-01-01T02:10:00.000000Z\t2\t7.0
+                    2024-01-01T03:10:00.000000Z\t1\t5.0
+                    2024-01-01T04:10:00.000000Z\t2\t13.0
+                    """,
+                    """
+                    ts\tc\ts
+                    \t3\t5.5
+                    2024-01-01T01:10:00.000000Z\t2\t7.0
+                    2024-01-01T02:10:00.000000Z\t10\t10.0
+                    2024-01-01T03:10:00.000000Z\t1\t5.0
+                    2024-01-01T04:10:00.000000Z\t2\t13.0
+                    """,
+                    """
+                    ts\tc\ts
+                    \t3\t5.5
+                    2024-01-01T01:10:00.000000Z\t2\t7.0
+                    2024-01-01T02:10:00.000000Z\t1\t6.0
+                    2024-01-01T03:10:00.000000Z\t1\t5.0
+                    2024-01-01T04:10:00.000000Z\t2\t13.0
+                    """
+            };
+            final String[] keyed = {
+                    """
+                    ts\tk\tc\ts
+                    \ta\t2\t3.5
+                    \tc\t1\t2.0
+                    2024-01-01T01:10:00.000000Z\ta\t1\t3.0
+                    2024-01-01T01:10:00.000000Z\tb\t1\t4.0
+                    2024-01-01T03:10:00.000000Z\ta\t1\t5.0
+                    2024-01-01T04:10:00.000000Z\tb\t1\t6.0
+                    2024-01-01T04:10:00.000000Z\ta\t1\t7.0
+                    """,
+                    """
+                    ts\tk\tc\ts
+                    \ta\t2\t3.5
+                    \tc\t1\t2.0
+                    2024-01-01T01:10:00.000000Z\ta\t1\t3.0
+                    2024-01-01T01:10:00.000000Z\tb\t1\t4.0
+                    2024-01-01T02:10:00.000000Z\ta\tnull\tnull
+                    2024-01-01T02:10:00.000000Z\tb\tnull\tnull
+                    2024-01-01T03:10:00.000000Z\ta\t1\t5.0
+                    2024-01-01T03:10:00.000000Z\tb\tnull\tnull
+                    2024-01-01T04:10:00.000000Z\ta\t1\t7.0
+                    2024-01-01T04:10:00.000000Z\tb\t1\t6.0
+                    """,
+                    """
+                    ts\tk\tc\ts
+                    \ta\t2\t3.5
+                    \tc\t1\t2.0
+                    2024-01-01T01:10:00.000000Z\ta\t1\t3.0
+                    2024-01-01T01:10:00.000000Z\tb\t1\t4.0
+                    2024-01-01T02:10:00.000000Z\ta\t1\t3.0
+                    2024-01-01T02:10:00.000000Z\tb\t1\t4.0
+                    2024-01-01T03:10:00.000000Z\ta\t1\t5.0
+                    2024-01-01T03:10:00.000000Z\tb\t1\t4.0
+                    2024-01-01T04:10:00.000000Z\ta\t1\t7.0
+                    2024-01-01T04:10:00.000000Z\tb\t1\t6.0
+                    """,
+                    """
+                    ts\tk\tc\ts
+                    \ta\t2\t3.5
+                    \tc\t1\t2.0
+                    2024-01-01T01:10:00.000000Z\ta\t1\t3.0
+                    2024-01-01T01:10:00.000000Z\tb\t1\t4.0
+                    2024-01-01T02:10:00.000000Z\ta\t10\t10.0
+                    2024-01-01T02:10:00.000000Z\tb\t10\t10.0
+                    2024-01-01T03:10:00.000000Z\ta\t1\t5.0
+                    2024-01-01T03:10:00.000000Z\tb\t10\t10.0
+                    2024-01-01T04:10:00.000000Z\ta\t1\t7.0
+                    2024-01-01T04:10:00.000000Z\tb\t1\t6.0
+                    """,
+                    """
+                    ts\tk\tc\ts
+                    \ta\t2\t3.5
+                    \tc\t1\t2.0
+                    2024-01-01T01:10:00.000000Z\ta\t1\t3.0
+                    2024-01-01T01:10:00.000000Z\tb\t1\t4.0
+                    2024-01-01T02:10:00.000000Z\ta\t1\t4.0
+                    2024-01-01T02:10:00.000000Z\tb\t1\t4.666666666666667
+                    2024-01-01T03:10:00.000000Z\ta\t1\t5.0
+                    2024-01-01T03:10:00.000000Z\tb\t1\t5.333333333333333
+                    2024-01-01T04:10:00.000000Z\tb\t1\t6.0
+                    2024-01-01T04:10:00.000000Z\ta\t1\t7.0
+                    """
+            };
+            for (int i = 0; i < fills.length; i++) {
+                // FILL(LINEAR) materializes its output and supports random access
+                final boolean isLinear = i == fills.length - 1;
+                assertQuery("SELECT ts, count() c, sum(v) s" + from + fills[i] + " ALIGN TO FIRST OBSERVATION")
+                        .timestamp("ts")
+                        .supportsRandomAccess(isLinear)
+                        .expectSize(isLinear)
+                        .returns(notKeyed[i]);
+                assertQuery("SELECT ts, k, count() c, sum(v) s" + from + fills[i] + " ALIGN TO FIRST OBSERVATION")
+                        .timestamp("ts")
+                        .supportsRandomAccess(isLinear)
+                        .expectSize(isLinear)
+                        .returns(keyed[i]);
+                if (i == 0) {
+                    // without FILL, ALIGN TO CALENDAR rewrites to GROUP BY
+                    continue;
+                }
+                // ALIGN TO CALENDAR anchors the grid at 01:00 instead
+                assertQuery("SELECT ts, count() c, sum(v) s" + from + fills[i])
+                        .timestamp("ts")
+                        .supportsRandomAccess(isLinear)
+                        .expectSize(isLinear)
+                        .returns(notKeyed[i].replace(":10:00.000000Z", ":00:00.000000Z"));
+                assertQuery("SELECT ts, k, count() c, sum(v) s" + from + fills[i])
+                        .timestamp("ts")
+                        .supportsRandomAccess(isLinear)
+                        .expectSize(isLinear)
+                        .returns(keyed[i].replace(":10:00.000000Z", ":00:00.000000Z"));
+            }
+            assertQuery("SELECT ts, k, count() c, sum(v) s" + from + " FILL(NULL)")
+                    .assertsPlan("""
+                            Sample By
+                              fill: null
+                              keys: [ts,k]
+                              values: [count(*),sum(v)]
+                                VirtualRecord
+                                  functions: [case([v<3,null,ts]),k,v]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: e
+                            """);
+
+            // no timestamped rows at all: just the NULL-timestamp groups
+            final String allNull = " FROM (SELECT k, v, NULL::TIMESTAMP ts FROM e) timestamp(ts) SAMPLE BY 1h";
+            for (int i = 0; i < fills.length; i++) {
+                final boolean isLinear = i == fills.length - 1;
+                assertQuery("SELECT ts, count() c, sum(v) s" + allNull + fills[i] + " ALIGN TO FIRST OBSERVATION")
+                        .timestamp("ts")
+                        .supportsRandomAccess(isLinear)
+                        .expectSize(isLinear)
+                        .returns("""
+                                ts\tc\ts
+                                \t8\t30.5
+                                """);
+                assertQuery("SELECT ts, k, count() c, sum(v) s" + allNull + fills[i] + " ALIGN TO FIRST OBSERVATION")
+                        .timestamp("ts")
+                        .supportsRandomAccess(isLinear)
+                        .expectSize(isLinear)
+                        .returns("""
+                                ts\tk\tc\ts
+                                \ta\t5\t18.5
+                                \tc\t1\t2.0
+                                \tb\t2\t10.0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByOnJoinResolvesMasterTimestamp() throws Exception {
+        // SAMPLE BY over a join buckets on the master's designated timestamp. The optimiser
+        // used to inject it under its bare name, which failed with "Ambiguous column" when
+        // the other input also had a ts column: always for a sub-query input, and for two
+        // tables on the paths that do not rewrite to GROUP BY (ALIGN TO FIRST OBSERVATION,
+        // FILL(LINEAR)). FROM-TO qualified it with the table name instead of the alias, so
+        // it failed with "Invalid table name or alias" over any join. The paths that do not
+        // rewrite also lost the master's timestamp from the join once an aggregate read a
+        // column, and failed with "TIMESTAMP column is required but not provided".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (sym SYMBOL, k INT, c1 DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b (sym SYMBOL, k INT, c1 DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO a VALUES
+                        ('x', 1, 1.5, '2024-01-01T00:00'),
+                        ('y', 1, 2.5, '2024-01-01T00:40'),
+                        ('x', 2, 3.5, '2024-01-01T02:10'),
+                        ('y', 3, 4.5, '2024-01-01T02:50')
+                    """);
+            execute("""
+                    INSERT INTO b VALUES
+                        ('x', 1, 10.0, '2024-01-01T00:30'),
+                        ('y', 2, 20.0, '2024-01-01T01:30'),
+                        ('x', 2, 20.0, '2024-01-01T02:30'),
+                        ('y', 4, 40.0, '2024-01-01T03:30')
+                    """);
+            final String[] inputs = {"b", "(SELECT * FROM b LIMIT 10)", "(SELECT sym, k, c1, ts FROM b)"};
+            for (boolean isFusedEnabled : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelHashJoinGroupByEnabled(isFusedEnabled);
+                for (String input : inputs) {
+                    // GROUP BY rewrite; a RIGHT JOIN null-extends l.ts, which forms a NULL bucket
+                    assertQuery("SELECT count() c, sum(r.c1) s FROM a l JOIN " + input + " r ON l.k = r.k SAMPLE BY 1h")
+                            .expectSize()
+                            .returns("""
+                                    c\ts
+                                    2\t20.0
+                                    2\t40.0
+                                    """);
+                    assertQuery("SELECT count() c, sum(r.c1) s FROM a l LEFT JOIN " + input + " r ON l.k = r.k SAMPLE BY 1h")
+                            .expectSize()
+                            .returns("""
+                                    c\ts
+                                    2\t20.0
+                                    3\t40.0
+                                    """);
+                    assertQuery("SELECT count() c, sum(r.c1) s FROM a l RIGHT JOIN " + input + " r ON l.k = r.k SAMPLE BY 1h")
+                            .expectSize()
+                            .returns("""
+                                    c\ts
+                                    1\t40.0
+                                    2\t20.0
+                                    2\t40.0
+                                    """);
+
+                    // no GROUP BY rewrite
+                    assertQuery("SELECT count() c, sum(r.c1) s FROM a l JOIN " + input + " r ON l.k = r.k SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                            .noRandomAccess()
+                            .returns("""
+                                    c\ts
+                                    2\t20.0
+                                    2\t40.0
+                                    """);
+                    assertQuery("SELECT l.sym, count() c, sum(r.c1) s FROM a l LEFT JOIN " + input + " r ON l.k = r.k SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                            .noRandomAccess()
+                            .returns("""
+                                    sym\tc\ts
+                                    x\t1\t10.0
+                                    y\t1\t10.0
+                                    x\t2\t40.0
+                                    y\t1\tnull
+                                    """);
+                    assertQuery("SELECT count() c, sum(r.c1) s FROM a l JOIN " + input + " r ON l.k = r.k SAMPLE BY 1h FILL(LINEAR)")
+                            .expectSize()
+                            .returns("""
+                                    c\ts
+                                    2\t20.0
+                                    2\t30.0
+                                    2\t40.0
+                                    """);
+                    assertQuery("SELECT count() c, sum(r.c1) s FROM a l LEFT JOIN " + input + " r ON l.k = r.k SAMPLE BY 1h FILL(LINEAR)")
+                            .expectSize()
+                            .returns("""
+                                    c\ts
+                                    2\t20.0
+                                    2\t30.0
+                                    3\t40.0
+                                    """);
+                }
+
+                // FROM-TO filters on the master's timestamp, which excludes the NULL bucket
+                for (String join : new String[]{"JOIN", "RIGHT JOIN"}) {
+                    assertQuery("SELECT count() c, sum(r.c1) s FROM a l " + join + " b r ON l.k = r.k SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T04:00'")
+                            .expectSize()
+                            .returns("""
+                                    c\ts
+                                    2\t20.0
+                                    2\t40.0
+                                    """);
+                    assertQuery("SELECT count() c, sum(r.c1) s FROM a l " + join + " b r ON l.k = r.k SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T04:00' FILL(NULL)")
+                            .noRandomAccess()
+                            .returns("""
+                                    c\ts
+                                    2\t20.0
+                                    null\tnull
+                                    2\t40.0
+                                    null\tnull
+                                    """);
+                }
+                assertQuery("SELECT count() c, sum(r.c1) s FROM a l LEFT JOIN b r ON l.k = r.k SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T04:00' FILL(NULL)")
+                        .noRandomAccess()
+                        .returns("""
+                                c\ts
+                                2\t20.0
+                                null\tnull
+                                3\t40.0
+                                null\tnull
+                                """);
+            }
+
+            sqlExecutionContext.setParallelHashJoinGroupByEnabled(configuration.isSqlParallelHashJoinGroupByEnabled());
+            assertQuery("SELECT count() c, sum(r.c1) s FROM a l JOIN b r ON l.k = r.k SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                    .assertsPlan("""
+                            Sample By
+                              fill: none
+                              values: [count(*),sum(c1)]
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: r.k=l.k
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                            """);
+            assertQuery("SELECT count() c, sum(r.c1) s FROM a l JOIN (SELECT * FROM b LIMIT 10) r ON l.k = r.k SAMPLE BY 1h")
+                    .assertsPlan("""
+                            SelectedRecord
+                                Encode sort light
+                                  keys: [ts]
+                                    GroupBy vectorized: false
+                                      keys: [ts]
+                                      values: [count(*),sum(c1)]
+                                        SelectedRecord
+                                            Hash Join Light
+                                              condition: r.k=l.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    Limit value: 10 skip-rows: 0 take-rows: 4
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: b
+                            """);
+            assertQuery("SELECT count() c, sum(r.c1) s FROM a l JOIN b r ON l.k = r.k SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T04:00'")
+                    .assertsPlanContaining(
+                            "Interval forward scan on: a",
+                            "intervals: [(\"2024-01-01T00:00:00.000000Z\",\"2024-01-01T03:59:59.999999Z\")]"
+                    );
+        });
+    }
+
+    @Test
     public void testSampleByOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE eq_equities_market_data (" +
