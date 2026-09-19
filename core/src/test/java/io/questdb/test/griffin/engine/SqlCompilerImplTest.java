@@ -4449,6 +4449,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 .fails(7, "cursor function cannot be used as a column [column=c]");
     }
 
+    // https://github.com/questdb/questdb/issues/6406
+    @Test
+    public void testTablePartitionsWithDottedTableName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table \"a.b\" (ts timestamp) timestamp(ts)");
+            assertQuery("select * from table_partitions('a.b')")
+                    .assertsPlan("show_partitions of: a.b\n");
+            assertQuery("select table_partitions('a.b')")
+                    .assertsPlan("SelectedRecord\n" +
+                            "    Cross Join\n" +
+                            "        long_sequence count: 1\n" +
+                            "        RecordAsAField\n" +
+                            "            show_partitions of: a.b\n");
+        });
+    }
+
     @Test
     public void testDeallocateMissingStatementName() throws Exception {
         assertMemoryLeak(() -> {
