@@ -257,6 +257,10 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
         return parquetMetaReader;
     }
 
+    public boolean isSamePageFrameBinding(ParquetPartitionDecoder other) {
+        return parquetMetaAddr == other.parquetMetaAddr && parquetMetaSize == other.parquetMetaSize;
+    }
+
     /**
      * Hot-path-only initialization. Use when the parquet file is mmapped
      * locally (write/restore/index/O3 callers).

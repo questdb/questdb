@@ -232,7 +232,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         // The comparator's left side was pre-set at the end of the previous
         // put() call. For Parquet frames, the record holds flyweight references
         // pointing into decoded row group buffers. Those buffers may have been
-        // freed between frames (by releaseParquetBuffers()), so we re-navigate
+        // freed between frames (by releaseDecodedFrameBuffers()), so we re-navigate
         // once per frame change to ensure the references are backed by live memory.
         int currentFrameIndex = Rows.toPartitionIndex(currentRecord.getRowId());
 
