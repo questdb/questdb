@@ -7571,17 +7571,16 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMultiTableEqualityReorderedFilterStaysPostJoin() throws Exception {
+    public void testMultiTableEqualityDeferredFilterStaysPostJoin() throws Exception {
         // Covers the hasNonEquiNullingJoin arm of the two-table equality deferral;
         // testMultiTableEqualityMasterFilterStaysPostJoin covers the masterNullingJoinIndex arm.
-        // The WHERE equality (c.c1 = d.d1) is across two INNER-joined tables whose NULL-extension
-        // comes from a lower-model-index non-equi RIGHT/FULL OUTER. That join carries no JoinContext,
-        // so homogenizeCrossJoins rewrites it to a CROSS variant reorderTables appends last -- after
-        // c and d join -- and NULL-extends them. masterNullingJoinIndex scans only higher model
-        // indexes and misses the reorder, so analyseEquals defers via hasNonEquiNullingJoin to the
-        // exec-order-aware assignFilters, keeping c.c1 = d.d1 post-join. Folding it into the c/d inner
-        // join applies it before the reordered outer join, emptying that subtree (7 != 8) so the join
-        // pairs the slave row with NULL c/d and leaks (null,50,null,null) -- 1 row for 0.
+        // The WHERE equality (c.c1 = d.d1) is across two INNER-joined tables and the level holds a
+        // non-equi RIGHT/FULL OUTER, so analyseEquals defers it to assignFilters, which keeps it
+        // post-join. Folding it into the c/d inner join would empty that subtree (7 != 8), and on
+        // master, where the outer join ran after c and d, the join then paired its slave row with
+        // NULL c/d and leaked (null,50,null,null) -- 1 row for 0. constrainRightAndFullJoinOrder
+        // keeps the outer join at its SQL position, so the inner joins now drop that row anyway, and
+        // the deferral is what still keeps the equality out of the c/d join.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (x INT, k INT)");
             execute("INSERT INTO a VALUES (100, 1)");
