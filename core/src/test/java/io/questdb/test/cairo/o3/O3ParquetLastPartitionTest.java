@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.o3;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -45,7 +46,7 @@ import org.junit.Test;
  * back to ceilPageSize(staleOffset), discarding the appended rows. A reader or column type
  * converter that then mapped the committed row count faulted past the shortened file.
  * <p>
- * Both tests here make the day-1 partition native, grow it from 500 to 600 rows through the
+ * The O3 append tests make the day-1 partition native, grow it from 500 to 600 rows through the
  * mid-partition O3 append while a parquet day-2 partition is the last one, close the writer
  * and check the column file length and the data. For a LONG column 500 rows fit into one
  * 4 KiB page and 600 rows need two, so a truncating close with a stale 500-row offset is
@@ -101,6 +102,16 @@ public class O3ParquetLastPartitionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testParquetLastTransitionWithBitmapIndexAsyncCommit() throws Exception {
+        assertParquetLastTransitionWithBitmapIndex("async");
+    }
+
+    @Test
+    public void testParquetLastTransitionWithBitmapIndexSyncCommit() throws Exception {
+        assertParquetLastTransitionWithBitmapIndex("sync");
+    }
+
     private void appendDay2ThenDay1AndCloseWriter() throws Exception {
         // day 2 is born parquet and becomes the last partition
         execute("INSERT INTO x SELECT timestamp_sequence('2022-02-26T00:00:00', 1_000_000L), x, 's' || x FROM long_sequence(10)");
@@ -135,6 +146,33 @@ public class O3ParquetLastPartitionTest extends AbstractCairoTest {
                         2022-02-25T10:01:38.000000Z\t99\ts99
                         2022-02-25T10:01:39.000000Z\t100\ts100
                         """);
+    }
+
+    private void assertParquetLastTransitionWithBitmapIndex(String commitMode) throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL INDEX TYPE BITMAP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES ('2022-02-25T00:00:00', 'a')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x SET FORMAT PARQUET");
+            drainWalQueue();
+            TableToken token = engine.verifyTableName("x");
+            Assert.assertFalse("WAL setup suspended the table", engine.getTableSequencerAPI().isSuspended(token));
+
+            // A parquet day 2 replaces native day 1 as the last partition and closes its bitmap writer.
+            execute("INSERT INTO x VALUES ('2022-02-26T00:00:00', 'b')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    "parquet transition suspended WAL under " + commitMode,
+                    engine.getTableSequencerAPI().isSuspended(token)
+            );
+            assertQuery("SELECT count() FROM x")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n2\n");
+        });
     }
 
     private static long columnFileLength(String tableName, String partitionTimestamp, String columnName) throws NumericException {
