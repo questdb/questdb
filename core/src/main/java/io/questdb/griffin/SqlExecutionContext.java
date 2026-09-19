@@ -310,7 +310,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     /**
      * Returns true while a cursor is being opened only to learn a query's column types, as
-     * {@code CREATE VIEW} does to derive the view's metadata from its SELECT. No principal is
+     * {@code CREATE VIEW} does to derive the view's metadata from its SELECT, and
+     * {@code CREATE MATERIALIZED VIEW} to validate its SELECT's. No principal is
      * reading data through such a cursor, so view auditing skips it: an audit row for it would
      * assert an access to rows that nobody asked for.
      */
