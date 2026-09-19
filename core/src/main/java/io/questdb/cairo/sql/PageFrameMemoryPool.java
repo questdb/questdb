@@ -827,6 +827,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         recordAtSlices.put(runFrame, Numbers.encodeLowHighInts(runStart, (int) kept));
     }
 
+    boolean isFrameStable(int frameIndex) {
+        return addressCache.getFrameFormat(frameIndex) == PartitionFormat.NATIVE
+                && !usesCustomDecode(frameIndex);
+    }
+
     private void accountDecode(DecodedFrameBuffers parquetBuffers) {
         if (parquetBuffers.decodedBytes > parquetBuffers.retainedBytes) {
             cachedBytes += parquetBuffers.decodedBytes - parquetBuffers.retainedBytes;
