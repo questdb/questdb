@@ -260,11 +260,12 @@ public class SqlOptimiser implements Mutable {
     private final IntObjHashMap<ObjList<QueryColumn>> windowFunctionHashMap = new IntObjHashMap<>();
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
-    // True when the current join level contains a non-equi RIGHT/FULL OUTER join that
-    // homogenizeCrossJoins turns into a CROSS_RIGHT/CROSS_FULL and reorderTables appends last. Such a
-    // join NULL-extends tables that execute before it, but masterNullingJoinIndex (model order) cannot
-    // see the reorder, so analyseEquals defers single-table WHERE predicates to the exec-order-aware
-    // assignFilters instead of pushing them down eagerly. Filled by precomputeHasNonEquiNullingJoin.
+    // True when the current join level contains a non-equi RIGHT/FULL OUTER join, which
+    // homogenizeCrossJoins turns into a CROSS_RIGHT/CROSS_FULL. analyseEquals then defers
+    // single-table WHERE predicates to the exec-order-aware assignFilters instead of pushing them
+    // down eagerly. constrainRightAndFullJoinOrder keeps such a join at its SQL position, so
+    // masterNullingJoinIndex (model order) agrees with the execution order and the deferral is
+    // conservative: it can cost a pushdown, never a row. Filled by precomputeHasNonEquiNullingJoin.
     private boolean hasNonEquiNullingJoin;
     // True when the execution-order anchors are valid (ordered join models are a full permutation).
     private boolean isNullingExecOrderValid;
@@ -644,6 +645,18 @@ public class SqlOptimiser implements Mutable {
         return model.getTimestamp() != null
                 && model.getOrderBy().size() == 1
                 && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
+    }
+
+    /**
+     * Returns true for RIGHT and FULL OUTER joins, including the JOIN_CROSS_RIGHT / JOIN_CROSS_FULL
+     * variants {@code homogenizeCrossJoins} produces for a non-equi ON clause.
+     * {@link #constrainRightAndFullJoinOrder} keeps each of them at its SQL position.
+     */
+    private static boolean isRightOrFullJoinType(int joinType) {
+        return joinType == IQueryModel.JOIN_RIGHT_OUTER
+                || joinType == IQueryModel.JOIN_FULL_OUTER
+                || joinType == IQueryModel.JOIN_CROSS_RIGHT
+                || joinType == IQueryModel.JOIN_CROSS_FULL;
     }
 
     /**
@@ -1915,9 +1928,8 @@ public class SqlOptimiser implements Mutable {
                     final int nullingJoinIndex = masterNullingJoinIndex(bColIndex);
                     // Defer a single-model inner ON conjunct until assignFilters has the final order.
                     // It may push to the source only when doing so cannot change the match set of a
-                    // nulling join before the conjunct's INNER origin. A reordering non-equi RIGHT/FULL
-                    // OUTER (hasNonEquiNullingJoin) executes last after homogenizing to CROSS, so it can
-                    // NULL-extend even a table masterNullingJoinIndex misses in model order.
+                    // nulling join before the conjunct's INNER origin. A WHERE predicate also defers
+                    // when the level has a non-equi RIGHT/FULL OUTER (hasNonEquiNullingJoin).
                     if (joinIndex >= 0 || (nullingJoinIndex < 0 && !hasNonEquiNullingJoin)) {
                         // single table reference + constant
                         jc = contextPool.next();
@@ -1941,8 +1953,8 @@ public class SqlOptimiser implements Mutable {
                         // Keep the predicate post-join. Register a non-null literal constant for the
                         // transitive slave prune ONLY when a model-order master-nulling join makes it
                         // result-neutral (RIGHT/FULL OUTER set joins; addTransitiveFilters skips SPLICE).
-                        // With only a reordering non-equi CROSS join (nullingJoinIndex < 0), the prune is
-                        // not neutral, so skip registration. A bind variable is excluded: it can be NULL
+                        // With only hasNonEquiNullingJoin set (nullingJoinIndex < 0), no such join makes the
+                        // prune neutral, so skip registration. A bind variable is excluded: it can be NULL
                         // at runtime, and `null = null` is TRUE, so pushing it would change which rows survive.
                         parent.addParsedWhereNode(node, innerPredicate);
                         if (nullingJoinIndex >= 0 && node.lhs.type == CONSTANT) {
@@ -1975,9 +1987,8 @@ public class SqlOptimiser implements Mutable {
                             } else if (masterNullingJoinIndex(lhi) >= 0 || hasNonEquiNullingJoin) {
                                 // a.c1 = a.c2 on a master-nulled table: defer to assignFilters so the
                                 // post-join anchor is chosen in execution order (WHERE-origin only).
-                                // Also defers when a reordering non-equi RIGHT/FULL OUTER NULL-extends
-                                // lhi out of model order; pushing would empty lhi and change which rows
-                                // that join NULL-extends, leaking NULL-master rows. Checked before the
+                                // Also defers when the level has a non-equi RIGHT/FULL OUTER
+                                // (hasNonEquiNullingJoin, conservative). Checked before the
                                 // barrier-slave branch below: when lhi is itself barrier-joined but a
                                 // further nulling join sits above it, that branch would anchor at lhi's
                                 // own join, below the nulling join, and leak.
@@ -2072,8 +2083,8 @@ public class SqlOptimiser implements Mutable {
                         // Keep post-join. Register a non-null literal constant for the transitive slave
                         // prune ONLY when a model-order master-nulling join makes it result-neutral
                         // (RIGHT/FULL OUTER; skipped for SPLICE in addTransitiveFilters; see the case 0
-                        // branch). With only a reordering non-equi CROSS join (nullingJoinIndex < 0) the
-                        // prune is not neutral, so skip it. A bind variable is excluded for the same reason.
+                        // branch). With only hasNonEquiNullingJoin set (nullingJoinIndex < 0) no such join
+                        // makes the prune neutral, so skip it. A bind variable is excluded for the same reason.
                         parent.addParsedWhereNode(node, innerPredicate);
                         if (nullingJoinIndex >= 0 && node.rhs.type == CONSTANT) {
                             registerTransitiveFilterFact(
@@ -2132,7 +2143,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void applyModelOnOrderingConstraints(IQueryModel parent) {
+    private void applyOrderingConstraints(IQueryModel parent) {
         for (int i = 2 * tempExprs.size(), n = tempIntList.size(); i < n; i += 2) {
             addOrderingConstraint(parent, tempIntList.getQuick(i), tempIntList.getQuick(i + 1));
         }
@@ -2891,36 +2902,29 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
-    private void constrainModelOnOriginsAfterReorderedNullingJoins(IQueryModel parent) {
+    /**
+     * Keeps every RIGHT and FULL OUTER join at its SQL position in the execution order. Its master is
+     * the whole SQL prefix, so every model before it must execute before it, and every model after it
+     * must execute after it. Without these edges, doReorderTables() appends a model without context
+     * parents (a CROSS JOIN, or the CROSS_RIGHT / CROSS_FULL that homogenizeCrossJoins() makes of a
+     * non-equi ON clause) after the ordered models. A later join then runs before the outer join,
+     * which NULL-extends that join's rows instead of dropping them, and a prefix model runs after it,
+     * which multiplies or drops the outer join's unmatched rows. reorderTables() applies the edges
+     * through applyOrderingConstraints() after each swapJoinOrder() pass, which may rebuild a context
+     * and drop them. Applying them only then leaves the models after the outer join free to take over
+     * each other's equalities, as they could before.
+     */
+    private void constrainRightAndFullJoinOrder(IQueryModel parent) {
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
-        tempIntHashSet.clear();
-        for (int i = 0, n = tempExprs.size(); i < n; i++) {
-            final int sourceIndex = tempIntList.getQuick(2 * i);
-            final int originIndex = tempIntList.getQuick(2 * i + 1);
-            for (int boundaryIndex = 1; boundaryIndex < originIndex; boundaryIndex++) {
-                final IQueryModel boundaryModel = joinModels.getQuick(boundaryIndex);
-                final int joinType = boundaryModel.getJoinType();
-                if (joinType != IQueryModel.JOIN_CROSS_RIGHT && joinType != IQueryModel.JOIN_CROSS_FULL) {
-                    continue;
-                }
-
-                // A non-equi outer join consumes the complete logical prefix as its master.
-                // Keep every prefix model before the boundary, regardless of which model the
-                // later INNER-ON predicate references. The first edge also marks this boundary
-                // so repeated predicates materialize its prefix only once.
-                if (tempIntHashSet.add(boundaryIndex)) {
-                    recordOrderingConstraint(parent, 0, boundaryIndex);
-                    for (int prefixIndex = 1; prefixIndex < boundaryIndex; prefixIndex++) {
-                        recordOrderingConstraint(parent, prefixIndex, boundaryIndex);
-                    }
-                }
-
-                // When the source belongs to the prefix, the boundary must execute before the
-                // logical INNER origin so assignFilters keeps the gate at that origin. When the
-                // source follows the boundary, only keep the source after it; source pushdown is
-                // then safe because it cannot alter the outer join's already-established match set.
-                final int constrainedIndex = sourceIndex <= boundaryIndex ? originIndex : sourceIndex;
-                recordOrderingConstraint(parent, boundaryIndex, constrainedIndex);
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            if (!isRightOrFullJoinType(joinModels.getQuick(i).getJoinType())) {
+                continue;
+            }
+            for (int prefixIndex = 0; prefixIndex < i; prefixIndex++) {
+                recordOrderingConstraint(prefixIndex, i);
+            }
+            for (int laterIndex = i + 1; laterIndex < n; laterIndex++) {
+                recordOrderingConstraint(i, laterIndex);
             }
         }
     }
@@ -7167,9 +7171,8 @@ public class SqlOptimiser implements Mutable {
             // seed the model-order anchors masterNullingJoinIndex reads in analyseEquals below (a
             // RIGHT/FULL OUTER not yet homogenized into a CROSS variant is master-nulling either way)
             precomputeNullingJoinAnchors(model);
-            // flag a non-equi RIGHT/FULL OUTER that will reorder past later tables; masterNullingJoinIndex
-            // (model order) cannot see that reorder, so analyseEquals defers single-table WHERE
-            // predicates to assignFilters when this is set
+            // flag a non-equi RIGHT/FULL OUTER; analyseEquals defers single-table WHERE predicates to
+            // assignFilters when this is set (conservatively, see hasNonEquiNullingJoin)
             precomputeHasNonEquiNullingJoin(model);
             processJoinConditions(model, where, false, model, -1);
 
@@ -7180,7 +7183,7 @@ public class SqlOptimiser implements Mutable {
             processEmittedJoinClauses(model);
             createImpliedDependencies(model);
             homogenizeCrossJoins(model);
-            constrainModelOnOriginsAfterReorderedNullingJoins(model);
+            constrainRightAndFullJoinOrder(model);
             reorderTables(model);
             assignFilters(model);
             alignJoinClauses(model);
@@ -7456,10 +7459,10 @@ public class SqlOptimiser implements Mutable {
     /**
      * Sets {@link #hasNonEquiNullingJoin} for the current level. A RIGHT/FULL OUTER join whose ON
      * clause carries no plain cross-table equality gets no join context, so {@code homogenizeCrossJoins}
-     * turns it into a CROSS_RIGHT/CROSS_FULL that {@code reorderTables} appends last, NULL-extending
-     * every table joined before it. Runs before processJoinConditions, while the join types are still
-     * RIGHT/FULL OUTER and no context has been built, so it predicts the homogenization by inspecting
-     * the raw criteria instead of reading the (not-yet-built) context.
+     * turns it into a CROSS_RIGHT/CROSS_FULL, which NULL-extends every table joined before it. Runs
+     * before processJoinConditions, while the join types are still RIGHT/FULL OUTER and no context
+     * has been built, so it predicts the homogenization by inspecting the raw criteria instead of
+     * reading the (not-yet-built) context.
      */
     private void precomputeHasNonEquiNullingJoin(IQueryModel parent) throws SqlException {
         hasNonEquiNullingJoin = false;
@@ -8262,10 +8265,9 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
-    private void recordOrderingConstraint(IQueryModel parent, int parentIndex, int childIndex) {
+    private void recordOrderingConstraint(int parentIndex, int childIndex) {
         tempIntList.add(parentIndex);
         tempIntList.add(childIndex);
-        addOrderingConstraint(parent, parentIndex, childIndex);
     }
 
     /**
@@ -8406,6 +8408,13 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0; i < zc; i++) {
                 if (z != i) {
                     int to = tempCrosses.getQuick(i);
+                    // a barrier join must not take over a later inner join's equality: code generation
+                    // ignores the join context of a CROSS_LEFT/CROSS_RIGHT/CROSS_FULL join, so the
+                    // equality would be lost, and an outer join would turn it into a match condition
+                    // that NULL-extends the rows the inner join filters out
+                    if (joinBarriers.contains(joinModels.getQuick(to).getJoinType())) {
+                        continue;
+                    }
                     final JoinContext jc = joinModels.getQuick(to).getJoinContext();
                     // look above i up to OUTER join
                     for (int k = i - 1; k > -1 && swapJoinOrder(model, to, k, jc); k--) ;
@@ -8414,7 +8423,7 @@ public class SqlOptimiser implements Mutable {
                 }
             }
 
-            applyModelOnOrderingConstraints(model);
+            applyOrderingConstraints(model);
             IntList ordered = model.nextOrderedJoinModels();
             int thisCost = doReorderTables(model, ordered);
 

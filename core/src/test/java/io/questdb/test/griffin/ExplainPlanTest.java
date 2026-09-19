@@ -6756,6 +6756,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         .noRandomAccess()
                         .returns("k\tcid\tbid\nnull\tnull\t5\n");
 
+                // the non-equi outer join runs at its SQL position, so the inner joins drop the b row
+                // it NULL-extends: c.k = NULL matches no f row. Master ran the inner joins first and
+                // returned that row as (null,100,null,null), which the NULL bind value kept.
                 assertQuery("""
                         SELECT *
                         FROM (
@@ -6769,10 +6772,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         ORDER BY y
                         """.formatted(join))
                         .noLeakCheck()
-                        .returns("""
-                                x\ty\tck\tdk
-                                null\t100\tnull\tnull
-                                """);
+                        .returns("x\ty\tck\tdk\n");
             }
 
             execute("INSERT INTO a VALUES (5)");
