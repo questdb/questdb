@@ -154,7 +154,8 @@ public class QueryCompileBenchmark {
 
         sql = switch (query) {
             case "table" -> "SELECT ts, sym, price FROM trades WHERE sym = 'AAPL' AND price > 10";
-            case "declare" -> "DECLARE @sym := 'AAPL' SELECT ts, sym, price FROM trades WHERE sym = @sym AND price > 10";
+            case "declare" ->
+                    "DECLARE @sym := 'AAPL' SELECT ts, sym, price FROM trades WHERE sym = @sym AND price > 10";
             case "view" -> "SELECT ts, sym, price FROM v_trades WHERE price > 10";
             case "view_declare" -> "DECLARE @sym := 'MSFT' SELECT ts, sym, price FROM v_trades_sym WHERE price > 10";
             case "mat_view" -> "SELECT ts, sym, price FROM mv_trades WHERE sym = 'AAPL' AND price > 10";
