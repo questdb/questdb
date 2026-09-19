@@ -13838,6 +13838,7 @@ public class SqlOptimiser implements Mutable {
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
             rewrittenModel.recordViews(model.getReferencedViews());
+            rewrittenModel.recordViewAudits(model.getViewAudits());
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
             if (ALLOW_FUNCTION_MEMOIZATION) {
                 collectColumnRefCount(null, rewrittenModel);
@@ -13860,6 +13861,10 @@ public class SqlOptimiser implements Mutable {
         selectQueryModel.setIsUpdate(true);
         IQueryModel optimisedNested = optimise(selectQueryModel, sqlExecutionContext, sqlParserCallback);
         assert optimisedNested.isUpdate();
+        // The parser hands a statement's view audits to its top model, which for an UPDATE is this
+        // one. Code generation compiles the nested model into the cursor that reads the rows, so
+        // the audits have to be on that one, or an UPDATE that reads an audited view records nothing.
+        optimisedNested.recordViewAudits(updateQueryModel.getViewAudits());
         updateQueryModel.setNestedModel(optimisedNested);
 
         // And then generate plan for UPDATE top level QueryModel
