@@ -1900,24 +1900,25 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testColumnEqColumnReorderedFilterStaysPostJoinSymbol() throws Exception {
-        // SYMBOL variant of testColumnEqColumnReorderedFilterStaysPostJoin. Unlike INT, SYMBOL null=null
-        // is not unconditionally true, so the mechanism is the match-set change, not the null-row's own
-        // verdict: pushing c.v = c.w into c changes which rows the reordered join NULL-extends and leaked
-        // a (null,100,,) row. Held post-join, the full join keeps only the matched (10,5,foo,foo) row.
+        // SYMBOL variant of testColumnEqColumnReorderedFilterStaysPostJoin. Pushing c.v = c.w into c
+        // emptied c ('foo' != 'bar'), so the reordered join paired the slave row with a NULL c and
+        // leaked (null,5,,) -- 1 row for 0. The matched (10,5,foo,bar) row fails v=w, so the correct
+        // result is empty. b holds no unmatched row: the reorder NULL-extends c for one, which the SQL
+        // join order would drop, and v=w keeps it, since SYMBOL NULL=NULL is true, as INT's is.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (x INT, k INT)");
             execute("INSERT INTO a VALUES (10, 1)");
             execute("CREATE TABLE b (y INT)");
-            execute("INSERT INTO b VALUES (5), (100)");
+            execute("INSERT INTO b VALUES (5)");
             execute("CREATE TABLE c (k INT, v SYMBOL, w SYMBOL)");
-            execute("INSERT INTO c VALUES (1, 'foo', 'foo')");
+            execute("INSERT INTO c VALUES (1, 'foo', 'bar')");
 
-            final String expected = "x\ty\tv\tw\n10\t5\tfoo\tfoo\n";
             for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
-                assertQuery("SELECT a.x, b.y, c.v, c.w FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k WHERE c.v = c.w ORDER BY b.y")
+                assertQuery("SELECT a.x, b.y, c.v, c.w FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k WHERE c.v = c.w")
                         .noLeakCheck()
+                        .noRandomAccess()
                         .withPlanContaining("Filter filter: c.v=c.w")
-                        .returns(expected);
+                        .returns("x\ty\tv\tw\n");
             }
         });
     }

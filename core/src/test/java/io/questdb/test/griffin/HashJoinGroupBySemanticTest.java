@@ -42,6 +42,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
@@ -576,6 +577,88 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                         assertOutcome(select + from(join) + " WHERE 1 = 1" + order, context, false);
                     }
                     assertOutcome("SELECT count(*) n, sum(d) d FROM (SELECT p.d" + from(join) + " WHERE 1 = 0)", context, false);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolEqualityOnNullExtendedRows() throws Exception {
+        // For a constant-false ON conjunct the ordinary plan reads the null-extended input from an
+        // empty table, while the fused plan filters its build input and keeps the table's symbols.
+        // a stores a NULL symbol and b stores none. SYMBOL equality on a null-extended row must
+        // depend on neither, so both plans return the same rows with and without the conjunct.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (s SYMBOL, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b (s SYMBOL, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO a VALUES
+                        ('x', 1, '2024-01-01T00:00'),
+                        (NULL, 2, '2024-01-01T01:00'),
+                        ('y', 3, '2024-01-01T02:00')
+                    """);
+            execute("""
+                    INSERT INTO b VALUES
+                        ('x', 1, '2024-01-01T00:00'),
+                        ('z', 4, '2024-01-01T01:00')
+                    """);
+            final String[] joins = {" LEFT JOIN ", " RIGHT JOIN "};
+            final String[] ons = {"l.k = r.k", "l.k = r.k AND 1 = 2"};
+            final String[][] results = {
+                    {
+                            """
+                            ls\trs\tc\tlk\trk
+                            \t\t1\t1\t0
+                            x\tx\t1\t1\t1
+                            y\t\t1\t1\t0
+                            """,
+                            """
+                            ls\trs\tc\tlk\trk
+                            \t\t1\t1\t0
+                            x\t\t1\t1\t0
+                            y\t\t1\t1\t0
+                            """
+                    },
+                    {
+                            """
+                            ls\trs\tc\tlk\trk
+                            \tz\t1\t0\t1
+                            x\tx\t1\t1\t1
+                            """,
+                            """
+                            ls\trs\tc\tlk\trk
+                            \tx\t1\t0\t1
+                            \tz\t1\t0\t1
+                            """
+                    }
+            };
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                for (int i = 0; i < joins.length; i++) {
+                    for (int j = 0; j < ons.length; j++) {
+                        // The fuzzer found the divergence over projections; plain tables diverge too.
+                        for (String input : new String[]{"%s", "(SELECT s, k, ts FROM %s)"}) {
+                            final String sql = "SELECT l.s ls, r.s rs, count() c, count(l.k) lk, count(r.k) rk"
+                                    + " FROM " + input.formatted("a") + " l" + joins[i] + input.formatted("b") + " r"
+                                    + " ON " + ons[j] + " WHERE l.s = l.s AND r.s = r.s ORDER BY ls, rs";
+                            for (boolean isFused : new boolean[]{true, false}) {
+                                context.setParallelHashJoinGroupByEnabled(isFused);
+                                try {
+                                    final QueryAssertion assertion = assertQuery(sql)
+                                            .withEngine(engine)
+                                            .withContext(context)
+                                            .expectSize();
+                                    if (isFused) {
+                                        assertion.withPlanContaining("Async Hash Join Group By");
+                                    } else {
+                                        assertion.withPlanNotContaining("Async Hash Join Group By");
+                                    }
+                                    assertion.returns(results[i][j]);
+                                } finally {
+                                    context.setParallelHashJoinGroupByEnabled(true);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         });
