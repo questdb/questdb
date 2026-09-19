@@ -232,7 +232,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
 
         @Override
         public boolean hasNext() {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (dualRecord) {
                 slaveRecordLeads();
                 dualRecord = false;

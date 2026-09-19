@@ -122,7 +122,8 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
                 Function symbolFunc = includedSymbolFuncs.getQuick(i);
                 symbolFunc.init(pageFrameCursor, executionContext);
                 int key = symbolMapReader.keyOf(symbolFunc.getStrA(null));
-                if (key != SymbolTable.VALUE_NOT_FOUND) {
+                if (key != SymbolTable.VALUE_NOT_FOUND
+                        && (key != SymbolTable.VALUE_IS_NULL || symbolMapReader.containsNullValue())) {
                     symbolKeys.add(key);
                 }
             }

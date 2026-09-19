@@ -27,12 +27,14 @@ package io.questdb.test.griffin.engine.functions.activity;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -41,6 +43,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -531,6 +534,40 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
         assertQuery("cancel query 123456789")
                 .withContext(regularUserContext1)
                 .fails(13, "Query cancellation is disabled");
+    }
+
+    @Test
+    public void testResourceGroupColumnIsAppended() throws Exception {
+        assertMemoryLeak(() -> {
+            try (RecordCursorFactory factory = engine.select("SELECT * FROM query_activity()", sqlExecutionContext)) {
+                final RecordMetadata metadata = factory.getMetadata();
+                final StringSink schema = new StringSink();
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    schema.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i))).put('\n');
+                }
+                TestUtils.assertEquals("""
+                        query_id:LONG
+                        worker_id:LONG
+                        worker_pool:STRING
+                        username:STRING
+                        query_start:TIMESTAMP
+                        state_change:TIMESTAMP
+                        state:STRING
+                        is_wal:BOOLEAN
+                        query:STRING
+                        memory_used:LONG
+                        memory_limit:LONG
+                        resource_group:STRING
+                        """, schema);
+            }
+        });
+    }
+
+    @Test
+    public void testResourceGroupWithoutLeaseIsNull() throws Exception {
+        assertQuery("SELECT resource_group FROM query_activity()")
+                .noRandomAccess()
+                .returns("resource_group\n\n");
     }
 
     private void assertInjectedPoolNameRejected(String query, CharSequence poolName) throws Exception {
