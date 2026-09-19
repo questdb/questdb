@@ -76,9 +76,9 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * floating-point tolerance, and the counts cannot absorb a dropped or duplicated pair the way
  * that tolerance can. The tolerance is relative to the result, so the generator leaves out the
  * aggregates whose result can cancel to near zero while their inputs stay large (covariance,
- * correlation, regression, skewness, kurtosis, weighted stddev): their reduction-order noise
- * would exceed it. HashJoinGroupByAggregatesTest covers them. The fuzz integers are small, so
- * integer sums, averages and variances stay exact or nearly so.
+ * correlation, regression, skewness, kurtosis): their reduction-order noise would exceed it.
+ * HashJoinGroupByAggregatesTest covers them. The fuzz integers are small, so integer sums,
+ * averages, variances and weighted standard deviations stay exact or nearly so.
  */
 public final class HashJoinGroupByClause {
     private static final String[] BOOLEAN_DDLS = {"BOOLEAN"};
@@ -114,6 +114,10 @@ public final class HashJoinGroupByClause {
     private static final String[] SAMPLE_BY_INTERVALS = {"1h", "6h", "1d"};
     private static final String SYMBOL_KEY = "sym";
     private static final String[] VARIANCE_FUNCTIONS = {"stddev", "stddev_samp", "stddev_pop", "variance", "var_samp", "var_pop"};
+    // The last three are the weighted stddev functions, which appendAggregate() also emits with an abs() weight.
+    private static final String[] WEIGHTED_FUNCTIONS = {
+            "weighted_avg", "vwap", "weighted_stddev_rel", "weighted_stddev", "weighted_stddev_freq"
+    };
 
     private HashJoinGroupByClause() {
     }
@@ -289,9 +293,15 @@ public final class HashJoinGroupByClause {
                 sql.put("count(*)");
                 return;
             }
-            sql.put(rnd.nextBoolean() ? "weighted_avg(" : "vwap(")
+            // A negative weight makes a weighted stddev group NULL, so an abs() weight keeps groups with
+            // values. One draw picks both the function and the abs().
+            final int fn = rnd.nextInt(WEIGHTED_FUNCTIONS.length + 3);
+            final boolean isAbsWeight = fn >= WEIGHTED_FUNCTIONS.length;
+            sql.put(WEIGHTED_FUNCTIONS[isAbsWeight ? fn - 3 : fn]).put('(')
                     .put(alias).put('.').put(FuzzNames.column(rnd, value.getName())).put(", ")
-                    .put(alias).put('.').put(FuzzNames.column(rnd, weight.getName())).put(')');
+                    .put(isAbsWeight ? "abs(" : "")
+                    .put(alias).put('.').put(FuzzNames.column(rnd, weight.getName()))
+                    .put(isAbsWeight ? "))" : ")");
         }
     }
 

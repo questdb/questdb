@@ -198,8 +198,14 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
             for (int a = 0; a < BINARY_ARGUMENTS.length; a++) {
                 String x = BINARY_ARGUMENTS[a];
                 String y = BINARY_ARGUMENTS[(a + f + 1) % BINARY_ARGUMENTS.length];
-                sink.add(function + "(r." + x + ", " + weight(function, "p." + y) + ")");
-                sink.add(function + "(p." + x + ", " + weight(function, "r." + y) + ")");
+                sink.add(function + "(r." + x + ", p." + y + ")");
+                sink.add(function + "(p." + x + ", r." + y + ")");
+                // A negative weight makes a weighted stddev group NULL, and most groups hold one. abs() keeps
+                // groups with values; DATE and TIMESTAMP weights are non-negative already.
+                if (function.startsWith("weighted_stddev") && !y.equals("dt") && !y.equals("t")) {
+                    sink.add(function + "(r." + x + ", abs(p." + y + "))");
+                    sink.add(function + "(p." + x + ", abs(r." + y + "))");
+                }
             }
         }
     }
@@ -412,13 +418,5 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
         } finally {
             context.setParallelHashJoinGroupByEnabled(true);
         }
-    }
-
-    // The weighted stddev functions treat a zero weight sum as "no data" and divide by running weight sums, so
-    // with negative weights their result depends on how rows split into partial results, in ordinary parallel
-    // GROUP BY as well. Their weights stay non-negative here; DATE and TIMESTAMP values already are.
-    private static String weight(String function, String column) {
-        return function.startsWith("weighted_stddev") && !column.endsWith(".dt") && !column.endsWith(".t")
-                ? "abs(" + column + ")" : column;
     }
 }
