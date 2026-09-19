@@ -2027,7 +2027,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 }
                 // test the cursor, if no exception thrown viewSql is working
-                try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                // Nobody is handed the row this reads, so the open is flagged like the probe in
+                // executeCreateView: an audited view in the new body must not record a read.
+                final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                executionContext.setMetadataProbe(true);
+                final RecordCursor cursor;
+                try {
+                    cursor = factory.getCursor(executionContext);
+                } finally {
+                    executionContext.setMetadataProbe(wasMetadataProbe);
+                }
+                try (cursor) {
                     cursor.hasNext();
                 }
             }
