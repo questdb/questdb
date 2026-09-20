@@ -59,24 +59,22 @@ import org.jetbrains.annotations.Nullable;
 public final class HashJoinGroupByCandidate {
     private final IntList baseColumnIndexes;
     private final int buildIndex;
-    private final int buildKeyColumn;
     private final ExpressionNode buildOnFilter;
     private final IntList columnSources;
     private final LowerCaseCharSequenceIntHashMap[] inputColumns;
     private final boolean isInputSwapped;
-    private final boolean isSymbolKey;
     private final IQueryModel joinModel;
+    private final HashJoinGroupByKeys keys;
     private final int logicalJoinType;
     private final IntList postJoinFilterSources;
     private final RecordMetadata probeBaseMetadata;
-    private final int probeKeyColumn;
     private final ExpressionNode resolvedBuildOnFilter;
     private final IntList requiredBuildColumns;
     private final ObjList<QueryColumn> resolvedColumns;
     private final RecordMetadata resolvedMetadata;
     private final ObjList<ExpressionNode> resolvedPostJoinFilters;
 
-    private HashJoinGroupByCandidate(Analyzer analyzer, int probeKeyColumn, int buildKeyColumn, boolean isSymbolKey, boolean isInputSwapped) {
+    private HashJoinGroupByCandidate(Analyzer analyzer, HashJoinGroupByKeys keys, boolean isInputSwapped) {
         this.probeBaseMetadata = GenericRecordMetadata.copyOf(analyzer.sources[1 - analyzer.buildIndex]);
         this.postJoinFilterSources = analyzer.postJoinFilterSources;
         this.inputColumns = analyzer.inputColumns;
@@ -87,18 +85,12 @@ public final class HashJoinGroupByCandidate {
         this.resolvedMetadata = analyzer.metadata;
         this.resolvedPostJoinFilters = analyzer.resolvedPostJoinFilters;
         this.buildIndex = analyzer.buildIndex;
-        this.buildKeyColumn = buildKeyColumn;
-        this.isSymbolKey = isSymbolKey;
+        this.keys = keys;
         this.isInputSwapped = isInputSwapped;
         this.buildOnFilter = analyzer.buildOnFilter;
         this.joinModel = analyzer.join;
         this.logicalJoinType = analyzer.joinType;
-        this.probeKeyColumn = probeKeyColumn;
         this.requiredBuildColumns = analyzer.requiredBuildColumns;
-    }
-
-    public int getBuildKeyColumn() {
-        return buildKeyColumn;
     }
 
     public IQueryModel getBuildModel() {
@@ -111,16 +103,17 @@ public final class HashJoinGroupByCandidate {
         return buildOnFilter;
     }
 
+    /** Reconciled equality keys in sink order, with base-table column indexes. */
+    public HashJoinGroupByKeys getKeys() {
+        return keys;
+    }
+
     public int getLogicalJoinType() {
         return logicalJoinType;
     }
 
     public int getPhysicalJoinType() {
         return logicalJoinType == IQueryModel.JOIN_INNER ? IQueryModel.JOIN_INNER : IQueryModel.JOIN_LEFT_OUTER;
-    }
-
-    public int getProbeKeyColumn() {
-        return probeKeyColumn;
     }
 
     public IQueryModel getProbeModel() {
@@ -135,11 +128,6 @@ public final class HashJoinGroupByCandidate {
     /** True when the build is the first input in join order: every RIGHT join, and an INNER join whose first table is smaller. */
     public boolean isInputSwapped() {
         return isInputSwapped;
-    }
-
-    /** Both key columns are SYMBOL; otherwise both are INT. */
-    public boolean isSymbolKey() {
-        return isSymbolKey;
     }
 
     /** Exact implementations from HashJoinGroupByAggregates, not SQL names or supportsParallelism() alone. */
@@ -189,6 +177,7 @@ public final class HashJoinGroupByCandidate {
                 && factory.getFilter().isStableWithinExecution();
     }
 
+    /** Payload and projection types; a key column answers to {@link HashJoinGroupByKeys#supportsKeyType(int)} instead. */
     public static boolean supportsValueType(int type) {
         return switch (ColumnType.tagOf(type)) {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR,
@@ -238,10 +227,16 @@ public final class HashJoinGroupByCandidate {
             return null;
         }
         // A residual may be extracted only when it depends on the physical build alone.
-        JoinContext keys = slave.getJoinContext();
-        if (keys == null || keys.aNames.size() != 1
-                || keys.aIndexes.getQuick(0) == keys.bIndexes.getQuick(0)) {
+        JoinContext joinContext = slave.getJoinContext();
+        if (joinContext == null || joinContext.aNames.size() == 0) {
             return null;
+        }
+        for (int i = 0, n = joinContext.aNames.size(); i < n; i++) {
+            // These are join-model indexes, so the guard rejects an equality of two columns of one
+            // input (ON p.a = p.b) and admits a self-join, whose two names are two models.
+            if (joinContext.aIndexes.getQuick(i) == joinContext.bIndexes.getQuick(i)) {
+                return null;
+            }
         }
         IQueryModel left = baseTable(join.getJoinModels().getQuick(0), join);
         IQueryModel right = baseTable(join.getJoinModels().getQuick(1), join);
@@ -255,14 +250,11 @@ public final class HashJoinGroupByCandidate {
             final int buildIndex = selectBuildIndex(joinType, order, leftReader.size(), rightReader.size());
             Analyzer analyzer = new Analyzer(join, joinType, buildIndex,
                     leftReader.getMetadata(), rightReader.getMetadata(), parser, executionContext);
-            int a = analyzer.resolveInput(keys.aIndexes.getQuick(0), keys.aNames.getQuick(0), 0);
-            int b = analyzer.resolveInput(keys.bIndexes.getQuick(0), keys.bNames.getQuick(0), 0);
-            // SYMBOL keys match by text: the build translates them into the probe's symbol keys.
-            // Mixed key types, including SYMBOL against STRING or VARCHAR, keep the ordinary plan.
-            final int keyType = a < 0 || b < 0 ? ColumnType.UNDEFINED : analyzer.metadata.getColumnType(a);
-            if ((keyType != ColumnType.INT && keyType != ColumnType.SYMBOL) || analyzer.metadata.getColumnType(b) != keyType) {
+            final HashJoinGroupByKeys keys = analyzer.resolveKeys(joinContext);
+            if (keys == null) {
                 return null;
             }
+            // A key column is not a payload column: the key table or the map holds it.
             analyzer.requiredBuildColumns.clear();
             if (!analyzer.checkBuildOnFilter(slave.getOuterJoinExpressionClause())) {
                 return null;
@@ -299,10 +291,7 @@ public final class HashJoinGroupByCandidate {
             if (analyzer.hasUndefinedBindVariable) {
                 return null;
             }
-            int buildKey = keys.aIndexes.getQuick(0) == analyzer.buildIndex ? a : b;
-            int probeKey = buildKey == a ? b : a;
-            return new HashJoinGroupByCandidate(analyzer, analyzer.columnIndexes.getQuick(probeKey),
-                    analyzer.columnIndexes.getQuick(buildKey), keyType == ColumnType.SYMBOL, buildIndex == order.getQuick(0));
+            return new HashJoinGroupByCandidate(analyzer, keys, buildIndex == order.getQuick(0));
         } catch (SqlException e) {
             // The ordinary plan reports errors in its own compile order, and only its interval extraction
             // and generateFilter() compile optimiser-internal nodes such as and_offset. A failed
@@ -467,6 +456,9 @@ public final class HashJoinGroupByCandidate {
         private final RecordMetadata[] sources;
         private ExpressionNode buildOnFilter;
         private boolean hasUndefinedBindVariable;
+        // An input column reference takes the key type set: a key column reaches the map, while
+        // an expression operand reaches the payload or the projection and takes the value types.
+        private boolean isResolvingInputColumn;
         private ExpressionNode resolvedBuildOnFilter;
         private int usedSources;
 
@@ -497,17 +489,22 @@ public final class HashJoinGroupByCandidate {
 
         private void captureInputColumns() {
             int payloadSize = requiredBuildColumns.size();
-            for (int source = 0; source < 2; source++) {
-                IQueryModel input = join.getJoinModels().getQuick(source);
-                ObjList<QueryColumn> columns = input.getColumns();
-                int count = columns.size() > 0 ? columns.size() : sources[source].getColumnCount();
-                for (int i = 0; i < count; i++) {
-                    CharSequence name = columns.size() > 0 ? columns.getQuick(i).getName() : sources[source].getColumnName(i);
-                    int resolved = resolveInput(source, name, 0);
-                    if (resolved >= 0) {
-                        inputColumns[source].put(Chars.toString(name), columnIndexes.getQuick(resolved));
+            isResolvingInputColumn = true;
+            try {
+                for (int source = 0; source < 2; source++) {
+                    IQueryModel input = join.getJoinModels().getQuick(source);
+                    ObjList<QueryColumn> columns = input.getColumns();
+                    int count = columns.size() > 0 ? columns.size() : sources[source].getColumnCount();
+                    for (int i = 0; i < count; i++) {
+                        CharSequence name = columns.size() > 0 ? columns.getQuick(i).getName() : sources[source].getColumnName(i);
+                        int resolved = resolveInput(source, name, 0);
+                        if (resolved >= 0) {
+                            inputColumns[source].put(Chars.toString(name), columnIndexes.getQuick(resolved));
+                        }
                     }
                 }
+            } finally {
+                isResolvingInputColumn = false;
             }
             requiredBuildColumns.setPos(payloadSize);
         }
@@ -569,7 +566,9 @@ public final class HashJoinGroupByCandidate {
         }
 
         private ExpressionNode column(int index, int position) {
-            if (index < 0 || !supportsValueType(metadata.getColumnType(index))) {
+            if (index < 0 || !(isResolvingInputColumn
+                    ? HashJoinGroupByKeys.supportsKeyType(metadata.getColumnType(index))
+                    : supportsValueType(metadata.getColumnType(index)))) {
                 return null;
             }
             int source = columnSources.getQuick(index);
@@ -679,6 +678,35 @@ public final class HashJoinGroupByCandidate {
             ExpressionNode column = resolve(ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, name, 0, 0),
                     join.getJoinModels().getQuick(source), source, depth + 1);
             return column != null && column.type == ExpressionNode.LITERAL ? metadata.getColumnIndexQuiet(column.token) : -1;
+        }
+
+        /**
+         * Resolves and reconciles every equality of the join context, in its order. Returns null
+         * for a key the fused plan does not support and for a pair the ordinary plan rejects, so
+         * that the ordinary compile reports the mismatch itself.
+         */
+        private HashJoinGroupByKeys resolveKeys(JoinContext context) {
+            final HashJoinGroupByKeys keys = new HashJoinGroupByKeys();
+            final int count = context.aNames.size();
+            isResolvingInputColumn = true;
+            try {
+                for (int i = 0; i < count; i++) {
+                    final int a = resolveInput(context.aIndexes.getQuick(i), context.aNames.getQuick(i), 0);
+                    final int b = resolveInput(context.bIndexes.getQuick(i), context.bNames.getQuick(i), 0);
+                    if (a < 0 || b < 0) {
+                        return null;
+                    }
+                    final int build = context.aIndexes.getQuick(i) == buildIndex ? a : b;
+                    final int probe = build == a ? b : a;
+                    if (!keys.add(columnIndexes.getQuick(probe), metadata.getColumnType(probe),
+                            columnIndexes.getQuick(build), metadata.getColumnType(build), count == 1)) {
+                        return null;
+                    }
+                }
+            } finally {
+                isResolvingInputColumn = false;
+            }
+            return keys;
         }
     }
 }

@@ -34,6 +34,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.HashJoinGroupByCandidate;
+import io.questdb.griffin.HashJoinGroupByKeys;
+import io.questdb.griffin.HashJoinGroupByMetadata;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -43,6 +45,7 @@ import io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunction;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -124,6 +127,54 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCompiledKeyColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyTables();
+            String sql = "SELECT count(*) FROM ka LEFT JOIN kb ON ka.sym=kb.sym AND ka.l=kb.l";
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory probeFactory = select("SELECT sym, l FROM ka");
+                 RecordCursorFactory buildFactory = select("SELECT l, sym FROM kb")) {
+                HashJoinGroupByCandidate candidate = candidate(compiler, sql);
+                Assert.assertNotNull(candidate);
+                // The analysis addresses base tables; the metadata compiles the keys against the inputs.
+                try (HashJoinGroupByMetadata metadata = new HashJoinGroupByMetadata(configuration, candidate,
+                        probeFactory.getMetadata(), ints(16, 1), buildFactory.getMetadata(), ints(1, 16))) {
+                    Assert.assertEquals("[1,0]", metadata.getProbeKeyColumns().toString());
+                    Assert.assertEquals("[0,1]", metadata.getBuildKeyColumns().toString());
+                    Assert.assertEquals("ka.l=kb.l and ka.sym=kb.sym", metadata.getCondition());
+                    Assert.assertTrue(metadata.hasStaticSymbolTables());
+                    Assert.assertFalse(metadata.isSymbolKey());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCompositeKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyTables();
+            // Keys follow the join context, whose order is the optimiser's, not the statement's.
+            assertKeys("ka.i=kb.i AND ka.l=kb.l", "1=1:LONG 0=0:INT", false);
+            assertKeys("ka.i=kb.i AND ka.l=kb.l AND ka.c=kb.c", "4=4:CHAR 1=1:LONG 0=0:INT", false);
+            assertKeys("ka.dt=kb.dt AND ka.u=kb.u", "12=12:UUID 8=8:DATE", false);
+            // A lone SYMBOL pair keeps the INT layout; inside a composite key both sides write text.
+            assertKeys("ka.sym=kb.sym", "16=16:SYMBOL", true);
+            assertKeys("ka.i=kb.i AND ka.sym=kb.sym", "16=16:STRING 0=0:INT", false);
+            assertKeys("ka.str=kb.vc AND ka.ts=kb.tn", "9=10:TIMESTAMP_NS 17=18:VARCHAR", false);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                HashJoinGroupByCandidate candidate = candidate(compiler,
+                        "SELECT count(*) FROM ka LEFT JOIN kb ON ka.str=kb.vc AND ka.ts=kb.tn");
+                Assert.assertNotNull(candidate);
+                HashJoinGroupByKeys keys = candidate.getKeys();
+                Assert.assertTrue(keys.isProbeTimestampAsNanos(0));
+                Assert.assertFalse(keys.isBuildTimestampAsNanos(0));
+                Assert.assertTrue(keys.isProbeStringAsVarchar(1));
+                Assert.assertFalse(keys.isBuildStringAsVarchar(1));
+            }
+        });
+    }
+
+    @Test
     public void testDefaultResultsAndOuterPredicatePlacement() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -140,6 +191,40 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             assertPlanContains("select p.country, sum(r.energy_kwh)" + JOIN, "physicalJoinType: inner", true);
             assertPlanContains("select p.country, sum(r.energy_kwh)" + outer, "physicalJoinType: left outer", true);
             assertPlanContains("select p.country, first(r.energy_kwh)" + JOIN, "Hash Join Light", false);
+        });
+    }
+
+    @Test
+    public void testGeneralKeyTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyTables();
+            // Every pair the ordinary hash join reconciles becomes a key; only a lone INT pair and
+            // a lone SYMBOL pair take the INT layout, and the rest keep the ordinary plan for now.
+            assertKeys("ka.i=kb.i", "0=0:INT", true);
+            assertKeys("ka.sym=kb.sym", "16=16:SYMBOL", true);
+            assertKeys("ka.l=kb.l", "1=1:LONG", false);
+            assertKeys("ka.s=kb.s", "2=2:SHORT", false);
+            assertKeys("ka.b=kb.b", "3=3:BYTE", false);
+            assertKeys("ka.c=kb.c", "4=4:CHAR", false);
+            assertKeys("ka.bo=kb.bo", "5=5:BOOLEAN", false);
+            assertKeys("ka.f=kb.f", "6=6:FLOAT", false);
+            assertKeys("ka.d=kb.d", "7=7:DOUBLE", false);
+            assertKeys("ka.dt=kb.dt", "8=8:DATE", false);
+            assertKeys("ka.ts=kb.ts", "9=9:TIMESTAMP", false);
+            assertKeys("ka.tn=kb.tn", "10=10:TIMESTAMP_NS", false);
+            assertKeys("ka.ts=kb.tn", "9=10:TIMESTAMP_NS", false);
+            assertKeys("ka.tn=kb.ts", "10=9:TIMESTAMP_NS", false);
+            assertKeys("ka.ip=kb.ip", "11=11:IPv4", false);
+            assertKeys("ka.u=kb.u", "12=12:UUID", false);
+            assertKeys("ka.l256=kb.l256", "13=13:LONG256", false);
+            assertKeys("ka.g=kb.g", "14=14:GEOHASH(8c)", false);
+            assertKeys("ka.dec=kb.dec", "15=15:DECIMAL(10,2)", false);
+            assertKeys("ka.str=kb.str", "17=17:STRING", false);
+            assertKeys("ka.vc=kb.vc", "18=18:VARCHAR", false);
+            assertKeys("ka.sym=kb.str", "16=17:STRING", false);
+            assertKeys("ka.sym=kb.vc", "16=18:VARCHAR", false);
+            assertKeys("ka.str=kb.vc", "17=18:VARCHAR", false);
+            assertKeys("ka.vc=kb.str", "18=17:VARCHAR", false);
         });
     }
 
@@ -181,8 +266,8 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                 Assert.assertEquals(IQueryModel.JOIN_LEFT_OUTER, candidate.getPhysicalJoinType());
                 Assert.assertEquals("r", candidate.getProbeModel().getTableName().toString());
                 Assert.assertEquals("p", candidate.getBuildModel().getTableName().toString());
-                Assert.assertEquals(0, candidate.getProbeKeyColumn());
-                Assert.assertEquals(0, candidate.getBuildKeyColumn());
+                Assert.assertEquals(0, candidate.getKeys().getProbeColumn(0));
+                Assert.assertEquals(0, candidate.getKeys().getBuildColumn(0));
                 Assert.assertEquals("[1,2]", candidate.getRequiredBuildColumns().toString());
                 // An INNER join builds the smaller table: r is empty and p has one row, so r builds
                 // in either order and the payload holds only r's column.
@@ -195,8 +280,8 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                     Assert.assertEquals(IQueryModel.JOIN_INNER, candidate.getPhysicalJoinType());
                     Assert.assertEquals("p", candidate.getProbeModel().getTableName().toString());
                     Assert.assertEquals("r", candidate.getBuildModel().getTableName().toString());
-                    Assert.assertEquals(0, candidate.getProbeKeyColumn());
-                    Assert.assertEquals(0, candidate.getBuildKeyColumn());
+                    Assert.assertEquals(0, candidate.getKeys().getProbeColumn(0));
+                    Assert.assertEquals(0, candidate.getKeys().getBuildColumn(0));
                     Assert.assertEquals("[2]", candidate.getRequiredBuildColumns().toString());
                 }
             }
@@ -275,7 +360,8 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             Assert.assertFalse(isSymbolKey("select p.country, sum(r.energy_kwh)" + JOIN));
             execute("alter table p alter column plant_id type long");
             execute("alter table r alter column plant_id type long");
-            assertCandidate("select p.country, sum(r.energy_kwh)" + JOIN, false);
+            assertCandidate("select p.country, sum(r.energy_kwh)" + JOIN, true);
+            Assert.assertFalse(isIntKeyed("select p.country, sum(r.energy_kwh)" + JOIN));
         });
     }
 
@@ -284,9 +370,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             for (String sql : new String[]{
-                    "select p.country, sum(r.energy_kwh) from r join p on r.long_key=p.long_key",
                     "select p.country, sum(r.energy_kwh) from r join p on r.plant_id+1=p.plant_id",
-                    "select p.country, sum(r.energy_kwh)" + JOIN + " and r.long_key=p.long_key",
                     "select p.country, sum(r.energy_kwh)" + JOIN + " where r.energy_kwh > p.installed_kwp",
                     "select p.country, sum(r.energy_kwh)" + JOIN + " join p p2 on r.plant_id=p2.plant_id",
                     "select country, sum(e) from (select p.country country, r.energy_kwh e" + JOIN + " limit 3)",
@@ -327,8 +411,8 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                         "select p.country, sum(r.energy_kwh) from p right join r on r.sym_key=p.sym_key");
                 Assert.assertNotNull(candidate);
                 Assert.assertTrue(candidate.isInputSwapped());
-                Assert.assertEquals(5, candidate.getProbeKeyColumn());
-                Assert.assertEquals(4, candidate.getBuildKeyColumn());
+                Assert.assertEquals(5, candidate.getKeys().getProbeColumn(0));
+                Assert.assertEquals(4, candidate.getKeys().getBuildColumn(0));
             }
             Assert.assertFalse(isSymbolKey("select p.country, sum(r.energy_kwh)" + JOIN));
             assertPlanContains("select p.country, sum(r.energy_kwh) from r join p on r.sym_key=p.sym_key", "symbolKeyJoin: true", true);
@@ -338,17 +422,34 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                     Assert.assertFalse(Chars.contains(cursor.getRecord().getStrA(0), "symbolKeyJoin"));
                 }
             }
-            // Text and mixed-type keys keep the ordinary plan and its own key conversions.
+            // Text and mixed-type keys reconcile into a staged key, which keeps the ordinary plan
+            // until the code generator wires the key sinks.
             for (String on : new String[]{
                     "r.sym_key=p.str_key", "r.str_key=p.sym_key", "r.sym_key=p.vc_key", "r.vc_key=p.sym_key",
                     "r.str_key=p.str_key", "r.vc_key=p.vc_key"
             }) {
-                assertCandidate("select p.country, sum(r.energy_kwh) from r join p on " + on, false);
+                assertCandidate("select p.country, sum(r.energy_kwh) from r join p on " + on, true);
+                Assert.assertFalse(on, isIntKeyed("select p.country, sum(r.energy_kwh) from r join p on " + on));
                 assertPlanContains("select p.country, sum(r.energy_kwh) from r join p on " + on, "Hash Join", false);
             }
             // SYMBOL against INT fails the ordinary compile as before.
             for (String on : new String[]{"r.sym_key=p.plant_id", "r.plant_id=p.sym_key"}) {
                 assertMismatchedKeys("select p.country, sum(r.energy_kwh) from r join p on " + on);
+            }
+        });
+    }
+
+    @Test
+    public void testUnsupportedKeyTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyTables();
+            // A key no RecordSink stages into a map keeps the ordinary plan, which joins it itself.
+            for (String on : new String[]{"ka.bin=kb.bin", "ka.arr=kb.arr"}) {
+                assertCandidate("SELECT count(*) FROM ka LEFT JOIN kb ON " + on, false);
+            }
+            // The ordinary plan reports a pair neither plan can reconcile.
+            for (String on : new String[]{"ka.i=kb.l", "ka.dt=kb.ts", "ka.sym=kb.i", "ka.f=kb.d"}) {
+                assertMismatchedKeys("SELECT count(*) FROM ka LEFT JOIN kb ON " + on);
             }
         });
     }
@@ -361,6 +462,18 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         try (RecordCursorFactory ignored = select(sql)) {
             Assert.assertNotNull(ignored);
         }
+    }
+
+    private void assertKeys(String on, String expected, boolean isIntKeyed) throws Exception {
+        String sql = "SELECT count(*) FROM ka LEFT JOIN kb ON " + on;
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            HashJoinGroupByCandidate candidate = candidate(compiler, sql);
+            Assert.assertNotNull(on, candidate);
+            Assert.assertEquals(on, expected, describeKeys(candidate.getKeys()));
+            Assert.assertEquals(on, isIntKeyed, candidate.getKeys().isIntKeyed());
+        }
+        // Nothing generates the key sinks yet, so a staged key keeps the ordinary plan.
+        assertPlanContains(sql, isIntKeyed ? "Hash Join Group By" : "Hash Left Outer Join Light", isIntKeyed);
     }
 
     private void assertMismatchedKeys(String sql) throws Exception {
@@ -406,11 +519,47 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         return candidate;
     }
 
+    private boolean isIntKeyed(String sql) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            HashJoinGroupByCandidate candidate = candidate(compiler, sql);
+            Assert.assertNotNull(sql, candidate);
+            return candidate.getKeys().isIntKeyed();
+        }
+    }
+
     private boolean isSymbolKey(String sql) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             HashJoinGroupByCandidate candidate = candidate(compiler, sql);
             Assert.assertNotNull(sql, candidate);
-            return candidate.isSymbolKey();
+            return candidate.getKeys().isSymbolKey();
+        }
+    }
+
+    private static String describeKeys(HashJoinGroupByKeys keys) {
+        StringSink sink = new StringSink();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            if (i > 0) {
+                sink.putAscii(' ');
+            }
+            sink.put(keys.getProbeColumn(i)).putAscii('=').put(keys.getBuildColumn(i))
+                    .putAscii(':').put(ColumnType.nameOf(keys.getType(i)));
+        }
+        return sink.toString();
+    }
+
+    private static IntList ints(int... columns) {
+        IntList list = new IntList(columns.length);
+        for (int i = 0; i < columns.length; i++) {
+            list.add(columns[i]);
+        }
+        return list;
+    }
+
+    private void createKeyTables() throws Exception {
+        for (String name : new String[]{"ka", "kb"}) {
+            execute("CREATE TABLE " + name + " (i INT, l LONG, s SHORT, b BYTE, c CHAR, bo BOOLEAN, f FLOAT, d DOUBLE, " +
+                    "dt DATE, ts TIMESTAMP, tn TIMESTAMP_NS, ip IPV4, u UUID, l256 LONG256, g GEOHASH(8c), " +
+                    "dec DECIMAL(10,2), sym SYMBOL, str STRING, vc VARCHAR, bin BINARY, arr DOUBLE[], v DOUBLE)");
         }
     }
 

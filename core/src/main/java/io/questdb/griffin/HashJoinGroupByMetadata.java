@@ -37,6 +37,7 @@ import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
@@ -50,16 +51,16 @@ import java.io.Closeable;
  */
 public final class HashJoinGroupByMetadata implements Closeable {
     private final IntList buildColumns = new IntList();
-    private final int buildKeyColumn;
+    private final IntList buildKeyColumns = new IntList();
     private final ExpressionNode buildOnFilter;
     private final ObjList<QueryColumn> columns = new ObjList<>();
     private final String condition;
     private final boolean hasStaticSymbolTables;
-    private final boolean isSymbolKey;
+    private final HashJoinGroupByKeys keys;
     private final JoinRecordMetadata joinedMetadata;
     private final GenericRecordMetadata payloadMetadata = new GenericRecordMetadata();
     private final int probeColumnCount;
-    private final int probeKeyColumn;
+    private final IntList probeKeyColumns = new IntList();
     private ExpressionNode postJoinFilter;
 
     public HashJoinGroupByMetadata(
@@ -75,18 +76,33 @@ public final class HashJoinGroupByMetadata implements Closeable {
             throw SqlException.$(0, "hash join input mapping size mismatch");
         }
         probeColumnCount = probeMetadata.getColumnCount();
-        probeKeyColumn = requireColumn(probeBaseColumns, candidate.getProbeKeyColumn());
-        buildKeyColumn = requireColumn(buildBaseColumns, candidate.getBuildKeyColumn());
-        isSymbolKey = candidate.isSymbolKey();
-        final int keyType = isSymbolKey ? ColumnType.SYMBOL : ColumnType.INT;
-        if (probeMetadata.getColumnType(probeKeyColumn) != keyType || buildMetadata.getColumnType(buildKeyColumn) != keyType) {
-            throw SqlException.$(0, "hash join input key type mismatch");
-        }
+        keys = candidate.getKeys();
         // Symbol keys translate through, and payload symbols resolve with, the inputs' static tables.
-        boolean hasStaticSymbolTables = !isSymbolKey
-                || (probeMetadata.isSymbolTableStatic(probeKeyColumn) && buildMetadata.isSymbolTableStatic(buildKeyColumn));
-        condition = candidate.getProbeModel().getName() + "." + probeMetadata.getColumnName(probeKeyColumn)
-                + "=" + candidate.getBuildModel().getName() + "." + buildMetadata.getColumnName(buildKeyColumn);
+        boolean hasStaticSymbolTables = true;
+        StringSink conditionSink = Misc.getThreadLocalSink();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final int probeColumn = requireColumn(probeBaseColumns, keys.getProbeColumn(i));
+            final int buildColumn = requireColumn(buildBaseColumns, keys.getBuildColumn(i));
+            // The inputs compiled after the analysis, so they carry the analysed types or nothing.
+            if (probeMetadata.getColumnType(probeColumn) != keys.getProbeType(i)
+                    || buildMetadata.getColumnType(buildColumn) != keys.getBuildType(i)) {
+                throw SqlException.$(0, "hash join input key type mismatch");
+            }
+            if (ColumnType.isSymbol(keys.getProbeType(i)) && !probeMetadata.isSymbolTableStatic(probeColumn)) {
+                hasStaticSymbolTables = false;
+            }
+            if (ColumnType.isSymbol(keys.getBuildType(i)) && !buildMetadata.isSymbolTableStatic(buildColumn)) {
+                hasStaticSymbolTables = false;
+            }
+            probeKeyColumns.add(probeColumn);
+            buildKeyColumns.add(buildColumn);
+            if (i > 0) {
+                conditionSink.putAscii(" and ");
+            }
+            conditionSink.put(candidate.getProbeModel().getName()).putAscii('.').put(probeMetadata.getColumnName(probeColumn))
+                    .putAscii('=').put(candidate.getBuildModel().getName()).putAscii('.').put(buildMetadata.getColumnName(buildColumn));
+        }
+        condition = conditionSink.toString();
         joinedMetadata = new JoinRecordMetadata(configuration,
                 probeColumnCount + candidate.getRequiredBuildColumns().size());
         try {
@@ -158,8 +174,14 @@ public final class HashJoinGroupByMetadata implements Closeable {
         return buildColumns;
     }
 
+    /** Compiled build-record index of the INT layout's only key column. */
     public int getBuildKeyColumn() {
-        return buildKeyColumn;
+        return buildKeyColumns.getQuick(0);
+    }
+
+    /** Compiled build-record indexes of every key column, in sink order. */
+    public IntList getBuildKeyColumns() {
+        return buildKeyColumns;
     }
 
     public String getCondition() {
@@ -170,24 +192,37 @@ public final class HashJoinGroupByMetadata implements Closeable {
         return joinedMetadata;
     }
 
+    /** Reconciled equality keys, whose column indexes address the analysed base tables. */
+    public HashJoinGroupByKeys getKeys() {
+        return keys;
+    }
+
     public RecordMetadata getPayloadMetadata() {
         return payloadMetadata;
     }
 
+    /** Compiled probe-record index of the INT layout's only key column. */
     public int getProbeKeyColumn() {
-        return probeKeyColumn;
+        return probeKeyColumns.getQuick(0);
+    }
+
+    /** Compiled probe-record indexes of every key column, in sink order. */
+    public IntList getProbeKeyColumns() {
+        return probeKeyColumns;
     }
 
     /**
-     * False when a SYMBOL key or build SYMBOL payload column lacks a static symbol table.
-     * Base-table columns always have one; the planner keeps the ordinary plan otherwise.
+     * False when a SYMBOL key column of either input, or a build SYMBOL payload column, lacks a
+     * static symbol table. Base-table columns always have one; the planner keeps the ordinary
+     * plan otherwise. A staged SYMBOL key needs one as much as a translated one does, since the
+     * sink writes the symbol's text.
      */
     public boolean hasStaticSymbolTables() {
         return hasStaticSymbolTables;
     }
 
     public boolean isSymbolKey() {
-        return isSymbolKey;
+        return keys.isSymbolKey();
     }
 
     public HashJoinGroupByRecord newRecord() {
