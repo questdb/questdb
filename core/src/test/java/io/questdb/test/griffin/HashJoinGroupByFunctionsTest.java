@@ -61,6 +61,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -612,7 +613,7 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
                     HashJoinGroupByCandidate candidate = SqlCodeGenerator.getHashJoinGroupByCandidate(model, new FunctionParser(configuration, engine.getFunctionFactoryCache()), sqlExecutionContext);
                     Assert.assertNotNull(sql, candidate);
                     outer = candidate.getPhysicalJoinType() == IQueryModel.JOIN_LEFT_OUTER;
-                    metadata = new HashJoinGroupByMetadata(configuration, candidate, probeFactory.getMetadata(), probeColumns,
+                    metadata = new HashJoinGroupByMetadata(configuration, new BytecodeAssembler(), candidate, probeFactory.getMetadata(), probeColumns,
                             buildFactory.getMetadata(), buildColumns);
                     functions = generator.compileHashJoinGroupByFunctions(model, metadata, workers, sqlExecutionContext);
                 }

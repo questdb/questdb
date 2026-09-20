@@ -24,14 +24,25 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.LoopingRecordSink;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.HashJoinGroupByCandidate;
 import io.questdb.griffin.HashJoinGroupByKeys;
@@ -44,6 +55,7 @@ import io.questdb.griffin.engine.functions.columns.DoubleColumn;
 import io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunction;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.str.StringSink;
@@ -53,6 +65,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
+    private static final SingleColumnType BUILD_ROW_COUNT_TYPE = new SingleColumnType(ColumnType.LONG);
     private static final String JOIN = " from r join p on r.plant_id=p.plant_id";
 
     @Test
@@ -137,7 +150,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                 HashJoinGroupByCandidate candidate = candidate(compiler, sql);
                 Assert.assertNotNull(candidate);
                 // The analysis addresses base tables; the metadata compiles the keys against the inputs.
-                try (HashJoinGroupByMetadata metadata = new HashJoinGroupByMetadata(configuration, candidate,
+                try (HashJoinGroupByMetadata metadata = new HashJoinGroupByMetadata(configuration, new BytecodeAssembler(), candidate,
                         probeFactory.getMetadata(), ints(16, 1), buildFactory.getMetadata(), ints(1, 16))) {
                     Assert.assertEquals("[1,0]", metadata.getProbeKeyColumns().toString());
                     Assert.assertEquals("[0,1]", metadata.getBuildKeyColumns().toString());
@@ -440,6 +453,99 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeySinkLayout() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyTables();
+            // The map stores the reconciled type of each key, in the join context's order.
+            assertKeySinkLayout("ka.l=kb.l", "LONG");
+            assertKeySinkLayout("ka.i=kb.i AND ka.l=kb.l", "LONG,INT");
+            assertKeySinkLayout("ka.str=kb.vc AND ka.ts=kb.tn", "TIMESTAMP_NS,VARCHAR");
+            assertKeySinkLayout("ka.i=kb.i AND ka.sym=kb.sym", "STRING,INT");
+            assertKeySinkLayout("ka.g=kb.g AND ka.dec=kb.dec AND ka.u=kb.u", "UUID,DECIMAL(10,2),GEOHASH(8c)");
+            // The INT layout reads its key off the record and stages nothing, so it has no sinks.
+            for (String on : new String[]{"ka.i=kb.i", "ka.sym=kb.sym"}) {
+                try (SqlCompiler compiler = engine.getSqlCompiler();
+                     RecordCursorFactory probeFactory = select("SELECT * FROM ka");
+                     RecordCursorFactory buildFactory = select("SELECT * FROM kb")) {
+                    try (HashJoinGroupByMetadata metadata = keyMetadata(compiler, on, probeFactory, buildFactory, probeFactory, buildFactory)) {
+                        Assert.assertFalse(on, metadata.isKeyStaged());
+                        Assert.assertEquals(on, 0, metadata.getKeyTypes().getColumnCount());
+                        Assert.assertNull(on, metadata.newProbeKeySink());
+                        Assert.assertNull(on, metadata.newBuildKeySink());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testKeySinksMatchOrdinaryJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyTables();
+            insertKeyRows();
+            // Every reconciled pair, staged through the two generated sinks, has to select the
+            // same rows the ordinary hash join selects, NULL keys and empty results included.
+            for (String on : new String[]{
+                    "ka.l=kb.l", "ka.s=kb.s", "ka.b=kb.b", "ka.c=kb.c", "ka.bo=kb.bo",
+                    "ka.f=kb.f", "ka.d=kb.d", "ka.dt=kb.dt", "ka.ts=kb.ts", "ka.tn=kb.tn",
+                    "ka.ip=kb.ip", "ka.u=kb.u", "ka.l256=kb.l256", "ka.g=kb.g", "ka.dec=kb.dec",
+                    "ka.str=kb.str", "ka.vc=kb.vc",
+                    // Pairs that reconcile to a third type, so the two sides encode differently.
+                    "ka.ts=kb.tn", "ka.tn=kb.ts", "ka.str=kb.vc", "ka.vc=kb.str",
+                    "ka.sym=kb.str", "ka.str=kb.sym", "ka.sym=kb.vc", "ka.vc=kb.sym",
+                    // Composites, including a SYMBOL pair that compares as text until 2c.
+                    "ka.i=kb.i AND ka.l=kb.l",
+                    "ka.i=kb.i AND ka.sym=kb.sym",
+                    "ka.sym=kb.sym AND ka.str=kb.vc AND ka.l=kb.l AND ka.ts=kb.tn",
+                    "ka.vc=kb.str AND ka.dt=kb.dt AND ka.c=kb.c",
+                    "ka.l=kb.l AND ka.g=kb.g",
+                    // One input's STRING key writes VARCHAR while the other's writes STRING, so
+                    // the two inputs must not share one set of per-column encoding flags.
+                    "ka.str=kb.vc AND ka.sym=kb.str",
+                    "ka.ts=kb.tn AND ka.tn=kb.ts",
+                    // A column both sides leave entirely NULL, so every key is NULL.
+                    "ka.v=kb.v",
+            }) {
+                assertKeySinksMatchOrdinaryJoin(on);
+            }
+            // Projections that put the key columns at different indexes on the two sides, which
+            // the sinks address through the compiled indexes rather than the base-table ones.
+            assertKeySinksMatchOrdinaryJoin("ka.sym=kb.sym AND ka.l=kb.l",
+                    "SELECT v, sym, l FROM ka", "SELECT l, i, sym FROM kb");
+            assertKeySinksMatchOrdinaryJoin("ka.str=kb.vc AND ka.sym=kb.str",
+                    "SELECT str, sym FROM ka", "SELECT i, vc, str FROM kb");
+        });
+    }
+
+    @Test
+    public void testKeySinksUnderEverySinkType() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyTables();
+            insertKeyRows();
+            // RecordSinkFactory returns no class for the looping sink, so the key sinks go through
+            // getInstance() and never branch on the class; all three sink types stage the same key.
+            for (int sinkType : new int[]{RecordSinkFactory.SINK_TYPE_SINGLE_METHOD,
+                    RecordSinkFactory.SINK_TYPE_CHUNKED, RecordSinkFactory.SINK_TYPE_LOOPING}) {
+                setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, sinkType);
+                for (String on : new String[]{"ka.l=kb.l", "ka.ts=kb.tn",
+                        "ka.sym=kb.sym AND ka.str=kb.vc AND ka.l=kb.l AND ka.ts=kb.tn"}) {
+                    assertKeySinksMatchOrdinaryJoin(on);
+                }
+                try (SqlCompiler compiler = engine.getSqlCompiler();
+                     RecordCursorFactory probeFactory = select("SELECT * FROM ka");
+                     RecordCursorFactory buildFactory = select("SELECT * FROM kb")) {
+                    try (HashJoinGroupByMetadata metadata = keyMetadata(compiler, "ka.l=kb.l",
+                            probeFactory, buildFactory, probeFactory, buildFactory)) {
+                        boolean isLooping = sinkType == RecordSinkFactory.SINK_TYPE_LOOPING;
+                        Assert.assertEquals(isLooping, metadata.newProbeKeySink() instanceof LoopingRecordSink);
+                        Assert.assertEquals(isLooping, metadata.newBuildKeySink() instanceof LoopingRecordSink);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUnsupportedKeyTypes() throws Exception {
         assertMemoryLeak(() -> {
             createKeyTables();
@@ -474,6 +580,74 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         }
         // Nothing generates the key sinks yet, so a staged key keeps the ordinary plan.
         assertPlanContains(sql, isIntKeyed ? "Hash Join Group By" : "Hash Left Outer Join Light", isIntKeyed);
+    }
+
+    private void assertKeySinkLayout(String on, String expected) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler();
+             RecordCursorFactory probeFactory = select("SELECT * FROM ka");
+             RecordCursorFactory buildFactory = select("SELECT * FROM kb")) {
+            try (HashJoinGroupByMetadata metadata = keyMetadata(compiler, on, probeFactory, buildFactory, probeFactory, buildFactory)) {
+                Assert.assertTrue(on, metadata.isKeyStaged());
+                Assert.assertNotNull(on, metadata.newProbeKeySink());
+                Assert.assertNotNull(on, metadata.newBuildKeySink());
+                StringSink sink = new StringSink();
+                ColumnTypes keyTypes = metadata.getKeyTypes();
+                for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+                    if (i > 0) {
+                        sink.putAscii(',');
+                    }
+                    sink.put(ColumnType.nameOf(keyTypes.getColumnType(i)));
+                }
+                Assert.assertEquals(on, expected, sink.toString());
+            }
+        }
+    }
+
+    private void assertKeySinksMatchOrdinaryJoin(String on) throws Exception {
+        assertKeySinksMatchOrdinaryJoin(on, "SELECT * FROM ka", "SELECT * FROM kb");
+    }
+
+    private void assertKeySinksMatchOrdinaryJoin(String on, String probeSql, String buildSql) throws Exception {
+        final long expected = pairCount("SELECT count(*) FROM ka JOIN kb ON " + on);
+        // A pair that matches nothing would pass whatever the sinks stage, so refuse one.
+        Assert.assertTrue(on + " matched no rows", expected > 0);
+        long matched = 0;
+        try (SqlCompiler compiler = engine.getSqlCompiler();
+             RecordCursorFactory probeBase = select("SELECT * FROM ka");
+             RecordCursorFactory buildBase = select("SELECT * FROM kb");
+             RecordCursorFactory probeFactory = select(probeSql);
+             RecordCursorFactory buildFactory = select(buildSql)) {
+            try (HashJoinGroupByMetadata metadata = keyMetadata(compiler, on, probeFactory, buildFactory, probeBase, buildBase)) {
+                Assert.assertTrue(on, metadata.isKeyStaged());
+                RecordSink buildKeySink = metadata.newBuildKeySink();
+                RecordSink probeKeySink = metadata.newProbeKeySink();
+                // One map row per distinct build key, counting the build rows that share it, so a
+                // probe hit contributes exactly the pairs the ordinary join would emit for it.
+                try (Map map = new OrderedMap(1024, metadata.getKeyTypes(), BUILD_ROW_COUNT_TYPE, 16, 0.6, 1024)) {
+                    try (RecordCursor cursor = buildFactory.getCursor(sqlExecutionContext)) {
+                        Record record = cursor.getRecord();
+                        while (cursor.hasNext()) {
+                            MapKey key = map.withKey();
+                            buildKeySink.copy(record, key);
+                            MapValue value = key.createValue();
+                            value.putLong(0, value.isNew() ? 1 : value.getLong(0) + 1);
+                        }
+                    }
+                    try (RecordCursor cursor = probeFactory.getCursor(sqlExecutionContext)) {
+                        Record record = cursor.getRecord();
+                        while (cursor.hasNext()) {
+                            MapKey key = map.withKey();
+                            probeKeySink.copy(record, key);
+                            MapValue value = key.findValue();
+                            if (value != null) {
+                                matched += value.getLong(0);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Assert.assertEquals(on, expected, matched);
     }
 
     private void assertMismatchedKeys(String sql) throws Exception {
@@ -519,6 +693,31 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         return candidate;
     }
 
+
+
+
+    private void insertKeyRows() throws Exception {
+        // Small overlapping domains with NULLs, so both sides carry duplicate keys, shared keys,
+        // keys the other side lacks and NULL keys. BINARY and ARRAY stay NULL: no key uses them.
+        for (String name : new String[]{"ka", "kb"}) {
+            execute("INSERT INTO " + name + " (i, l, s, b, c, bo, f, d, dt, ts, tn, ip, u, l256, g, dec, sym, str, vc) " +
+                    """
+                            SELECT rnd_int(0, 2, 1), rnd_int(0, 2, 1)::long, rnd_short(0, 2), rnd_byte(0, 2),
+                                   rnd_str('a', 'b', NULL)::char, rnd_boolean(),
+                                   rnd_int(0, 2, 1)::float, rnd_int(0, 2, 1)::double,
+                                   rnd_int(0, 2, 1)::long::date, rnd_int(0, 2, 1)::long::timestamp,
+                                   rnd_int(0, 2, 1)::long::timestamp::timestamp_ns,
+                                   rnd_ipv4('10.0.0.1/30', 1),
+                                   rnd_str('11111111-1111-1111-1111-111111111111',
+                                           '22222222-2222-2222-2222-222222222222', NULL)::uuid,
+                                   rnd_str('0x01', '0x02', NULL)::long256,
+                                   rnd_str('sp052w92', 'ezs42e44', NULL)::geohash(8c),
+                                   rnd_int(0, 2, 1)::decimal(10,2),
+                                   rnd_symbol('a', 'b', NULL), rnd_str('a', 'b', NULL), rnd_varchar('a', 'b', NULL)
+                            FROM long_sequence(64)""");
+        }
+    }
+
     private boolean isIntKeyed(String sql) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             HashJoinGroupByCandidate candidate = candidate(compiler, sql);
@@ -535,6 +734,39 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         }
     }
 
+    private HashJoinGroupByMetadata keyMetadata(
+            SqlCompiler compiler,
+            String on,
+            RecordCursorFactory probeFactory,
+            RecordCursorFactory buildFactory,
+            RecordCursorFactory probeBase,
+            RecordCursorFactory buildBase
+    ) throws Exception {
+        // LEFT JOIN pins ka as the probe input, whatever the optimiser makes of the key order.
+        HashJoinGroupByCandidate candidate = candidate(compiler, "SELECT count(*) FROM ka LEFT JOIN kb ON " + on);
+        Assert.assertNotNull(on, candidate);
+        return new HashJoinGroupByMetadata(configuration, new BytecodeAssembler(), candidate,
+                probeFactory.getMetadata(), baseColumns(probeFactory.getMetadata(), probeBase.getMetadata()),
+                buildFactory.getMetadata(), baseColumns(buildFactory.getMetadata(), buildBase.getMetadata()));
+    }
+
+    private long pairCount(String sql) throws Exception {
+        try (RecordCursorFactory factory = select(sql);
+             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            Assert.assertTrue(sql, cursor.hasNext());
+            return cursor.getRecord().getLong(0);
+        }
+    }
+
+    /** Maps each column of an input projection to its index in the base table, by name. */
+    private static IntList baseColumns(RecordMetadata projection, RecordMetadata base) {
+        IntList list = new IntList(projection.getColumnCount());
+        for (int i = 0; i < projection.getColumnCount(); i++) {
+            list.add(base.getColumnIndex(projection.getColumnName(i)));
+        }
+        return list;
+    }
+
     private static String describeKeys(HashJoinGroupByKeys keys) {
         StringSink sink = new StringSink();
         for (int i = 0, n = keys.size(); i < n; i++) {
@@ -546,6 +778,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         }
         return sink.toString();
     }
+
 
     private static IntList ints(int... columns) {
         IntList list = new IntList(columns.length);

@@ -5205,7 +5205,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return null;
             }
             final int workerCount = executionContext.getSharedQueryWorkerCount();
-            try (HashJoinGroupByMetadata metadata = new HashJoinGroupByMetadata(configuration, candidate,
+            try (HashJoinGroupByMetadata metadata = new HashJoinGroupByMetadata(configuration, asm, candidate,
                     probeInput.getMetadata(), probeColumns,
                     build.getMetadata(), candidate.getInputColumns(build.getMetadata(), true))) {
                 if (!metadata.hasStaticSymbolTables()) {

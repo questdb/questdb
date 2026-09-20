@@ -24,20 +24,28 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.join.HashJoinGroupByRecord;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
+import io.questdb.std.BitSet;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -48,23 +56,49 @@ import java.io.Closeable;
  * Input mappings are compiled-record index -> base-table index, not writer indexes.
  * Build SYMBOL payloads keep the build input's symbol keys and its static symbol tables.
  * Construct before the candidate's borrowed models are mutated or the compiler reused.
+ * <p>
+ * A key the narrow INT layout cannot carry reaches its map through a {@link RecordSink}
+ * per input. This class generates the two sink classes and hands out instances, one per
+ * worker, through {@link #newProbeKeySink()} and {@link #newBuildKeySink()}; it borrows
+ * both input metadatas for that, so instantiate while the inputs are alive. The INT
+ * layout stages nothing, so it gets no key types and no sinks.
  */
 public final class HashJoinGroupByMetadata implements Closeable {
     private final IntList buildColumns = new IntList();
+    // Borrowed for the looping sink, which reads the source types when a caller instantiates it.
+    private final RecordMetadata buildInputMetadata;
     private final IntList buildKeyColumns = new IntList();
+    private final ListColumnFilter buildKeyFilter = new ListColumnFilter();
+    @Nullable
+    private final Class<RecordSink> buildKeySinkClass;
+    private final BitSet buildKeyStringAsVarchar = new BitSet();
+    private final BitSet buildKeySymbolAsString = new BitSet();
+    private final BitSet buildKeyTimestampAsNanos = new BitSet();
     private final ExpressionNode buildOnFilter;
     private final ObjList<QueryColumn> columns = new ObjList<>();
     private final String condition;
     private final boolean hasStaticSymbolTables;
     private final HashJoinGroupByKeys keys;
+    private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     private final JoinRecordMetadata joinedMetadata;
     private final GenericRecordMetadata payloadMetadata = new GenericRecordMetadata();
     private final int probeColumnCount;
+    private final RecordMetadata probeInputMetadata;
     private final IntList probeKeyColumns = new IntList();
+    private final ListColumnFilter probeKeyFilter = new ListColumnFilter();
+    @Nullable
+    private final Class<RecordSink> probeKeySinkClass;
+    // Per-column encoding flags of one input, indexed the way RecordSinkFactory indexes them. The
+    // two inputs keep their own sets, because one set shared by both would force an encoding onto
+    // whatever column happens to sit at the same index on the other side.
+    private final BitSet probeKeyStringAsVarchar = new BitSet();
+    private final BitSet probeKeySymbolAsString = new BitSet();
+    private final BitSet probeKeyTimestampAsNanos = new BitSet();
     private ExpressionNode postJoinFilter;
 
     public HashJoinGroupByMetadata(
             CairoConfiguration configuration,
+            BytecodeAssembler asm,
             HashJoinGroupByCandidate candidate,
             RecordMetadata probeMetadata,
             IntList probeBaseColumns,
@@ -103,6 +137,45 @@ public final class HashJoinGroupByMetadata implements Closeable {
                     .putAscii('=').put(candidate.getBuildModel().getName()).putAscii('.').put(buildMetadata.getColumnName(buildColumn));
         }
         condition = conditionSink.toString();
+        probeInputMetadata = probeMetadata;
+        buildInputMetadata = buildMetadata;
+        if (keys.isIntKeyed()) {
+            // The INT layout reads its key straight off the probe record and translates the build
+            // side once per distinct key, so it stages nothing and needs no sink.
+            probeKeySinkClass = null;
+            buildKeySinkClass = null;
+        } else {
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                final int probeColumn = probeKeyColumns.getQuick(i);
+                final int buildColumn = buildKeyColumns.getQuick(i);
+                keyTypes.add(keys.getType(i));
+                // A ListColumnFilter entry is a 1-based index whose sign asks for a skip; a key
+                // column is always copied, so every entry is positive.
+                probeKeyFilter.add(probeColumn + 1);
+                buildKeyFilter.add(buildColumn + 1);
+                if (keys.isSymbolAsString(i)) {
+                    // Both sides write the symbol's text, so keys from two dictionaries compare.
+                    probeKeySymbolAsString.set(probeColumn);
+                    buildKeySymbolAsString.set(buildColumn);
+                }
+                if (keys.isProbeStringAsVarchar(i)) {
+                    probeKeyStringAsVarchar.set(probeColumn);
+                }
+                if (keys.isBuildStringAsVarchar(i)) {
+                    buildKeyStringAsVarchar.set(buildColumn);
+                }
+                if (keys.isProbeTimestampAsNanos(i)) {
+                    probeKeyTimestampAsNanos.set(probeColumn);
+                }
+                if (keys.isBuildTimestampAsNanos(i)) {
+                    buildKeyTimestampAsNanos.set(buildColumn);
+                }
+            }
+            probeKeySinkClass = RecordSinkFactory.getInstanceClass(configuration, asm, probeMetadata,
+                    probeKeyFilter, null, null, probeKeySymbolAsString, probeKeyStringAsVarchar, probeKeyTimestampAsNanos);
+            buildKeySinkClass = RecordSinkFactory.getInstanceClass(configuration, asm, buildMetadata,
+                    buildKeyFilter, null, null, buildKeySymbolAsString, buildKeyStringAsVarchar, buildKeyTimestampAsNanos);
+        }
         joinedMetadata = new JoinRecordMetadata(configuration,
                 probeColumnCount + candidate.getRequiredBuildColumns().size());
         try {
@@ -197,6 +270,14 @@ public final class HashJoinGroupByMetadata implements Closeable {
         return keys;
     }
 
+    /**
+     * Column types of the staged key, in sink order, which is the layout both key sinks write and
+     * the layout the build's map stores. Empty for the INT layout, which stages no key.
+     */
+    public ColumnTypes getKeyTypes() {
+        return keyTypes;
+    }
+
     public RecordMetadata getPayloadMetadata() {
         return payloadMetadata;
     }
@@ -225,6 +306,29 @@ public final class HashJoinGroupByMetadata implements Closeable {
         return keys.isSymbolKey();
     }
 
+    /** True when the key reaches its map through the two key sinks rather than the INT layout. */
+    public boolean isKeyStaged() {
+        return !keys.isIntKeyed();
+    }
+
+    /**
+     * A key sink over the build input's records. Sinks hold scratch state, so the owner's build
+     * takes one of its own; see the {@link RecordSink} javadoc. Null for the INT layout.
+     */
+    public RecordSink newBuildKeySink() {
+        return isKeyStaged() ? newKeySink(buildKeySinkClass, buildInputMetadata, buildKeyFilter,
+                buildKeySymbolAsString, buildKeyStringAsVarchar, buildKeyTimestampAsNanos) : null;
+    }
+
+    /**
+     * A key sink over the probe input's records. Sinks hold scratch state, so every worker takes
+     * one of its own; see the {@link RecordSink} javadoc. Null for the INT layout.
+     */
+    public RecordSink newProbeKeySink() {
+        return isKeyStaged() ? newKeySink(probeKeySinkClass, probeInputMetadata, probeKeyFilter,
+                probeKeySymbolAsString, probeKeyStringAsVarchar, probeKeyTimestampAsNanos) : null;
+    }
+
     public HashJoinGroupByRecord newRecord() {
         return new HashJoinGroupByRecord(probeColumnCount, payloadMetadata);
     }
@@ -239,6 +343,20 @@ public final class HashJoinGroupByMetadata implements Closeable {
 
     ExpressionNode getPostJoinFilter() {
         return postJoinFilter;
+    }
+
+    // The generated class is nullable by contract: null asks for the looping sink, which
+    // RecordSinkFactory builds from the same filter and flags. Never branch on the class.
+    private static RecordSink newKeySink(
+            @Nullable Class<RecordSink> clazz,
+            RecordMetadata inputMetadata,
+            ListColumnFilter filter,
+            BitSet symbolAsString,
+            BitSet stringAsVarchar,
+            BitSet timestampAsNanos
+    ) {
+        return RecordSinkFactory.getInstance(clazz, inputMetadata, filter, null, null,
+                symbolAsString, stringAsVarchar, timestampAsNanos);
     }
 
     private static TableColumnMetadata copyColumn(RecordMetadata metadata, int column, boolean symbolTableStatic) {

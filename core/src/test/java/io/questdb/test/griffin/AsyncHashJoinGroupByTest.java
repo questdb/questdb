@@ -2243,7 +2243,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     // The fixture compiles r as the probe. An INNER join builds the smaller table,
                     // so a test that grows p must keep r at least as large.
                     Assert.assertEquals(sql, "r", String.valueOf(candidate.getProbeModel().getName()));
-                    try (HashJoinGroupByMetadata metadata = new HashJoinGroupByMetadata(configuration, candidate,
+                    try (HashJoinGroupByMetadata metadata = new HashJoinGroupByMetadata(configuration, new BytecodeAssembler(), candidate,
                             probeFactory.getMetadata(), probeColumns, buildFactory.getMetadata(), buildColumns)) {
                         functions = generator.compileHashJoinGroupByFunctions(model, metadata, WORKERS, sqlExecutionContext);
                         if (hook != null) {
