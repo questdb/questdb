@@ -44,10 +44,10 @@ import io.questdb.std.IntList;
  * A lone INT pair, and a lone SYMBOL pair whose keys the build translates into the probe's
  * domain, keep the narrow INT layout ({@link #isIntKeyed()}). Every other shape stages its key
  * through a {@link io.questdb.cairo.RecordSink} into a map. A SYMBOL pair inside a composite key
- * therefore compares as text, which matches the same rows at a higher cost than the ordinary
- * hash join pays: {@code SqlCodeGenerator.convertSymbolJoinKeysToInt()} translates such a pair
- * into int keys whenever both symbol tables are static, and nothing translates the symbols of a
- * staged key.
+ * therefore compares as text, which selects the same rows as the int comparison the ordinary
+ * hash join uses there: {@code SqlCodeGenerator.convertSymbolJoinKeysToInt()} translates such a
+ * pair into int keys whenever both symbol tables are static, while nothing translates the
+ * symbols of a staged key.
  */
 public final class HashJoinGroupByKeys {
     private final IntList buildColumns = new IntList();
