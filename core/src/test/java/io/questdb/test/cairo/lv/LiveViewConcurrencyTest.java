@@ -1370,6 +1370,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             final AtomicBoolean isRunning = new AtomicBoolean(true);
             final AtomicLong refreshTicks = new AtomicLong();
             final AtomicLong swapsObserved = new AtomicLong();
+            final AtomicLong inPlacePublishesObserved = new AtomicLong();
             final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
             final RuntimeException injectedFailure = new RuntimeException("injected refresh failure");
             execute("INSERT INTO base VALUES ('2027-01-01T00:00:01.000000Z', 2)");
@@ -1392,7 +1393,8 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 }
             }) {
                 final Thread driver = newTierSwapRefreshThread(
-                        job, tier, new CyclicBarrier(1), isRunning, refreshTicks, swapsObserved, errors, CLOCK_ADVANCE_MICROS
+                        job, tier, new CyclicBarrier(1), isRunning, refreshTicks, swapsObserved,
+                        inPlacePublishesObserved, errors, CLOCK_ADVANCE_MICROS
                 );
                 try {
                     driver.start();
@@ -1407,6 +1409,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 Assert.assertEquals(0, refreshTicks.get());
                 Assert.assertEquals(0, swapsObserved.get());
             }
+            Assert.assertEquals(0, inPlacePublishesObserved.get());
             if (!errors.isEmpty()) {
                 throw new AssertionError("refresh driver failed", errors.peek());
             }
@@ -1532,6 +1535,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             AtomicBoolean isRunning,
             AtomicLong refreshTicks,
             AtomicLong swapsObserved,
+            AtomicLong inPlacePublishesObserved,
             ConcurrentLinkedQueue<Throwable> errors,
             long clockStepMicros
     ) {
@@ -1548,19 +1552,27 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 try {
                     Assert.assertTrue("the startup cursor must pin the tier", initialCursor.isRoutingEligible());
                     int lastPublishedIdx = tier.getPublishedIdx();
+                    long lastPublishedLvSeqTxn = tier.getSlot(lastPublishedIdx).lvSeqTxn();
                     barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
                     while (isRunning.get() && errors.isEmpty()) {
                         setCurrentMicros(currentMicros + clockStepMicros);
                         drainWalQueue();
+                        // Sample between passes: O3 can publish in place without changing the
+                        // slot index. This driver owns every refresh, so it can read the stamp
+                        // without a pin after job.run() returns.
                         for (int i = 0; i < REFRESH_PASSES_PER_TICK && job.run(); i++) {
                             final int publishedIdx = tier.getPublishedIdx();
+                            final long publishedLvSeqTxn = tier.getSlot(publishedIdx).lvSeqTxn();
                             if (publishedIdx != lastPublishedIdx) {
                                 swapsObserved.incrementAndGet();
-                                lastPublishedIdx = publishedIdx;
                                 // Close on the owning thread, outside job.run(). Subsequent
                                 // churn stays uncoordinated; the counter remains a lower bound.
                                 initialCursor = Misc.free(initialCursor);
+                            } else if (publishedLvSeqTxn != lastPublishedLvSeqTxn) {
+                                inPlacePublishesObserved.incrementAndGet();
                             }
+                            lastPublishedIdx = publishedIdx;
+                            lastPublishedLvSeqTxn = publishedLvSeqTxn;
                         }
                         refreshTicks.incrementAndGet();
                     }
@@ -2863,7 +2875,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             // which is what makes the frames the filter workers read carry slot rows disk
             // does not have.
             final Thread driver = newTierSwapRefreshThread(
-                    job, tier, barrier, running, refreshTicks, swapsObserved, errors, CLOCK_ADVANCE_MICROS / 6
+                    job, tier, barrier, running, refreshTicks, swapsObserved, new AtomicLong(), errors, CLOCK_ADVANCE_MICROS / 6
             );
 
             final Thread[] readers = new Thread[numReaders];
@@ -2955,13 +2967,13 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // finish inside the driver's first tick at any row count, the driver publishes nothing
     // while the readers are alive, and the run races nothing while passing. So the writers
     // pace to the driver (one batch per tick), the tier is pre-warmed before any reader opens,
-    // and the run asserts its own counters - swaps the driver caught under the readers, and
+    // and the run asserts its own counters - publishes the driver caught under the readers, and
     // (for a tier-routing shape) reads that actually reached the tier mid-soak.
     private void runReaderChurnSoak(Rnd rnd, int numWriters, int numReaders, int rowCount, boolean modeB, boolean leadMode) throws Exception {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
         // Growth budget 0 forces normal publication onto the swap path, but O3 restaging
         // can still rewrite the current slot. The driver's startup cursor makes the first
-        // swap observable; the budget alone cannot guarantee that the sampler sees one.
+        // swap observable; subsequent passes count both swaps and in-place publications.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
 
         final int n = 1 + rnd.nextInt(8);
@@ -2996,11 +3008,12 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
         final AtomicBoolean running = new AtomicBoolean(true);
         // Refresh ticks completed by the driver; the writers pace off it. And the run's own
-        // evidence: reads that found the tier at the instant they looked, and swaps the driver
-        // caught between two of its own passes.
+        // evidence: reads that found the tier at the instant they looked, and publishes (swaps
+        // and in-place) the driver caught between two of its own passes.
         final AtomicLong refreshTicks = new AtomicLong();
         final AtomicLong routedReads = new AtomicLong();
         final AtomicLong swapsObserved = new AtomicLong();
+        final AtomicLong inPlacePublishesObserved = new AtomicLong();
         // In lead mode advance the clock by a fraction of FLUSH EVERY per tick so a flush comes
         // due only every few ticks; the refreshes in between publish the un-flushed lead (Mode
         // A). Otherwise advance past FLUSH EVERY every tick so every refresh also flushes and
@@ -3042,7 +3055,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 );
             }
             final Thread driver = newTierSwapRefreshThread(
-                    job, tier, barrier, running, refreshTicks, swapsObserved, errors, clockStepMicros
+                    job, tier, barrier, running, refreshTicks, swapsObserved, inPlacePublishesObserved, errors, clockStepMicros
             );
 
             final Thread[] readers = new Thread[numReaders];
@@ -3092,13 +3105,14 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
 
             LOG.info().$("LV concurrency reader-churn soak done: modeB=").$(modeB).$(", leadMode=").$(leadMode)
                     .$(", refreshTicks=").$(refreshTicks.get()).$(", routedReads=").$(routedReads.get())
-                    .$(", swapsObserved=").$(swapsObserved.get()).$();
+                    .$(", swapsObserved=").$(swapsObserved.get())
+                    .$(", inPlacePublishesObserved=").$(inPlacePublishesObserved.get()).$();
             // The soak's own evidence. A green run that raced nothing looks identical without
             // these: a driver that never published under the readers, or reads that never
             // reached the tier.
             Assert.assertTrue(
-                    "the refresh worker must have swapped tier slots under the churning readers",
-                    swapsObserved.get() > 0
+                    "the refresh worker must have published into the tier under the churning readers",
+                    swapsObserved.get() + inPlacePublishesObserved.get() > 0
             );
             if (modeB) {
                 Assert.assertTrue(
@@ -3155,7 +3169,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
         // See runReaderChurnSoak: force normal publication onto the swap path, moving the
         // data/aux regions that var-length readers dereference. The driver's startup cursor
-        // makes the first swap observable even when later O3 restages update in place.
+        // makes the first swap observable; it also counts later in-place O3 publications.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
 
         final String viewSql = "SELECT ts, vs, vv, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base";
@@ -3182,11 +3196,13 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
         final LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
         final AtomicBoolean running = new AtomicBoolean(true);
-        // The writers pace off refreshTicks; routedReads and swapsObserved are the run's own
-        // evidence that it raced the tier rather than spending itself against an empty one.
+        // The writers pace off refreshTicks; routedReads and the two publish counters are the
+        // run's own evidence that it raced the tier rather than spending itself against an
+        // empty one.
         final AtomicLong refreshTicks = new AtomicLong();
         final AtomicLong routedReads = new AtomicLong();
         final AtomicLong swapsObserved = new AtomicLong();
+        final AtomicLong inPlacePublishesObserved = new AtomicLong();
         try {
             // Pre-warm, single-threaded: commit the leading slice and refresh it, so the tier is
             // live and stamped before any reader opens.
@@ -3221,7 +3237,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 );
             }
             final Thread driver = newTierSwapRefreshThread(
-                    job, tier, barrier, running, refreshTicks, swapsObserved, errors, CLOCK_ADVANCE_MICROS
+                    job, tier, barrier, running, refreshTicks, swapsObserved, inPlacePublishesObserved, errors, CLOCK_ADVANCE_MICROS
             );
 
             final Thread[] readers = new Thread[numReaders];
@@ -3266,10 +3282,11 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             driveRefreshToQuiescence(job);
 
             LOG.info().$("LV concurrency var-size reader-churn soak done: refreshTicks=").$(refreshTicks.get())
-                    .$(", routedReads=").$(routedReads.get()).$(", swapsObserved=").$(swapsObserved.get()).$();
+                    .$(", routedReads=").$(routedReads.get()).$(", swapsObserved=").$(swapsObserved.get())
+                    .$(", inPlacePublishesObserved=").$(inPlacePublishesObserved.get()).$();
             Assert.assertTrue(
-                    "the refresh worker must have swapped tier slots under the churning readers",
-                    swapsObserved.get() > 0
+                    "the refresh worker must have published into the tier under the churning readers",
+                    swapsObserved.get() + inPlacePublishesObserved.get() > 0
             );
             Assert.assertTrue(
                     "the readers must have routed through the tier's var-length regions mid-soak, not just after it",
