@@ -5733,14 +5733,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
+                // The scalar count over a LEFT or RIGHT equi-join takes the fused hash join
+                // GROUP BY, which carries the predicate as an attribute of its own instead of a
+                // Filter node above the join. FULL OUTER and the temporal joins keep both.
+                boolean isFused = i < 2;
+                boolean isSwapped = "RIGHT".equals(joinType);
 
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T2.value<>T2.value")
                         .noLeakCheck()
-                        .assertsPlan("Count\n" + "    Filter filter: T2.value=T2.value\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
+                        // A RIGHT join pushes the predicate into T2, its preserved side, where
+                        // the filter compiler folds value=value away: fixed-width NULLs compare
+                        // equal, so the predicate holds for every row.
+                        .assertsPlan(isFused
+                                ? fusedCountPlan(isSwapped, isSwapped ? null : "postJoinFilter: T2.value=T2.value", false)
+                                : "Count\n" + "    Filter filter: T2.value=T2.value\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
 
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T2.value=1")
                         .noLeakCheck()
-                        .assertsPlan("Count\n" + "    Filter filter: T2.value!=1\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
+                        .assertsPlan(isFused
+                                ? fusedCountPlan(isSwapped, isSwapped ? "probeFilter: value!=1" : "postJoinFilter: T2.value!=1", isSwapped)
+                                : "Count\n" + "    Filter filter: T2.value!=1\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
 
                 // Push the predicate down to the 'left' table for joins that keep every left
                 // row (LEFT OUTER, LT, ASOF). RIGHT and FULL OUTER NULL-extend the left table,
@@ -5748,7 +5760,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 boolean isLeftNulled = "RIGHT".equals(joinType) || "FULL".equals(joinType);
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T1.value=1")
                         .noLeakCheck()
-                        .assertsPlan(isLeftNulled
+                        .assertsPlan(isFused
+                                ? fusedCountPlan(isSwapped, isSwapped ? "postJoinFilter: T1.value!=1" : "probeFilter: value!=1", !isSwapped)
+                                : isLeftNulled
                                 ? "Count\n" + "    Filter filter: T1.value!=1\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n"
                                 : "Count\n" + "    " + factoryType + "\n" + (i < 3 ? "      condition: T2.created=T1.created\n" : "") + "        Async JIT Filter workers: 1\n" + "          filter: value!=1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "        Hash\n" : "") + (i < 3 ? "    " : "") + "        PageFrame\n" + (i < 3 ? "    " : "") + "            Row forward scan\n" + (i < 3 ? "    " : "") + "            Frame forward scan on: tab\n");
             }
@@ -5759,6 +5773,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String factoryType = joinFactoryTypes[i];
                 // RIGHT and FULL OUTER NULL-extend T1, so a T1 predicate stays a post-join filter.
                 boolean isLeftNulled = "RIGHT".equals(joinType) || "FULL".equals(joinType);
+                // The three-input queries below keep the ordinary plan; the two parent-model
+                // ones are two-input joins that the fused hash join GROUP BY takes.
+                boolean isFused = i < 2;
+                boolean isSwapped = "RIGHT".equals(joinType);
 
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T1.value=1")
                         .noLeakCheck()
@@ -5777,14 +5795,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 // where clause in parent model
                 assertQuery("SELECT count(1) " + "FROM ( " + "SELECT * " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created ) e " + "WHERE not value1<>value1")
                         .noLeakCheck()
-                        .assertsPlan("Count\n" + "    SelectedRecord\n" + "        Filter filter: T2.value=T2.value\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n");
+                        .assertsPlan(isFused
+                                ? fusedCountPlan(isSwapped, isSwapped ? null : "postJoinFilter: T2.value=T2.value", false)
+                                : "Count\n" + "    SelectedRecord\n" + "        Filter filter: T2.value=T2.value\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n");
 
                 // value is T1 (the master): RIGHT/FULL OUTER NULL-extend it, so the tautological
                 // not value<>value (T1.value=T1.value) stays a post-join filter instead of pushing
                 // into the master sub-query. The count is unchanged; only the plan moves.
                 assertQuery("SELECT count(1) " + "FROM ( " + "SELECT * " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created ) e " + "WHERE not value<>value")
                         .noLeakCheck()
-                        .assertsPlan(isLeftNulled
+                        .assertsPlan(isFused
+                                ? fusedCountPlan(isSwapped, isSwapped ? "postJoinFilter: T1.value=T1.value" : null, false)
+                                : isLeftNulled
                                 ? "Count\n" + "    SelectedRecord\n" + "        Filter filter: T1.value=T1.value\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n"
                                 : "Count\n" + "    SelectedRecord\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n");
             }
@@ -13509,6 +13531,31 @@ public class ExplainPlanTest extends AbstractCairoTest {
             return isLong256StrFactory(((NegatingFunctionFactory) factory).getDelegate());
         }
         return factory instanceof EqLong256StrFunctionFactory;
+    }
+
+    /**
+     * The plan of a scalar {@code count()} over an equi-join of two {@code tab} scans that the
+     * fused hash join GROUP BY takes. {@code filterAttr} is the operator's own predicate
+     * attribute, or null when the query has none.
+     */
+    private static String fusedCountPlan(boolean isSwapped, String filterAttr, boolean isJitFilter) {
+        return (isJitFilter ? "Async JIT Hash Join Group By workers: 1\n" : "Async Hash Join Group By workers: 1\n")
+                + "  logicalJoinType: " + (isSwapped ? "right outer" : "left outer") + "\n"
+                + "  physicalJoinType: left outer\n"
+                + "  inputSwapped: " + isSwapped + "\n"
+                + "  condition: " + (isSwapped ? "T2.created=T1.created" : "T1.created=T2.created") + "\n"
+                + "  buildStrategy: shared\n"
+                + "  aggregation: scalar\n"
+                + "  values: [count(*)]\n"
+                + (filterAttr == null ? "" : "  " + filterAttr + "\n")
+                + "    Probe\n"
+                + "        PageFrame\n"
+                + "            Row forward scan\n"
+                + "            Frame forward scan on: tab\n"
+                + "    Build\n"
+                + "        PageFrame\n"
+                + "            Row forward scan\n"
+                + "            Frame forward scan on: tab\n";
     }
 
     private void assertBindVarPlan(String type) throws Exception {

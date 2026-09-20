@@ -359,8 +359,9 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                         }
                     }
                 }
-                // A SYMBOL key changed to VARCHAR on either side invalidates the factory, and the
-                // recompiled query keeps the ordinary plan until the key is SYMBOL again.
+                // A SYMBOL key changed to VARCHAR on either side invalidates the factory. The
+                // recompiled query stages the reconciled VARCHAR key until the key is SYMBOL
+                // again and the build translates it once per distinct key.
                 for (String table : new String[]{"r", "p"}) {
                     for (boolean keyed : new boolean[]{false, true}) {
                         String sql = "select " + (keyed ? "p.s, " : "") + AGGREGATES + JOINS[1].replace("r.id=p.id", "r.k=p.k")
@@ -372,7 +373,7 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                             Assert.assertThrows(TableReferenceOutOfDateException.class, () -> result(factory, context));
                             Assert.assertEquals(0, fused.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                             Assert.assertNull(context.getMemoryTracker());
-                            assertDifferential(sql, context, false);
+                            assertDifferential(sql, context, true);
                             execute("alter table " + table + " alter column k type symbol");
                             Assert.assertThrows(TableReferenceOutOfDateException.class, () -> result(factory, context));
                             assertDifferential(sql, context, true);

@@ -82,9 +82,11 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
             TestUtils.execute(pool, (db, compiler, ignored) -> {
                 // k holds the text of id. p writes the key texts in a different order, so equal text
                 // has different symbol keys in r and p.
-                db.execute("create table r as (select (x%509)::int id, ('k'||(x%509))::symbol k, x::int g, x*0.25 d, ('s'||(6-x%7))::symbol s, "
+                db.execute("create table r as (select (x%509)::int id, ('k'||(x%509))::symbol k, (x%509)::long lk, "
+                        + "('k'||(x%509))::varchar vk, x::int g, x*0.25 d, ('s'||(6-x%7))::symbol s, "
                         + "('s'||(x%5))::symbol s2, timestamp_sequence('2020-01-01', 100000000) t from long_sequence(1200)) timestamp(t) partition by day", ignored);
-                db.execute("create table p as (select ((x+250)%503)::int id, ('k'||((x+250)%503))::symbol k, x*0.5 d, ('s'||(x%7))::symbol s, "
+                db.execute("create table p as (select ((x+250)%503)::int id, ('k'||((x+250)%503))::symbol k, ((x+250)%503)::long lk, "
+                        + "('k'||((x+250)%503))::varchar vk, x*0.5 d, ('s'||(x%7))::symbol s, "
                         + "('s'||(4-x%5))::symbol s2, timestamp_sequence('2020-01-01', 100000000) t from long_sequence(1006)) timestamp(t) partition by day", ignored);
                 String[] intKeyQueries = {
                         "select r.s, p.s, r.s2, p.s2, count(*) n, count(r.s) rs, count(p.s) ps, sum(r.d) d"
@@ -95,11 +97,15 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
                                 + " sum(length(r.s)::double) rl, avg(length(p.s)::double) pl, sum(r.d) s, avg(p.d) a"
                                 + " from r left join p on r.id=p.id where p.d>8 or p.d is null"
                 };
-                // Each query runs with the INT key and with the SYMBOL key: two keyed queries, then a scalar one.
-                String[] queries = new String[intKeyQueries.length * 2];
-                for (int q = 0; q < intKeyQueries.length; q++) {
-                    queries[q] = intKeyQueries[q];
-                    queries[q + intKeyQueries.length] = intKeyQueries[q].replace("r.id=p.id", "r.k=p.k");
+                // Each query runs once per key shape: the two the INT layout reads, then the two
+                // that stage a key into the build's map. The shape index stays q % 3, so the
+                // sharding and cancellation expectations below keep addressing the same query.
+                String[] keys = {"r.id=p.id", "r.k=p.k", "r.lk=p.lk", "r.id=p.id and r.vk=p.vk"};
+                String[] queries = new String[intKeyQueries.length * keys.length];
+                for (int key = 0; key < keys.length; key++) {
+                    for (int q = 0; q < intKeyQueries.length; q++) {
+                        queries[key * intKeyQueries.length + q] = intKeyQueries[q].replace("r.id=p.id", keys[key]);
+                    }
                 }
                 for (int format = 0; format < 3; format++) {
                     if (format > 0) {

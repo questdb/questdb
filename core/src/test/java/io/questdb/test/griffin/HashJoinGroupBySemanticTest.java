@@ -488,9 +488,12 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                     // PostgreSQL-style ::float means DOUBLE (SqlParser.rewritePgCast),
                     // unlike a FLOAT table column. Check the compiled allowlist boundary.
                     assertDifferential("select sum(r.d::float)" + from(join), context, true);
-                    for (String on : new String[]{"r.id=p.id and r.i=p.i", "r.id+1=p.id", "r.l=p.l", "r.d=p.d", "r.t=p.t",
+                    // An expression key keeps the ordinary plan; every reconciled pair stages its
+                    // key into the build's map, composites and SYMBOL-as-text included.
+                    assertDifferential("select count(*) from " + PROJECTED_R + join + PROJECTED_P + " on r.id+1=p.id", context, false);
+                    for (String on : new String[]{"r.id=p.id and r.i=p.i", "r.l=p.l", "r.d=p.d", "r.t=p.t",
                             "r.s=p.s and r.id=p.id", "r.s=p.s and r.s2=p.s2"}) {
-                        assertDifferential("select count(*) from " + PROJECTED_R + join + PROJECTED_P + " on " + on, context, false);
+                        assertDifferential("select count(*) from " + PROJECTED_R + join + PROJECTED_P + " on " + on, context, true);
                     }
                     // SYMBOL keys match by text through reordered projections, also across different
                     // SYMBOL columns, whose dictionaries assign their own keys.
@@ -520,10 +523,11 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                                     + "b p on r.id=p.id order by r.s,p.s", context, isFused);
                         }
                     }
-                    // SYMBOL keys against text keys with the same values keep the ordinary plan.
+                    // A SYMBOL key against a text key reconciles to that text type and both sides
+                    // stage their text, which matches the same rows as the ordinary plan's cast.
                     for (String on : new String[]{"r.s=p.str", "r.str=p.s", "r.s=p.vc", "r.vc=p.s"}) {
                         assertDifferential("select r.s,p.s,count(*),sum(r.d),sum(p.d) from a r" + join + "b p on " + on
-                                + " order by r.s,p.s", context, false);
+                                + " order by r.s,p.s", context, true);
                     }
                 }
                 assertDifferential("select count(*) from a r full join b p on r.id=p.id", context, false);

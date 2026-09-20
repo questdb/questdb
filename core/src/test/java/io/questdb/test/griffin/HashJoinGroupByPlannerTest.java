@@ -255,10 +255,11 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                         // p has one row more than r, so the INNER join builds r, as RIGHT does.
                         Assert.assertTrue(plan, plan.contains("inputSwapped: " + (j != 1)));
                     }
-                    // Mixed text keys keep the ordinary plan, which converts the keys itself.
+                    // Mixed text keys reconcile to STRING or VARCHAR and stage that text into the
+                    // build's map, which selects the same rows the symbol translation selects.
                     for (String column : new String[]{"plant_str", "plant_vc"}) {
-                        assertDifferential(SELECT + join.replace("p.plant_id", "p." + column) + " order by country, yr, mo", context, false);
-                        assertDifferential(SELECT + join.replace("r.plant_id", "r." + column) + " order by country, yr, mo", context, false);
+                        assertDifferential(SELECT + join.replace("p.plant_id", "p." + column) + " order by country, yr, mo", context, true);
+                        assertDifferential(SELECT + join.replace("r.plant_id", "r." + column) + " order by country, yr, mo", context, true);
                     }
                 }
                 context.setParallelHashJoinGroupByEnabled(false);
@@ -280,7 +281,6 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                         "select p.country, first(r.energy_kwh), last(r.energy_kwh)" + JOINS[0] + " order by country",
                         "select p.country, sum(r.plant_id), mode(r.energy_kwh)" + JOINS[0] + " order by country",
                         SELECT + " from r join p on r.plant_id::long=p.plant_id::long order by country,yr,mo",
-                        SELECT + JOINS[0] + " and r.energy_kwh=p.installed_kwp order by country,yr,mo",
                         SELECT + JOINS[1] + " and r.energy_kwh > 0 order by country,yr,mo",
                         SELECT + JOINS[1] + " where r.energy_kwh > 0 or p.installed_kwp > 0 order by country,yr,mo",
                         SELECT + " from (r limit 2) r join p on r.plant_id=p.plant_id order by country,yr,mo",
@@ -291,6 +291,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 }) {
                     assertDifferential(sql, context, false);
                 }
+                // A second equality is a key, not a residual predicate, so the pair stages a
+                // composite key instead of keeping the ordinary plan.
+                assertDifferential(SELECT + JOINS[0] + " and r.energy_kwh=p.installed_kwp order by country,yr,mo", context, true);
             }
         });
     }

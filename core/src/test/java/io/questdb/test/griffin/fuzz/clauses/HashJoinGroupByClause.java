@@ -55,8 +55,11 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * [ORDER BY ...]
  * [LIMIT N]
  * </pre>
- * The join key is the shared INT column {@code k} or the shared SYMBOL column {@code sym}, the two
- * key types the fused plan accepts. Grouping keys, aggregate arguments and single-side predicates
+ * The join key is one of the four shared key columns, or two of them together: the INT column
+ * {@code k} and the SYMBOL column {@code sym}, which the fused plan reads through its narrow INT
+ * layout, and the LONG column {@code lk} and the VARCHAR column {@code vk}, which it stages
+ * through a {@link io.questdb.cairo.RecordSink} into a map, as it stages every composite key and
+ * the SYMBOL-against-VARCHAR pair. Grouping keys, aggregate arguments and single-side predicates
  * come from either input, so every join type sees them on the probe, on the build and on the
  * null-extended side. Each input is the table itself, a projection over it that renames some
  * columns and may filter (the fused planner resolves columns through it), a {@code LATEST ON}
@@ -66,7 +69,7 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * reach the features the fused planner has to turn down, each of which keeps the ordinary plan
  * in both arms of the fused axis: a constant WHERE conjunct, SAMPLE BY with FILL, a
  * {@code LIMIT} sub-query, {@code LATEST ON} on a table input, a cross-input WHERE predicate, an ON predicate over the preserved side
- * of an outer join, a composite key, columns of other types, and aggregates outside the fused
+ * of an outer join, columns of other types, and aggregates outside the fused
  * allowlist. A planner that accepts one of them by mistake returns different rows than the
  * ordinary plan, and the fused axis reports it.
  * <p>
@@ -104,6 +107,7 @@ public final class HashJoinGroupByClause {
     private static final String INT_KEY = "k";
     private static final String[] JOIN_KINDS = {"JOIN", "LEFT JOIN", "RIGHT JOIN"};
     private static final String LEFT_ALIAS = "l";
+    private static final String LONG_KEY = "lk";
     // min() and max() arguments. The fused plan accepts every type but BOOLEAN and BYTE, which the
     // parser passes to classes registered for other argument types, so those two keep the ordinary plan.
     private static final String[] MIN_MAX_DDLS = {
@@ -113,6 +117,7 @@ public final class HashJoinGroupByClause {
     // The fuzz tables span 30 to 75 hours, so every interval yields several buckets.
     private static final String[] SAMPLE_BY_INTERVALS = {"1h", "6h", "1d"};
     private static final String SYMBOL_KEY = "sym";
+    private static final String VARCHAR_KEY = "vk";
     private static final String[] VARIANCE_FUNCTIONS = {"stddev", "stddev_samp", "stddev_pop", "variance", "var_samp", "var_pop"};
     // The last three are the weighted stddev functions, which appendAggregate() also emits with an abs() weight.
     private static final String[] WEIGHTED_FUNCTIONS = {
@@ -155,16 +160,26 @@ public final class HashJoinGroupByClause {
 
         sql.put(" FROM ").put(l.fromSql).put(' ').put(LEFT_ALIAS);
         sql.put(' ').put(joinKind).put(' ').put(r.fromSql).put(' ').put(RIGHT_ALIAS);
-        // 0-19: INT key, 20-38: SYMBOL key, 39: both, which keeps the ordinary plan.
+        // 0-11: INT key and 12-23: SYMBOL key, the two the narrow INT layout reads.
+        // 24-29: LONG key, 30-35: VARCHAR key, 36-37: SYMBOL against VARCHAR and
+        // 38-39: INT and SYMBOL together, the four that stage their key into a map.
         final int keyPick = rnd.nextInt(40);
         sql.put(" ON ");
-        if (keyPick < 20 || keyPick == 39) {
+        if (keyPick < 12 || keyPick >= 38) {
             appendKeyEquality(sql, rnd, l.name(INT_KEY), r.name(INT_KEY));
+        } else if (keyPick < 24) {
+            appendKeyEquality(sql, rnd, l.name(SYMBOL_KEY), r.name(SYMBOL_KEY));
+        } else if (keyPick < 30) {
+            appendKeyEquality(sql, rnd, l.name(LONG_KEY), r.name(LONG_KEY));
+        } else if (keyPick < 36) {
+            appendKeyEquality(sql, rnd, l.name(VARCHAR_KEY), r.name(VARCHAR_KEY));
+        } else {
+            // vk holds sym's texts, so the pair matches rows; it reconciles to VARCHAR and
+            // both sides stage their text rather than translating symbol keys.
+            appendKeyEquality(sql, rnd, l.name(SYMBOL_KEY), r.name(VARCHAR_KEY));
         }
-        if (keyPick == 39) {
+        if (keyPick >= 38) {
             sql.put(" AND ");
-        }
-        if (keyPick >= 20) {
             appendKeyEquality(sql, rnd, l.name(SYMBOL_KEY), r.name(SYMBOL_KEY));
         }
         if (rnd.nextInt(4) == 0) {

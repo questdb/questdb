@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordCursor;
@@ -47,6 +48,7 @@ import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.join.HashJoinGroupByRecord;
 import io.questdb.griffin.engine.join.IntHashJoinBuild;
+import io.questdb.griffin.engine.join.MapHashJoinBuild;
 import io.questdb.griffin.engine.join.SymbolKeyTranslator;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -65,19 +67,27 @@ import org.jetbrains.annotations.TestOnly;
  */
 public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLockOwner {
     private final RecordCursorFactory buildFactory;
+    // The INT layout's only build key column, -1 when the key sinks stage the key instead.
     private final int buildKeyColumn;
+    // The owner's own build-side key sink; null for the INT layout, which stages nothing.
+    private final RecordSink buildKeySink;
     private final AsyncFilterContext filterContext;
     private final HashJoinGroupByFunctions functions;
+    private final boolean isKeyStaged;
     // Null for INT keys.
     private final SymbolKeyTranslator keyTranslator;
     private final boolean outer;
     private final PerWorkerLocks perWorkerLocks;
+    // The INT layout's only probe key column, -1 when the key sinks stage the key instead.
     private final int probeKeyColumn;
     private final ObjList<HashJoinGroupByRecord> records = new ObjList<>();
     private final ObjList<Slot> slots = new ObjList<>();
-    private IntHashJoinBuild build;
     private RecordCursor buildCursor;
-    private FrozenHashJoinBuild.IntKeyed frozen;
+    // The frozen build of the open cursor, whichever of the two builds produced it.
+    private FrozenHashJoinBuild frozen;
+    // Exactly one of the two builds exists, as isKeyStaged says.
+    private IntHashJoinBuild intBuild;
+    private MapHashJoinBuild mapBuild;
     private boolean isBuildUnique;
     private boolean functionsInitialized;
     private boolean filtersInitialized;
@@ -97,14 +107,24 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         this.functions = functions;
         this.filterContext = filterContext;
         this.outer = outer;
-        this.probeKeyColumn = metadata.getProbeKeyColumn();
-        this.buildKeyColumn = metadata.getBuildKeyColumn();
+        this.isKeyStaged = metadata.isKeyStaged();
+        this.probeKeyColumn = isKeyStaged ? -1 : metadata.getProbeKeyColumn();
+        this.buildKeyColumn = isKeyStaged ? -1 : metadata.getBuildKeyColumn();
         this.keyTranslator = metadata.isSymbolKey() ? new SymbolKeyTranslator() : null;
         CairoConfiguration configuration = engine.getConfiguration();
         perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
         try {
-            build = new IntHashJoinBuild(metadata.getPayloadMetadata(), metadata.getBuildColumns(),
-                    64, 64, true);
+            // Sinks read the borrowed input metadatas when they are instantiated, so every sink
+            // this execution will ever need is taken here, while the inputs are still alive.
+            buildKeySink = metadata.newBuildKeySink();
+            if (isKeyStaged) {
+                mapBuild = new MapHashJoinBuild(configuration, metadata.getKeyTypes(), metadata.getPayloadMetadata(),
+                        metadata.getBuildColumns(), configuration.getSqlSmallMapKeyCapacity(),
+                        configuration.getSqlSmallMapPageSize(), 64, true);
+            } else {
+                intBuild = new IntHashJoinBuild(metadata.getPayloadMetadata(), metadata.getBuildColumns(),
+                        64, 64, true);
+            }
             if (functions.isKeyed()) {
                 ObjList<GroupByFunctionsUpdater> workerUpdaters = new ObjList<>();
                 for (int i = 0; i < workerCount; i++) {
@@ -115,7 +135,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                         perWorkerLocks, workerCount);
             }
             for (int i = -1; i < workerCount; i++) {
-                Slot slot = new Slot(metadata.newRecord());
+                // Sinks hold scratch state, so each slot probes through one of its own.
+                Slot slot = new Slot(metadata.newRecord(), metadata.newProbeKeySink());
                 if (!functions.isKeyed()) {
                     slot.value = new SimpleMapValue(functions.getValueTypes().getColumnCount());
                 }
@@ -171,7 +192,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         }
         frozen = null;
         isBuildUnique = false;
-        failure = Misc.freeBestEffort(failure, build);
+        failure = Misc.freeBestEffort(failure, intBuild);
+        failure = Misc.freeBestEffort(failure, mapBuild);
         failure = Misc.freeBestEffort(failure, keyTranslator);
         // Functions, slots and the build have released every symbol table view of this cursor.
         failure = Misc.freeBestEffort(failure, buildCursor);
@@ -227,13 +249,26 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                     functions.getUpdater(i - 1).updateEmpty(slot.value);
                     slot.value.setNew(true);
                 }
-                if (slot.probe == null) {
-                    slot.probe = frozen.newProbe();
+                // Casting here, once per slot per execution, keeps the reducers' hot call sites
+                // on a single probe implementation; see the monomorphic-reducer rule.
+                final FrozenHashJoinBuild.Probe probe;
+                if (isKeyStaged) {
+                    if (slot.recordProbe == null) {
+                        slot.recordProbe = ((FrozenHashJoinBuild.RecordKeyed) frozen).newProbe(slot.probeKeySink);
+                    } else {
+                        slot.recordProbe.reopen();
+                    }
+                    probe = slot.recordProbe;
                 } else {
-                    slot.probe.reopen();
+                    if (slot.intProbe == null) {
+                        slot.intProbe = ((FrozenHashJoinBuild.IntKeyed) frozen).newProbe();
+                    } else {
+                        slot.intProbe.reopen();
+                    }
+                    probe = slot.intProbe;
                 }
                 slot.probeRecord.of(symbolTableSource);
-                slot.joinedRecord.of(slot.probeRecord, slot.probeRecord, slot.probe);
+                slot.joinedRecord.of(slot.probeRecord, slot.probeRecord, probe);
             }
             filtersInitialized = true;
             filterContext.initFilters(symbolTableSource, executionContext);
@@ -279,19 +314,24 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         buildCursor = buildFactory.getCursor(executionContext);
         // The child cursor is fresh. Unknown/filtered sizes retain incremental growth.
         final long rowCountHint = buildCursor.size();
-        build.open(memoryTracker, circuitBreaker);
-        if (keyTranslator != null) {
-            keyTranslator.of(
-                    (StaticSymbolTable) probeSymbols.newSymbolTable(probeKeyColumn),
-                    (StaticSymbolTable) buildCursor.newSymbolTable(buildKeyColumn),
-                    memoryTracker,
-                    circuitBreaker
-            );
-        }
-        frozen = build.build(buildCursor, buildKeyColumn, rowCountHint, keyTranslator);
-        if (keyTranslator != null) {
-            // Translation ends with the build; do not hold the cache while probing.
-            keyTranslator.close();
+        if (isKeyStaged) {
+            mapBuild.open(memoryTracker, circuitBreaker);
+            frozen = mapBuild.build(buildCursor, buildKeySink, rowCountHint);
+        } else {
+            intBuild.open(memoryTracker, circuitBreaker);
+            if (keyTranslator != null) {
+                keyTranslator.of(
+                        (StaticSymbolTable) probeSymbols.newSymbolTable(probeKeyColumn),
+                        (StaticSymbolTable) buildCursor.newSymbolTable(buildKeyColumn),
+                        memoryTracker,
+                        circuitBreaker
+                );
+            }
+            frozen = intBuild.build(buildCursor, buildKeyColumn, rowCountHint, keyTranslator);
+            if (keyTranslator != null) {
+                // Translation ends with the build; do not hold the cache while probing.
+                keyTranslator.close();
+            }
         }
         isBuildUnique = frozen.getRowCount() == frozen.getKeyCount();
     }
@@ -318,6 +358,11 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
 
     boolean isBuildUnique() {
         return isBuildUnique;
+    }
+
+    /** True when the probe stages its key through a {@link RecordSink} rather than reading an INT. */
+    boolean isKeyStaged() {
+        return isKeyStaged;
     }
 
     boolean isOuter() {
@@ -363,20 +408,27 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
 
     static final class Slot implements QuietCloseable {
         final HashJoinGroupByRecord joinedRecord;
+        // Null for the INT layout; the slot's record probe borrows it for its whole life.
+        final RecordSink probeKeySink;
         final ProbeRecord probeRecord = new ProbeRecord();
-        FrozenHashJoinBuild.IntProbe probe;
+        // Exactly one of the two probes exists, as the atom's isKeyStaged says.
+        FrozenHashJoinBuild.IntProbe intProbe;
+        FrozenHashJoinBuild.RecordProbe recordProbe;
         SimpleMapValue value;
 
-        Slot(HashJoinGroupByRecord joinedRecord) {
+        Slot(HashJoinGroupByRecord joinedRecord, RecordSink probeKeySink) {
             this.joinedRecord = joinedRecord;
+            this.probeKeySink = probeKeySink;
         }
 
         @Override
         public void close() {
             Throwable failure = Misc.freeBestEffort(null, value);
             value = null;
-            failure = Misc.freeBestEffort(failure, probe);
-            probe = null;
+            failure = Misc.freeBestEffort(failure, intProbe);
+            intProbe = null;
+            failure = Misc.freeBestEffort(failure, recordProbe);
+            recordProbe = null;
             failure = Misc.freeBestEffort(failure, probeRecord);
             CairoException.rethrowCleanupFailure(failure);
         }
@@ -388,11 +440,14 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             }
             joinedRecord.clear();
             probeRecord.of(null);
-            if (probe != null) {
-                // A probe may hold native memory charged to this execution's tracker, so it
-                // releases here, while that tracker is still the one that charged it. The
-                // object stays: reopen() brings it back for the next execution.
-                probe.close();
+            // A probe may hold native memory charged to this execution's tracker, so it
+            // releases here, while that tracker is still the one that charged it. The
+            // object stays: reopen() brings it back for the next execution.
+            if (intProbe != null) {
+                intProbe.close();
+            }
+            if (recordProbe != null) {
+                recordProbe.close();
             }
         }
     }

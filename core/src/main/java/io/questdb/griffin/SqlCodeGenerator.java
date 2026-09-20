@@ -5157,9 +5157,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return null;
         }
         HashJoinGroupByCandidate candidate = getHashJoinGroupByCandidate(model, functionParser, executionContext);
-        // A staged key needs the key sinks and the map-backed build that the code generator does
-        // not wire yet, so only the narrow INT layout reaches the fused operator.
-        if (candidate == null || !candidate.getKeys().isIntKeyed()) {
+        if (candidate == null) {
             return null;
         }
         RecordCursorFactory probe = null;

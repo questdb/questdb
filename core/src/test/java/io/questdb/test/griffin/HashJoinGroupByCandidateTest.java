@@ -211,8 +211,8 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
     public void testGeneralKeyTypes() throws Exception {
         assertMemoryLeak(() -> {
             createKeyTables();
-            // Every pair the ordinary hash join reconciles becomes a key; only a lone INT pair and
-            // a lone SYMBOL pair take the INT layout, and the rest keep the ordinary plan for now.
+            // Every pair the ordinary hash join reconciles becomes a key. A lone INT pair and a
+            // lone SYMBOL pair take the INT layout; the rest stage their key into a map.
             assertKeys("ka.i=kb.i", "0=0:INT", true);
             assertKeys("ka.sym=kb.sym", "16=16:SYMBOL", true);
             assertKeys("ka.l=kb.l", "1=1:LONG", false);
@@ -435,15 +435,17 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                     Assert.assertFalse(Chars.contains(cursor.getRecord().getStrA(0), "symbolKeyJoin"));
                 }
             }
-            // Text and mixed-type keys reconcile into a staged key, which keeps the ordinary plan
-            // until the code generator wires the key sinks.
+            // Text and mixed-type keys reconcile into a staged key, which routes to the fused
+            // operator through the key sinks and never prints symbolKeyJoin.
             for (String on : new String[]{
                     "r.sym_key=p.str_key", "r.str_key=p.sym_key", "r.sym_key=p.vc_key", "r.vc_key=p.sym_key",
                     "r.str_key=p.str_key", "r.vc_key=p.vc_key"
             }) {
-                assertCandidate("select p.country, sum(r.energy_kwh) from r join p on " + on, true);
-                Assert.assertFalse(on, isIntKeyed("select p.country, sum(r.energy_kwh) from r join p on " + on));
-                assertPlanContains("select p.country, sum(r.energy_kwh) from r join p on " + on, "Hash Join", false);
+                String sql = "select p.country, sum(r.energy_kwh) from r join p on " + on;
+                assertCandidate(sql, true);
+                Assert.assertFalse(on, isIntKeyed(sql));
+                assertPlanContains(sql, "Async Hash Join Group By", true);
+                assertPlanExcludes(sql, "symbolKeyJoin");
             }
             // SYMBOL against INT fails the ordinary compile as before.
             for (String on : new String[]{"r.sym_key=p.plant_id", "r.plant_id=p.sym_key"}) {
@@ -578,8 +580,9 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             Assert.assertEquals(on, expected, describeKeys(candidate.getKeys()));
             Assert.assertEquals(on, isIntKeyed, candidate.getKeys().isIntKeyed());
         }
-        // Nothing generates the key sinks yet, so a staged key keeps the ordinary plan.
-        assertPlanContains(sql, isIntKeyed ? "Hash Join Group By" : "Hash Left Outer Join Light", isIntKeyed);
+        // Both layouts reach the fused operator: the INT one reads its key off the probe record,
+        // the staged one stages it through the two key sinks.
+        assertPlanContains(sql, "Hash Join Group By", true);
     }
 
     private void assertKeySinkLayout(String on, String expected) throws Exception {
@@ -670,6 +673,17 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             }
             Assert.assertTrue(plan.toString(), plan.toString().contains(expected));
             Assert.assertEquals(plan.toString(), fused, plan.toString().contains("Hash Join Group By"));
+        }
+    }
+
+    private void assertPlanExcludes(String sql, String unexpected) throws Exception {
+        try (RecordCursorFactory factory = select("explain " + sql);
+             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            StringSink plan = new StringSink();
+            while (cursor.hasNext()) {
+                plan.put(cursor.getRecord().getStrA(0)).put('\n');
+            }
+            Assert.assertFalse(plan.toString(), plan.toString().contains(unexpected));
         }
     }
 
