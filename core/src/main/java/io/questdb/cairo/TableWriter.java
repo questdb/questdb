@@ -85,6 +85,7 @@ import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
+import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -196,7 +197,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     };
     private static final Row NOOP_ROW = new NoOpRow();
     private static final int O3_ERRNO_FATAL = Integer.MAX_VALUE - 1;
-    private static final int POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT = 32;
     private static final String POSTING_SEAL_PURGE_PENDING_FILE_NAME = "_posting_seal_purge_pending.d";
     private static final int POSTING_SEAL_PURGE_PENDING_FORMAT = 1;
     private static final int ROW_ACTION_NO_PARTITION = 1;
@@ -3160,7 +3160,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @TestOnly
-    public void publishDeferredPostingSealPurgesOnFullQueueForTesting() {
+    public void publishDeferredPostingSealPurgesForTesting() {
         publishDeferredPostingSealPurges(txWriter.getTxn(), true);
     }
 
@@ -5488,13 +5488,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void closeDeferredPostingSealPurges0() {
         long currentTableTxn = txWriter != null ? txWriter.getTxn() : -1L;
         if (txWriter != null) {
-            publishDeferredPostingSealPurgesOnClose(currentTableTxn);
+            publishDeferredPostingSealPurges(currentTableTxn, true);
         }
-        // Ready (committed-superseded) tasks the publish attempt could not hand
-        // off would otherwise be dropped, orphaning the superseded .pv/.pc
-        // sidecar files for the process lifetime. Spill them to a table-local
-        // file the next writer open replays. Future (uncommitted) entries are
-        // re-discovered from the posting chain on reopen, so they need no spill.
+        // A writer without a message bus may fail to acquire the purge-log writer.
+        // Spill its remaining ready tasks to a table-local file for the next open.
+        // Recovery rediscovers future (uncommitted) entries from the posting chain,
+        // so they need no spill.
         boolean spilled = spillReadyPostingSealPurges(currentTableTxn);
         for (int i = deferredPostingSealPurges.size() - 1; i >= 0; i--) {
             PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(i);
@@ -8581,19 +8580,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         rowAction = ROW_ACTION_O3;
         o3TimestampSetter(timestamp);
         return row;
-    }
-
-    private long nextPostingSealPurgePubSeq(Sequence pubSeq, int retryCount) {
-        long cursor = pubSeq.next();
-        for (int i = 0; cursor < 0 && i < retryCount; i++) {
-            if (i > 0) {
-                Os.sleep(1);
-            } else {
-                Os.pause();
-            }
-            cursor = pubSeq.next();
-        }
-        return cursor;
     }
 
     /**
@@ -12130,11 +12116,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         publishDeferredPostingSealPurges(currentTableTxn, true);
     }
 
-    private void publishDeferredPostingSealPurges(long currentTableTxn, boolean persistOnQueueFull) {
-        publishDeferredPostingSealPurges(currentTableTxn, persistOnQueueFull, 0);
-    }
-
-    private void publishDeferredPostingSealPurges(long currentTableTxn, boolean persistOnQueueFull, int queueRetryCount) {
+    private void publishDeferredPostingSealPurges(long currentTableTxn, boolean isDirectPersistAllowed) {
         // Fast path: every caller runs post-join (the 0-body asserts
         // o3PartitionUpdRemaining == 0), so no O3 worker mutates
         // deferredPostingSealPurges here and this size() read needs no lock. It skips
@@ -12144,23 +12126,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         synchronized (parquetSealPurgeLock) {
-            publishDeferredPostingSealPurges0(currentTableTxn, persistOnQueueFull, queueRetryCount);
+            publishDeferredPostingSealPurges0(currentTableTxn, isDirectPersistAllowed);
         }
     }
 
-    private void publishDeferredPostingSealPurges0(long currentTableTxn, boolean persistOnQueueFull, int queueRetryCount) {
+    private void publishDeferredPostingSealPurges0(long currentTableTxn, boolean isDirectPersistAllowed) {
         assert o3PartitionUpdRemaining.get() == 0 : "deferred posting seal-purge publish ran with O3 partition workers in flight";
         if (deferredPostingSealPurges.size() == 0) {
             return;
         }
         if (messageBus == null) {
-            if (persistOnQueueFull) {
+            if (isDirectPersistAllowed) {
                 persistDeferredPostingSealPurgesDirect(currentTableTxn);
             }
             return;
         }
-        Sequence pubSeq = messageBus.getPostingSealPurgePubSeq();
-        RingQueue<PostingSealPurgeTask> queue = messageBus.getPostingSealPurgeQueue();
+        ConcurrentQueue<PostingSealPurgeTask> queue = messageBus.getPostingSealPurgeQueue();
         int writePos = 0;
         for (int readPos = 0, n = deferredPostingSealPurges.size(); readPos < n; readPos++) {
             PostingSealPurgeTask deferredTask = deferredPostingSealPurges.getQuick(readPos);
@@ -12175,46 +12156,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 continue;
             }
 
-            long cursor = nextPostingSealPurgePubSeq(pubSeq, queueRetryCount);
-            if (cursor < 0) {
-                // A live PostingSealPurgeJob owns the purge-log writer, so
-                // direct persist is mostly useful when no job/message bus owns
-                // that table. Close gives the ring a bounded drain chance first.
-                if (persistOnQueueFull && PostingSealPurgeJob.persistReadyTasksDirect(engine, deferredPostingSealPurges, readPos, n, currentTableTxn)) {
-                    writePos = releaseDirectPersistedPostingSealPurges(readPos, writePos, n, currentTableTxn);
-                } else {
-                    for (int i = readPos; i < n; i++) {
-                        deferredPostingSealPurges.setQuick(writePos++, deferredPostingSealPurges.getQuick(i));
-                    }
-                }
-                break;
-            }
-            try {
-                PostingSealPurgeTask queueTask = queue.get(cursor);
-                queueTask.of(
-                        deferredTask.getTableToken(),
-                        deferredTask.getIndexColumnName(),
-                        deferredTask.getPostingColumnNameTxn(),
-                        deferredTask.getSealTxn(),
-                        deferredTask.getPartitionTimestamp(),
-                        deferredTask.getPartitionNameTxn(),
-                        deferredTask.getPartitionBy(),
-                        deferredTask.getTimestampType(),
-                        deferredTask.getFromTableTxn(),
-                        deferredToTxn
-                );
-            } finally {
-                pubSeq.done(cursor);
-            }
+            queue.enqueue(deferredTask);
             releaseDeferredPostingSealPurgeTask(deferredTask);
         }
         for (int i = deferredPostingSealPurges.size() - 1; i >= writePos; i--) {
             deferredPostingSealPurges.remove(i);
         }
-    }
-
-    private void publishDeferredPostingSealPurgesOnClose(long currentTableTxn) {
-        publishDeferredPostingSealPurges(currentTableTxn, true, POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT);
     }
 
     private void publishPendingPostingSealPurges(long currentTableTxn) {
@@ -12963,19 +12910,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (deferredPostingSealPurgeTaskPool != null) {
             deferredPostingSealPurgeTaskPool.release(task);
         }
-    }
-
-    private int releaseDirectPersistedPostingSealPurges(int readPos, int writePos, int n, long currentTableTxn) {
-        assert Thread.holdsLock(parquetSealPurgeLock);
-        for (int i = readPos; i < n; i++) {
-            PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(i);
-            if (task.isEmpty() || task.getToTableTxn() <= currentTableTxn) {
-                releaseDeferredPostingSealPurgeTask(task);
-            } else {
-                deferredPostingSealPurges.setQuick(writePos++, task);
-            }
-        }
-        return writePos;
     }
 
     private void releaseIndexerWriters() {

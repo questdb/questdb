@@ -24,7 +24,6 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.MessageBus;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoConfigurationWrapper;
@@ -56,9 +55,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
+import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectBitSet;
@@ -108,12 +105,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         super.setUp();
-        // Every test must start with an empty shared posting-seal-purge ring. Many
-        // tests here run a WorkerPool + O3, which publish purge tasks into the
-        // engine-wide MessageBus ring; with no PostingSealPurgeJob draining it in the
-        // harness the residue can saturate the ring and starve a later test's purge --
-        // e.g. leaving a superseded .pv unreclaimed, or making a saturation assertion
-        // see no room. Draining here makes each test independent of the prior one.
+        // Tests without a purge job leave tasks in the shared queue. Clear them
+        // so each test starts independently of earlier tables and seal generations.
         drainPostingSealPurgeQueue();
     }
 
@@ -3505,6 +3498,62 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetLastTransitionPublishesReadyPostingSealPurgesWithBacklog() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "posting_parquet_transition";
+            final long partitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym SYMBOL, sym2 SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO " + tableName + " SELECT timestamp_sequence('2022-02-25', 1_000_000L), 'a', 'a' FROM long_sequence(500)");
+            drainWalQueue();
+            TableToken tableToken = engine.verifyTableName(tableName);
+            fillPostingSealPurgeQueue(tableToken);
+            try {
+                execute("ALTER TABLE " + tableName + " ALTER COLUMN sym ADD INDEX TYPE POSTING");
+                execute("ALTER TABLE " + tableName + " ALTER COLUMN sym2 ADD INDEX TYPE POSTING");
+                drainWalQueue();
+                ObjList<PostingSealFileNames> oldFiles = new ObjList<>();
+                ObjList<PostingSealFileNames> liveFiles = new ObjList<>();
+                for (int i = 0; i < 2; i++) {
+                    String columnName = i == 0 ? "sym" : "sym2";
+                    oldFiles.add(resolvePostingSealFileNames(tableName, columnName, null, partitionTimestamp, 0));
+                    liveFiles.add(resolvePostingSealFileNames(tableName, columnName, null, partitionTimestamp, -1));
+                    Assert.assertTrue("ADD INDEX must supersede generation zero", liveFiles.getQuick(i).sealTxn > 0);
+                    assertPostingSealFilesExist(oldFiles.getQuick(i), true);
+                }
+
+                execute("ALTER TABLE " + tableName + " SET FORMAT PARQUET");
+                drainWalQueue();
+                execute("INSERT INTO " + tableName + " VALUES ('2022-02-26T00:00:00', 'b', 'b')");
+                drainWalQueue();
+                Assert.assertFalse("transition must not suspend WAL", engine.getTableSequencerAPI().isSuspended(tableToken));
+                try (TableReader reader = engine.getReader(tableToken)) {
+                    Assert.assertFalse(reader.getTxFile().isPartitionParquet(0));
+                    Assert.assertTrue(reader.getTxFile().isPartitionParquet(1));
+                }
+
+                // Consume the backlog without discarding any real purge task. A
+                // later commit also gives a surviving indexer a chance to retry.
+                try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                    runPostingSealPurgeJob(purgeJob);
+                    execute("INSERT INTO " + tableName + " VALUES ('2022-02-26T00:00:01', 'c', 'c')");
+                    drainWalQueue();
+                    runPostingSealPurgeJob(purgeJob);
+                }
+                assertQuery("SELECT count() FROM " + tableName).noRandomAccess().expectSize().returns("count\n502\n");
+                for (int i = 0; i < 2; i++) {
+                    String columnName = i == 0 ? "sym" : "sym2";
+                    assertQuery("SELECT count() FROM " + tableName + " WHERE " + columnName + " = 'a'")
+                            .noRandomAccess().expectSize().returns("count\n500\n");
+                    assertPostingSealFilesExist(liveFiles.getQuick(i), true);
+                    assertPostingSealFilesExist(oldFiles.getQuick(i), false);
+                }
+            } finally {
+                drainPostingSealPurgeQueue();
+            }
+        });
+    }
+
+    @Test
     public void testO3DeferredPostingSealPurgeRunsAfterCommit() throws Exception {
         assertMemoryLeak(() -> {
             if (configuration.disableColumnPurgeJob()) {
@@ -3547,7 +3596,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testO3DeferredPostingSealPurgePersistsOnCloseWhenJobHoldsLogWriter() throws Exception {
+    public void testO3PostingSealPurgeSurvivesWriterCloseWithBacklogAndLiveJob() throws Exception {
         assertMemoryLeak(() -> {
             if (configuration.disableColumnPurgeJob()) {
                 return;
@@ -3571,40 +3620,24 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             final TableToken tableToken = engine.getTableTokenIfExists(tableName);
             Assert.assertNotNull("table must exist", tableToken);
 
-            // Earlier covering-index tests in this class leave purge tasks in the
-            // shared MessageBus ring (no PostingSealPurgeJob drains it in the test
-            // harness), so it can arrive already saturated. Sibling tests clear it
-            // by running a purge job first; this test must instead keep the ring
-            // full via the liveJob below, so drain the residue directly so its own
-            // fillPostingSealPurgeQueue saturation starts from an empty ring.
             drainPostingSealPurgeQueue();
 
-            // A live PostingSealPurgeJob owns the sys.posting_seal_purge_log
-            // writer for the entire close, exactly as in a running server. It is
-            // not draining concurrently (CPU-starved or in error backoff), so the
-            // ring stays saturated and the close-time direct-persist fallback
-            // cannot acquire the log writer.
+            // A live job owns the purge-log writer but does not consume tasks
+            // until after the data writer closes. The queue must accept the
+            // deferred work even with a backlog larger than the former ring.
             try (PostingSealPurgeJob liveJob = new PostingSealPurgeJob(engine)) {
                 Assert.assertTrue("live job must own the log writer", liveJob.isJobAliveForTesting());
                 fillPostingSealPurgeQueue(tableToken);
 
-                // The O3 commit advances _txn so the deferred purge is ready, but
-                // the ring is full so it remains in the TableWriter until close.
+                // The O3 commit makes the deferred purge ready and queues it.
                 execute(insertPostingRowsSql(35, 92));
 
-                // Close while liveJob still holds the log writer. The ready purge
-                // intent must survive instead of being dropped and orphaning the
-                // superseded .pv/.pc files for the process lifetime.
+                // Closing the writer must not invalidate its queued task.
                 engine.releaseAllWriters();
                 assertPostingSealFilesExist(oldFiles, true);
             }
 
-            // Clear the saturating dummy tasks so a recovering job can drain the
-            // real, deferred purge work.
-            drainPostingSealPurgeQueue();
-
-            // Reopen the data table so writer-open recovery can replay the intent
-            // recorded at close, then let a job complete the promised purge.
+            // Reopening the data writer must also preserve the queued task.
             try (TableWriter ignore = engine.getWriter(tableToken, "posting seal purge recovery test")) {
                 Assert.assertNotNull(ignore);
             }
@@ -3618,7 +3651,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testO3DeferredPostingSealPurgePersistsOnCloseWhenQueueIsFull() throws Exception {
+    public void testO3PostingSealPurgeSurvivesWriterCloseWithBacklog() throws Exception {
         assertMemoryLeak(() -> {
             if (configuration.disableColumnPurgeJob()) {
                 return;
@@ -3637,7 +3670,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
             execute(insertPostingRowsSql(0, 35));
             final PostingSealFileNames oldFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
-            final long oldSealTxn = oldFiles.sealTxn;
             assertPostingSealFilesExist(oldFiles, true);
 
             try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
@@ -3648,33 +3680,25 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             Assert.assertNotNull("table must exist", tableToken);
             fillPostingSealPurgeQueue(tableToken);
 
-            // The O3 commit advances _txn while the ring is full, so the now
-            // ready deferred purge remains in TableWriter until close. Close
-            // must persist it to sys.posting_seal_purge_log instead of dropping
-            // the task.
+            // The queue accepts the ready task despite the backlog and owns a
+            // copy that survives writer close and deferred-task pool reuse.
             try {
                 execute(insertPostingRowsSql(35, 92));
                 engine.releaseAllWriters();
                 assertPostingSealFilesExist(oldFiles, true);
-                assertOpenDeferredPostingSealPurgeLogRow(
-                        tableToken,
-                        indexColumnName,
-                        oldSealTxn
-                );
+                assertPostingSealPurgePendingFileExists(tableToken, false);
+                try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                    runPostingSealPurgeJob(purgeJob);
+                }
+                assertPostingSealFilesExist(oldFiles, false);
             } finally {
                 drainPostingSealPurgeQueue();
             }
-
-            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
-                runPostingSealPurgeJob(purgeJob);
-            }
-
-            assertPostingSealFilesExist(oldFiles, false);
         });
     }
 
     @Test
-    public void testO3DeferredPostingSealPurgePersistsMultipleReadyEntriesOnCloseWhenQueueIsFull() throws Exception {
+    public void testO3PostingSealPurgeSurvivesMultipleReadyEntriesAndWriterCloseWithBacklog() throws Exception {
         assertMemoryLeak(() -> {
             if (configuration.disableColumnPurgeJob()) {
                 return;
@@ -3712,24 +3736,21 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 engine.releaseAllWriters();
                 assertPostingSealFilesExist(oldFiles1, true);
                 assertPostingSealFilesExist(oldFiles2, true);
-                assertOpenDeferredPostingSealPurgeLogRow(tableToken, indexColumnName1, oldFiles1.sealTxn);
-                assertOpenDeferredPostingSealPurgeLogRow(tableToken, indexColumnName2, oldFiles2.sealTxn);
+                assertPostingSealPurgePendingFileExists(tableToken, false);
+                try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                    runPostingSealPurgeJob(purgeJob);
+                }
+                assertPostingSealFilesExist(oldFiles1, false);
+                assertPostingSealFilesExist(oldFiles2, false);
             } finally {
                 drainPostingSealPurgeQueue();
             }
-
-            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
-                runPostingSealPurgeJob(purgeJob);
-            }
-
-            assertPostingSealFilesExist(oldFiles1, false);
-            assertPostingSealFilesExist(oldFiles2, false);
         });
     }
 
 
     @Test
-    public void testDirectPersistReadyDeferredPostingSealPurgeRetainsFutureEntryWhenQueueIsFull() throws Exception {
+    public void testDeferredPostingSealPurgePublishesReadyEntryAndRetainsFutureEntryWithBacklog() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
 
         assertMemoryLeak(() -> {
@@ -3780,11 +3801,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     row.putLong(3, 2000);
                     row.append();
 
-                    writer.publishDeferredPostingSealPurgesOnFullQueueForTesting();
-                    assertOpenDeferredPostingSealPurgeLogRow(tableToken, indexColumnName, readyFiles.sealTxn);
+                    writer.publishDeferredPostingSealPurgesForTesting();
+                    try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                        runPostingSealPurgeJob(purgeJob);
+                    }
+                    assertPostingSealFilesExist(readyFiles, false);
+                    assertPostingSealFilesExist(futureFiles, true);
                     assertOpenDeferredPostingSealPurgeLogRowCount(tableToken, indexColumnName, futureFiles.sealTxn, 0);
-
-                    drainPostingSealPurgeQueue();
                     writer.commit();
                 }
 
@@ -3800,7 +3823,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCommitSeqTxnPublishesReadyDeferredPostingSealPurgeRetainedByFullQueue() throws Exception {
+    public void testCommitSeqTxnPreservesQueuedPostingSealPurgeWithBacklog() throws Exception {
         assertMemoryLeak(() -> {
             if (configuration.disableColumnPurgeJob()) {
                 return;
@@ -3833,9 +3856,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 execute(insertPostingRowsSql(tableName, 35, 92, false));
                 assertPostingSealFilesExist(oldFiles, true);
 
-                drainPostingSealPurgeQueue();
                 try (TableWriter writer = TestUtils.getWriter(engine, tableToken)) {
-                    writer.commitSeqTxn(12345);
+                    writer.commitSeqTxn(12_345);
                 }
 
                 try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
@@ -3849,17 +3871,11 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
-     * A live PostingSealPurgeJob owns the purge-log writer and the ring is
-     * full, so the close-time handoff in closeDeferredPostingSealPurges()
-     * reaches neither the ring nor the shared log. Rather than dropping the
-     * ready intent, the close spills it to the table-local pending file
-     * (spilled == true), so nothing reaches the shared log yet the intent
-     * survives on disk for the next open to replay. This covers the spill
-     * fallback; the spill-write-failure drop path is covered by
-     * {@link #testCloseDropsReadyDeferredPostingSealPurgeWhenSpillFileWriteFails()}.
+     * A stopped consumer that owns the purge-log writer must not force ready
+     * tasks into a spill file. The unbounded queue owns them across writer close.
      */
     @Test
-    public void testCloseWithLivePurgeJobSpillsReadyDeferredPostingSealPurgeWhenQueueIsFull() throws Exception {
+    public void testCloseWithLivePurgeJobQueuesReadyPostingSealPurgeWithBacklog() throws Exception {
         assertMemoryLeak(() -> {
             if (configuration.disableColumnPurgeJob()) {
                 return;
@@ -3890,18 +3906,16 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             try (PostingSealPurgeJob ignoredLiveJob = new PostingSealPurgeJob(engine)) {
                 fillPostingSealPurgeQueue(tableToken);
                 try {
-                    // The O3 commit advances _txn so the deferred purge is
-                    // ready, but the ring is full so it stays in the
-                    // TableWriter until close.
                     execute(insertPostingRowsSql(tableName, 35, 92, false));
                     engine.releaseAllWriters();
 
-                    // The handoff reached neither the ring nor the shared log,
-                    // but the ready intent was spilled to the table-local
-                    // pending file instead of being dropped.
+                    // The job has not consumed the task yet; the queue, not a
+                    // spill file or log row, owns the ready intent.
                     assertOpenDeferredPostingSealPurgeLogRowCount(tableToken, indexColumnName, oldFiles.sealTxn, 0);
-                    assertPostingSealPurgePendingFileExists(tableToken, true);
+                    assertPostingSealPurgePendingFileExists(tableToken, false);
                     assertPostingSealFilesExist(oldFiles, true);
+                    runPostingSealPurgeJob(ignoredLiveJob);
+                    assertPostingSealFilesExist(oldFiles, false);
                 } finally {
                     drainPostingSealPurgeQueue();
                 }
@@ -3910,33 +3924,18 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
-     * The multi-record spill+replay round trip. A live PostingSealPurgeJob
-     * owns the purge-log writer and the ring is full, so closing a table with
-     * TWO superseded posting indexes spills BOTH ready intents into a single
-     * two-record pending file - the only path that writes a record count >= 2.
-     * The next writer open then walks that file, exercising the variable
-     * inter-record stride (each record advances by 56 fixed bytes plus the
-     * stored index column name), and republishes both intents so a later purge
-     * job reclaims the superseded .pv/.pc sidecars for both columns.
-     * <p>
-     * The two index columns use DISTINCT name lengths on purpose: a record
-     * stride that ignored the variable-length name would still land correctly
-     * on the second record when both names share a length, hiding the bug. This
-     * complements the single-record file-existence check in
-     * {@link #testCloseWithLivePurgeJobSpillsReadyDeferredPostingSealPurgeWhenQueueIsFull()}
-     * and the single-record replay in
-     * {@link #testO3DeferredPostingSealPurgePersistsOnCloseWhenJobHoldsLogWriter()}.
+     * Replay the pending-file format from writers that spilled before the queue
+     * became unbounded. Different name lengths exercise variable record strides.
      */
     @Test
-    public void testCloseWithLivePurgeJobSpillsMultipleReadyDeferredPostingSealPurgesAndReplaysOnReopen() throws Exception {
+    public void testRecoverLegacyPostingSealPurgePendingFileWithMultipleEntries() throws Exception {
         assertMemoryLeak(() -> {
             if (configuration.disableColumnPurgeJob()) {
                 return;
             }
             drainPostingSealPurgeQueue();
             final String tableName = "posting_close_live_job_multi_deferred";
-            // Distinct lengths so the on-disk record stride genuinely depends
-            // on the stored name length between records, not a constant.
+            // Distinct lengths exercise copying the mutable column-name sinks.
             final String indexColumnName1 = "new_col_11";
             final String indexColumnName2 = "ix2";
             final String coveredColumnName = "marker";
@@ -3964,29 +3963,19 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             Assert.assertNotNull("table must exist", tableToken);
             try (PostingSealPurgeJob ignoredLiveJob = new PostingSealPurgeJob(engine)) {
                 fillPostingSealPurgeQueue(tableToken);
-                try {
-                    // The O3 commit advances _txn so both deferred purges are
-                    // ready, but the ring is full so they stay in the
-                    // TableWriter until close.
-                    execute(insertPostingRowsSql(tableName, 35, 92, true));
-                    engine.releaseAllWriters();
-
-                    // The handoff reached neither the ring nor the shared log,
-                    // so both ready intents were spilled into one two-record
-                    // pending file rather than the log table.
-                    assertOpenDeferredPostingSealPurgeLogRowCount(tableToken, indexColumnName1, oldFiles1.sealTxn, 0);
-                    assertOpenDeferredPostingSealPurgeLogRowCount(tableToken, indexColumnName2, oldFiles2.sealTxn, 0);
-                    assertPostingSealPurgePendingFileExists(tableToken, true);
-                    assertPostingSealFilesExist(oldFiles1, true);
-                    assertPostingSealFilesExist(oldFiles2, true);
-                } finally {
-                    drainPostingSealPurgeQueue();
-                }
+                execute(insertPostingRowsSql(tableName, 35, 92, true));
+                engine.releaseAllWriters();
+                assertOpenDeferredPostingSealPurgeLogRowCount(tableToken, indexColumnName1, oldFiles1.sealTxn, 0);
+                assertOpenDeferredPostingSealPurgeLogRowCount(tableToken, indexColumnName2, oldFiles2.sealTxn, 0);
+                assertPostingSealPurgePendingFileExists(tableToken, false);
+                assertPostingSealFilesExist(oldFiles1, true);
+                assertPostingSealFilesExist(oldFiles2, true);
             }
 
-            // Reopen so writer-open recovery walks the two-record pending file
-            // (the inter-record stride path) and republishes both intents. The
-            // file is removed once recovered.
+            // Store the real queued tasks in the legacy format, then verify that
+            // writer-open recovery republishes them into the new queue.
+            writeQueuedPostingSealPurgePendingFile(tableToken);
+            assertPostingSealPurgePendingFileExists(tableToken, true);
             try (TableWriter ignore = engine.getWriter(tableToken, "posting seal purge multi-record recovery test")) {
                 Assert.assertNotNull(ignore);
             }
@@ -3996,31 +3985,23 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 runPostingSealPurgeJob(purgeJob);
             }
 
-            // Both superseded seal-file pairs must be purged, proving the
-            // second record parsed at the correct offset.
+            // Both superseded seal-file pairs must disappear.
             assertPostingSealFilesExist(oldFiles1, false);
             assertPostingSealFilesExist(oldFiles2, false);
         });
     }
 
     /**
-     * The genuine data-losing branch of closeDeferredPostingSealPurges(): a
-     * live PostingSealPurgeJob owns the purge-log writer and the ring is full
-     * (so the handoff fails), AND the close-time spill to the table-local
-     * pending file also fails. With spilled == false the ready intent is
-     * dropped with a LOG.critical and the superseded .pv/.pc sidecar files are
-     * orphaned for the process lifetime - the next open finds no spill file to
-     * replay, so a later purge job cannot reclaim them. Contrast with
-     * {@link #testCloseWithLivePurgeJobSpillsReadyDeferredPostingSealPurgeWhenQueueIsFull()},
-     * where the spill succeeds and the intent survives.
+     * A queue backlog no longer requires a spill write. Even if the filesystem
+     * would reject that write, closing the writer preserves its queued purge.
      */
     @Test
-    public void testCloseDropsReadyDeferredPostingSealPurgeWhenSpillFileWriteFails() throws Exception {
-        final AtomicBoolean failSpillWrite = new AtomicBoolean(false);
+    public void testCloseQueuesReadyPostingSealPurgeWhenSpillFileWriteWouldFail() throws Exception {
+        final AtomicBoolean isSpillWriteFailing = new AtomicBoolean(false);
         ff = new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, int opts) {
-                if (failSpillWrite.get() && Utf8s.endsWithAscii(name, "_posting_seal_purge_pending.d")) {
+                if (isSpillWriteFailing.get() && Utf8s.endsWithAscii(name, "_posting_seal_purge_pending.d")) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -4057,45 +4038,38 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             try (PostingSealPurgeJob ignoredLiveJob = new PostingSealPurgeJob(engine)) {
                 fillPostingSealPurgeQueue(tableToken);
                 try {
-                    // The O3 commit advances _txn so the deferred purge is
-                    // ready, but the ring is full so it stays in the
-                    // TableWriter until close.
                     execute(insertPostingRowsSql(tableName, 35, 92, false));
 
-                    // Close while the live job holds the purge-log writer and
-                    // the spill write fails. The ready intent reaches neither
-                    // the ring, nor the shared log, nor the spill file, so the
-                    // drop branch fires.
-                    failSpillWrite.set(true);
+                    // The task already belongs to the queue. Close must not need
+                    // either the busy purge-log writer or a spill-file write.
+                    isSpillWriteFailing.set(true);
                     engine.releaseAllWriters();
-                    failSpillWrite.set(false);
+                    isSpillWriteFailing.set(false);
 
-                    // No record of the intent anywhere: the shared log is
-                    // untouched and the spill file was never created.
+                    // The consumer has not run, so only the queue owns the task.
                     assertOpenDeferredPostingSealPurgeLogRowCount(tableToken, indexColumnName, oldFiles.sealTxn, 0);
                     assertPostingSealPurgePendingFileExists(tableToken, false);
-                    // The superseded files are orphaned by the drop.
                     assertPostingSealFilesExist(oldFiles, true);
+                    runPostingSealPurgeJob(ignoredLiveJob);
+                    assertPostingSealFilesExist(oldFiles, false);
                 } finally {
                     drainPostingSealPurgeQueue();
                 }
             }
 
-            // Reopen and run a purge job. With no spill file to replay and the
-            // intent dropped, the orphaned files cannot be reclaimed - the data
-            // loss the LOG.critical warns about.
+            // Reopen after cleanup without a spill file.
             try (TableWriter ignore = engine.getWriter(tableToken, "posting seal purge drop test")) {
                 Assert.assertNotNull(ignore);
             }
             try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
                 runPostingSealPurgeJob(purgeJob);
             }
-            assertPostingSealFilesExist(oldFiles, true);
+            assertPostingSealFilesExist(oldFiles, false);
         });
     }
 
     @Test
-    public void testSquashPartitionsKeepsRetainedDeferredPostingSealPurgeAcrossSuccessfulCommit() throws Exception {
+    public void testSquashPartitionsKeepsQueuedPostingSealPurgeAcrossSuccessfulCommit() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
         node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
         node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
@@ -4142,8 +4116,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 );
                 try (TableWriter writer = TestUtils.getWriter(engine, tableToken)) {
                     writer.squashPartitions();
-                    drainPostingSealPurgeQueue();
-                    writer.commitSeqTxn(12345);
+                    writer.commitSeqTxn(12_345);
                 }
                 final long squashedPartitionCount = selectLong("SELECT count() FROM table_partitions('" + tableName + "')");
                 Assert.assertTrue(
@@ -4162,7 +4135,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAttachDetachForceRemoveKeepRetainedDeferredPostingSealPurgeAcrossCommits() throws Exception {
+    public void testAttachDetachForceRemoveKeepQueuedPostingSealPurgeAcrossCommits() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, DETACHED_DIR_MARKER);
 
         assertMemoryLeak(() -> {
@@ -4212,9 +4185,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     LongList partitions = new LongList();
                     partitions.add(dayAfterTarget);
                     writer.forceRemovePartitions(partitions);
-
-                    drainPostingSealPurgeQueue();
-                    writer.commitSeqTxn(12345);
+                    writer.commitSeqTxn(12_345);
                 }
                 assertQuery("SELECT count() FROM " + tableName + " WHERE ts = '2022-02-26T00:00:00.000000Z'")
                         .noLeakCheck()
@@ -12703,14 +12674,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         }
     }
 
-    private void assertOpenDeferredPostingSealPurgeLogRow(
-            TableToken tableToken,
-            String indexColumnName,
-            long sealTxn
-    ) throws Exception {
-        assertOpenDeferredPostingSealPurgeLogRowCount(tableToken, indexColumnName, sealTxn, 1);
-    }
-
     private void assertOpenDeferredPostingSealPurgeLogRowCount(
             TableToken tableToken,
             String indexColumnName,
@@ -12906,9 +12869,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     private void fillPostingSealPurgeQueue(TableToken liveToken) {
-        MessageBus bus = engine.getMessageBus();
-        MPSequence pubSeq = bus.getPostingSealPurgePubSeq();
-        RingQueue<PostingSealPurgeTask> queue = bus.getPostingSealPurgeQueue();
+        ConcurrentQueue<PostingSealPurgeTask> queue = engine.getMessageBus().getPostingSealPurgeQueue();
         TableToken missingToken = new TableToken(
                 "__missing_posting_seal_purge_queue_fill",
                 "__missing_posting_seal_purge_queue_fill",
@@ -12918,56 +12879,30 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 false,
                 false
         );
-        int published = 0;
-        while (true) {
-            long cursor = pubSeq.next();
-            if (cursor == -2) {
-                Os.pause();
-                continue;
-            }
-            if (cursor < 0) {
-                break;
-            }
-            try {
-                queue.get(cursor).of(
-                        missingToken,
-                        "missing_col",
-                        COLUMN_NAME_TXN_NONE,
-                        published,
-                        0L,
-                        -1L,
-                        PartitionBy.NONE,
-                        ColumnType.TIMESTAMP_MICRO,
-                        0L,
-                        0L
-                );
-            } finally {
-                pubSeq.done(cursor);
-            }
-            published++;
+        // Exceed the former bounded ring's capacity without running the consumer.
+        final int taskCount = 4 * configuration.getColumnPurgeQueueCapacity();
+        PostingSealPurgeTask task = new PostingSealPurgeTask();
+        for (int i = 0; i < taskCount; i++) {
+            task.of(
+                    missingToken,
+                    "missing_col",
+                    COLUMN_NAME_TXN_NONE,
+                    i,
+                    0L,
+                    -1L,
+                    PartitionBy.NONE,
+                    ColumnType.TIMESTAMP_MICRO,
+                    0L,
+                    0L
+            );
+            queue.enqueue(task);
+            task.clear();
         }
-        Assert.assertTrue("posting seal purge queue must be saturated by the test", published > 0);
+        Assert.assertTrue("queue must retain the backlog", queue.getApproximateCount() >= taskCount);
     }
 
     private void drainPostingSealPurgeQueue() {
-        MessageBus bus = engine.getMessageBus();
-        SCSequence subSeq = bus.getPostingSealPurgeSubSeq();
-        RingQueue<PostingSealPurgeTask> queue = bus.getPostingSealPurgeQueue();
-        while (true) {
-            long cursor = subSeq.next();
-            if (cursor == -2) {
-                Os.pause();
-                continue;
-            }
-            if (cursor < 0) {
-                break;
-            }
-            try {
-                queue.get(cursor).clear();
-            } finally {
-                subSeq.done(cursor);
-            }
-        }
+        engine.getMessageBus().getPostingSealPurgeQueue().clear();
     }
 
     /**
@@ -13540,6 +13475,36 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     // Writes a deliberately corrupt posting seal-purge pending file, truncated to
     // an exact length (TRUNCATE_TO_POINTER) so the recovery bound-checks see the
     // intended short/overrunning layout rather than a page-padded file.
+    private void writeQueuedPostingSealPurgePendingFile(TableToken token) {
+        ConcurrentQueue<PostingSealPurgeTask> queue = engine.getMessageBus().getPostingSealPurgeQueue();
+        PostingSealPurgeTask task = new PostingSealPurgeTask();
+        try (Path path = new Path(); MemoryMARW mem = Vm.getCMARWInstance()) {
+            path.of(configuration.getDbRoot()).concat(token).concat("_posting_seal_purge_pending.d");
+            mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+            mem.putInt(1); // Legacy format version.
+            mem.putInt(0);
+            int count = 0;
+            while (queue.tryDequeue(task)) {
+                if (!token.equals(task.getTableToken())) {
+                    continue;
+                }
+                mem.putLong(task.getPostingColumnNameTxn());
+                mem.putLong(task.getSealTxn());
+                mem.putLong(task.getPartitionTimestamp());
+                mem.putLong(task.getPartitionNameTxn());
+                mem.putInt(task.getPartitionBy());
+                mem.putInt(task.getTimestampType());
+                mem.putLong(task.getFromTableTxn());
+                mem.putLong(task.getToTableTxn());
+                mem.putStr(task.getIndexColumnName());
+                count++;
+            }
+            Assert.assertTrue("fixture must contain multiple real purge tasks", count >= 2);
+            mem.putInt(Integer.BYTES, count);
+            mem.sync(false);
+        }
+    }
+
     private void writeCorruptPostingSealPurgePendingFile(TableToken token, int variant) {
         FilesFacade ff = configuration.getFilesFacade();
         try (Path path = new Path()) {
