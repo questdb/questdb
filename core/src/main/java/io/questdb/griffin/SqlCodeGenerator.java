@@ -9707,6 +9707,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         };
     }
 
+    /**
+     * Returns true when every projected token names a column of {@code metadata}. Column order is
+     * deliberately not considered, so this preserves the historical timestamp-first reordering of
+     * `(...) TIMESTAMP(ts)` sub-queries; it only rejects projections whose names the nested
+     * metadata cannot supply.
+     */
+    private static boolean projectsNestedColumnNames(ObjList<QueryColumn> columns, int selectColumnCount, RecordMetadata metadata) {
+        for (int i = 0; i < selectColumnCount; i++) {
+            final CharSequence token = columns.getQuick(i).getAst().token;
+            if (Chars.equals(metadata.getColumnName(i), token)) {
+                continue;
+            }
+            boolean found = false;
+            for (int j = 0, n = metadata.getColumnCount(); j < n; j++) {
+                if (j != i && Chars.equals(metadata.getColumnName(j), token)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private RecordCursorFactory generateSelectChoose(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         boolean overrideTimestampRequired = model.hasExplicitTimestamp() && executionContext.isTimestampRequired();
         final RecordCursorFactory factory;
@@ -9790,7 +9816,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         } else {
             final int tsIndex = metadata.getTimestampIndex();
-            entity = timestamp != null && tsIndex != -1 && Chars.equalsIgnoreCase(timestamp.token, metadata.getColumnName(tsIndex));
+            entity = timestamp != null && tsIndex != -1
+                    && Chars.equalsIgnoreCase(timestamp.token, metadata.getColumnName(tsIndex))
+                    // Matching the designated timestamp alone does not make the wrapper
+                    // redundant: the nested metadata is handed straight back to the caller, so
+                    // it must also carry the projection's column count and names. A
+                    // JoinRecordMetadata names columns `<alias>.<column>`, which would
+                    // otherwise reach the wire and change the result's shape.
+                    && metadata.getColumnCount() == selectColumnCount
+                    && projectsNestedColumnNames(columns, selectColumnCount, metadata);
         }
 
         if (entity) {

@@ -58,6 +58,38 @@ public class ExplicitTimestampJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCtasOverExplicitTimestampJoinMaster() throws Exception {
+        // The hoisted timestamp is qualified as `<masterAlias>.ts`, which matches the join
+        // metadata's timestamp column name and trips the entity shortcut in
+        // SqlCodeGenerator.generateSelectChoose. The outer projection is discarded, so CTAS
+        // sees the raw JoinRecordMetadata names and rejects them.
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE TABLE r AS (SELECT ts, x, ts2, y FROM (a) TIMESTAMP(ts) LT JOIN b)");
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampJoinMasterKeepsProjectionNames() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT ts, x, ts2, y FROM (a) TIMESTAMP(ts) LT JOIN b")
+                    .timestamp("ts").noRandomAccess().returns("ts\tx\tts2\ty\n");
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampJoinMasterKeepsProjectionShape() throws Exception {
+        // A narrower, reordered projection must not be widened back to the join's full
+        // column set.
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT x, ts FROM (a) TIMESTAMP(ts) ASOF JOIN b")
+                    .timestamp("ts").noRandomAccess().returns("x\tts\n");
+        });
+    }
+
+    @Test
     public void testInvalidBranchTimestampCannotResolveToSlave() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
