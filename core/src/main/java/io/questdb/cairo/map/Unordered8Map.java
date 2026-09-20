@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkSPI;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -45,6 +46,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Numbers;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -100,6 +102,9 @@ public class Unordered8Map implements Map, Reopenable {
     private final FlyweightPackedMapValue value;
     private final FlyweightPackedMapValue value2;
     private final FlyweightPackedMapValue value3;
+    // Retained so that a ProbeView can build its own value flyweight; the constructor's
+    // valueTypes argument is @Transient and must not outlive the call.
+    private final long[] valueOffsets;
     private final long valueSize;
     private long batchEmptyValueStart;
     private int free;
@@ -180,6 +185,7 @@ public class Unordered8Map implements Map, Reopenable {
                 }
             }
             this.valueSize = valueSize;
+            this.valueOffsets = valueOffsets;
 
             this.entrySize = Bytes.align8b(KEY_SIZE + valueSize);
             // Validate against initialKeyCapacity so both eager and lazy modes catch the
@@ -803,6 +809,259 @@ public class Unordered8Map implements Map, Reopenable {
 
     boolean isZeroKey(long startAddress) {
         return Unsafe.getLong(startAddress) == 0;
+    }
+
+    /**
+     * Read-only, re-targetable probe over a frozen {@link Unordered8Map}, so that many threads can
+     * look up keys in one map at the same time. The map's own {@link MapKey} cannot do that: it
+     * holds one staged key and the {@code value}/{@code value2}/{@code value3} flyweights its
+     * lookups return are shared by every caller. A view stages the key in a field of its own and
+     * carries its own value flyweight, so two views share nothing but the frozen map they read.
+     * Unlike {@link OrderedMap.ProbeView} it needs no native memory: an eight-byte key fits in a
+     * {@code long}.
+     * <p>
+     * The shape is stage once, probe many. {@link #of(Unordered8Map)} binds or rebinds the view,
+     * {@link #withKey()} starts a fresh key, a {@link RecordSink} copies the key column in, and
+     * {@link #findValue()} looks the key up. Rebinding leaves the staged key alone, so one staged
+     * key probes any map that shares the bound value layout - what a partitioned build needs; a
+     * map with a different layout is rejected.
+     * <p>
+     * A view reads a map that nothing is mutating: between {@link #of(Unordered8Map)} and the last
+     * {@link #findValue()} the map must take no put, clear, rehash or close. The view snapshots the
+     * hash table bounds, the mask and the zero-key flag when it binds, so a later rehash leaves it
+     * reading a freed block.
+     */
+    public static final class ProbeView implements RecordSinkSPI, QuietCloseable {
+        private long entrySize;
+        private boolean hasZero;
+        private long key;
+        private long mask;
+        private long memLimit;
+        private long memStart;
+        private FlyweightPackedMapValue value;
+        private long[] valueOffsets;
+        private long valueSize = -1;
+        private long zeroMemStart;
+
+        @Override
+        public void close() {
+            // The view holds no native memory of its own. Drop the snapshot, so that a probe
+            // after close faults instead of reading a block the map may meanwhile have freed.
+            memStart = 0;
+            memLimit = 0;
+            zeroMemStart = 0;
+            mask = 0;
+            hasZero = false;
+        }
+
+        /**
+         * Looks the staged key up in the bound map and returns its value, or null when the map
+         * holds no such key. The returned value is this view's own flyweight and stays valid
+         * until the next call.
+         */
+        public MapValue findValue() {
+            if (key == 0) {
+                // The zero key marks an empty slot, so it lives in its own entry past the table.
+                return hasZero ? value.of(zeroMemStart, zeroMemStart + KEY_SIZE, false) : null;
+            }
+            long startAddress = memStart + entrySize * (Hash.hashLong64(key) & mask);
+            for (; ; ) {
+                final long k = Unsafe.getLong(startAddress);
+                if (k == 0) {
+                    return null;
+                }
+                if (k == key) {
+                    return value.of(startAddress, startAddress + KEY_SIZE, false);
+                }
+                // Advance sequentially, as the map's own lookup does.
+                startAddress += entrySize;
+                if (startAddress >= memLimit) {
+                    startAddress = memStart;
+                }
+            }
+        }
+
+        /**
+         * Allocated native bytes, always zero: an eight-byte key stages in a field. Stated
+         * explicitly so that a caller summing the bytes of a mixed set of views needs no branch.
+         */
+        public long getSizeInBytes() {
+            return 0;
+        }
+
+        /**
+         * Binds or rebinds this view to an open map and snapshots its lookup state. The first
+         * call adopts the map's value layout; every later call requires the same layout and
+         * leaves the staged key alone, so one key can probe a series of maps.
+         */
+        public ProbeView of(Unordered8Map map) {
+            if (!map.isOpen()) {
+                throw CairoException.nonCritical().put("map probe view needs an open map");
+            }
+            if (valueSize == -1) {
+                valueSize = map.valueSize;
+                valueOffsets = map.valueOffsets;
+                value = new FlyweightPackedMapValue(valueSize, valueOffsets);
+            } else if (valueSize != map.valueSize || !sameValueOffsets(map.valueOffsets)) {
+                throw CairoException.nonCritical().put("map probe view is bound to a different value layout");
+            }
+            entrySize = map.entrySize;
+            hasZero = map.hasZero;
+            mask = map.mask;
+            memLimit = map.memLimit;
+            memStart = map.memStart;
+            zeroMemStart = map.zeroMemStart;
+            return this;
+        }
+
+        @Override
+        public void putArray(ArrayView view) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putBin(BinarySequence value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putBool(boolean value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putByte(byte value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putChar(char value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putDate(long value) {
+            putLong(value);
+        }
+
+        @Override
+        public void putDecimal128(Decimal128 value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putDecimal256(Decimal256 value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putDouble(double value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putFloat(float value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putIPv4(int value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putInt(int value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putInterval(Interval interval) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putLong(long value) {
+            key = value;
+        }
+
+        @Override
+        public void putLong128(long lo, long hi) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putLong256(Long256 value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putLong256(long l0, long l1, long l2, long l3) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putRecord(Record value) {
+            // no-op
+        }
+
+        @Override
+        public void putShort(short value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putStr(CharSequence value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putStr(CharSequence value, int lo, int hi) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putTimestamp(long value) {
+            putLong(value);
+        }
+
+        @Override
+        public void putVarchar(Utf8Sequence value) {
+            throw new UnsupportedOperationException();
+        }
+
+        /**
+         * Accepts a tracker and ignores it: the view allocates nothing. Stated explicitly, as
+         * {@link Map#setMemoryTracker} asks of a non-allocating map, so that a caller can wire
+         * every view the same way and a later allocating change has to face the question.
+         */
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        }
+
+        @Override
+        public void skip(int bytes) {
+            throw new UnsupportedOperationException();
+        }
+
+        /** Discards the staged key and starts a new one. */
+        public ProbeView withKey() {
+            key = 0;
+            return this;
+        }
+
+        private boolean sameValueOffsets(long[] other) {
+            if (valueOffsets == other) {
+                return true;
+            }
+            if (valueOffsets == null || other == null || valueOffsets.length != other.length) {
+                return false;
+            }
+            for (int i = 0, n = valueOffsets.length; i < n; i++) {
+                if (valueOffsets[i] != other[i]) {
+                    return false;
+                }
+            }
+            return true;
+        }
     }
 
     class Key implements MapKey {
