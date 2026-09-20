@@ -44,8 +44,10 @@ import io.questdb.std.IntList;
  * A lone INT pair, and a lone SYMBOL pair whose keys the build translates into the probe's
  * domain, keep the narrow INT layout ({@link #isIntKeyed()}). Every other shape stages its key
  * through a {@link io.questdb.cairo.RecordSink} into a map. A SYMBOL pair inside a composite key
- * therefore compares as text, exactly as the ordinary hash join compares it, since nothing
- * translates the symbols of a staged key.
+ * therefore compares as text, which matches the same rows at a higher cost than the ordinary
+ * hash join pays: {@code SqlCodeGenerator.convertSymbolJoinKeysToInt()} translates such a pair
+ * into int keys whenever both symbol tables are static, and nothing translates the symbols of a
+ * staged key.
  */
 public final class HashJoinGroupByKeys {
     private final IntList buildColumns = new IntList();
@@ -109,7 +111,9 @@ public final class HashJoinGroupByKeys {
             }
         } else if (ColumnType.isSymbol(probeType) && ColumnType.isSymbol(buildType)) {
             // The INT layout translates the build's symbol keys once per distinct key; a staged
-            // key has no such step, so inside a composite key both sides compare as text.
+            // key has no such step, so inside a composite key both sides compare as text. The
+            // ordinary hash join translates such a pair, so the fused plan hashes text where the
+            // ordinary plan hashes ints.
             type = isSingleKey ? ColumnType.SYMBOL : ColumnType.STRING;
             if (!isSingleKey) {
                 symbolAsString.set(key);
