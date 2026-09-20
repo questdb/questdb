@@ -6349,11 +6349,15 @@ public class SubsampleTest extends AbstractCairoTest {
             assertQuery("SELECT ts, x FROM (SELECT ts, x FROM t SUBSAMPLE uniform(2)) TIMESTAMP(ts)")
                     .timestamp("ts")
                     .returns(uniformExpected);
-            // NOTE: the desugared wildcard stack projects the window timestamp first (ts, x),
-            // not in table order (x, ts) - pinned current behavior.
+            // an inner wildcard expands in table order (x, ts); the TIMESTAMP() suffix
+            // designates a timestamp and must not reorder it.
             assertQuery("SELECT * FROM (SELECT * FROM t SUBSAMPLE uniform(2)) TIMESTAMP(ts)")
                     .timestamp("ts")
-                    .returns(uniformExpected);
+                    .returns("""
+                            x\tts
+                            1\t1970-01-01T00:00:00.000010Z
+                            4\t1970-01-01T00:00:00.000040Z
+                            """);
             // TIMESTAMP(other_col): re-designating onto a renamed projection of the timestamp
             // works over a subsampled subquery exactly as over ordinary subqueries.
             assertQuery("SELECT * FROM (SELECT ts, x, ts AS t2 FROM t SUBSAMPLE uniform(2)) TIMESTAMP(t2)")
@@ -6381,14 +6385,14 @@ public class SubsampleTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000010Z\t1
                             1970-01-01T00:00:00.000040Z\t4
                             """);
-            // NOTE: the explicit clause moves the designated column to the front of the star
-            // expansion (ts, rt, x instead of the subquery's rt, ts, x) - pinned current behavior.
+            // the explicit clause designates a timestamp; the star expansion keeps the
+            // subquery's own column order (rt, ts, x).
             assertQuery("SELECT * FROM (SELECT q.ts rt, p.ts ts, p.x FROM tsp p ASOF JOIN tsq q SUBSAMPLE uniform(2)) s TIMESTAMP(ts)")
                     .timestamp("ts")
                     .returns("""
-                            ts\trt\tx
-                            1970-01-01T00:00:00.000010Z\t1970-01-01T00:00:00.000005Z\t1
-                            1970-01-01T00:00:00.000040Z\t1970-01-01T00:00:00.000025Z\t4
+                            rt\tts\tx
+                            1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t1
+                            1970-01-01T00:00:00.000025Z\t1970-01-01T00:00:00.000040Z\t4
                             """);
         });
     }

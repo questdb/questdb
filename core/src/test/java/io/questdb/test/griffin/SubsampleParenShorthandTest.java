@@ -477,17 +477,16 @@ public class SubsampleParenShorthandTest extends AbstractCairoTest {
     public void testShorthandThenTimestampClause() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            // "timestamp" never triggered the collapse; pinned as a control. Note: a timestamp()
-            // suffix on a sub-query reorders output columns timestamp-first for every spelling,
-            // so the reference must carry the same suffix.
+            // "timestamp" never triggered the collapse; pinned as a control. A timestamp()
+            // suffix designates a timestamp, it does not reorder the select list.
             assertQuery("SELECT v, ts FROM (t SUBSAMPLE uniform(4)) TIMESTAMP(ts)")
                     .timestamp("ts")
                     .returns("""
-                            ts\tv
-                            1970-01-01T00:00:00.000000Z\t1.0
-                            1970-01-01T00:00:03.000000Z\t4.0
-                            1970-01-01T00:00:06.000000Z\t7.0
-                            1970-01-01T00:00:09.000000Z\t10.0
+                            v\tts
+                            1.0\t1970-01-01T00:00:00.000000Z
+                            4.0\t1970-01-01T00:00:03.000000Z
+                            7.0\t1970-01-01T00:00:06.000000Z
+                            10.0\t1970-01-01T00:00:09.000000Z
                             """);
             assertSqlCursors(
                     "SELECT v, ts FROM (SELECT * FROM t SUBSAMPLE uniform(4)) TIMESTAMP(ts)",

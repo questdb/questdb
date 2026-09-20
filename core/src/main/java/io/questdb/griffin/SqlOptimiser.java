@@ -8070,15 +8070,6 @@ public class SqlOptimiser implements Mutable {
             emitLiteralsTopDown(model.getLatestBy(), model);
         }
 
-        // propagate explicit timestamp declaration
-        if (model.getTimestamp() != null && nestedIsFlex && nestedAllowsColumnChange) {
-            emitLiteralsTopDown(model.getTimestamp(), nested);
-            // Don't emit to nested union models by name here. In UNION, columns are matched
-            // by position, not name. Name-based resolution can map to a wrong column index
-            // in union branches. The indexed propagation below (emitColumnLiteralsTopDown loop)
-            // correctly propagates columns by position.
-        }
-
         if (model.getWhereClause() != null) {
             if (allowColumnsChange) {
                 emitLiteralsTopDown(model.getWhereClause(), model);
@@ -8107,6 +8098,19 @@ public class SqlOptimiser implements Mutable {
 
         if (nestedIsFlex && nestedAllowsColumnChange) {
             emitColumnLiteralsTopDown(model.getColumns(), nested);
+
+            // Propagate the explicit timestamp declaration. This runs *after* the projection so
+            // that a timestamp the projection already selects keeps its position in the select
+            // list: top-down columns are appended in emit order, and the nested model is pruned
+            // to them, so emitting the timestamp first would push it to the front and reorder
+            // the user's projection (`SELECT x, ts FROM (t) TIMESTAMP(ts)` -> `ts, x`).
+            // Don't emit to nested union models by name here. In UNION, columns are matched
+            // by position, not name. Name-based resolution can map to a wrong column index
+            // in union branches. The indexed propagation below (emitColumnLiteralsTopDown loop)
+            // correctly propagates columns by position.
+            if (model.getTimestamp() != null) {
+                emitLiteralsTopDown(model.getTimestamp(), nested);
+            }
 
             // If any UNION branch is GROUP BY, pre-add its key column positions
             // to nested's topDownColumns. GROUP BY branches need all key columns
