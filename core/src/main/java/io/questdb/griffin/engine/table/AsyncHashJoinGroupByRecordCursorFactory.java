@@ -244,7 +244,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 final PageFrameMemoryRecord probeRecord = slot.probeRecord;
                 probeRecord.init(pool.navigateTo(frameIndex));
                 final HashJoinGroupByRecord record = slot.joinedRecord;
-                final FrozenHashJoinBuild.Probe probe = slot.probe;
+                final FrozenHashJoinBuild.IntProbe probe = slot.probe;
                 final HashJoinGroupByFunctions functions = atom.getFunctions();
                 final RecordSink sink = functions.getMapSink(slotId);
                 final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -311,7 +311,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         // row list the filter phase produced instead of by every row of the frame.
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.Probe probe = slot.probe;
+        final FrozenHashJoinBuild.IntProbe probe = slot.probe;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -342,7 +342,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         // enlarge the general loop that handles arbitrarily long duplicate chains.
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.Probe probe = slot.probe;
+        final FrozenHashJoinBuild.IntProbe probe = slot.probe;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -404,7 +404,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 }
                 // Phase two: join and aggregate the surviving rows.
                 final HashJoinGroupByRecord record = slot.joinedRecord;
-                final FrozenHashJoinBuild.Probe probe = slot.probe;
+                final FrozenHashJoinBuild.IntProbe probe = slot.probe;
                 final HashJoinGroupByFunctions functions = atom.getFunctions();
                 final RecordSink sink = functions.getMapSink(slotId);
                 final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);

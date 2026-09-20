@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.RecordSinkSPI;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
@@ -50,7 +49,6 @@ import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Numbers;
-import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -1075,7 +1073,7 @@ public class OrderedMap implements Map, Reopenable {
      * allocator. {@link #close()} releases it, and so does a change of memory tracker, since the
      * tracker that charged the buffer has to be the one credited for its release.
      */
-    public static final class ProbeView implements RecordSinkSPI, QuietCloseable {
+    public static final class ProbeView implements MapProbeView {
         private static final long MIN_STAGING_CAPACITY = 64;
         private long appendAddr;
         private boolean committed;
@@ -1121,6 +1119,7 @@ public class OrderedMap implements Map, Reopenable {
          * hash. The returned value is this view's own flyweight and stays valid until the next
          * call.
          */
+        @Override
         public MapValue findValue() {
             if (!committed) {
                 commit();
@@ -1147,6 +1146,7 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         /** Allocated native bytes, including unused capacity. */
+        @Override
         public long getSizeInBytes() {
             return stagingCapacity;
         }
@@ -1401,6 +1401,7 @@ public class OrderedMap implements Map, Reopenable {
          * the tracker that charged it and re-primes it at its initial capacity under the new one,
          * so no staged key survives the call.
          */
+        @Override
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
             if (tracker == memoryTracker) {
                 return;
@@ -1428,6 +1429,7 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         /** Discards the staged key and starts a new one. The view must already be bound. */
+        @Override
         public ProbeView withKey() {
             assert stagingAddr != 0 : "probe view is not bound to a map";
             reset();

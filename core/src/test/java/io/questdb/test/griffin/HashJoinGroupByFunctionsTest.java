@@ -346,11 +346,11 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
                  // Build symbols resolve through the build cursor, so it stays open while probing.
                  RecordCursor buildCursor = fixture.buildFactory.getCursor(sqlExecutionContext)) {
                 build.open(sqlExecutionContext.getMemoryTracker(), sqlExecutionContext.getCircuitBreaker());
-                FrozenHashJoinBuild frozen = build.build(buildCursor, fixture.metadata.getBuildKeyColumn());
+                FrozenHashJoinBuild.IntKeyed frozen = build.build(buildCursor, fixture.metadata.getBuildKeyColumn());
                 try (RecordCursor cursor = fixture.probeFactory.getCursor(sqlExecutionContext)) {
                     Assert.assertTrue(cursor.hasNext());
-                    FrozenHashJoinBuild.Probe a = frozen.newProbe();
-                    FrozenHashJoinBuild.Probe b = frozen.newProbe();
+                    FrozenHashJoinBuild.IntProbe a = frozen.newProbe();
+                    FrozenHashJoinBuild.IntProbe b = frozen.newProbe();
                     HashJoinGroupByRecord left = fixture.metadata.newRecord();
                     HashJoinGroupByRecord right = fixture.metadata.newRecord();
                     left.of(cursor.getRecord(), cursor, a);
@@ -644,12 +644,12 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
                  // Build symbols resolve through the build cursor, so it stays open while probing.
                  RecordCursor buildCursor = buildFactory.getCursor(sqlExecutionContext)) {
                 build.open(sqlExecutionContext.getMemoryTracker(), sqlExecutionContext.getCircuitBreaker());
-                FrozenHashJoinBuild frozen = build.build(buildCursor, metadata.getBuildKeyColumn());
+                FrozenHashJoinBuild.IntKeyed frozen = build.build(buildCursor, metadata.getBuildKeyColumn());
                 try (RecordCursor cursor = probeFactory.getCursor(sqlExecutionContext)) {
                     ObjList<HashJoinGroupByRecord> records = new ObjList<>();
-                    ObjList<FrozenHashJoinBuild.Probe> probes = new ObjList<>();
+                    ObjList<FrozenHashJoinBuild.IntProbe> probes = new ObjList<>();
                     for (int i = 0; i <= workers; i++) {
-                        FrozenHashJoinBuild.Probe probe = frozen.newProbe();
+                        FrozenHashJoinBuild.IntProbe probe = frozen.newProbe();
                         HashJoinGroupByRecord record = metadata.newRecord();
                         record.of(cursor.getRecord(), cursor, probe);
                         probes.add(probe);
@@ -682,7 +682,7 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
                         for (int slot = -1; slot < workers; slot++) {
                             cursor.toTop();
                             HashJoinGroupByRecord record = records.getQuick(slot + 1);
-                            FrozenHashJoinBuild.Probe probe = probes.getQuick(slot + 1);
+                            FrozenHashJoinBuild.IntProbe probe = probes.getQuick(slot + 1);
                             List<String> actual = new ArrayList<>();
                             try (Map map = MapFactory.createUnorderedMap(configuration, functions.getKeyTypes(), functions.getValueTypes(), false)) {
                                 while (cursor.hasNext()) {

@@ -77,7 +77,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private final ObjList<Slot> slots = new ObjList<>();
     private IntHashJoinBuild build;
     private RecordCursor buildCursor;
-    private FrozenHashJoinBuild frozen;
+    private FrozenHashJoinBuild.IntKeyed frozen;
     private boolean isBuildUnique;
     private boolean functionsInitialized;
     private boolean filtersInitialized;
@@ -364,7 +364,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     static final class Slot implements QuietCloseable {
         final HashJoinGroupByRecord joinedRecord;
         final ProbeRecord probeRecord = new ProbeRecord();
-        FrozenHashJoinBuild.Probe probe;
+        FrozenHashJoinBuild.IntProbe probe;
         SimpleMapValue value;
 
         Slot(HashJoinGroupByRecord joinedRecord) {
@@ -375,6 +375,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         public void close() {
             Throwable failure = Misc.freeBestEffort(null, value);
             value = null;
+            failure = Misc.freeBestEffort(failure, probe);
+            probe = null;
             failure = Misc.freeBestEffort(failure, probeRecord);
             CairoException.rethrowCleanupFailure(failure);
         }
@@ -386,6 +388,12 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             }
             joinedRecord.clear();
             probeRecord.of(null);
+            if (probe != null) {
+                // A probe may hold native memory charged to this execution's tracker, so it
+                // releases here, while that tracker is still the one that charged it. The
+                // object stays: reopen() brings it back for the next execution.
+                probe.close();
+            }
         }
     }
 

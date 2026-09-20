@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.RecordSinkSPI;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -46,7 +45,6 @@ import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Numbers;
-import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -831,7 +829,7 @@ public class Unordered8Map implements Map, Reopenable {
      * hash table bounds, the mask and the zero-key flag when it binds, so a later rehash leaves it
      * reading a freed block.
      */
-    public static final class ProbeView implements RecordSinkSPI, QuietCloseable {
+    public static final class ProbeView implements MapProbeView {
         private long entrySize;
         private boolean hasZero;
         private long key;
@@ -859,6 +857,7 @@ public class Unordered8Map implements Map, Reopenable {
          * holds no such key. The returned value is this view's own flyweight and stays valid
          * until the next call.
          */
+        @Override
         public MapValue findValue() {
             if (key == 0) {
                 // The zero key marks an empty slot, so it lives in its own entry past the table.
@@ -885,6 +884,7 @@ public class Unordered8Map implements Map, Reopenable {
          * Allocated native bytes, always zero: an eight-byte key stages in a field. Stated
          * explicitly so that a caller summing the bytes of a mixed set of views needs no branch.
          */
+        @Override
         public long getSizeInBytes() {
             return 0;
         }
@@ -1034,6 +1034,7 @@ public class Unordered8Map implements Map, Reopenable {
          * {@link Map#setMemoryTracker} asks of a non-allocating map, so that a caller can wire
          * every view the same way and a later allocating change has to face the question.
          */
+        @Override
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
         }
 
@@ -1043,6 +1044,7 @@ public class Unordered8Map implements Map, Reopenable {
         }
 
         /** Discards the staged key and starts a new one. */
+        @Override
         public ProbeView withKey() {
             key = 0;
             return this;
