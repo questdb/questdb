@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.std.Hash;
@@ -55,8 +54,9 @@ import java.io.Closeable;
  * <p>
  * The rows themselves, their links and their payload records live in
  * {@link HashJoinRowHeap}, which {@link MapHashJoinBuild} shares; see there for the
- * row layout, the heap bound and how SYMBOL payloads resolve. A SYMBOL join key
- * arrives already translated by {@link SymbolKeyTranslator}.
+ * row layout, the heap bound and how SYMBOL payloads resolve. A SYMBOL join key is stored
+ * as the build's own symbol key; the probe translates its key into that domain through
+ * {@link SymbolKeyTranslator}.
  * <p>
  * Hash tables and rows use tracked native buffers. Growth accounts for both old and
  * new allocations and is cancellable. Frozen views borrow these buffers until close;
@@ -111,16 +111,16 @@ public final class IntHashJoinBuild implements Closeable {
 
     /** Consumes a borrowed INT-keyed cursor once. The caller retains ownership of the cursor. */
     public FrozenHashJoinBuild.IntKeyed build(RecordCursor cursor, int keyColumn) {
-        return build(cursor, keyColumn, -1, null);
+        return build(cursor, keyColumn, -1);
     }
 
     /**
      * Consumes a borrowed cursor once and resolves SYMBOL payloads through it until close,
      * so the caller keeps the cursor open until then. A nonnegative hint is the remaining
-     * row count of a freshly acquired cursor. A translator maps SYMBOL keys into the probe
-     * key domain; rows whose key the probe dictionary lacks cannot match and are skipped.
+     * row count of a freshly acquired cursor. A SYMBOL key column keeps its own key, which
+     * is the domain the probe translates into.
      */
-    public FrozenHashJoinBuild.IntKeyed build(RecordCursor cursor, int keyColumn, long rowCountHint, @Nullable SymbolKeyTranslator keyTranslator) {
+    public FrozenHashJoinBuild.IntKeyed build(RecordCursor cursor, int keyColumn, long rowCountHint) {
         requireBuilding();
         try {
             if (rowCountHint > 0) {
@@ -128,17 +128,8 @@ public final class IntHashJoinBuild implements Closeable {
             }
             final Record record = cursor.getRecord();
             // The source cursor checks the breaker at its frame boundaries.
-            if (keyTranslator == null) {
-                while (cursor.hasNext()) {
-                    appendRow(record.getInt(keyColumn), record);
-                }
-            } else {
-                while (cursor.hasNext()) {
-                    final int key = keyTranslator.translate(record.getInt(keyColumn));
-                    if (key != SymbolTable.VALUE_NOT_FOUND) {
-                        appendRow(key, record);
-                    }
-                }
+            while (cursor.hasNext()) {
+                appendRow(record.getInt(keyColumn), record);
             }
             return freeze(cursor);
         } catch (Throwable th) {

@@ -43,6 +43,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.HashJoinGroupByCandidate;
 import io.questdb.griffin.HashJoinGroupByKeys;
@@ -53,11 +55,15 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
 import io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunction;
+import io.questdb.griffin.engine.join.SymbolKeyTranslatingRecord;
+import io.questdb.griffin.engine.join.SymbolKeyTranslator;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -170,9 +176,10 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             assertKeys("ka.i=kb.i AND ka.l=kb.l", "1=1:LONG 0=0:INT", false);
             assertKeys("ka.i=kb.i AND ka.l=kb.l AND ka.c=kb.c", "4=4:CHAR 1=1:LONG 0=0:INT", false);
             assertKeys("ka.dt=kb.dt AND ka.u=kb.u", "12=12:UUID 8=8:DATE", false);
-            // A lone SYMBOL pair keeps the INT layout; inside a composite key both sides write text.
+            // A lone SYMBOL pair keeps the INT layout; inside a composite key it stages an int
+            // that the probe translates into the build's domain, so it stays a SYMBOL key.
             assertKeys("ka.sym=kb.sym", "16=16:SYMBOL", true);
-            assertKeys("ka.i=kb.i AND ka.sym=kb.sym", "16=16:STRING 0=0:INT", false);
+            assertKeys("ka.i=kb.i AND ka.sym=kb.sym", "16=16:SYMBOL 0=0:INT", false);
             assertKeys("ka.str=kb.vc AND ka.ts=kb.tn", "9=10:TIMESTAMP_NS 17=18:VARCHAR", false);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 HashJoinGroupByCandidate candidate = candidate(compiler,
@@ -462,7 +469,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             assertKeySinkLayout("ka.l=kb.l", "LONG");
             assertKeySinkLayout("ka.i=kb.i AND ka.l=kb.l", "LONG,INT");
             assertKeySinkLayout("ka.str=kb.vc AND ka.ts=kb.tn", "TIMESTAMP_NS,VARCHAR");
-            assertKeySinkLayout("ka.i=kb.i AND ka.sym=kb.sym", "STRING,INT");
+            assertKeySinkLayout("ka.i=kb.i AND ka.sym=kb.sym", "SYMBOL,INT");
             assertKeySinkLayout("ka.g=kb.g AND ka.dec=kb.dec AND ka.u=kb.u", "UUID,DECIMAL(10,2),GEOHASH(8c)");
             // The INT layout reads its key off the record and stages nothing, so it has no sinks.
             for (String on : new String[]{"ka.i=kb.i", "ka.sym=kb.sym"}) {
@@ -495,7 +502,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                     // Pairs that reconcile to a third type, so the two sides encode differently.
                     "ka.ts=kb.tn", "ka.tn=kb.ts", "ka.str=kb.vc", "ka.vc=kb.str",
                     "ka.sym=kb.str", "ka.str=kb.sym", "ka.sym=kb.vc", "ka.vc=kb.sym",
-                    // Composites, including a SYMBOL pair that compares as text until 2c.
+                    // Composites, including SYMBOL pairs that stage a translated int key.
                     "ka.i=kb.i AND ka.l=kb.l",
                     "ka.i=kb.i AND ka.sym=kb.sym",
                     "ka.sym=kb.sym AND ka.str=kb.vc AND ka.l=kb.l AND ka.ts=kb.tn",
@@ -636,16 +643,40 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                             value.putLong(0, value.isNew() ? 1 : value.getLong(0) + 1);
                         }
                     }
-                    try (RecordCursor cursor = probeFactory.getCursor(sqlExecutionContext)) {
+                    // A SYMBOL key pair compares as ints, so the probe stages its key through
+                    // the same translating record the operator hands each worker.
+                    final ObjList<SymbolKeyTranslator> caches = new ObjList<>();
+                    SymbolKeyTranslatingRecord translating = null;
+                    try (RecordCursor buildCursor = buildFactory.getCursor(sqlExecutionContext);
+                         RecordCursor cursor = probeFactory.getCursor(sqlExecutionContext)) {
                         Record record = cursor.getRecord();
+                        Record keyRecord = record;
+                        IntList symbolProbeColumns = metadata.getSymbolKeyProbeColumns();
+                        IntList symbolBuildColumns = metadata.getSymbolKeyBuildColumns();
+                        if (symbolProbeColumns.size() > 0) {
+                            translating = new SymbolKeyTranslatingRecord(probeFactory.getMetadata().getColumnCount(), symbolProbeColumns);
+                            translating.of(record);
+                            for (int i = 0, n = symbolProbeColumns.size(); i < n; i++) {
+                                StaticSymbolTable probeTable = (StaticSymbolTable) cursor.newSymbolTable(symbolProbeColumns.getQuick(i));
+                                SymbolKeyTranslator cache = new SymbolKeyTranslator();
+                                caches.add(cache);
+                                cache.of(probeTable.getSymbolCount(), null, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+                                translating.getView(i).of(cache, probeTable,
+                                        (StaticSymbolTable) buildCursor.newSymbolTable(symbolBuildColumns.getQuick(i)));
+                            }
+                            keyRecord = translating;
+                        }
                         while (cursor.hasNext()) {
                             MapKey key = map.withKey();
-                            probeKeySink.copy(record, key);
+                            probeKeySink.copy(keyRecord, key);
                             MapValue value = key.findValue();
                             if (value != null) {
                                 matched += value.getLong(0);
                             }
                         }
+                    } finally {
+                        Misc.free(translating);
+                        Misc.freeObjList(caches);
                     }
                 }
             }

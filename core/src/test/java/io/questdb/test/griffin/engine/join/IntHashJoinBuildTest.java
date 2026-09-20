@@ -256,12 +256,12 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                  RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 for (long hint : new long[]{limit / 16 + 1, Long.MAX_VALUE}) {
                     build.open(tracker, NOOP);
-                    CairoException error = Assert.assertThrows(CairoException.class, () -> build.build(cursor, 0, hint, null));
+                    CairoException error = Assert.assertThrows(CairoException.class, () -> build.build(cursor, 0, hint));
                     TestUtils.assertContains(error.getFlyweightMessage(), "hash join build buffer overflow");
                     Assert.assertEquals(0, tracker.getUsed());
                     cursor.toTop();
                     build.open(tracker, NOOP);
-                    FrozenHashJoinBuild.IntProbe probe = build.build(cursor, 0, 1, null).newProbe();
+                    FrozenHashJoinBuild.IntProbe probe = build.build(cursor, 0, 1).newProbe();
                     Assert.assertTrue(probe.findSingleUnchecked(17));
                     Assert.assertEquals(17, probe.getRecord().getInt(0));
                     build.close();
@@ -271,7 +271,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 // The largest legal hint reaches tracked allocation and is rejected
                 // by this tiny memory limit, rather than wrapping its compressed offset.
                 build.open(tracker, NOOP);
-                CairoException error = Assert.assertThrows(CairoException.class, () -> build.build(cursor, 0, limit / 16, null));
+                CairoException error = Assert.assertThrows(CairoException.class, () -> build.build(cursor, 0, limit / 16));
                 TestUtils.assertContains(error.getFlyweightMessage(), "query memory limit exceeded");
                 TestUtils.assertContains(error.getFlyweightMessage(), ", size=" + limit + ",");
                 Assert.assertEquals(0, tracker.getUsed());
@@ -468,7 +468,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 for (int execution = 0; execution < 2; execution++) {
                     cursor.toTop();
                     build.open(tracker, NOOP);
-                    FrozenHashJoinBuild.IntKeyed frozen = build.build(cursor, 0, cursor.size(), null);
+                    FrozenHashJoinBuild.IntKeyed frozen = build.build(cursor, 0, cursor.size());
                     Assert.assertEquals(10_000, frozen.getRowCount());
                     Assert.assertEquals(capacity, tracker.getUsed());
                     Assert.assertEquals(capacity, frozen.getSizeInBytes());
@@ -480,7 +480,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     Assert.assertEquals(0, tracker.getUsed());
                     build.open(tracker, NOOP);
                     CairoException error = Assert.assertThrows(CairoException.class,
-                            () -> build.build(cursor, 0, Long.MAX_VALUE, null));
+                            () -> build.build(cursor, 0, Long.MAX_VALUE));
                     TestUtils.assertContains(error.getFlyweightMessage(), "hash join build buffer overflow");
                     Assert.assertEquals(0, tracker.getUsed());
                 }
@@ -1331,72 +1331,74 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSymbolKeyTranslationCachesDistinctKeysAndDropsMissingOnes() throws Exception {
+    public void testSymbolKeyTranslationCachesDistinctKeysAndKeepsEveryBuildRow() throws Exception {
         assertMemoryLeak(() -> {
-            // Equal text has different keys in the two dictionaries; IT and FR are absent from the probe.
+            // Equal text has different keys in the two dictionaries; IT and FR are absent from the
+            // probe, and PT from the build. The build keeps every row: it stores its own keys now.
             Symbols buildSymbols = new Symbols("ES", "IT", "FR", "DE");
-            Symbols probeSymbols = new Symbols("DE", "ES");
+            Symbols probeSymbols = new Symbols("DE", "ES", "PT");
             final int nil = SymbolTable.VALUE_IS_NULL;
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(1 << 20);
                  IntHashJoinBuild build = new IntHashJoinBuild(new ArrayColumnTypes().add(ColumnType.SYMBOL), indexes(0), 2, 16, true);
-                 SymbolKeyTranslator translator = new SymbolKeyTranslator()) {
+                 SymbolKeyTranslator translator = new SymbolKeyTranslator();
+                 SymbolKeyTranslator.View view = new SymbolKeyTranslator.View()) {
                 FrozenHashJoinBuild.IntProbe probe = null;
-                // The second execution drops the only duplicates, leaving a unique build.
-                int[][] executions = {{0, 1, 0, nil, 3, 2, 0, 3, nil}, {1, 0, 2, 3, 1, nil}};
+                // The second execution has no duplicate key, leaving a unique build.
+                int[][] executions = {{0, 1, 0, nil, 3, 2, 0, 3, nil}, {1, 0, 2, 3, nil}};
                 for (int[] keys : executions) {
                     buildSymbols.resetCounts();
                     probeSymbols.resetCounts();
                     build.open(tracker, NOOP);
-                    translator.of(probeSymbols.newTable(0), buildSymbols.newTable(0), tracker, NOOP);
-                    Assert.assertEquals(4 * Integer.BYTES, translator.getSizeInBytes());
-                    FrozenHashJoinBuild.IntKeyed frozen = build.build(new KeyCursor(buildSymbols, keys), 0, keys.length, translator);
-                    translator.close();
+                    FrozenHashJoinBuild.IntKeyed frozen = build.build(new KeyCursor(buildSymbols, keys), 0, keys.length);
                     Assert.assertEquals(build.getSizeInBytes(), tracker.getUsed());
-                    int distinct = 0;
-                    int expectedRows = 0;
-                    for (int i = 0; i < keys.length; i++) {
-                        boolean isFirst = true;
-                        for (int j = 0; j < i; j++) {
-                            isFirst &= keys[j] != keys[i];
-                        }
-                        if (isFirst && keys[i] != nil) {
-                            distinct++;
-                        }
-                        if (keys[i] != 1 && keys[i] != 2) {
-                            expectedRows++;
-                        }
-                    }
-                    // One dictionary lookup per distinct non-null build key, none per row or for null.
-                    Assert.assertEquals(distinct, probeSymbols.keyOfCalls);
-                    Assert.assertEquals(distinct, buildSymbols.valueOfCalls);
-                    Assert.assertEquals(expectedRows, frozen.getRowCount());
-                    Assert.assertEquals(3, frozen.getKeyCount());
-                    Assert.assertEquals(keys.length != 9, frozen.getRowCount() == frozen.getKeyCount());
+                    // The build translates nothing, so no lookup happened while it read its rows.
+                    Assert.assertEquals(0, buildSymbols.keyOfCalls);
+                    Assert.assertEquals(0, probeSymbols.valueOfCalls);
+                    // Every row is kept, including the ones whose symbol the probe lacks.
+                    Assert.assertEquals(keys.length, frozen.getRowCount());
+                    Assert.assertEquals(5, frozen.getKeyCount());
+                    Assert.assertEquals(keys.length == 5, frozen.getRowCount() == frozen.getKeyCount());
+
+                    translator.of(3, tracker, NOOP);
+                    Assert.assertEquals(3 * Integer.BYTES, translator.getSizeInBytes());
+                    view.of(translator, probeSymbols.newTable(0), buildSymbols.newTable(0));
                     if (probe == null) {
                         probe = frozen.newProbe();
                     } else {
                         probe.reopen();
                     }
-                    // Probe keys: DE is 0, ES is 1, and null build keys match null probe keys.
-                    for (int probeKey : new int[]{0, 1, nil, SymbolTable.VALUE_NOT_FOUND, 2}) {
-                        probe.find(probeKey);
-                        int matches = 0;
-                        while (probe.hasNext()) {
-                            probe.next();
-                            // The payload keeps the build key, which resolves to the same text.
-                            int buildKey = probe.getRecord().getInt(0);
-                            TestUtils.assertEquals(probeSymbols.valueOf(0, probeKey), probe.getRecord().getSymA(0));
-                            Assert.assertEquals(probeKey == nil ? nil : probeKey == 0 ? 3 : 0, buildKey);
-                            matches++;
-                        }
-                        int expected = 0;
-                        for (int key : keys) {
-                            if (probeKey == nil ? key == nil : probeKey == 0 ? key == 3 : probeKey == 1 && key == 0) {
-                                expected++;
+                    // Probe keys: DE is 0 against the build's 3, ES is 1 against 0, PT is absent
+                    // from the build, a probe key past the dictionary reads as null, and null
+                    // matches null. Two passes, so the second reads the cache.
+                    for (int pass = 0; pass < 2; pass++) {
+                        for (int probeKey : new int[]{0, 1, 2, 3, nil}) {
+                            final int buildKey = view.translate(probeKey);
+                            Assert.assertEquals(probeKey == 0 ? 3 : probeKey == 1 ? 0
+                                    : probeKey == 2 ? SymbolTable.VALUE_NOT_FOUND : nil, buildKey);
+                            probe.find(buildKey);
+                            int matches = 0;
+                            while (probe.hasNext()) {
+                                probe.next();
+                                // The payload keeps the build key, which resolves to the same text.
+                                Assert.assertEquals(buildKey, probe.getRecord().getInt(0));
+                                TestUtils.assertEquals(buildSymbols.valueOf(0, buildKey), probe.getRecord().getSymA(0));
+                                matches++;
                             }
+                            int expected = 0;
+                            for (int key : keys) {
+                                if (key == buildKey) {
+                                    expected++;
+                                }
+                            }
+                            Assert.assertEquals(expected, matches);
                         }
-                        Assert.assertEquals(expected, matches);
                     }
+                    // One lookup per distinct cached probe key, none per probed row and none for
+                    // null; the key past the dictionary is the only one that resolves every time.
+                    Assert.assertEquals(5, buildSymbols.keyOfCalls);
+                    Assert.assertEquals(5, probeSymbols.valueOfCalls);
+                    view.close();
+                    translator.close();
                     build.close();
                     Assert.assertEquals(0, tracker.getUsed());
                 }
@@ -1405,15 +1407,40 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolKeyTranslationFailureLeavesTheEntryUnresolved() throws Exception {
+        assertMemoryLeak(() -> {
+            Symbols buildSymbols = new Symbols("ES", "IT");
+            Symbols probeSymbols = new Symbols("IT", "ES");
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(1 << 20);
+                 SymbolKeyTranslator translator = new SymbolKeyTranslator();
+                 SymbolKeyTranslator.View view = new SymbolKeyTranslator.View()) {
+                translator.of(2, tracker, NOOP);
+                view.of(translator, probeSymbols.newTable(0), buildSymbols.newTable(0));
+                buildSymbols.failKeyOfAt = 1;
+                Assert.assertThrows(IllegalStateException.class, () -> view.translate(0));
+                // The entry stays unresolved, so a later probe resolves it rather than reading
+                // whatever the failed lookup would have left behind.
+                buildSymbols.failKeyOfAt = 0;
+                Assert.assertEquals(1, view.translate(0));
+                Assert.assertEquals(1, view.translate(0));
+                Assert.assertEquals(2, buildSymbols.keyOfCalls);
+                view.close();
+                translator.close();
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
     public void testSymbolKeyTranslatorBoundsMemoryAndReuse() throws Exception {
         assertMemoryLeak(() -> {
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(15);
-                 SymbolKeyTranslator translator = new SymbolKeyTranslator()) {
+                 SymbolKeyTranslator translator = new SymbolKeyTranslator();
+                 SymbolKeyTranslator.View view = new SymbolKeyTranslator.View()) {
                 Symbols buildSymbols = new Symbols("a", "b", "c", "d");
                 Symbols probeSymbols = new Symbols("d", "c", "b", "a");
                 // The cache holds four INT keys: 16 bytes exceed the limit and nothing stays charged.
-                CairoException error = Assert.assertThrows(CairoException.class,
-                        () -> translator.of(probeSymbols.newTable(0), buildSymbols.newTable(0), tracker, NOOP));
+                CairoException error = Assert.assertThrows(CairoException.class, () -> translator.of(4, tracker, NOOP));
                 Assert.assertTrue(error.isOutOfMemory());
                 Assert.assertEquals(0, tracker.getUsed());
                 Assert.assertEquals(0, translator.getSizeInBytes());
@@ -1427,81 +1454,48 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                         throw CairoException.queryCancelled(1);
                     }
                 };
-                Assert.assertThrows(CairoException.class,
-                        () -> translator.of(probeSymbols.newTable(0), buildSymbols.newTable(0), tracker, cancelled));
+                Assert.assertThrows(CairoException.class, () -> translator.of(4, tracker, cancelled));
                 Assert.assertEquals(0, tracker.getUsed());
 
-                translator.of(probeSymbols.newTable(0), buildSymbols.newTable(0), tracker, NOOP);
+                translator.of(4, tracker, NOOP);
                 Assert.assertEquals(16, tracker.getUsed());
+                view.of(translator, probeSymbols.newTable(0), buildSymbols.newTable(0));
                 for (int pass = 0; pass < 2; pass++) {
                     for (int key = 0; key < 4; key++) {
-                        Assert.assertEquals(3 - key, translator.translate(key));
+                        Assert.assertEquals(3 - key, view.translate(key));
                     }
                 }
-                Assert.assertEquals(4, probeSymbols.keyOfCalls);
-                Assert.assertEquals(SymbolTable.VALUE_IS_NULL, translator.translate(SymbolTable.VALUE_IS_NULL));
-                Assert.assertEquals(4, probeSymbols.keyOfCalls);
-                // A key outside the build dictionary resolves as the ordinary join resolves it, uncached.
+                Assert.assertEquals(4, buildSymbols.keyOfCalls);
+                Assert.assertEquals(SymbolTable.VALUE_IS_NULL, view.translate(SymbolTable.VALUE_IS_NULL));
+                Assert.assertEquals(4, buildSymbols.keyOfCalls);
+                // A key outside the probe dictionary resolves as the ordinary join resolves it, uncached.
                 for (int key : new int[]{4, -1}) {
-                    Assert.assertEquals(SymbolTable.VALUE_IS_NULL, translator.translate(key));
-                    Assert.assertEquals(SymbolTable.VALUE_IS_NULL, translator.translate(key));
+                    Assert.assertEquals(SymbolTable.VALUE_IS_NULL, view.translate(key));
+                    Assert.assertEquals(SymbolTable.VALUE_IS_NULL, view.translate(key));
                 }
-                Assert.assertEquals(8, probeSymbols.keyOfCalls);
+                Assert.assertEquals(8, buildSymbols.keyOfCalls);
 
                 // Rebinding releases the old cache and resolves every key again for the new dictionaries.
-                Symbols grownBuild = new Symbols("a", "b", "c", "d", "e", "f", "g", "h");
-                translator.of(new Symbols("h", "a").newTable(0), grownBuild.newTable(0), tracker, NOOP);
+                Symbols grownProbe = new Symbols("a", "b", "c", "d", "e", "f", "g", "h");
+                Symbols smallBuild = new Symbols("h", "a");
+                translator.of(8, tracker, NOOP);
                 Assert.assertEquals(32, tracker.getUsed());
-                Assert.assertEquals(1, translator.translate(0));
-                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, translator.translate(3));
-                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, translator.translate(3));
-                Assert.assertEquals(0, translator.translate(7));
-                Assert.assertEquals(3, grownBuild.valueOfCalls);
+                view.of(translator, grownProbe.newTable(0), smallBuild.newTable(0));
+                Assert.assertEquals(1, view.translate(0));
+                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, view.translate(3));
+                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, view.translate(3));
+                Assert.assertEquals(0, view.translate(7));
+                Assert.assertEquals(3, grownProbe.valueOfCalls);
 
-                // An empty build dictionary needs no cache.
-                translator.of(probeSymbols.newTable(0), new Symbols().newTable(0), tracker, NOOP);
+                // An empty probe dictionary needs no cache.
+                translator.of(0, tracker, NOOP);
                 Assert.assertEquals(0, tracker.getUsed());
-                Assert.assertEquals(SymbolTable.VALUE_IS_NULL, translator.translate(SymbolTable.VALUE_IS_NULL));
+                view.of(translator, new Symbols().newTable(0), buildSymbols.newTable(0));
+                Assert.assertEquals(SymbolTable.VALUE_IS_NULL, view.translate(SymbolTable.VALUE_IS_NULL));
+                view.close();
+                view.close();
                 translator.close();
                 translator.close();
-                Assert.assertEquals(0, tracker.getUsed());
-            }
-        });
-    }
-
-    @Test
-    public void testSymbolKeyTranslationFailureClosesBuild() throws Exception {
-        assertMemoryLeak(() -> {
-            Symbols buildSymbols = new Symbols("ES", "IT");
-            Symbols probeSymbols = new Symbols("IT", "ES");
-            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(1 << 20);
-                 IntHashJoinBuild build = new IntHashJoinBuild(new ArrayColumnTypes().add(ColumnType.SYMBOL), indexes(0), 2, 16, true);
-                 SymbolKeyTranslator translator = new SymbolKeyTranslator()) {
-                int[] keys = new int[4096];
-                for (int i = 0; i < keys.length; i++) {
-                    keys[i] = i % 2;
-                }
-                probeSymbols.failKeyOfAt = 2;
-                build.open(tracker, NOOP);
-                translator.of(probeSymbols.newTable(0), buildSymbols.newTable(0), tracker, NOOP);
-                Assert.assertThrows(IllegalStateException.class,
-                        () -> build.build(new KeyCursor(buildSymbols, keys), 0, -1, translator));
-                Assert.assertEquals(0, build.getSizeInBytes());
-                translator.close();
-                Assert.assertEquals(0, tracker.getUsed());
-
-                probeSymbols.failKeyOfAt = 0;
-                build.open(tracker, NOOP);
-                translator.of(probeSymbols.newTable(0), buildSymbols.newTable(0), tracker, NOOP);
-                FrozenHashJoinBuild.IntKeyed frozen = build.build(new KeyCursor(buildSymbols, keys), 0, -1, translator);
-                translator.close();
-                Assert.assertEquals(4096, frozen.getRowCount());
-                Assert.assertEquals(2, frozen.getKeyCount());
-                FrozenHashJoinBuild.IntProbe probe = frozen.newProbe();
-                probe.find(0);
-                probe.next();
-                TestUtils.assertEquals("IT", probe.getRecord().getSymA(0));
-                build.close();
                 Assert.assertEquals(0, tracker.getUsed());
             }
         });

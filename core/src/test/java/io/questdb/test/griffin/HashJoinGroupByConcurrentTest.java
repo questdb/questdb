@@ -97,10 +97,13 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
                                 + " sum(length(r.s)::double) rl, avg(length(p.s)::double) pl, sum(r.d) s, avg(p.d) a"
                                 + " from r left join p on r.id=p.id where p.d>8 or p.d is null"
                 };
-                // Each query runs once per key shape: the two the INT layout reads, then the two
-                // that stage a key into the build's map. The shape index stays q % 3, so the
-                // sharding and cancellation expectations below keep addressing the same query.
-                String[] keys = {"r.id=p.id", "r.k=p.k", "r.lk=p.lk", "r.id=p.id and r.vk=p.vk"};
+                // Each query runs once per key shape: the two the INT layout reads, then the three
+                // that stage a key into the build's map. The last one puts a SYMBOL pair inside a
+                // staged key, so every worker translates through one shared cache. The shape index
+                // stays q % 3, so the sharding and cancellation expectations below keep addressing
+                // the same query.
+                String[] keys = {"r.id=p.id", "r.k=p.k", "r.lk=p.lk", "r.id=p.id and r.vk=p.vk",
+                        "r.id=p.id and r.k=p.k"};
                 String[] queries = new String[intKeyQueries.length * keys.length];
                 for (int key = 0; key < keys.length; key++) {
                     for (int q = 0; q < intKeyQueries.length; q++) {

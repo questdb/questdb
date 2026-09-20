@@ -34,20 +34,19 @@ import io.questdb.std.IntList;
  * indexes address those tables until {@link HashJoinGroupByMetadata} compiles them against the
  * actual inputs. The class holds plain values and borrows nothing, so a cursor factory may keep it.
  * <p>
- * {@link #add(int, int, int, int, boolean)} applies the reconciliation rule that
+ * {@link #add(int, int, int, int)} applies the reconciliation rule that
  * {@code SqlCodeGenerator.processJoinContext()} and the horizon join share, so a pair this class
  * rejects is the pair the ordinary plan rejects with "join column type mismatch". The sink flags
  * are indexed by key position rather than by column, which keeps the two sides apart and lets
  * {@link HashJoinGroupByMetadata} turn them into the per-column bit sets that
  * {@code RecordSinkFactory} takes.
  * <p>
- * A lone INT pair, and a lone SYMBOL pair whose keys the build translates into the probe's
- * domain, keep the narrow INT layout ({@link #isIntKeyed()}). Every other shape stages its key
- * through a {@link io.questdb.cairo.RecordSink} into a map. A SYMBOL pair inside a composite key
- * therefore compares as text, which selects the same rows as the int comparison the ordinary
- * hash join uses there: {@code SqlCodeGenerator.convertSymbolJoinKeysToInt()} translates such a
- * pair into int keys whenever both symbol tables are static, while nothing translates the
- * symbols of a staged key.
+ * A lone INT pair and a lone SYMBOL pair keep the narrow INT layout ({@link #isIntKeyed()}).
+ * Every other shape stages its key through a {@link io.questdb.cairo.RecordSink} into a map.
+ * A SYMBOL pair compares as ints either way: the probe translates its symbol key into the
+ * build's domain, so the pair reconciles to {@link ColumnType#SYMBOL} and neither side writes
+ * its text. That is what {@code SqlCodeGenerator.convertSymbolJoinKeysToInt()} does for the
+ * ordinary hash join whenever both symbol tables are static, which the planner also requires.
  */
 public final class HashJoinGroupByKeys {
     private final IntList buildColumns = new IntList();
@@ -85,9 +84,11 @@ public final class HashJoinGroupByKeys {
      * stage, when the ordinary plan would reject the pair, and when a column that an earlier key
      * already stages would have to stage differently
      * here: one column reaches its sink through one encoding, so the shape keeps the ordinary plan.
+     * A probe SYMBOL column that two keys would translate is the same kind of conflict, since
+     * the translating record indexes its views by probe column and can hold only one per column.
      * The caller discards these keys when this returns false, so a rejected pair may stay appended.
      */
-    public boolean add(int probeColumn, int probeType, int buildColumn, int buildType, boolean isSingleKey) {
+    public boolean add(int probeColumn, int probeType, int buildColumn, int buildType) {
         if (!supportsKeyType(probeType) || !supportsKeyType(buildType)) {
             return false;
         }
@@ -110,14 +111,10 @@ public final class HashJoinGroupByKeys {
                 symbolAsString.set(key);
             }
         } else if (ColumnType.isSymbol(probeType) && ColumnType.isSymbol(buildType)) {
-            // The INT layout translates the build's symbol keys once per distinct key; a staged
-            // key has no such step, so inside a composite key both sides compare as text. The
-            // ordinary hash join translates such a pair, so the fused plan hashes text where the
-            // ordinary plan hashes ints.
-            type = isSingleKey ? ColumnType.SYMBOL : ColumnType.STRING;
-            if (!isSingleKey) {
-                symbolAsString.set(key);
-            }
+            // Both dictionaries stay as they are and the probe translates its key into the
+            // build's domain, so the pair compares as ints whether it is the lone key or one
+            // column of a staged composite.
+            type = ColumnType.SYMBOL;
         } else if (ColumnType.isSymbol(probeType) || ColumnType.isSymbol(buildType)) {
             type = ColumnType.STRING;
             symbolAsString.set(key);
@@ -173,7 +170,7 @@ public final class HashJoinGroupByKeys {
         return buildTimestampAsNanos.get(key);
     }
 
-    /** True for the narrow INT layout: one INT pair, or one SYMBOL pair the build translates. */
+    /** True for the narrow INT layout: one INT pair, or one SYMBOL pair the probe translates. */
     public boolean isIntKeyed() {
         return size() == 1 && (types.getQuick(0) == ColumnType.INT || types.getQuick(0) == ColumnType.SYMBOL);
     }
@@ -193,9 +190,14 @@ public final class HashJoinGroupByKeys {
         return symbolAsString.get(key);
     }
 
-    /** The single SYMBOL pair of the INT layout, which the build translates into the probe's symbol keys. */
+    /** The single SYMBOL pair of the INT layout, whose probe keys translate into the build's domain. */
     public boolean isSymbolKey() {
         return size() == 1 && types.getQuick(0) == ColumnType.SYMBOL;
+    }
+
+    /** A SYMBOL pair, whose probe keys translate into the build's domain instead of comparing as text. */
+    public boolean isTranslatedSymbol(int key) {
+        return types.getQuick(key) == ColumnType.SYMBOL;
     }
 
     public int size() {
@@ -207,7 +209,10 @@ public final class HashJoinGroupByKeys {
             if (probeColumns.getQuick(i) == probeColumns.getQuick(key)
                     && (probeStringAsVarchar.get(i) != probeStringAsVarchar.get(key)
                     || probeTimestampAsNanos.get(i) != probeTimestampAsNanos.get(key)
-                    || symbolAsString.get(i) != symbolAsString.get(key))) {
+                    || symbolAsString.get(i) != symbolAsString.get(key)
+                    // One probe SYMBOL column translates once, because the translating record
+                    // the probe sink reads indexes its views by probe column.
+                    || (isTranslatedSymbol(i) && isTranslatedSymbol(key)))) {
                 return true;
             }
             if (buildColumns.getQuick(i) == buildColumns.getQuick(key)

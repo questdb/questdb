@@ -59,7 +59,8 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * {@code k} and the SYMBOL column {@code sym}, which the fused plan reads through its narrow INT
  * layout, and the LONG column {@code lk} and the VARCHAR column {@code vk}, which it stages
  * through a {@link io.questdb.cairo.RecordSink} into a map, as it stages every composite key and
- * the SYMBOL-against-VARCHAR pair. Grouping keys, aggregate arguments and single-side predicates
+ * the SYMBOL-against-VARCHAR pair. A SYMBOL pair compares as an int on either route, because the
+ * probe translates its key into the build's domain; only a SYMBOL against text compares as text. Grouping keys, aggregate arguments and single-side predicates
  * come from either input, so every join type sees them on the probe, on the build and on the
  * null-extended side. Each input is the table itself, a projection over it that renames some
  * columns and may filter (the fused planner resolves columns through it), a {@code LATEST ON}
@@ -175,7 +176,7 @@ public final class HashJoinGroupByClause {
             appendKeyEquality(sql, rnd, l.name(VARCHAR_KEY), r.name(VARCHAR_KEY));
         } else {
             // vk holds sym's texts, so the pair matches rows; it reconciles to VARCHAR and
-            // both sides stage their text rather than translating symbol keys.
+            // both sides stage their text, which is the one shape that does not translate.
             appendKeyEquality(sql, rnd, l.name(SYMBOL_KEY), r.name(VARCHAR_KEY));
         }
         if (keyPick >= 38) {

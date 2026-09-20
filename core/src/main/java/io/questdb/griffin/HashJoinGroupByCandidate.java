@@ -699,7 +699,7 @@ public final class HashJoinGroupByCandidate {
                     final int build = context.aIndexes.getQuick(i) == buildIndex ? a : b;
                     final int probe = build == a ? b : a;
                     if (!keys.add(columnIndexes.getQuick(probe), metadata.getColumnType(probe),
-                            columnIndexes.getQuick(build), metadata.getColumnType(build), count == 1)) {
+                            columnIndexes.getQuick(build), metadata.getColumnType(build))) {
                         return null;
                     }
                 }

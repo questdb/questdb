@@ -35,27 +35,30 @@ import io.questdb.std.Vect;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Translates build-side SYMBOL join keys into the probe table's symbol key domain,
- * so that the frozen build and the probe loop compare plain INT keys. Each distinct
- * build key resolves its text through the probe dictionary once per execution. The
- * owner thread uses one instance at a time; both symbol tables are borrowed views.
+ * Translates probe-side SYMBOL join keys into the build table's symbol key domain, so that the
+ * frozen build stores the build's own keys and the probe loop compares plain INT keys. The
+ * translation is lazy: a probe key resolves the first time a worker meets it, and a probe key
+ * the frame never reads costs nothing.
  * <p>
- * The cache is a dense, tracked native array indexed by build symbol key and sized by
- * the build dictionary. {@link #of} allocates it and any failure there releases it.
- * {@link #close} releases it and drops the borrowed tables; the instance is reusable.
+ * The cache is a dense, tracked native array indexed by probe symbol key and sized by the probe
+ * dictionary. Every worker shares one cache, because an entry is a function of the two
+ * dictionaries alone: two workers that fill the same entry write the same value, so the race is
+ * benign and no synchronization is needed. The owner allocates the cache through {@link #of} and
+ * any failure there releases it; {@link #close} releases it and leaves the instance reusable.
+ * <p>
+ * The dictionaries are not shared. Each worker translates through its own {@link View}, which
+ * holds that worker's pair of symbol tables and reads the shared cache.
  */
 public final class SymbolKeyTranslator implements QuietCloseable {
     // Clearing checks the breaker once per MiB, as the build's buffers do.
     private static final long FILL_CHUNK_SIZE = 1024 * 1024;
     // Translated keys are nonnegative, VALUE_IS_NULL or VALUE_NOT_FOUND, never -1.
     private static final int UNRESOLVED = -1;
-    private StaticSymbolTable buildKeyTable;
     private long cacheAddress;
     private int cacheKeyCount;
     private long cacheSize;
     @Nullable
     private MemoryTracker memoryTracker;
-    private StaticSymbolTable probeKeyTable;
 
     @Override
     public void close() {
@@ -65,32 +68,25 @@ public final class SymbolKeyTranslator implements QuietCloseable {
         cacheSize = 0;
         cacheKeyCount = 0;
         memoryTracker = null;
-        probeKeyTable = null;
-        buildKeyTable = null;
     }
 
     public long getSizeInBytes() {
         return cacheSize;
     }
 
-    /** Binds both dictionaries and allocates an unresolved cache for the build dictionary. */
-    public void of(
-            StaticSymbolTable probeKeyTable,
-            StaticSymbolTable buildKeyTable,
-            @Nullable MemoryTracker memoryTracker,
-            SqlExecutionCircuitBreaker circuitBreaker
-    ) {
+    /**
+     * Allocates an unresolved cache for the probe dictionary's current key count. A probe key
+     * beyond that count, which a concurrent writer may have added, resolves uncached.
+     */
+    public void of(int probeKeyCount, @Nullable MemoryTracker memoryTracker, SqlExecutionCircuitBreaker circuitBreaker) {
         close();
-        this.probeKeyTable = probeKeyTable;
-        this.buildKeyTable = buildKeyTable;
         this.memoryTracker = memoryTracker;
         try {
-            final int keyCount = buildKeyTable.getSymbolCount();
-            if (keyCount > 0) {
-                final long size = (long) keyCount * Integer.BYTES;
+            if (probeKeyCount > 0) {
+                final long size = (long) probeKeyCount * Integer.BYTES;
                 cacheAddress = Unsafe.malloc(size, MemoryTag.NATIVE_JOIN_MAP, memoryTracker);
                 cacheSize = size;
-                cacheKeyCount = keyCount;
+                cacheKeyCount = probeKeyCount;
                 for (long offset = 0; offset < size; offset += FILL_CHUNK_SIZE) {
                     circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                     Vect.memset(cacheAddress + offset, Math.min(size - offset, FILL_CHUNK_SIZE), 0xFF);
@@ -103,24 +99,52 @@ public final class SymbolKeyTranslator implements QuietCloseable {
     }
 
     /**
-     * Returns the probe symbol key for a build symbol key: VALUE_IS_NULL for null, and
-     * VALUE_NOT_FOUND when the probe dictionary lacks the text, so no probe row can match.
+     * One worker's translation path: its own two symbol tables over the shared cache. A view is
+     * valid while the cache stays open and both tables stay open, which is one execution; the
+     * object itself survives {@link #close()} and rebinds for the next execution.
      */
-    public int translate(int buildKey) {
-        if (buildKey == SymbolTable.VALUE_IS_NULL) {
-            return SymbolTable.VALUE_IS_NULL;
+    public static final class View implements QuietCloseable {
+        private StaticSymbolTable buildKeyTable;
+        private long cacheAddress;
+        private int cacheKeyCount;
+        private SymbolTable probeKeyTable;
+
+        /** Both tables are borrowed views of this execution's sources; the caller keeps them alive. */
+        public void of(SymbolKeyTranslator translator, SymbolTable probeKeyTable, StaticSymbolTable buildKeyTable) {
+            this.cacheAddress = translator.cacheAddress;
+            this.cacheKeyCount = translator.cacheKeyCount;
+            this.probeKeyTable = probeKeyTable;
+            this.buildKeyTable = buildKeyTable;
         }
-        if (buildKey < 0 || buildKey >= cacheKeyCount) {
-            // The build cursor's dictionary does not hold this key. Resolve it like
-            // SymbolTranslatingRecord does for the ordinary join, without caching.
-            return probeKeyTable.keyOf(buildKeyTable.valueOf(buildKey));
+
+        @Override
+        public void close() {
+            cacheAddress = 0;
+            cacheKeyCount = 0;
+            probeKeyTable = null;
+            buildKeyTable = null;
         }
-        final long address = cacheAddress + (long) buildKey * Integer.BYTES;
-        int probeKey = Unsafe.getInt(address);
-        if (probeKey == UNRESOLVED) {
-            probeKey = probeKeyTable.keyOf(buildKeyTable.valueOf(buildKey));
-            Unsafe.putInt(address, probeKey);
+
+        /**
+         * Returns the build symbol key for a probe symbol key: VALUE_IS_NULL for null, and
+         * VALUE_NOT_FOUND when the build dictionary lacks the text, so no build row can match.
+         */
+        public int translate(int probeKey) {
+            if (probeKey == SymbolTable.VALUE_IS_NULL) {
+                return SymbolTable.VALUE_IS_NULL;
+            }
+            if (probeKey < 0 || probeKey >= cacheKeyCount) {
+                // The probe dictionary grew past the cache. Resolve the key like
+                // SymbolTranslatingRecord does for the ordinary join, without caching.
+                return buildKeyTable.keyOf(probeKeyTable.valueOf(probeKey));
+            }
+            final long address = cacheAddress + (long) probeKey * Integer.BYTES;
+            int buildKey = Unsafe.getInt(address);
+            if (buildKey == UNRESOLVED) {
+                buildKey = buildKeyTable.keyOf(probeKeyTable.valueOf(probeKey));
+                Unsafe.putInt(address, buildKey);
+            }
+            return buildKey;
         }
-        return probeKey;
     }
 }

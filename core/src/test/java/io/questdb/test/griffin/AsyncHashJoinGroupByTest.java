@@ -118,8 +118,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Runs every lifecycle case with INT join keys and with SYMBOL join keys, whose build
- * translates keys into the probe's symbol keys and keeps its cursor open until close.
+ * Runs every lifecycle case with INT join keys and with SYMBOL join keys, whose probe
+ * translates its keys into the build's symbol keys and whose build cursor stays open
+ * until close, both for its payload symbols and for those translation lookups.
  */
 @RunWith(Parameterized.class)
 public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
@@ -517,18 +518,22 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     public void testTranslationCacheAndBuildMemoryLimitsCloseBuildCursorAndReuse() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            // SYMBOL keys translate through a cache of 400,000 bytes for this build dictionary. The
-            // probe holds every key text, so the build keeps every translated row.
-            execute("insert into p select " + key("x::int") + ", 'ES', 1.0 from long_sequence(100_000)");
-            execute("insert into r select " + key("x::int") + ", timestamp_sequence('2021-03-01', 1_000_000), 1.0, 2.0 from long_sequence(100_000)");
-            final long cacheSize = 400_000;
-            final long cacheLimit = 256 * 1024;
-            final long buildLimit = 1024 * 1024;
+            // The build is small and the probe dictionary is large, which separates the two
+            // allocations: the build runs first, and the translation cache follows it once the
+            // probe frame cursor is open and its dictionary size is known.
+            execute("insert into p select " + key("x::int") + ", 'ES', 1.0 from long_sequence(1_000)");
+            execute("insert into r select " + key("x::int") + ", timestamp_sequence('2021-03-01', 1_000_000), 1.0, 2.0 from long_sequence(200_000)");
+            // The probe holds 200,000 distinct keys, so SYMBOL keys translate through a cache
+            // of 800,000 bytes. The build's rows and key table together stay under 64 KiB.
+            final long cacheSize = 800_000;
+            final long buildLimit = 8 * 1024;
+            final long cacheLimit = 512 * 1024;
+            final int buildRows = 1_005;
             MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(0)) {
                 for (boolean keyed : new boolean[]{true, false}) {
-                    // A filtered build cursor has no size, so the build reads and translates rows
-                    // before it outgrows the limit. Otherwise the build sizes its rows up front.
+                    // A filtered build cursor has no size, so the build reads rows before it
+                    // outgrows the limit. Otherwise the build sizes its rows up front.
                     for (boolean isBuildFiltered : new boolean[]{false, true}) {
                         Hook hook = new Hook();
                         hook.instrumentBuild = true;
@@ -538,17 +543,17 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                         hook.onLimit = () -> usedWhileReading.set(tracker.getUsed());
                         String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
                         try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
-                            // With SYMBOL keys, the lower limit rejects the translation cache. The higher one
-                            // admits the cache, and the build exceeds the limit afterwards.
-                            for (long limit : new long[]{cacheLimit, buildLimit}) {
-                                final boolean isCacheFailure = isSymbolKey && limit == cacheLimit;
+                            // INT keys translate nothing, so only the build limit fails them. The
+                            // higher limit admits the build and rejects the cache after it.
+                            for (long limit : isSymbolKey ? new long[]{buildLimit, cacheLimit} : new long[]{buildLimit}) {
+                                final boolean isCacheFailure = limit == cacheLimit;
                                 int opens = hook.buildOpens;
                                 hook.calls.set(0);
                                 usedWhileReading.set(-1);
                                 tracker.setLimit(limit);
                                 sqlExecutionContext.setMemoryTracker(tracker);
                                 try (RecordCursor ignored = f.getRawCursor()) {
-                                    Assert.fail("expected the build to exceed the memory limit");
+                                    Assert.fail("expected the query to exceed the memory limit");
                                 } catch (CairoException ex) {
                                     Assert.assertTrue(ex.isOutOfMemory());
                                     boolean isInTranslator = false;
@@ -558,7 +563,6 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                         isInBuild |= frame.getClassName().endsWith("IntHashJoinBuild")
                                                 && frame.getMethodName().equals("build");
                                     }
-                                    // INT keys have no cache, so they fail while the build stores rows.
                                     Assert.assertEquals(isCacheFailure, isInTranslator);
                                     Assert.assertEquals(!isCacheFailure, isInBuild);
                                 } finally {
@@ -566,11 +570,17 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                 }
                                 Assert.assertEquals(opens + 1, hook.buildOpens);
                                 Assert.assertEquals(hook.buildOpens, hook.buildCloses);
-                                Assert.assertEquals(!isCacheFailure && isBuildFiltered, hook.buildReads > 0);
-                                if (!isCacheFailure && isBuildFiltered) {
-                                    // The build reads its rows while the tracker charges the whole cache.
+                                if (isCacheFailure) {
+                                    // The build finished before the cache asked for its bytes.
+                                    Assert.assertEquals(buildRows + 1, hook.buildReads);
+                                } else {
+                                    Assert.assertEquals(isBuildFiltered, hook.buildReads > 0);
+                                }
+                                if (isBuildFiltered) {
+                                    // The cache is charged after the build, never while it reads.
                                     Assert.assertTrue(usedWhileReading.get() > 0);
-                                    Assert.assertEquals(isSymbolKey, usedWhileReading.get() >= cacheSize);
+                                    Assert.assertTrue("build read under a charged cache: " + usedWhileReading.get(),
+                                            usedWhileReading.get() < cacheSize);
                                 }
                                 Assert.assertEquals(0, tracker.getUsed());
                                 Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
@@ -658,12 +668,12 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBuildCancellationDuringLargeKeyTranslationAndReuse() throws Exception {
+    public void testCancellationDuringLargeKeyTranslationAndReuse() throws Exception {
         assertMemoryLeak(() -> {
             // A symbol capacity for the key count keeps each keyOf() lookup short.
             createTables(isSymbolKey ? "symbol capacity 524288" : "int");
-            // With SYMBOL keys, the 300,000 distinct build keys fill a translation cache of two MiB chunks.
-            // The probe holds every key text, so the build keeps every translated row.
+            // With SYMBOL keys, the probe's 300,000 distinct keys size a translation cache that
+            // clears in two MiB chunks, after the build has read every one of its rows.
             final int keyCount = 300_000;
             execute("insert into p select " + key("x::int") + ", ('c'||(x%64))::symbol, x*0.5 from long_sequence(" + keyCount + ")");
             execute("insert into r select " + key("x::int") + ", timestamp_sequence('2021-03-01', 1_000_000), 1.0, 2.0 from long_sequence(" + keyCount + ")");
@@ -688,8 +698,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     ((SqlExecutionContextImpl) sqlExecutionContext).with(previousBreaker);
                     sqlExecutionContext.setMemoryTracker(previousTracker);
                 }
-                // Checks follow the build cursor's frames, the build phases and MiB of cache and
-                // build memory, not the translated keys.
+                // Checks follow the build cursor's frames, the build phases and MiB of build
+                // memory and cleared cache, not the rows or the translated keys.
                 Assert.assertTrue("build checks must not scale with " + keyCount + " keys: " + counting.checks,
                         counting.checks > 0 && counting.checks < 128);
                 int cacheCancellations = 0;
@@ -715,6 +725,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     if (hook.buildReads > 0 && hook.buildReads <= buildRows) {
                         rowCancellations++;
                     }
+                    // The cache clears after the build, so its cancellations are not row ones.
                     Assert.assertEquals(hook.buildOpens, hook.buildCloses);
                     Assert.assertEquals(0, tracker.getUsed());
                     Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());

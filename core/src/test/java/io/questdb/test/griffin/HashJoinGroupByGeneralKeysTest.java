@@ -228,6 +228,85 @@ public class HashJoinGroupByGeneralKeysTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testTranslatedSymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            // Two dictionaries that hold the same texts under different keys, each with a text
+            // the other lacks, and NULLs on both sides. A SYMBOL pair compares as an int wherever
+            // it sits, so the probe translates its key before it looks one up or stages one.
+            for (String name : new String[]{"ks", "kt"}) {
+                execute("CREATE TABLE " + name + " (sym SYMBOL, sym2 SYMBOL, i INT, v DOUBLE, t TIMESTAMP) "
+                        + "TIMESTAMP(t) PARTITION BY DAY");
+            }
+            // ks writes a, b, c, d and kt writes d, c, b, e, so no shared text shares a key,
+            // 'a' is missing from kt and 'e' from ks. sym2 reverses its two texts the same way.
+            execute("""
+                    INSERT INTO ks VALUES
+                    ('a', 'p', 0, 1.0, '2020-01-01T00:00:00Z'),
+                    ('b', 'q', 1, 2.0, '2020-01-01T01:00:00Z'),
+                    ('c', 'p', 0, 3.0, '2020-01-01T02:00:00Z'),
+                    ('d', 'q', 1, 4.0, '2020-01-01T03:00:00Z'),
+                    (NULL, 'p', 0, 5.0, '2020-01-02T00:00:00Z'),
+                    ('a', NULL, 1, 6.0, '2020-01-02T01:00:00Z'),
+                    ('b', 'q', 0, 7.0, '2020-01-02T02:00:00Z'),
+                    ('d', NULL, 1, 8.0, '2020-01-02T03:00:00Z')""");
+            execute("""
+                    INSERT INTO kt VALUES
+                    ('d', 'q', 1, 10.0, '2020-01-01T00:00:00Z'),
+                    ('c', 'p', 0, 20.0, '2020-01-01T01:00:00Z'),
+                    ('b', 'q', 1, 30.0, '2020-01-01T02:00:00Z'),
+                    ('e', 'p', 0, 40.0, '2020-01-01T03:00:00Z'),
+                    (NULL, 'q', 1, 50.0, '2020-01-02T00:00:00Z'),
+                    ('d', NULL, 0, 60.0, '2020-01-02T01:00:00Z'),
+                    ('b', 'p', 1, 70.0, '2020-01-02T02:00:00Z'),
+                    ('e', 'q', 0, 80.0, '2020-01-02T03:00:00Z')""");
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                context.changePageFrameSizes(1, 2);
+                for (int threshold : new int[]{Integer.MAX_VALUE, 1}) {
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
+                    for (String on : new String[]{
+                            // The INT layout, where the reducer translates before the lookup.
+                            "ks.sym=kt.sym",
+                            // Staged keys, where the sink reads the translating probe record.
+                            "ks.sym=kt.sym AND ks.sym2=kt.sym2",
+                            "ks.i=kt.i AND ks.sym=kt.sym",
+                            "ks.sym=kt.sym AND ks.i=kt.i",
+                            "ks.sym2=kt.sym2 AND ks.i=kt.i AND ks.sym=kt.sym",
+                    }) {
+                        assertDifferential("SELECT ks.sym pk, kt.sym bk, count(*) n, count(kt.i) bi, sum(kt.v) bv "
+                                + "FROM ks JOIN kt ON " + on + " ORDER BY pk, bk", context, true);
+                        assertDifferential("SELECT count(*) n, count(kt.i) bi, sum(ks.v) pv, sum(kt.v) bv "
+                                + "FROM ks LEFT JOIN kt ON " + on, context, true);
+                        // A probe filter narrows the frame before the key is translated.
+                        assertDifferential("SELECT count(*) n, count(kt.i) bi, sum(ks.v) pv "
+                                + "FROM ks LEFT JOIN kt ON " + on + " WHERE ks.v > 2.0", context, true);
+                    }
+                }
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, Integer.MAX_VALUE);
+                // Both layouts translate, so both report the translation in their plan, and a
+                // pair that compares as text does not.
+                for (String on : new String[]{"ks.sym=kt.sym", "ks.i=kt.i AND ks.sym=kt.sym"}) {
+                    assertPlanContains("SELECT count(*) FROM ks JOIN kt ON " + on, "symbolKeyJoin: true", context);
+                }
+                assertPlanExcludes("SELECT count(*) FROM ks JOIN kt ON ks.i=kt.i", "symbolKeyJoin", context);
+            }
+        });
+    }
+
+    private static void assertPlanContains(String sql, String expected, SqlExecutionContextImpl context) throws Exception {
+        try (RecordCursorFactory factory = engine.select(sql, context)) {
+            String actual = HashJoinGroupByQualificationTest.plan(factory, context);
+            Assert.assertTrue(sql + "\n" + actual, actual.contains(expected));
+        }
+    }
+
+    private static void assertPlanExcludes(String sql, String unexpected, SqlExecutionContextImpl context) throws Exception {
+        try (RecordCursorFactory factory = engine.select(sql, context)) {
+            String actual = HashJoinGroupByQualificationTest.plan(factory, context);
+            Assert.assertFalse(sql + "\n" + actual, actual.contains(unexpected));
+        }
+    }
+
     private static void assertKeyPair(String on, SqlExecutionContextImpl context) throws Exception {
         // A keyed shape with a SYMBOL payload, and a scalar one over an outer join, whose
         // count(kb.i) turns a lost match into a different number.

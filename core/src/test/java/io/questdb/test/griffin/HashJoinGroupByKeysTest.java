@@ -36,8 +36,8 @@ public class HashJoinGroupByKeysTest {
     @Test
     public void testCompositeKeysKeepTheirOrder() {
         HashJoinGroupByKeys keys = new HashJoinGroupByKeys();
-        Assert.assertTrue(keys.add(7, ColumnType.LONG, 3, ColumnType.LONG, false));
-        Assert.assertTrue(keys.add(1, ColumnType.INT, 2, ColumnType.INT, false));
+        Assert.assertTrue(keys.add(7, ColumnType.LONG, 3, ColumnType.LONG));
+        Assert.assertTrue(keys.add(1, ColumnType.INT, 2, ColumnType.INT));
         Assert.assertEquals(2, keys.size());
         Assert.assertEquals("7=3:LONG 1=2:INT", describe(keys));
         Assert.assertEquals(7, keys.getProbeColumn(0));
@@ -72,27 +72,58 @@ public class HashJoinGroupByKeysTest {
     public void testRepeatedColumnEncoding() {
         // One column reaches its sink through one encoding, so two keys must agree on it.
         HashJoinGroupByKeys shared = new HashJoinGroupByKeys();
-        Assert.assertTrue(shared.add(4, ColumnType.INT, 1, ColumnType.INT, false));
-        Assert.assertTrue(shared.add(4, ColumnType.INT, 2, ColumnType.INT, false));
+        Assert.assertTrue(shared.add(4, ColumnType.INT, 1, ColumnType.INT));
+        Assert.assertTrue(shared.add(4, ColumnType.INT, 2, ColumnType.INT));
         Assert.assertEquals("4=1:INT 4=2:INT", describe(shared));
 
         HashJoinGroupByKeys probeConflict = new HashJoinGroupByKeys();
-        Assert.assertTrue(probeConflict.add(4, ColumnType.SYMBOL, 1, ColumnType.SYMBOL, false));
-        Assert.assertFalse(probeConflict.add(4, ColumnType.SYMBOL, 2, ColumnType.VARCHAR, false));
+        Assert.assertTrue(probeConflict.add(4, ColumnType.SYMBOL, 1, ColumnType.SYMBOL));
+        Assert.assertFalse(probeConflict.add(4, ColumnType.SYMBOL, 2, ColumnType.VARCHAR));
 
         HashJoinGroupByKeys buildConflict = new HashJoinGroupByKeys();
-        Assert.assertTrue(buildConflict.add(1, ColumnType.TIMESTAMP, 4, ColumnType.TIMESTAMP, false));
-        Assert.assertFalse(buildConflict.add(2, ColumnType.TIMESTAMP_NANO, 4, ColumnType.TIMESTAMP, false));
+        Assert.assertTrue(buildConflict.add(1, ColumnType.TIMESTAMP, 4, ColumnType.TIMESTAMP));
+        Assert.assertFalse(buildConflict.add(2, ColumnType.TIMESTAMP_NANO, 4, ColumnType.TIMESTAMP));
+
+        // One probe SYMBOL column translates once: the translating record the probe sink reads
+        // indexes its views by probe column, so a second key over that column conflicts.
+        HashJoinGroupByKeys twoDictionaries = new HashJoinGroupByKeys();
+        Assert.assertTrue(twoDictionaries.add(4, ColumnType.SYMBOL, 1, ColumnType.SYMBOL));
+        Assert.assertFalse(twoDictionaries.add(4, ColumnType.SYMBOL, 2, ColumnType.SYMBOL));
+        // Even the identical pair twice, which no statement produces and no view could carry.
+        HashJoinGroupByKeys repeatedPair = new HashJoinGroupByKeys();
+        Assert.assertTrue(repeatedPair.add(4, ColumnType.SYMBOL, 1, ColumnType.SYMBOL));
+        Assert.assertFalse(repeatedPair.add(4, ColumnType.SYMBOL, 1, ColumnType.SYMBOL));
+        // Two probe columns may share one build column: each translates through its own view.
+        HashJoinGroupByKeys sharedBuild = new HashJoinGroupByKeys();
+        Assert.assertTrue(sharedBuild.add(4, ColumnType.SYMBOL, 1, ColumnType.SYMBOL));
+        Assert.assertTrue(sharedBuild.add(5, ColumnType.SYMBOL, 1, ColumnType.SYMBOL));
     }
 
     @Test
     public void testSingleKeyRouting() {
         // The INT layout takes a lone INT pair and a lone SYMBOL pair; everything else stages a key.
-        assertRoute(ColumnType.INT, ColumnType.INT, true, "0=1:INT", true, false);
-        assertRoute(ColumnType.SYMBOL, ColumnType.SYMBOL, true, "0=1:SYMBOL", true, true);
-        assertRoute(ColumnType.SYMBOL, ColumnType.SYMBOL, false, "0=1:STRING,symbolAsString", false, false);
-        assertRoute(ColumnType.LONG, ColumnType.LONG, true, "0=1:LONG", false, false);
-        assertRoute(ColumnType.IPv4, ColumnType.IPv4, true, "0=1:IPv4", false, false);
+        assertRoute(ColumnType.INT, ColumnType.INT, "0=1:INT", true, false);
+        assertRoute(ColumnType.SYMBOL, ColumnType.SYMBOL, "0=1:SYMBOL", true, true);
+        assertRoute(ColumnType.LONG, ColumnType.LONG, "0=1:LONG", false, false);
+        assertRoute(ColumnType.IPv4, ColumnType.IPv4, "0=1:IPv4", false, false);
+    }
+
+    @Test
+    public void testSymbolPairTranslatesInEveryPosition() {
+        // A SYMBOL pair reconciles to SYMBOL wherever it sits: the probe translates its key into
+        // the build's domain, so neither side writes its text and the pair compares as ints.
+        HashJoinGroupByKeys keys = new HashJoinGroupByKeys();
+        Assert.assertTrue(keys.add(0, ColumnType.INT, 1, ColumnType.INT));
+        Assert.assertTrue(keys.add(2, ColumnType.SYMBOL, 3, ColumnType.SYMBOL));
+        Assert.assertEquals("0=1:INT 2=3:SYMBOL", describe(keys));
+        Assert.assertFalse(keys.isIntKeyed());
+        Assert.assertFalse(keys.isSymbolKey());
+        Assert.assertFalse(keys.isTranslatedSymbol(0));
+        Assert.assertTrue(keys.isTranslatedSymbol(1));
+        // A SYMBOL against text still compares as text, so only the pair of dictionaries translates.
+        HashJoinGroupByKeys text = new HashJoinGroupByKeys();
+        Assert.assertTrue(text.add(0, ColumnType.SYMBOL, 1, ColumnType.STRING));
+        Assert.assertFalse(text.isTranslatedSymbol(0));
     }
 
     @Test
@@ -124,7 +155,7 @@ public class HashJoinGroupByKeysTest {
                 ColumnType.getDecimalType(10, 2)
         }) {
             HashJoinGroupByKeys keys = new HashJoinGroupByKeys();
-            Assert.assertTrue(ColumnType.nameOf(type), keys.add(0, type, 1, type, true));
+            Assert.assertTrue(ColumnType.nameOf(type), keys.add(0, type, 1, type));
             Assert.assertEquals(ColumnType.nameOf(type), type, keys.getType(0));
             Assert.assertEquals(ColumnType.nameOf(type), "0=1:" + ColumnType.nameOf(type), describe(keys));
         }
@@ -132,19 +163,19 @@ public class HashJoinGroupByKeysTest {
 
     private static void assertKey(int probeType, int buildType, String expected) {
         HashJoinGroupByKeys keys = new HashJoinGroupByKeys();
-        Assert.assertTrue(expected, keys.add(0, probeType, 1, buildType, false));
+        Assert.assertTrue(expected, keys.add(0, probeType, 1, buildType));
         Assert.assertEquals(expected, describe(keys));
     }
 
     private static void assertRejected(int probeType, int buildType) {
         String pair = ColumnType.nameOf(probeType) + " against " + ColumnType.nameOf(buildType);
-        Assert.assertFalse(pair, new HashJoinGroupByKeys().add(0, probeType, 1, buildType, true));
-        Assert.assertFalse(pair, new HashJoinGroupByKeys().add(0, buildType, 1, probeType, true));
+        Assert.assertFalse(pair, new HashJoinGroupByKeys().add(0, probeType, 1, buildType));
+        Assert.assertFalse(pair, new HashJoinGroupByKeys().add(0, buildType, 1, probeType));
     }
 
-    private static void assertRoute(int probeType, int buildType, boolean isSingleKey, String expected, boolean isIntKeyed, boolean isSymbolKey) {
+    private static void assertRoute(int probeType, int buildType, String expected, boolean isIntKeyed, boolean isSymbolKey) {
         HashJoinGroupByKeys keys = new HashJoinGroupByKeys();
-        Assert.assertTrue(expected, keys.add(0, probeType, 1, buildType, isSingleKey));
+        Assert.assertTrue(expected, keys.add(0, probeType, 1, buildType));
         Assert.assertEquals(expected, describe(keys));
         Assert.assertEquals(expected, isIntKeyed, keys.isIntKeyed());
         Assert.assertEquals(expected, isSymbolKey, keys.isSymbolKey());

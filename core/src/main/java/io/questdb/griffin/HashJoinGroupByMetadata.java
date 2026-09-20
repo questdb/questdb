@@ -57,6 +57,10 @@ import java.io.Closeable;
  * Build SYMBOL payloads keep the build input's symbol keys and its static symbol tables.
  * Construct before the candidate's borrowed models are mutated or the compiler reused.
  * <p>
+ * A SYMBOL key column compares as an int on both layouts: the probe translates its symbol key
+ * into the build's domain, so this class publishes those key columns for the atom to bind a
+ * translator to.
+ * <p>
  * A key the narrow INT layout cannot carry reaches its map through a {@link RecordSink}
  * per input. This class generates the two sink classes and hands out instances, one per
  * worker, through {@link #newProbeKeySink()} and {@link #newBuildKeySink()}; it borrows
@@ -94,6 +98,9 @@ public final class HashJoinGroupByMetadata implements Closeable {
     private final BitSet probeKeyStringAsVarchar = new BitSet();
     private final BitSet probeKeySymbolAsString = new BitSet();
     private final BitSet probeKeyTimestampAsNanos = new BitSet();
+    // Compiled indexes of the SYMBOL key columns, in key order, one entry per SYMBOL pair.
+    private final IntList symbolKeyBuildColumns = new IntList();
+    private final IntList symbolKeyProbeColumns = new IntList();
     private ExpressionNode postJoinFilter;
 
     public HashJoinGroupByMetadata(
@@ -130,6 +137,10 @@ public final class HashJoinGroupByMetadata implements Closeable {
             }
             probeKeyColumns.add(probeColumn);
             buildKeyColumns.add(buildColumn);
+            if (keys.isTranslatedSymbol(i)) {
+                symbolKeyProbeColumns.add(probeColumn);
+                symbolKeyBuildColumns.add(buildColumn);
+            }
             if (i > 0) {
                 conditionSink.putAscii(" and ");
             }
@@ -140,8 +151,8 @@ public final class HashJoinGroupByMetadata implements Closeable {
         probeInputMetadata = probeMetadata;
         buildInputMetadata = buildMetadata;
         if (keys.isIntKeyed()) {
-            // The INT layout reads its key straight off the probe record and translates the build
-            // side once per distinct key, so it stages nothing and needs no sink.
+            // The INT layout reads its key straight off the probe record, translating it when the
+            // key is a SYMBOL pair, so it stages nothing and needs no sink.
             probeKeySinkClass = null;
             buildKeySinkClass = null;
         } else {
@@ -282,6 +293,11 @@ public final class HashJoinGroupByMetadata implements Closeable {
         return payloadMetadata;
     }
 
+    /** Column count of the probe input, which bounds every probe index a key sink reads. */
+    public int getProbeColumnCount() {
+        return probeColumnCount;
+    }
+
     /** Compiled probe-record index of the INT layout's only key column. */
     public int getProbeKeyColumn() {
         return probeKeyColumns.getQuick(0);
@@ -292,16 +308,27 @@ public final class HashJoinGroupByMetadata implements Closeable {
         return probeKeyColumns;
     }
 
+    /** Compiled build-record indexes of the SYMBOL key columns, in key order. */
+    public IntList getSymbolKeyBuildColumns() {
+        return symbolKeyBuildColumns;
+    }
+
+    /** Compiled probe-record indexes of the SYMBOL key columns, in key order. */
+    public IntList getSymbolKeyProbeColumns() {
+        return symbolKeyProbeColumns;
+    }
+
     /**
      * False when a SYMBOL key column of either input, or a build SYMBOL payload column, lacks a
      * static symbol table. Base-table columns always have one; the planner keeps the ordinary
-     * plan otherwise. A staged SYMBOL key needs one as much as a translated one does, since the
-     * sink writes the symbol's text.
+     * plan otherwise. Both sides of a SYMBOL key need one: the probe resolves its key's text and
+     * the build answers {@code keyOf()} for it, whichever layout carries the key.
      */
     public boolean hasStaticSymbolTables() {
         return hasStaticSymbolTables;
     }
 
+    /** The INT layout's lone SYMBOL pair, whose probe keys translate into the build's domain. */
     public boolean isSymbolKey() {
         return keys.isSymbolKey();
     }
