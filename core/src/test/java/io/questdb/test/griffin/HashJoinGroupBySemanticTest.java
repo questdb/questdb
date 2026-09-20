@@ -546,7 +546,7 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                 context.setParallelHashJoinGroupByEnabled(true);
                 try (RecordCursorFactory factory = engine.select(sql, context); RecordCursor cursor = factory.getCursor(context)) {
                     Assert.assertEquals(ordinaryPlan, plan(factory, context));
-                    Assert.assertFalse(ordinaryPlan.contains("Async Hash Join Group By"));
+                    Assert.assertFalse(ordinaryPlan.contains("Hash Join Group By"));
                     Assert.assertTrue(cursor.hasNext());
                     Assert.assertEquals(pairs, cursor.getRecord().getLong(0));
                     Assert.assertTrue(cursor.getRecord().getDouble(1) >= 0);
@@ -648,9 +648,9 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                                             .withContext(context)
                                             .expectSize();
                                     if (isFused) {
-                                        assertion.withPlanContaining("Async Hash Join Group By");
+                                        assertion.withPlanContaining("Hash Join Group By");
                                     } else {
-                                        assertion.withPlanNotContaining("Async Hash Join Group By");
+                                        assertion.withPlanNotContaining("Hash Join Group By");
                                     }
                                     assertion.returns(results[i][j]);
                                 } finally {
@@ -901,7 +901,7 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
         String expected;
         context.setParallelHashJoinGroupByEnabled(false);
         try (RecordCursorFactory baseline = context.getCairoEngine().select(sql, context)) {
-            Assert.assertFalse(plan(baseline, context).contains("Async Hash Join Group By"));
+            Assert.assertFalse(plan(baseline, context).contains("Hash Join Group By"));
             expected = outcome(baseline, context);
         } finally {
             context.setParallelHashJoinGroupByEnabled(true);
@@ -909,7 +909,7 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = context.getCairoEngine().select(sql, context)) {
             Assert.assertEquals(sql, expected, outcome(factory, context));
             String actualPlan = plan(factory, context);
-            Assert.assertEquals(sql + "\n" + actualPlan, isFused, actualPlan.contains("Async Hash Join Group By"));
+            Assert.assertEquals(sql + "\n" + actualPlan, isFused, actualPlan.contains("Hash Join Group By"));
         }
         Assert.assertNull(context.getMemoryTracker());
     }

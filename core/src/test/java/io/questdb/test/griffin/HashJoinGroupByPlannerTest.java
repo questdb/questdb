@@ -306,7 +306,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                         .noRandomAccess()
                         .expectSize()
                         .withPlanContaining("Empty table")
-                        .withPlanNotContaining("Async Hash Join Group By")
+                        .withPlanNotContaining("Hash Join Group By")
                         .returns("""
                                 pairs\tenergy
                                 0\tnull
@@ -318,7 +318,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                         .noRandomAccess()
                         .timestamp("reading_ts")
                         .withPlanContaining("Sample By Fill")
-                        .withPlanNotContaining("Async Hash Join Group By")
+                        .withPlanNotContaining("Hash Join Group By")
                         .returns("""
                                 reading_ts\tpairs\tenergy
                                 2020-01-01T00:00:00.000000Z\t3\t30.0
@@ -332,7 +332,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                         .noRandomAccess()
                         .expectSize()
                         .withPlanContaining("LatestBy")
-                        .withPlanNotContaining("Async Hash Join Group By")
+                        .withPlanNotContaining("Hash Join Group By")
                         .returns("""
                                 pairs\tenergy
                                 3\t110.0
@@ -630,7 +630,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             baselineContext.with(AllowAllSecurityContext.INSTANCE, context.getBindVariableService(), null, -1, null);
             try (RecordCursorFactory baseline = engine.select(sql, baselineContext)) {
                 baselinePlan = plan(baseline, baselineContext);
-                Assert.assertFalse(baselinePlan.contains("Async Hash Join Group By"));
+                Assert.assertFalse(baselinePlan.contains("Hash Join Group By"));
                 expected = result(baseline, baselineContext);
                 types = new int[baseline.getMetadata().getColumnCount()];
                 for (int i = 0; i < types.length; i++) {
@@ -640,7 +640,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
         }
         try (RecordCursorFactory factory = engine.select(sql, context)) {
             String plan = plan(factory, context);
-            Assert.assertEquals(sql + "\n" + plan, enabled, plan.contains("Async Hash Join Group By"));
+            Assert.assertEquals(sql + "\n" + plan, enabled, plan.contains("Hash Join Group By"));
             if (!enabled) {
                 Assert.assertEquals(sql, baselinePlan, plan);
             }

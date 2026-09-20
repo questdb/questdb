@@ -503,7 +503,7 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
         context.setParallelHashJoinGroupByEnabled(true);
         try (RecordCursorFactory factory = context.getCairoEngine().select(sql, context)) {
             String actualPlan = plan(factory, context);
-            Assert.assertEquals(sql + "\n" + actualPlan, enabled, actualPlan.contains("Async Hash Join Group By"));
+            Assert.assertEquals(sql + "\n" + actualPlan, enabled, actualPlan.contains("Hash Join Group By"));
             assertAgainstBaseline(sql, factory, context);
         }
     }
@@ -513,9 +513,9 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
         String expected;
         try (RecordCursorFactory baseline = context.getCairoEngine().select(sql, context)) {
             String baselinePlan = plan(baseline, context);
-            Assert.assertFalse(baselinePlan.contains("Async Hash Join Group By"));
+            Assert.assertFalse(baselinePlan.contains("Hash Join Group By"));
             String candidatePlan = plan(factory, context);
-            if (!candidatePlan.contains("Async Hash Join Group By")) {
+            if (!candidatePlan.contains("Hash Join Group By")) {
                 Assert.assertEquals(sql, baselinePlan, candidatePlan);
             }
             Assert.assertEquals(sql, baseline.getMetadata().getColumnCount(), factory.getMetadata().getColumnCount());

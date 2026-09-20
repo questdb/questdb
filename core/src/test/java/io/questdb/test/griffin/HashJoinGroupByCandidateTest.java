@@ -382,7 +382,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                 plan.put(cursor.getRecord().getStrA(0)).put('\n');
             }
             Assert.assertTrue(plan.toString(), plan.toString().contains(expected));
-            Assert.assertEquals(plan.toString(), fused, plan.toString().contains("Async Hash Join Group By"));
+            Assert.assertEquals(plan.toString(), fused, plan.toString().contains("Hash Join Group By"));
         }
     }
 

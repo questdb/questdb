@@ -73,7 +73,9 @@ public class HashJoinGroupByAggregatesTest extends AbstractCairoTest {
     // Arguments stay below 1e5, so the rounding of a cancelling covariance stays below it as well. FLOAT
     // results compare exactly: only sum, min and max return FLOAT, and sums of these values are exact in FLOAT.
     private static final double DOUBLE_TOLERANCE = 1e-9;
-    private static final String FUSED = "Async Hash Join Group By";
+    // Matches both type names the fused operator prints: the plain one and
+    // "Async JIT Hash Join Group By" for a JIT-compiled probe filter.
+    private static final String FUSED = "Hash Join Group By";
     private static final String[] JOINS = {" JOIN ", " LEFT JOIN ", " RIGHT JOIN "};
 
     @Test

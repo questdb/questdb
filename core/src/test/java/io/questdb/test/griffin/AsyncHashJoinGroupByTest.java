@@ -46,6 +46,8 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReduceJob;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.HashJoinGroupByCandidate;
@@ -94,6 +96,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.sql.async.SlotGatedWorkStealingStrategy;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.LimitedMemoryTracker;
+import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -130,6 +133,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     private final boolean isSymbolKey;
     private int frameRows;
     private int factoryWorkerCount = WORKERS;
+    // When set, the fixture hands this stub to the filter context as its JIT handle, so a test
+    // can pin which frames the reducer takes the compiled path on.
+    private CompiledFilter probeCompiledFilter;
 
     public AsyncHashJoinGroupByTest(boolean isSymbolKey) {
         this.isSymbolKey = isSymbolKey;
@@ -933,6 +939,74 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             } catch (IllegalArgumentException expected) {
                 Assert.assertEquals("unsupported fused hash join execution inputs", expected.getMessage());
             }
+        });
+    }
+
+    @Test
+    public void testCompiledProbeFilterRunsOnlyOnPlainFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            // "note" takes no part in the query, so it can carry the frame-level Parquet type
+            // cast and the column top without moving the results.
+            execute("create table r (plant_id " + keyType() + ", reading_ts timestamp, energy_kwh double,"
+                    + " irradiance_wm2 double, note double) timestamp(reading_ts) partition by month");
+            execute("create table p (plant_id " + keyType() + ", country symbol, installed_kwp double)");
+            execute("insert into r values (" + key("1") + ", '2020-01-01', 10, 100, 1), (" + key("3") + ", '2020-01-02', 30, 300, 2), "
+                    + "(" + key("1") + ", '2020-01-03', 20, 200, 3), (" + key("2") + ", '2020-02-01', 40, null, 4), "
+                    + "(null, '2021-01-01', 50, 500, 5)");
+            execute("insert into p values (" + key("1") + ", 'ES', 5), (" + key("1") + ", 'ES', 7), (" + key("1")
+                    + ", 'IT', null), (" + key("2") + ", null, null), (null, 'ES', 11)");
+            final String sql = SCALAR_AGGREGATES + INNER + " WHERE r.energy_kwh > 10";
+            // Control: a plain native frame has neither a column top nor a type cast, so the
+            // reducer does reach the compiled filter. Without this the two cases below would
+            // pass even if the compiled path had been dropped altogether.
+            probeCompiledFilter = new PoisonCompiledFilter();
+            try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3, -1), "p", ints(0, 1, 2), "energy_kwh > 10", null)) {
+                try (RecordCursor cursor = f.getCursor()) {
+                    cursor.hasNext();
+                    Assert.fail("expected the compiled filter to run on a plain frame");
+                } catch (CairoException error) {
+                    TestUtils.assertContains(error.getFlyweightMessage(), "compiled probe filter must not run");
+                }
+            }
+            // A lazily converted Parquet column resolves per row through the logical record,
+            // which the compiled filter cannot address. A fixed-to-variable conversion is the
+            // one the decoder defers to Java, so it is what raises the frame's type-cast flag.
+            // The active partition never converts, so the probe reads the converted ones only.
+            execute("alter table r convert partition to parquet where reading_ts < '2021-01-01'");
+            execute("alter table r alter column note type varchar");
+            final String parquetSql = SCALAR_AGGREGATES + INNER
+                    + " WHERE r.reading_ts < '2021-01-01' AND r.energy_kwh > 10";
+            probeCompiledFilter = new PoisonCompiledFilter();
+            try (Fixture f = new Fixture(parquetSql, "r where reading_ts < '2021-01-01'", ints(0, 1, 2, 3, -1),
+                    "p", ints(0, 1, 2), "energy_kwh > 10", null)) {
+                f.assertResults(parquetSql);
+            }
+            // A column added now has no data in any existing partition, so every frame of this
+            // table carries a column top and the compiled filter cannot run on it either.
+            execute("alter table r add column backup_kwh double");
+            probeCompiledFilter = new PoisonCompiledFilter();
+            try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3, -1, -1), "p", ints(0, 1, 2), "energy_kwh > 10", null)) {
+                f.assertResults(sql);
+            }
+        });
+    }
+
+    @Test
+    public void testConstructionFailureReleasesCompiledProbeFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            factoryWorkerCount = 0;
+            PoisonCompiledFilter compiledFilter = new PoisonCompiledFilter();
+            probeCompiledFilter = compiledFilter;
+            // The context adopts the JIT handles before the factory constructor runs, so the
+            // constructor's own cleanup is what releases them.
+            try (Fixture ignored = new Fixture(SCALAR_AGGREGATES + INNER, "r", ints(0, 1, 2, 3), "p",
+                    ints(0, 1, 2), "energy_kwh > 10", null)) {
+                Assert.fail("zero worker slots must be rejected");
+            } catch (IllegalArgumentException expected) {
+                Assert.assertEquals("unsupported fused hash join execution inputs", expected.getMessage());
+            }
+            Assert.assertEquals(1, compiledFilter.closeCount);
         });
     }
 
@@ -1865,6 +1939,23 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         return rows;
     }
 
+    /** Fails the reduce task if the reducer takes the compiled path. */
+    private static class PoisonCompiledFilter extends CompiledFilter {
+        private int closeCount;
+
+        @Override
+        public long call(long dataAddress, long dataSize, long auxAddress, long varsAddress,
+                         long varsSize, long rowsAddress, long rowCount) {
+            throw CairoException.nonCritical().put("compiled probe filter must not run on this frame");
+        }
+
+        @Override
+        public void close() {
+            closeCount++;
+            super.close();
+        }
+    }
+
     /** Counts stateful breaker checks and cancels at the given one. */
     private static class BuildCheckBreaker extends CountingSqlExecutionCircuitBreaker {
         private final long failAt;
@@ -2192,8 +2283,20 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                 workerFilters.add(parser.parseFunction(expression, probeFactory.getMetadata(), sqlExecutionContext));
                             }
                         }
-                        filterContext = new AsyncFilterContext(configuration, null, null, null,
-                                probeFilter, null, workerFilters, WORKERS, 0, 0, 0);
+                        // The context takes the stub over, so each fixture needs its own.
+                        CompiledFilter compiledFilter = probeCompiledFilter;
+                        probeCompiledFilter = null;
+                        MemoryCARW bindVarMemory = null;
+                        ObjList<Function> bindVarFunctions = null;
+                        if (compiledFilter != null) {
+                            // The context requires both handles whenever it carries a compiled filter;
+                            // an empty function list keeps prepareBindVarMemory() a no-op.
+                            bindVarMemory = Vm.getCARWInstance(configuration.getSqlJitBindVarsMemoryPageSize(),
+                                    configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_JIT);
+                            bindVarFunctions = new ObjList<>();
+                        }
+                        filterContext = new AsyncFilterContext(configuration, compiledFilter, bindVarMemory,
+                                bindVarFunctions, probeFilter, null, workerFilters, WORKERS, 0, 0, 0);
                         RecordCursorFactory probeOwned = probeFactory;
                         RecordCursorFactory buildOwned = buildFactory;
                         HashJoinGroupByFunctions functionsOwned = functions;

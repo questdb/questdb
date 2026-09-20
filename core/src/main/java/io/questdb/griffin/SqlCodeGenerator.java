@@ -5166,6 +5166,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         AsyncFilterContext filterContext = null;
         Function filter = null;
         ObjList<Function> workerFilters = null;
+        CompiledFilter compiledFilter = null;
+        MemoryCARW bindVarMemory = null;
+        ObjList<Function> bindVarFunctions = null;
         ObjList<IQueryModel> inputModels = new ObjList<>();
         ObjList<ExpressionNode> whereClauses = new ObjList<>();
         ObjList<ExpressionNode> backups = new ObjList<>();
@@ -5220,19 +5223,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     filterFactory.halfClose();
                     probe = filterFactory.getBaseFactory();
                     filter = borrowedFilter;
-                    // The fused reducer reads logical rows and evaluates the interpreted filter, including
-                    // converted Parquet columns. Discard the unused JIT resources after transfer.
-                    Throwable failure = Misc.freeBestEffort(null, filterFactory.getCompiledFilter());
-                    failure = Misc.freeBestEffort(failure, filterFactory.getBindVarMemory());
-                    failure = Misc.freeObjListBestEffort(failure, filterFactory.getBindVarFunctions());
-                    CairoException.rethrowCleanupFailure(failure);
+                    // The fused reducer runs the compiled filter over the raw frame and falls back to
+                    // the interpreted one on frames with column tops or lazily converted Parquet columns.
+                    compiledFilter = filterFactory.getCompiledFilter();
+                    bindVarMemory = filterFactory.getBindVarMemory();
+                    bindVarFunctions = filterFactory.getBindVarFunctions();
                 }
                 Function filterOwned = filter;
                 ObjList<Function> workerFiltersOwned = workerFilters;
+                CompiledFilter compiledFilterOwned = compiledFilter;
+                MemoryCARW bindVarMemoryOwned = bindVarMemory;
+                ObjList<Function> bindVarFunctionsOwned = bindVarFunctions;
                 filter = null;
                 workerFilters = null;
-                filterContext = new AsyncFilterContext(configuration, null, null, null, filterOwned, null,
-                        workerFiltersOwned, workerCount, 0, 0, 0);
+                compiledFilter = null;
+                bindVarMemory = null;
+                bindVarFunctions = null;
+                // Leaving filterUsedColumnIndexes and the filtered record count at null/0 keeps
+                // Parquet late materialization off; shouldUseLateMaterialization() reads both.
+                filterContext = new AsyncFilterContext(configuration, compiledFilterOwned, bindVarMemoryOwned,
+                        bindVarFunctionsOwned, filterOwned, null, workerFiltersOwned, workerCount, 0, 0, 0);
                 RecordCursorFactory probeOwned = probe;
                 RecordCursorFactory buildOwned = build;
                 HashJoinGroupByFunctions functionsOwned = functions;
@@ -5255,6 +5265,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Throwable failure = Misc.freeBestEffort(null, filterContext);
             failure = Misc.freeBestEffort(failure, filter);
             failure = Misc.freeObjListBestEffort(failure, workerFilters);
+            failure = Misc.freeBestEffort(failure, compiledFilter);
+            failure = Misc.freeBestEffort(failure, bindVarMemory);
+            failure = Misc.freeObjListBestEffort(failure, bindVarFunctions);
             failure = Misc.freeBestEffort(failure, functions);
             failure = Misc.freeBestEffort(failure, probe);
             failure = Misc.freeBestEffort(failure, build);
