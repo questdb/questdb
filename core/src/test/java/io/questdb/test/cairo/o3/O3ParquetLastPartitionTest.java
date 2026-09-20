@@ -46,11 +46,11 @@ import org.junit.Test;
  * back to ceilPageSize(staleOffset), discarding the appended rows. A reader or column type
  * converter that then mapped the committed row count faulted past the shortened file.
  * <p>
- * The O3 append tests make the day-1 partition native, grow it from 500 to 600 rows through the
- * mid-partition O3 append while a parquet day-2 partition is the last one, close the writer
- * and check the column file length and the data. For a LONG column 500 rows fit into one
- * 4 KiB page and 600 rows need two, so a truncating close with a stale 500-row offset is
- * observable as a 4096-byte file regardless of the platform page size.
+ * The O3 append tests make the day-1 partition native, grow it from 500 to 8,692 rows through
+ * the mid-partition O3 append while a parquet day-2 partition is the last one, close the
+ * writer and check the column file length and the data. For a LONG column 500 rows fit into
+ * one 4 KiB page, while 8,692 rows require more than 64 KiB. A truncating close with a stale
+ * 500-row offset therefore fails the length check on hosts with 4, 16 or 64 KiB pages.
  */
 public class O3ParquetLastPartitionTest extends AbstractCairoTest {
 
@@ -82,7 +82,7 @@ public class O3ParquetLastPartitionTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("""
                             count\tmin\tmax\tsum
-                            600\t1\t500\t130300
+                            8692\t1\t8192\t33683778
                             """);
         });
     }
@@ -117,8 +117,8 @@ public class O3ParquetLastPartitionTest extends AbstractCairoTest {
         execute("INSERT INTO x SELECT timestamp_sequence('2022-02-26T00:00:00', 1_000_000L), x, 's' || x FROM long_sequence(10)");
         drainWalQueue();
 
-        // rows after day 1's max timestamp: in-place mid-partition O3 append, 500 -> 600 rows
-        execute("INSERT INTO x SELECT timestamp_sequence('2022-02-25T10:00:00', 1_000_000L), x, 's' || x FROM long_sequence(100)");
+        // rows after day 1's max timestamp: in-place mid-partition O3 append, 500 -> 8,692 rows
+        execute("INSERT INTO x SELECT timestamp_sequence('2022-02-25T10:00:00', 1_000_000L), x, 's' || x FROM long_sequence(8_192)");
         drainWalQueue();
 
         // pool closes the writer: doClose -> freeColumns(true) -> MemoryCMARWImpl.close(true)
@@ -127,24 +127,24 @@ public class O3ParquetLastPartitionTest extends AbstractCairoTest {
         long length = columnFileLength("x", "2022-02-25T00:00:00.000000Z", "a");
         Assert.assertTrue(
                 "writer close truncated the appended native partition column file to " + length + " bytes",
-                length >= 600L * Long.BYTES
+                length >= 8_692L * Long.BYTES
         );
 
-        // 1..500 from the first insert plus 1..100 from the appended rows
+        // 1..500 from the first insert plus 1..8,192 from the appended rows
         assertQuery("SELECT count(), min(a), max(a), sum(a) FROM x WHERE ts IN '2022-02-25'")
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
                         count\tmin\tmax\tsum
-                        600\t1\t500\t130300
+                        8692\t1\t8192\t33683778
                         """);
         // the last appended rows sit in the region a truncating close would have discarded
-        assertQuery("SELECT ts, a, s FROM x WHERE ts >= '2022-02-25T10:01:38' AND ts IN '2022-02-25'")
+        assertQuery("SELECT ts, a, s FROM x WHERE ts >= '2022-02-25T12:16:30' AND ts IN '2022-02-25'")
                 .timestamp("ts")
                 .returns("""
                         ts\ta\ts
-                        2022-02-25T10:01:38.000000Z\t99\ts99
-                        2022-02-25T10:01:39.000000Z\t100\ts100
+                        2022-02-25T12:16:30.000000Z\t8191\ts8191
+                        2022-02-25T12:16:31.000000Z\t8192\ts8192
                         """);
     }
 
