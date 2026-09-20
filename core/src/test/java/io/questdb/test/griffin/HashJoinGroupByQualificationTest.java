@@ -299,11 +299,21 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
 
     @Test
     public void testExcludedInternalValueTypes() {
-        for (int type : new int[]{ColumnType.LONG128, ColumnType.LONG256, ColumnType.STRING, ColumnType.VARCHAR,
-                ColumnType.BINARY, ColumnType.UUID, ColumnType.DECIMAL128, ColumnType.ARRAY, ColumnType.RECORD,
-                ColumnType.getGeoHashTypeWithBits(8), ColumnType.getGeoHashTypeWithBits(16),
-                ColumnType.getGeoHashTypeWithBits(32), ColumnType.getGeoHashTypeWithBits(60)}) {
+        // Variable-size types, which the build's row heap cannot copy; INTERVAL, which no
+        // base-table column carries; and LONG128, which is internal, so no build column is one
+        // although the key sinks stage it.
+        for (int type : new int[]{ColumnType.STRING, ColumnType.VARCHAR, ColumnType.BINARY,
+                ColumnType.ARRAY, ColumnType.RECORD, ColumnType.INTERVAL, ColumnType.LONG128}) {
             Assert.assertFalse(ColumnType.nameOf(type), HashJoinGroupByCandidate.supportsValueType(type));
+        }
+        // Fixed-size types the row heap copies, each at its own width.
+        for (int type : new int[]{ColumnType.IPv4, ColumnType.UUID, ColumnType.LONG256,
+                ColumnType.getGeoHashTypeWithBits(8), ColumnType.getGeoHashTypeWithBits(16),
+                ColumnType.getGeoHashTypeWithBits(32), ColumnType.getGeoHashTypeWithBits(60),
+                ColumnType.getDecimalType(2, 1), ColumnType.getDecimalType(4, 1),
+                ColumnType.getDecimalType(9, 2), ColumnType.getDecimalType(18, 2),
+                ColumnType.getDecimalType(38, 2), ColumnType.getDecimalType(50, 2)}) {
+            Assert.assertTrue(ColumnType.nameOf(type), HashJoinGroupByCandidate.supportsValueType(type));
         }
     }
 
@@ -413,10 +423,16 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                 }) {
                     assertDifferential(sql, context, false);
                 }
-                for (String type : new String[]{"string", "varchar", "binary", "uuid", "long256", "decimal(10,2)", "double[]", "geohash(8b)"}) {
+                // The build copies its payload into a row heap, so a variable-size build column
+                // keeps the ordinary plan while a fixed-size one of any width fuses.
+                for (String type : new String[]{"string", "varchar", "binary", "double[]",
+                        "uuid", "long256", "decimal(10,2)", "geohash(8b)", "ipv4"}) {
+                    boolean isFixedSize = !type.equals("string") && !type.equals("varchar")
+                            && !type.equals("binary") && !type.equals("double[]");
                     execute("alter table p add column unsupported " + type);
                     String value = type.equals("double[]") ? "dim_length(p.unsupported, 1)" : "p.unsupported";
-                    assertDifferential("select count(*) from r left join p on r.id=p.id where " + value + " = null", context, false);
+                    assertDifferential("select count(*) from r left join p on r.id=p.id where " + value + " = null",
+                            context, isFixedSize);
                     // An unreferenced unsupported column does not disable otherwise eligible execution.
                     assertDifferential("select " + AGGREGATES + JOINS[1], context, true);
                     execute("alter table p drop column unsupported");

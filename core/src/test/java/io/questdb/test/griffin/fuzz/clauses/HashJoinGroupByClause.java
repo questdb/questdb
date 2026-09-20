@@ -66,7 +66,12 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * columns and may filter (the fused planner resolves columns through it), a {@code LATEST ON}
  * sub-query, or a {@code LIMIT} sub-query (a barrier the fused planner must refuse).
  * <p>
- * Most queries reference only the column types and aggregates the fused plan reads. The rest
+ * Most queries reference only the column types and aggregates the fused plan reads. That set is
+ * per input rather than global: the build's row heap copies fixed-size columns only, while the
+ * probe's columns never reach it, so a STRING or VARCHAR reference joins the set of an input the
+ * join type makes the probe - the master of a LEFT OUTER join, the slave of a RIGHT OUTER one.
+ * An INNER join picks its build by size, which the generator cannot predict, so neither of its
+ * inputs takes the wider set. The rest of the queries
  * reach the features the fused planner has to turn down, each of which keeps the ordinary plan
  * in both arms of the fused axis: a constant WHERE conjunct, SAMPLE BY with FILL, a
  * {@code LIMIT} sub-query, {@code LATEST ON} on a table input, a cross-input WHERE predicate, an ON predicate over the preserved side
@@ -86,9 +91,13 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  */
 public final class HashJoinGroupByClause {
     private static final String[] BOOLEAN_DDLS = {"BOOLEAN"};
-    // count() arguments whose count class the fused plan accepts: CountInt, CountLong,
-    // CountFloat, CountDouble and CountSymbol, each for its own argument type only.
-    private static final String[] COUNT_ARGUMENT_DDLS = {"INT", "LONG", "FLOAT", "DOUBLE", "SYMBOL"};
+    // count() arguments whose count class the fused plan accepts: CountInt, CountLong, CountFloat,
+    // CountDouble, CountSymbol, CountIPv4, CountUuid, CountLong256, CountStr and CountVarchar,
+    // each for its own argument type only. A STRING or VARCHAR column reaches this only on the
+    // probe side, because the fusable set of a build input leaves the two out.
+    private static final String[] COUNT_ARGUMENT_DDLS = {
+            "INT", "LONG", "FLOAT", "DOUBLE", "SYMBOL", "IPv4", "UUID", "LONG256", "STRING", "VARCHAR"
+    };
     // The optimiser moves a constant conjunct into the join model's constant WHERE clause,
     // which the fused planner must refuse. Only a false one makes a planner that accepts it
     // visible, so three in four are false.
@@ -98,9 +107,13 @@ public final class HashJoinGroupByClause {
     // needs one value per aggregate, so appendFill() spells it out.
     private static final String[] FILLS = {"FILL(NULL)", "FILL(PREV)", null, "FILL(NONE)"};
     private static final String[] FLOATING_DDLS = {"FLOAT", "DOUBLE"};
-    // Column types the fused plan reads, HashJoinGroupByCandidate.supportsValueType().
+    // Fixed-size column types the build's row heap copies, so either input may carry them:
+    // HashJoinGroupByCandidate.supportsValueType(), minus the DECIMAL widths, whose DDL carries a
+    // precision and a scale and which isFusable() matches by kind instead. The fuzz tables carry
+    // no GEOHASH column, so that part of the payload set has no fuzz coverage.
     private static final String[] FUSABLE_DDLS = {
-            "BOOLEAN", "BYTE", "SHORT", "CHAR", "INT", "LONG", "DATE", "TIMESTAMP", "FLOAT", "DOUBLE", "SYMBOL"
+            "BOOLEAN", "BYTE", "SHORT", "CHAR", "INT", "LONG", "DATE", "TIMESTAMP", "FLOAT", "DOUBLE",
+            "SYMBOL", "IPv4", "UUID", "LONG256"
     };
     // Expression grouping-key kinds whose results the fused plan reads.
     private static final ColumnKind[] FUSABLE_KEY_KINDS = {ColumnKind.NUMERIC, ColumnKind.TEMPORAL, ColumnKind.BOOLEAN, ColumnKind.CHAR};
@@ -112,8 +125,11 @@ public final class HashJoinGroupByClause {
     // min() and max() arguments. The fused plan accepts every type but BOOLEAN and BYTE, which the
     // parser passes to classes registered for other argument types, so those two keep the ordinary plan.
     private static final String[] MIN_MAX_DDLS = {
-            "BOOLEAN", "BYTE", "SHORT", "CHAR", "INT", "LONG", "DATE", "TIMESTAMP", "FLOAT", "DOUBLE"
+            "BOOLEAN", "BYTE", "SHORT", "CHAR", "INT", "LONG", "DATE", "TIMESTAMP", "FLOAT", "DOUBLE", "IPv4"
     };
+    // Variable-size types the row heap cannot copy. The probe never reaches that heap, so only
+    // the probe side may carry them; on the build side the shape keeps the ordinary plan.
+    private static final String[] PROBE_ONLY_DDLS = {"STRING", "VARCHAR"};
     private static final String RIGHT_ALIAS = "r";
     // The fuzz tables span 30 to 75 hours, so every interval yields several buckets.
     private static final String[] SAMPLE_BY_INTERVALS = {"1h", "6h", "1d"};
@@ -137,8 +153,12 @@ public final class HashJoinGroupByClause {
         // One query in twenty may reference any column, which exercises the fallback for the
         // column types the fused plan does not read.
         final boolean isFusableOnly = rnd.nextInt(20) != 0;
-        final Input l = pickInput(rnd, left, isFusableOnly, ctx);
-        final Input r = pickInput(rnd, right, isFusableOnly, ctx);
+        // The planner builds the slave of a LEFT OUTER join and the master of a RIGHT OUTER one,
+        // so the other side is the probe. An INNER join picks its build by size, which this cannot
+        // predict, so neither of its inputs widens; a side this guesses wrong only keeps the
+        // ordinary plan in both arms of the fused axis, which still compares.
+        final Input l = pickInput(rnd, left, isFusableOnly, isLeftJoin, ctx);
+        final Input r = pickInput(rnd, right, isFusableOnly, isRightJoin, ctx);
 
         StringSink sql = new StringSink();
         sql.put("SELECT ");
@@ -384,15 +404,25 @@ public final class HashJoinGroupByClause {
         return false;
     }
 
-    private static ObjList<FuzzColumn> fusableColumns(ObjList<FuzzColumn> columns) {
+    private static ObjList<FuzzColumn> fusableColumns(ObjList<FuzzColumn> columns, boolean isProbe) {
         final ObjList<FuzzColumn> out = new ObjList<>();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final FuzzColumn c = columns.getQuick(i);
-            if (contains(FUSABLE_DDLS, c.getType().getDdl())) {
+            if (isFusable(c, isProbe)) {
                 out.add(c);
             }
         }
         return out;
+    }
+
+    private static boolean isFusable(FuzzColumn column, boolean isProbe) {
+        // Every DECIMAL width is a payload type, and its DDL spells out a precision and a scale,
+        // so the kind answers for the whole family.
+        if (column.getType().getKind() == ColumnKind.DECIMAL) {
+            return true;
+        }
+        final String ddl = column.getType().getDdl();
+        return contains(FUSABLE_DDLS, ddl) || (isProbe && contains(PROBE_ONLY_DDLS, ddl));
     }
 
     private static FuzzColumn pickColumn(Rnd rnd, ObjList<FuzzColumn> columns, String[] ddls) {
@@ -428,21 +458,21 @@ public final class HashJoinGroupByClause {
      * {@code LIMIT} sub-query takes the first rows in timestamp order, which is the same set in
      * every storage layout, and is a barrier that keeps the ordinary plan.
      */
-    private static Input pickInput(Rnd rnd, FuzzTable table, boolean isFusableOnly, BindContext ctx) {
+    private static Input pickInput(Rnd rnd, FuzzTable table, boolean isFusableOnly, boolean isProbe, BindContext ctx) {
         final String tableName = FuzzNames.table(rnd, table.getName());
         final int pick = rnd.nextInt(40);
         if (pick < 32) {
-            return new Input(tableName, table.getColumns(), isFusableOnly, true);
+            return new Input(tableName, table.getColumns(), isFusableOnly, isProbe, true);
         }
         if (pick == 39) {
-            return new Input("(SELECT * FROM " + tableName + " LIMIT " + (10 + rnd.nextInt(50)) + ')', table.getColumns(), isFusableOnly, false);
+            return new Input("(SELECT * FROM " + tableName + " LIMIT " + (10 + rnd.nextInt(50)) + ')', table.getColumns(), isFusableOnly, isProbe, false);
         }
         if (pick == 38) {
             final String latestOn = " LATEST ON " + table.getTsColumnName() + " PARTITION BY " + (rnd.nextBoolean() ? INT_KEY : SYMBOL_KEY);
             final String sql = rnd.nextBoolean()
                     ? "(SELECT * FROM " + tableName + latestOn + ')'
                     : "((SELECT * FROM " + tableName + ')' + latestOn + ')';
-            return new Input(sql, table.getColumns(), isFusableOnly, false);
+            return new Input(sql, table.getColumns(), isFusableOnly, isProbe, false);
         }
         final ObjList<FuzzColumn> exposed = new ObjList<>();
         final StringSink sql = new StringSink();
@@ -463,11 +493,11 @@ public final class HashJoinGroupByClause {
         }
         sql.put(" FROM ").put(tableName);
         if (rnd.nextBoolean()) {
-            final ObjList<FuzzColumn> columns = isFusableOnly ? fusableColumns(table.getColumns()) : table.getColumns();
+            final ObjList<FuzzColumn> columns = isFusableOnly ? fusableColumns(table.getColumns(), isProbe) : table.getColumns();
             sql.put(" WHERE ").put(new PredicateGenerator(rnd, 1).generate(columns, null, ctx));
         }
         sql.put(')');
-        return new Input(sql.toString(), exposed, isFusableOnly, false);
+        return new Input(sql.toString(), exposed, isFusableOnly, isProbe, false);
     }
 
     private static String predicate(Rnd rnd, Input input, String alias, BindContext ctx) {
@@ -486,12 +516,12 @@ public final class HashJoinGroupByClause {
         final boolean isFusableOnly;
         final boolean isTable;
 
-        Input(String fromSql, ObjList<FuzzColumn> allColumns, boolean isFusableOnly, boolean isTable) {
+        Input(String fromSql, ObjList<FuzzColumn> allColumns, boolean isFusableOnly, boolean isProbe, boolean isTable) {
             this.fromSql = fromSql;
             this.allColumns = allColumns;
             this.isFusableOnly = isFusableOnly;
             this.isTable = isTable;
-            this.columns = isFusableOnly ? fusableColumns(allColumns) : allColumns;
+            this.columns = isFusableOnly ? fusableColumns(allColumns, isProbe) : allColumns;
         }
 
         // The exposed name of a base column: a projection input may have renamed it.

@@ -32,9 +32,15 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.engine.CompressedOffsets;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTracker;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -46,14 +52,16 @@ import java.io.Closeable;
  * compressed offset of a chain head and share every byte of the row layout below.
  * <p>
  * A row is an eight-byte previous-match link (a byte offset plus eight, zero for a chain end)
- * followed by naturally aligned typed payloads. The heap is bounded by
- * {@link CompressedOffsets#MAX_ALIGNED8_HEAP_SIZE} before allocation or encoding, so every
- * row offset round trips through {@link CompressedOffsets#compressBiased8(long)}. Duplicate
+ * followed by typed payloads, each aligned to its own size up to eight bytes; a sixteen- or
+ * thirty-two-byte payload is a run of longs, so eight is its natural alignment too. The heap is
+ * bounded by {@link CompressedOffsets#MAX_ALIGNED8_HEAP_SIZE} before allocation or encoding, so
+ * every row offset round trips through {@link CompressedOffsets#compressBiased8(long)}. Duplicate
  * iteration follows the links in reverse input order, as the light join's LongChain does.
  * <p>
  * SYMBOL payloads store the source's symbol keys, like INT payloads; {@link PayloadRecord}
  * resolves them through the build source's symbol tables, which the source keeps valid until
- * the build closes.
+ * the build closes. A DECIMAL payload stores its raw words and nothing else: the precision and
+ * the scale ride in the payload column's type, which the joined metadata carries.
  * <p>
  * The heap is owner-built and frozen for the execution. {@link #freeze()} publishes it and
  * hands out the generation that every payload record asserts against, so that a record of an
@@ -68,6 +76,10 @@ final class HashJoinRowHeap implements Closeable {
     private final int[] sourceColumns;
     private final int[] types;
     private SqlExecutionCircuitBreaker circuitBreaker;
+    // Scratch sinks of append(), which the owner alone runs: the two wide decimals read through a
+    // sink and nothing else. A parallel build would need one pair per builder.
+    private Decimal128 decimal128;
+    private Decimal256 decimal256;
     private long generation;
     private long nextHandleBase;
     private long rowBytes;
@@ -88,13 +100,20 @@ final class HashJoinRowHeap implements Closeable {
         for (int i = 0; i < columnCount; i++) {
             final int type = ColumnType.tagOf(payloadTypes.getColumnType(i));
             final int size = switch (type) {
-                case ColumnType.BOOLEAN, ColumnType.BYTE -> 1;
-                case ColumnType.SHORT, ColumnType.CHAR -> 2;
-                case ColumnType.INT, ColumnType.FLOAT, ColumnType.SYMBOL -> 4;
-                case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.DOUBLE -> 8;
+                case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE, ColumnType.DECIMAL8 -> 1;
+                case ColumnType.SHORT, ColumnType.CHAR, ColumnType.GEOSHORT, ColumnType.DECIMAL16 -> 2;
+                case ColumnType.INT, ColumnType.FLOAT, ColumnType.SYMBOL, ColumnType.IPv4,
+                     ColumnType.GEOINT, ColumnType.DECIMAL32 -> 4;
+                case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.DOUBLE,
+                     ColumnType.GEOLONG, ColumnType.DECIMAL64 -> 8;
+                case ColumnType.UUID, ColumnType.DECIMAL128 -> 16;
+                case ColumnType.LONG256, ColumnType.DECIMAL256 -> 32;
                 default -> throw new IllegalArgumentException("unsupported hash join payload type: " + ColumnType.nameOf(type));
             };
-            offset = (offset + size - 1) & -size;
+            // A wider payload is a run of longs, so eight bytes is its natural alignment; aligning
+            // it to its own size would pad the row without making any read cheaper.
+            final int align = Math.min(size, Long.BYTES);
+            offset = (offset + align - 1) & -align;
             if (offset + size > Integer.MAX_VALUE - 7 || sourceColumns.getQuick(i) < 0) {
                 throw new IllegalArgumentException("invalid hash join payload layout");
             }
@@ -102,6 +121,12 @@ final class HashJoinRowHeap implements Closeable {
             this.sourceColumns[i] = sourceColumns.getQuick(i);
             types[i] = type;
             hasSymbolPayload |= type == ColumnType.SYMBOL;
+            if (type == ColumnType.DECIMAL128 && decimal128 == null) {
+                decimal128 = new Decimal128();
+            }
+            if (type == ColumnType.DECIMAL256 && decimal256 == null) {
+                decimal256 = new Decimal256();
+            }
             offset += size;
         }
         this.hasSymbolPayload = hasSymbolPayload;
@@ -134,6 +159,37 @@ final class HashJoinRowHeap implements Closeable {
                 case ColumnType.TIMESTAMP -> Unsafe.putLong(dest, record.getTimestamp(column));
                 case ColumnType.FLOAT -> Unsafe.putFloat(dest, record.getFloat(column));
                 case ColumnType.DOUBLE -> Unsafe.putDouble(dest, record.getDouble(column));
+                case ColumnType.IPv4 -> Unsafe.putInt(dest, record.getIPv4(column));
+                case ColumnType.GEOBYTE -> Unsafe.putByte(dest, record.getGeoByte(column));
+                case ColumnType.GEOSHORT -> Unsafe.putShort(dest, record.getGeoShort(column));
+                case ColumnType.GEOINT -> Unsafe.putInt(dest, record.getGeoInt(column));
+                case ColumnType.GEOLONG -> Unsafe.putLong(dest, record.getGeoLong(column));
+                // Lo first, then hi: the layout every fixed-size record reads a LONG128 from.
+                case ColumnType.UUID -> {
+                    Unsafe.putLong(dest, record.getLong128Lo(column));
+                    Unsafe.putLong(dest + Long.BYTES, record.getLong128Hi(column));
+                }
+                case ColumnType.LONG256 -> {
+                    final Long256 value = record.getLong256A(column);
+                    Unsafe.putLong(dest, value.getLong0());
+                    Unsafe.putLong(dest + Long.BYTES, value.getLong1());
+                    Unsafe.putLong(dest + Long.BYTES * 2, value.getLong2());
+                    Unsafe.putLong(dest + Long.BYTES * 3, value.getLong3());
+                }
+                case ColumnType.DECIMAL8 -> Unsafe.putByte(dest, record.getDecimal8(column));
+                case ColumnType.DECIMAL16 -> Unsafe.putShort(dest, record.getDecimal16(column));
+                case ColumnType.DECIMAL32 -> Unsafe.putInt(dest, record.getDecimal32(column));
+                case ColumnType.DECIMAL64 -> Unsafe.putLong(dest, record.getDecimal64(column));
+                // The scale rides in the payload column's type, so the heap stores raw words only.
+                case ColumnType.DECIMAL128 -> {
+                    record.getDecimal128(column, decimal128);
+                    Unsafe.putLong(dest, decimal128.getHigh());
+                    Unsafe.putLong(dest + Long.BYTES, decimal128.getLow());
+                }
+                case ColumnType.DECIMAL256 -> {
+                    record.getDecimal256(column, decimal256);
+                    Decimal256.put(decimal256, dest);
+                }
                 default -> throw new AssertionError();
             }
         }
@@ -231,10 +287,24 @@ final class HashJoinRowHeap implements Closeable {
      * hand out per slot.
      */
     final class PayloadRecord implements Record {
+        // One flyweight per LONG256 column, and a second set for getLong256B(), whose contract is
+        // that it survives a getLong256A() on the same column. Entries of other columns stay null,
+        // as the symbol table views of a column that is not a SYMBOL do.
+        private final Long256Impl[] long256A = new Long256Impl[types.length];
+        private final Long256Impl[] long256B = new Long256Impl[types.length];
         private final SymbolTable[] symbolTables = new SymbolTable[types.length];
         // Written by the probe on every advance; zero until the first match is positioned.
         long address;
         private long probeGeneration;
+
+        private PayloadRecord() {
+            for (int i = 0; i < types.length; i++) {
+                if (types[i] == ColumnType.LONG256) {
+                    long256A[i] = new Long256Impl();
+                    long256B[i] = new Long256Impl();
+                }
+            }
+        }
 
         @Override
         public boolean getBool(int col) {
@@ -257,6 +327,37 @@ final class HashJoinRowHeap implements Closeable {
         }
 
         @Override
+        public void getDecimal128(int col, Decimal128 sink) {
+            final long address = at(col);
+            sink.ofRaw(Unsafe.getLong(address), Unsafe.getLong(address + Long.BYTES));
+        }
+
+        @Override
+        public short getDecimal16(int col) {
+            return getShort(col);
+        }
+
+        @Override
+        public void getDecimal256(int col, Decimal256 sink) {
+            sink.ofRawAddress(at(col));
+        }
+
+        @Override
+        public int getDecimal32(int col) {
+            return getInt(col);
+        }
+
+        @Override
+        public long getDecimal64(int col) {
+            return getLong(col);
+        }
+
+        @Override
+        public byte getDecimal8(int col) {
+            return getByte(col);
+        }
+
+        @Override
         public double getDouble(int col) {
             return Unsafe.getDouble(at(col));
         }
@@ -267,6 +368,31 @@ final class HashJoinRowHeap implements Closeable {
         }
 
         @Override
+        public byte getGeoByte(int col) {
+            return getByte(col);
+        }
+
+        @Override
+        public int getGeoInt(int col) {
+            return getInt(col);
+        }
+
+        @Override
+        public long getGeoLong(int col) {
+            return getLong(col);
+        }
+
+        @Override
+        public short getGeoShort(int col) {
+            return getShort(col);
+        }
+
+        @Override
+        public int getIPv4(int col) {
+            return getInt(col);
+        }
+
+        @Override
         public int getInt(int col) {
             return Unsafe.getInt(at(col));
         }
@@ -274,6 +400,35 @@ final class HashJoinRowHeap implements Closeable {
         @Override
         public long getLong(int col) {
             return Unsafe.getLong(at(col));
+        }
+
+        @Override
+        public long getLong128Hi(int col) {
+            return Unsafe.getLong(at(col) + Long.BYTES);
+        }
+
+        @Override
+        public long getLong128Lo(int col) {
+            return Unsafe.getLong(at(col));
+        }
+
+        @Override
+        public void getLong256(int col, CharSink<?> sink) {
+            Numbers.appendLong256FromUnsafe(at(col), sink);
+        }
+
+        @Override
+        public Long256 getLong256A(int col) {
+            final Long256Impl value = long256A[col];
+            value.fromAddress(at(col));
+            return value;
+        }
+
+        @Override
+        public Long256 getLong256B(int col) {
+            final Long256Impl value = long256B[col];
+            value.fromAddress(at(col));
+            return value;
         }
 
         @Override

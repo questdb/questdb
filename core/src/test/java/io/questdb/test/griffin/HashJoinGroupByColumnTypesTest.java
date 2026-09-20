@@ -33,33 +33,88 @@ import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.assertDif
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.context;
 
 /**
- * Column types the fused plan reads outside the narrow set the build's row heap copies. A probe
- * column never reaches that heap - the reducer reads it straight off the page frame - so a probe
- * column of any type may appear in a filter, a grouping key or an aggregate argument. A build
- * column does reach the heap, so it still answers to
- * {@link io.questdb.griffin.HashJoinGroupByCandidate#supportsValueType(int)}.
+ * Column types the fused plan reads outside the eleven the operator started with. A probe column
+ * never reaches the build's row heap - the reducer reads it straight off the page frame - so a
+ * probe column of any type may appear in a filter, a grouping key or an aggregate argument. A
+ * build column does reach the heap, so it answers to
+ * {@link io.questdb.griffin.HashJoinGroupByCandidate#supportsValueType(int)}, which now holds
+ * every fixed-size type and leaves out the variable-size ones.
  * <p>
  * The LEFT JOIN in every query pins which input is which: the planner always builds the slave of
  * an outer join, so {@code p} is the probe and {@code b} the build whatever the two sizes are.
+ * {@code IntHashJoinBuildTest} pins the row heap's own layout and getters; this class pins what a
+ * query returns once the planner routes such a column to the operator.
  */
 public class HashJoinGroupByColumnTypesTest extends AbstractCairoTest {
-    // Types the GROUP BY key sink stages but the build's row heap does not copy.
-    private static final String[] WIDE_COLUMNS = {"vc", "str", "ip", "u", "l256", "g1", "g8", "dec32", "dec64", "dec128", "dec256"};
+    // Fixed-size types the row heap copies, so both inputs may carry them. Each width of GEOHASH
+    // and of DECIMAL is a type of its own, and each takes its own arm of the layout switch.
+    private static final String[] PAYLOAD_COLUMNS = {
+            "ip", "u", "l256", "g1", "g3", "g6", "g8",
+            "dec8", "dec16", "dec32", "dec64", "dec128", "dec256"
+    };
+    // Variable-size types, which the row heap cannot copy, so only the probe may carry them.
+    private static final String[] PROBE_ONLY_COLUMNS = {"vc", "str"};
 
     @Test
-    public void testBuildColumnsOfWideTypesKeepTheOrdinaryPlan() throws Exception {
+    public void testBuildColumnsOfFixedSizeTypesOnNativeAndParquetFrames() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             insertRows();
             try (SqlExecutionContextImpl context = context(engine, 4)) {
                 context.changePageFrameSizes(1, 8);
-                for (String column : WIDE_COLUMNS) {
-                    // A payload the row heap cannot copy, a build filter over it and an aggregate
-                    // over it all disqualify the shape until 6b widens the payload set.
-                    assertDifferential("SELECT b." + column + " k, count(*) n FROM p LEFT JOIN b ON p.id=b.id ORDER BY k",
+                for (int format = 0; format < 2; format++) {
+                    if (format == 1) {
+                        execute("ALTER TABLE p CONVERT PARTITION TO PARQUET WHERE t < '2020-01-02'");
+                        execute("ALTER TABLE b CONVERT PARTITION TO PARQUET WHERE t < '2020-01-02'");
+                    }
+                    for (String column : PAYLOAD_COLUMNS) {
+                        // The column is a payload the heap copies and the grouping key that reads
+                        // it back. The LEFT JOIN's misses take the type's own null instead.
+                        assertDifferential("SELECT b." + column + " k, count(*) n FROM p LEFT JOIN b ON p.id=b.id ORDER BY k",
+                                context, true);
+                        // A post-join filter over the payload, which reads it on the reducer.
+                        assertDifferential("SELECT count(*) n FROM p LEFT JOIN b ON p.id=b.id WHERE b." + column + " IS NOT NULL",
+                                context, true);
+                        assertDifferential("SELECT count(b." + column + ") n FROM p LEFT JOIN b ON p.id=b.id", context, true);
+                        // A build-side filter, which the build cursor applies before the copy.
+                        assertDifferential("SELECT count(*) n, sum(p.v) pv FROM p LEFT JOIN b ON p.id=b.id "
+                                + "AND b." + column + " IS NOT NULL", context, true);
+                    }
+                    // Every payload type at once, so the layout has to pack widths 1 to 32 in one row.
+                    StringBuilder projection = new StringBuilder();
+                    for (String column : PAYLOAD_COLUMNS) {
+                        projection.append("b.").append(column).append(", ");
+                    }
+                    // Both build routes copy through the same row heap: the narrow INT layout and
+                    // the map the composite key stages into.
+                    for (String on : new String[]{"p.id=b.id", "p.id=b.id AND p.l=b.l"}) {
+                        assertDifferential("SELECT " + projection + "count(*) n FROM p LEFT JOIN b ON " + on
+                                + " ORDER BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13", context, true);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testBuildColumnsOfVariableSizeTypesKeepTheOrdinaryPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            insertRows();
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                context.changePageFrameSizes(1, 8);
+                for (String column : new String[]{"vc", "str", "bin", "arr"}) {
+                    // The row heap cannot copy a variable-size payload, so the shape keeps the
+                    // ordinary plan rather than failing the query.
+                    assertDifferential("SELECT b." + column + " k, count(*) n FROM p LEFT JOIN b ON p.id=b.id",
                             context, false);
-                    assertDifferential("SELECT count(*) n FROM p LEFT JOIN b ON p.id=b.id WHERE b." + column + " IS NOT NULL",
+                }
+                for (String predicate : new String[]{"b.vc IS NOT NULL", "b.str IS NOT NULL",
+                        "b.bin IS NOT NULL", "array_sum(b.arr) > 0.5"}) {
+                    assertDifferential("SELECT count(*) n FROM p LEFT JOIN b ON p.id=b.id WHERE " + predicate,
                             context, false);
+                }
+                for (String column : PROBE_ONLY_COLUMNS) {
                     assertDifferential("SELECT count(b." + column + ") n FROM p LEFT JOIN b ON p.id=b.id", context, false);
                 }
             }
@@ -78,7 +133,7 @@ public class HashJoinGroupByColumnTypesTest extends AbstractCairoTest {
                         execute("ALTER TABLE p CONVERT PARTITION TO PARQUET WHERE t < '2020-01-02'");
                         execute("ALTER TABLE b CONVERT PARTITION TO PARQUET WHERE t < '2020-01-02'");
                     }
-                    for (String column : WIDE_COLUMNS) {
+                    for (String column : probeColumns()) {
                         // A grouping key, which reaches the fragments' key sink.
                         assertDifferential("SELECT p." + column + " k, count(*) n, sum(b.v) bv "
                                 + "FROM p LEFT JOIN b ON p.id=b.id ORDER BY k", context, true);
@@ -157,11 +212,19 @@ public class HashJoinGroupByColumnTypesTest extends AbstractCairoTest {
         });
     }
 
+    private static String[] probeColumns() {
+        final String[] columns = new String[PAYLOAD_COLUMNS.length + PROBE_ONLY_COLUMNS.length];
+        System.arraycopy(PAYLOAD_COLUMNS, 0, columns, 0, PAYLOAD_COLUMNS.length);
+        System.arraycopy(PROBE_ONLY_COLUMNS, 0, columns, PAYLOAD_COLUMNS.length, PROBE_ONLY_COLUMNS.length);
+        return columns;
+    }
+
     private void createTables() throws Exception {
         for (String name : new String[]{"p", "b"}) {
             execute("CREATE TABLE " + name + " (id INT, l LONG, vc VARCHAR, str STRING, ip IPV4, u UUID, "
-                    + "l256 LONG256, g1 GEOHASH(1c), g8 GEOHASH(8c), "
-                    + "dec32 DECIMAL(9,2), dec64 DECIMAL(18,2), dec128 DECIMAL(38,2), dec256 DECIMAL(50,2), "
+                    + "l256 LONG256, g1 GEOHASH(1c), g3 GEOHASH(3c), g6 GEOHASH(6c), g8 GEOHASH(8c), "
+                    + "dec8 DECIMAL(2,1), dec16 DECIMAL(4,1), dec32 DECIMAL(9,2), dec64 DECIMAL(18,2), "
+                    + "dec128 DECIMAL(38,2), dec256 DECIMAL(50,2), "
                     + "bin BINARY, arr DOUBLE[], v DOUBLE, t TIMESTAMP) TIMESTAMP(t) PARTITION BY DAY");
         }
     }
@@ -170,8 +233,8 @@ public class HashJoinGroupByColumnTypesTest extends AbstractCairoTest {
         // Small overlapping domains with NULLs on both sides, spread over two partitions so that
         // the parquet run converts one of them and leaves the other native.
         for (String name : new String[]{"p", "b"}) {
-            execute("INSERT INTO " + name + " (id, l, vc, str, ip, u, l256, g1, g8, "
-                    + "dec32, dec64, dec128, dec256, bin, arr, v, t) "
+            execute("INSERT INTO " + name + " (id, l, vc, str, ip, u, l256, g1, g3, g6, g8, "
+                    + "dec8, dec16, dec32, dec64, dec128, dec256, bin, arr, v, t) "
                     + "SELECT rnd_int(0, 2, 1), rnd_int(0, 2, 1)::long, "
                     + "rnd_varchar('va', 'vb', NULL), rnd_str('sa', 'sb', NULL), "
                     + "rnd_ipv4('10.0.0.1/30', 1), "
@@ -179,7 +242,10 @@ public class HashJoinGroupByColumnTypesTest extends AbstractCairoTest {
                     + "'22222222-2222-2222-2222-222222222222', NULL)::uuid, "
                     + "rnd_str('0x01', '0x02', NULL)::long256, "
                     + "rnd_str('s', 'e', NULL)::geohash(1c), "
+                    + "rnd_str('sp0', 'ezs', NULL)::geohash(3c), "
+                    + "rnd_str('sp052w', 'ezs42e', NULL)::geohash(6c), "
                     + "rnd_str('sp052w92', 'ezs42e44', NULL)::geohash(8c), "
+                    + "rnd_int(0, 2, 1)::decimal(2,1), rnd_int(0, 2, 1)::decimal(4,1), "
                     + "rnd_int(0, 2, 1)::decimal(9,2), rnd_int(0, 2, 1)::decimal(18,2), "
                     + "rnd_int(0, 2, 1)::decimal(38,2), rnd_int(0, 2, 1)::decimal(50,2), "
                     + "rnd_bin(4, 8, 2), rnd_double_array(1, 1), "

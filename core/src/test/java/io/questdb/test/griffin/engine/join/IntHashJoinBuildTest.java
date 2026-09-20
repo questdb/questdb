@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.join;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -41,8 +42,13 @@ import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.join.IntHashJoinBuild;
 import io.questdb.griffin.engine.join.SymbolKeyTranslator;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.Hash;
 import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -449,6 +455,105 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     Assert.assertEquals(0, record.getShort(9));
                     Assert.assertEquals(0, record.getByte(10));
                     Assert.assertFalse(record.getBool(11));
+                    Assert.assertFalse(probe.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWideFixedSizePayloadTypesRoundTripAndNullExtend() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE wide (ip IPV4, u UUID, l256 LONG256, "
+                    + "g1 GEOHASH(1c), g3 GEOHASH(3c), g6 GEOHASH(6c), g12 GEOHASH(12c), "
+                    + "dec8 DECIMAL(2,1), dec16 DECIMAL(4,1), dec32 DECIMAL(9,2), "
+                    + "dec64 DECIMAL(18,2), dec128 DECIMAL(38,2), dec256 DECIMAL(50,2))");
+            execute("""
+                    INSERT INTO wide VALUES
+                    ('10.0.0.7', '11111111-2222-3333-4444-555555555555',
+                     '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                     'q', 'sp0', 'sp052w', 'sp052w92p1p8',
+                     1.5::DECIMAL(2,1), 12.5::DECIMAL(4,1), 1234.56::DECIMAL(9,2),
+                     1234567890.12::DECIMAL(18,2), 123456789012345678.90::DECIMAL(38,2),
+                     12345678901234567890123456.78::DECIMAL(50,2)),
+                    (NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)""");
+            // The payload order reverses the table's, so an offset that ignored alignment shows up.
+            String[] names = {"dec256", "dec8", "dec128", "dec16", "l256", "dec32", "u", "dec64",
+                    "g1", "g3", "g6", "g12", "ip"};
+            ArrayColumnTypes types = new ArrayColumnTypes();
+            IntList mapping = new IntList();
+            try (RecordCursorFactory source = select("wide")) {
+                for (String name : names) {
+                    int index = source.getMetadata().getColumnIndex(name);
+                    types.add(source.getMetadata().getColumnType(index));
+                    mapping.add(index);
+                }
+                try (IntHashJoinBuild build = new IntHashJoinBuild(types, mapping, 2, 16);
+                     RecordCursor cursor = source.getCursor(sqlExecutionContext)) {
+                    build.open(null, NOOP);
+                    Assert.assertTrue(cursor.hasNext());
+                    build.append(7, cursor.getRecord());
+                    Assert.assertTrue(cursor.hasNext());
+                    build.append(8, cursor.getRecord());
+                    FrozenHashJoinBuild.IntProbe probe = build.freeze(cursor).newProbe();
+                    probe.find(7);
+                    probe.next();
+                    Record record = probe.getRecord();
+                    Decimal256 decimal256 = new Decimal256();
+                    Decimal128 decimal128 = new Decimal128();
+                    // The heap stores raw words only, so the reader applies the scale the payload
+                    // column's type carries, exactly as every other fixed-size record does.
+                    record.getDecimal256(0, decimal256);
+                    decimal256.of(decimal256.getHh(), decimal256.getHl(), decimal256.getLh(), decimal256.getLl(),
+                            ColumnType.getDecimalScale(types.getColumnType(0)));
+                    TestUtils.assertEquals("12345678901234567890123456.78", decimal256.toString());
+                    Assert.assertEquals(15, record.getDecimal8(1));
+                    record.getDecimal128(2, decimal128);
+                    decimal128.of(decimal128.getHigh(), decimal128.getLow(),
+                            ColumnType.getDecimalScale(types.getColumnType(2)));
+                    TestUtils.assertEquals("123456789012345678.90", decimal128.toString());
+                    Assert.assertEquals(125, record.getDecimal16(3));
+                    TestUtils.assertEquals("0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                            record.getLong256A(4).toString());
+                    // getLong256B() must survive a getLong256A() on the same column.
+                    Long256 a = record.getLong256A(4);
+                    Long256 b = record.getLong256B(4);
+                    Assert.assertNotSame(a, b);
+                    Assert.assertEquals(a.getLong0(), b.getLong0());
+                    Assert.assertEquals(123456, record.getDecimal32(5));
+                    Assert.assertEquals(0x1111111122223333L, record.getLong128Hi(6));
+                    Assert.assertEquals(0x4444555555555555L, record.getLong128Lo(6));
+                    Assert.assertEquals(123456789012L, record.getDecimal64(7));
+                    Assert.assertEquals(ColumnType.GEOBYTE, ColumnType.tagOf(types.getColumnType(8)));
+                    Assert.assertEquals(ColumnType.GEOSHORT, ColumnType.tagOf(types.getColumnType(9)));
+                    Assert.assertEquals(ColumnType.GEOINT, ColumnType.tagOf(types.getColumnType(10)));
+                    Assert.assertEquals(ColumnType.GEOLONG, ColumnType.tagOf(types.getColumnType(11)));
+                    Assert.assertEquals(GeoHashes.fromString("q", 0, 1), record.getGeoByte(8));
+                    Assert.assertEquals(GeoHashes.fromString("sp0", 0, 3), record.getGeoShort(9));
+                    Assert.assertEquals(GeoHashes.fromString("sp052w", 0, 6), record.getGeoInt(10));
+                    Assert.assertEquals(GeoHashes.fromString("sp052w92p1p8", 0, 12), record.getGeoLong(11));
+                    Assert.assertEquals(Numbers.parseIPv4("10.0.0.7"), record.getIPv4(12));
+                    Assert.assertFalse(probe.hasNext());
+                    // The NULL row keeps every type's own sentinel, which is what a LEFT join's
+                    // null-extended row has to match.
+                    probe.find(8);
+                    probe.next();
+                    record.getDecimal256(0, decimal256);
+                    Assert.assertTrue(decimal256.isNull());
+                    Assert.assertEquals(Decimals.DECIMAL8_NULL, record.getDecimal8(1));
+                    record.getDecimal128(2, decimal128);
+                    Assert.assertTrue(decimal128.isNull());
+                    Assert.assertEquals(Decimals.DECIMAL16_NULL, record.getDecimal16(3));
+                    Assert.assertEquals(Long256Impl.NULL_LONG256, record.getLong256A(4));
+                    Assert.assertEquals(Decimals.DECIMAL32_NULL, record.getDecimal32(5));
+                    Assert.assertEquals(Numbers.LONG_NULL, record.getLong128Hi(6));
+                    Assert.assertEquals(Numbers.LONG_NULL, record.getLong128Lo(6));
+                    Assert.assertEquals(Decimals.DECIMAL64_NULL, record.getDecimal64(7));
+                    Assert.assertEquals(GeoHashes.BYTE_NULL, record.getGeoByte(8));
+                    Assert.assertEquals(GeoHashes.SHORT_NULL, record.getGeoShort(9));
+                    Assert.assertEquals(GeoHashes.INT_NULL, record.getGeoInt(10));
+                    Assert.assertEquals(GeoHashes.NULL, record.getGeoLong(11));
+                    Assert.assertEquals(Numbers.IPv4_NULL, record.getIPv4(12));
                     Assert.assertFalse(probe.hasNext());
                 }
             }

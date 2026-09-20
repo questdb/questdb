@@ -187,7 +187,13 @@ public final class HashJoinGroupByCandidate {
         return switch (ColumnType.tagOf(type)) {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR,
                  ColumnType.INT, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP,
-                 ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.SYMBOL -> true;
+                 ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.SYMBOL, ColumnType.IPv4,
+                 ColumnType.UUID, ColumnType.LONG256, ColumnType.GEOBYTE, ColumnType.GEOSHORT,
+                 ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.DECIMAL8, ColumnType.DECIMAL16,
+                 ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128,
+                 ColumnType.DECIMAL256 -> true;
+            // STRING, VARCHAR, BINARY and ARRAY are variable-size, so the row heap cannot copy
+            // them. INTERVAL is not persisted, so no base-table column carries one.
             default -> false;
         };
     }
