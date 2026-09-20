@@ -178,6 +178,32 @@ public class SqlOptimiser implements Mutable {
     private static final IntHashSet limitTypes = new IntHashSet();
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
     private static final CharSequenceHashSet nullConstants = new CharSequenceHashSet();
+    /**
+     * Aggregates whose answer depends on the order their base hands rows over in. Read by
+     * {@link #hasOrderedGroupByFunc(ExpressionNode)}, which raises the model's order-by mnemonic to
+     * ORDER_BY_REQUIRED so an ORDER BY below is preserved rather than elided.
+     * <p>
+     * This is the WEAKER of the two order-sensitivity registries in the engine, and the difference is
+     * deliberate. The stronger one is {@link FunctionFactory#requiresAscendingDesignatedTimestamp()},
+     * indexed by name in {@link FunctionFactoryCache#isAscendingTimestampOrdered(CharSequence)} and
+     * declared today by twap() and sparkline() only. A function that declares it will have the order
+     * OBTAINED for it - the requirement restated on the base so the planner picks an ordered plan, or
+     * failing that a sort - because those two integrate across adjacent rows and refuse a base that
+     * does not provide the order.
+     * <p>
+     * The four names below do not refuse. Over a base that concatenates rather than merges they return
+     * the first or last row of the concatenation, which is not the earliest or latest in time - master
+     * does the same, and so does this release. Declaring the stronger flag on them would repair that,
+     * and was measured: it turns first()/last() over a UNION ALL into a merge, costs a sort over the
+     * aggregate for a keyed GROUP BY or LATEST ON base, and retains the base's designated timestamp in
+     * the projection of EVERY first()/last() query in the product - an extra column read on the most
+     * common aggregate shape in a time-series database, for which SqlOptimiserTest carries eight
+     * assertions that exist to pin the narrow projection. That is a behaviour and performance change to
+     * a surface far wider than the ordering corrections this registry pair came out of, so it is a
+     * decision of its own rather than a detail of one. See
+     * ScanDirectionContractTest#testFirstAndLastOverUnionAllDisagreeWithTheOrderedForm, which pins what
+     * they do today so the gap stays measured rather than assumed.
+     */
     private final static LowerCaseAsciiCharSequenceHashSet orderedGroupByFunctions;
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final CharacterStore characterStore;
@@ -345,6 +371,63 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return appearsInArgs;
+    }
+
+    /**
+     * True when any column of {@code model} calls an aggregate that needs its base in ascending
+     * designated-timestamp order - twap(), sparkline(). Asked before the functions are built, by both the
+     * optimiser (to restate the ordering requirement so an ordered plan is chosen) and the code generator
+     * (to sort when no ordered plan exists). See
+     * {@link FunctionFactory#requiresAscendingDesignatedTimestamp()}.
+     */
+    public static boolean hasAscendingTimestampGroupByFunc(
+            ArrayDeque<ExpressionNode> sqlNodeStack,
+            FunctionFactoryCache functionFactoryCache,
+            ObjList<QueryColumn> columns
+    ) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (hasAscendingTimestampGroupByFunc(sqlNodeStack, functionFactoryCache, columns.getQuick(i).getAst())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static boolean hasAscendingTimestampGroupByFunc(
+            ArrayDeque<ExpressionNode> sqlNodeStack,
+            FunctionFactoryCache functionFactoryCache,
+            ExpressionNode node
+    ) {
+        sqlNodeStack.clear();
+
+        // pre-order iterative tree traversal, as hasGroupByFunc below
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                switch (node.type) {
+                    case LITERAL:
+                        node = null;
+                        continue;
+                    case FUNCTION:
+                        if (functionFactoryCache.isAscendingTimestampOrdered(node.token)) {
+                            return true;
+                        }
+                        // fall through to traverse rhs and args
+                    default:
+                        for (int i = 0, n = node.args.size(); i < n; i++) {
+                            sqlNodeStack.add(node.args.getQuick(i));
+                        }
+                        if (node.rhs != null) {
+                            sqlNodeStack.push(node.rhs);
+                        }
+                        break;
+                }
+
+                node = node.lhs;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+        return false;
     }
 
     public static boolean hasGroupByFunc(ArrayDeque<ExpressionNode> sqlNodeStack, FunctionFactoryCache functionFactoryCache, ExpressionNode node) {
@@ -574,6 +657,23 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return false;
+    }
+
+    /**
+     * True when {@code model} hands its base's rows on in the order it received them, so an ordering
+     * restated below it is still the order its parent sees. A projection does; anything that
+     * aggregates, de-duplicates, joins or windows decides the order itself.
+     */
+    private static boolean isRowOrderPreserving(IQueryModel model) {
+        if (model.getJoinModels().size() > 1) {
+            return false;
+        }
+        return switch (model.getSelectModelType()) {
+            case IQueryModel.SELECT_MODEL_NONE,
+                 IQueryModel.SELECT_MODEL_CHOOSE,
+                 IQueryModel.SELECT_MODEL_VIRTUAL -> true;
+            default -> false;
+        };
     }
 
     private static boolean hasNestedUnionAll(IQueryModel model) {
@@ -5564,6 +5664,46 @@ public class SqlOptimiser implements Mutable {
         return isTimestampLiteral(timestampArg, timestampColumn);
     }
 
+    /**
+     * True when this model's own ORDER BY is exactly {@code ORDER BY <timestamp>} ascending, on one
+     * unqualified column, with no LIMIT - an order-by that asks for nothing the model does not already
+     * produce, rather than one that claims the row order or the row set.
+     * <p>
+     * Used by {@link #restateTimestampOrderForOrderSensitiveBase(IQueryModel)}. Everything it excludes is
+     * excluded because restating a base order underneath it would be reasoning about an order or a row set
+     * the user wrote: a DESC term, a term on another column, a leading or trailing extra term, an
+     * expression rather than a plain column, and any LIMIT.
+     */
+    private boolean isAscendingTimestampOrderBy(IQueryModel model, CharSequence timestamp) {
+        return model.getLimitLo() == null
+                && isAscendingTimestampOrderTerm(model.getOrderBy(), model.getOrderByDirection(), timestamp);
+    }
+
+    /**
+     * The same test against the order-by advice this model received from its parent rather than against
+     * its own ORDER BY. Advice is the parent's requirement seen through a channel that does not record
+     * which spelling produced it, so only the one spelling that asks for exactly the order
+     * {@link #restateTimestampOrderForOrderSensitiveBase(IQueryModel)} restates is admitted; any other
+     * advice still bails. That one spelling is what
+     * {@code select * from (<sample by over a union> ) order by ts} produces, and it wants the merge for
+     * the same reason the unwrapped spelling does.
+     */
+    private boolean isAscendingTimestampOrderByAdvice(IQueryModel model, CharSequence timestamp) {
+        return model.getLimitLo() == null
+                && isAscendingTimestampOrderTerm(model.getOrderByAdvice(), model.getOrderByDirectionAdvice(), timestamp);
+    }
+
+    private static boolean isAscendingTimestampOrderTerm(ObjList<ExpressionNode> terms, IntList directions, CharSequence timestamp) {
+        if (terms.size() != 1 || directions.size() != 1) {
+            return false;
+        }
+        if (directions.getQuick(0) != IQueryModel.ORDER_DIRECTION_ASCENDING) {
+            return false;
+        }
+        final ExpressionNode term = terms.getQuick(0);
+        return term.type == LITERAL && Chars.equalsIgnoreCase(term.token, timestamp);
+    }
+
     // True when this model is a UNION ALL branch (has siblings via getUnionModel()) whose single-column
     // order-by advice resolves to the union's designated timestamp - the precondition for pushing that
     // timestamp order uniformly into every branch.
@@ -7259,6 +7399,8 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
+        restateTimestampOrderForOrderSensitiveBase(model);
+
         final boolean isTsOrderPushEligible = orderByDirectionAdvice.size() == 1
                 && isDesignatedTimestampUnionAllBranch(model, orderByAdvice);
         final int tsOrderDirection = isTsOrderPushEligible ? orderByDirectionAdvice.getQuick(0) : -1;
@@ -7854,6 +7996,22 @@ public class SqlOptimiser implements Mutable {
             // by position, not name. Name-based resolution can map to a wrong column index
             // in union branches. The indexed propagation below (emitColumnLiteralsTopDown loop)
             // correctly propagates columns by position.
+        }
+
+        // Retain the base's designated timestamp when this model calls an aggregate that needs the base
+        // ascending by it - twap(), sparkline(). sparkline()'s signature is sparkline(D): it reads the
+        // designated timestamp from the frame rather than naming it, so nothing in the query text
+        // references the timestamp column and top-down pruning drops it from the base's projection. The
+        // base then reaches the code generator with no timestamp column at all, which is neither
+        // orderable nor sortable, and the function has to refuse. twap(x, ts) names its timestamp and so
+        // never had the problem, which is the whole difference between the two.
+        if (nestedIsFlex
+                && nestedAllowsColumnChange
+                && hasAscendingTimestampGroupByFunc(sqlNodeStack, functionParser.getFunctionFactoryCache(), model.getColumns())) {
+            final CharSequence timestamp = findTimestamp(nested);
+            if (timestamp != null) {
+                addTopDownColumn(timestamp, nested);
+            }
         }
 
         if (model.getWhereClause() != null) {
@@ -8695,6 +8853,112 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return n;
+    }
+
+    /**
+     * Writes onto the model directly below an order-sensitive consumer the
+     * {@code ORDER BY <designated timestamp>} the upgrade notes already tell users to write, when that
+     * consumer sits over a UNION ALL. The consumers are a SAMPLE BY and an aggregate that declares
+     * {@link FunctionFactory#requiresAscendingDesignatedTimestamp()} - twap(), sparkline().
+     * <p>
+     * A SAMPLE BY that walks buckets forward in a single pass - FILL other than NONE, ALIGN TO FIRST
+     * OBSERVATION, FROM ... TO - needs its base in ascending designated-timestamp order, and a UNION ALL
+     * concatenates rather than merges, so it does not provide one. The ordered plan for that base already
+     * exists: an ORDER BY on the union's timestamp routes to MergeUnionAllRecordCursorFactory, which k-way
+     * merges the branches and reports FORWARD honestly. The SAMPLE BY simply had no way to ask for it -
+     * order-by advice is deliberately not propagated through an aggregating model
+     * (see pushDownOrderByAdviceToJoinModels), because an outer ORDER BY on a SAMPLE BY result says nothing
+     * about the base's order. Restating the requirement as an actual ORDER BY on the base does ask for it,
+     * and every existing mechanism then fires, including the merge.
+     * <p>
+     * It is free when the base is already ascending: generateOrderBy elides an ORDER BY whose single column
+     * is the designated timestamp in the direction the base already scans.
+     * <p>
+     * The walk is load-bearing. An ORDER BY or a LIMIT that the user wrote between the SAMPLE BY and the
+     * UNION ALL makes the row order - or the row set - theirs, not ours to restate: an
+     * {@code ORDER BY <non-timestamp column>} there legitimately drops the designated timestamp, and
+     * restating a timestamp order across it resurrects a query that must keep refusing with "base query does
+     * not provide designated TIMESTAMP column" (SampleByTest#testTimestampIsRequiredBeforeSubqueryWithExplicitTs2).
+     * A model with shared references is skipped for the same reason: its rows are consumed by more than one
+     * parent, only one of which asked for this order.
+     * <p>
+     * An ORDER BY on the consumer itself is the same question asked one level up, and the answer is the same
+     * except in one case: {@code ORDER BY <designated timestamp>} ascending asks for the order this method
+     * restates, so bailing on it buys nothing and costs the merge. That one spelling is admitted - see
+     * {@link #isAscendingTimestampOrderBy(IQueryModel, CharSequence)} for what "that one spelling" excludes.
+     * Order-by advice reaching this model is the same question asked through a channel that does not record
+     * which spelling produced it, so the one spelling that asks for exactly this order is admitted and every
+     * other advice bails - that spelling is what
+     * {@code select * from (<sample by over a union>) order by ts} produces.
+     */
+    private void restateTimestampOrderForOrderSensitiveBase(IQueryModel model) {
+        if (!hasNestedUnionAll(model)) {
+            return;
+        }
+        if (model.getSampleBy() == null
+                && !hasAscendingTimestampGroupByFunc(sqlNodeStack, functionParser.getFunctionFactoryCache(), model.getColumns())) {
+            return;
+        }
+        if (model.getOrderBy().size() > 0 || model.getOrderByAdvice().size() > 0) {
+            // An ORDER BY the consumer wrote, or one its parent asked for through the advice channel, is
+            // only admitted when it asks for the order this method restates - which it can only do
+            // through a timestamp the consumer projects.
+            final CharSequence consumerTimestamp = findTimestamp(model);
+            if (consumerTimestamp == null) {
+                return;
+            }
+            if (model.getOrderBy().size() > 0 && !isAscendingTimestampOrderBy(model, consumerTimestamp)) {
+                return;
+            }
+            if (model.getOrderByAdvice().size() > 0 && !isAscendingTimestampOrderByAdvice(model, consumerTimestamp)) {
+                return;
+            }
+        }
+        final IQueryModel base = model.getNestedModel();
+        if (base == null) {
+            return;
+        }
+        // Find the model to write the ORDER BY onto. It is the one directly above the union head, and
+        // only that one: an ORDER BY there reaches the union branches through the advice channel and
+        // selects MergeUnionAllRecordCursorFactory, while the same ORDER BY written one projection
+        // higher sorts instead - on this branch and on master alike, so this is a property of the
+        // planner rather than of the restatement. Injecting at the immediate base therefore repaired
+        // only the spelling where the two coincide, which is the UNION ALL as the consumer's immediate
+        // nested model. Every model passed through on the way down has to hand its base's rows on in
+        // the order it received them, or the restated order is not the order the consumer sees.
+        IQueryModel target = null;
+        boolean hasUnion = false;
+        for (IQueryModel m = base; m != null; m = m.getNestedModel()) {
+            if (m.getOrderBy().size() > 0 || m.getLimitLo() != null || m.hasSharedRefs()) {
+                return;
+            }
+            if (m.getUnionModel() != null && m.getSetOperationType() == IQueryModel.SET_OPERATION_UNION_ALL) {
+                hasUnion = true;
+                break;
+            }
+            if (!isRowOrderPreserving(m)) {
+                return;
+            }
+            target = m;
+        }
+        if (!hasUnion) {
+            return;
+        }
+        if (target == null) {
+            // base is the union head itself, so there is no model between it and the consumer to carry
+            // the ORDER BY. Keep writing it onto base, as before.
+            target = base;
+        }
+        // Resolve the timestamp against the target, not against the consumer: the ORDER BY has to name a
+        // column the model it lands on projects. Resolving it against the consumer made this method
+        // inert for the whole flagged-aggregate arm, because a group by calling twap(x, ts) or
+        // sparkline(x) projects the aggregate and not the timestamp, so the consumer's
+        // columnNameToAliasMap has no entry for it and every such query fell through to the sort.
+        final CharSequence timestamp = findTimestamp(target);
+        if (timestamp == null) {
+            return;
+        }
+        target.addOrderBy(nextLiteral(timestamp), IQueryModel.ORDER_DIRECTION_ASCENDING);
     }
 
     private void resolveJoinColumns(IQueryModel model) throws SqlException {

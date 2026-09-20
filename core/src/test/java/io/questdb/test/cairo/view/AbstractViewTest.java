@@ -66,7 +66,10 @@ class AbstractViewTest extends AbstractCairoTest {
         AbstractCairoTest.setUpStatic();
     }
 
-    private void assertReferencedViews(String query, String[] expectedReferencedViews) throws SqlException {
+    // Package-private (was private) so a subclass that has to spell out the assertQueryAndPlan steps
+    // itself - e.g. to assert a non-forward designated-timestamp order that the shared helper's
+    // timestamp parameter cannot express - can still assert the referenced views. Behaviour unchanged.
+    void assertReferencedViews(String query, String... expectedReferencedViews) throws SqlException {
         if (expectedReferencedViews == null || expectedReferencedViews.length == 0) {
             return;
         }

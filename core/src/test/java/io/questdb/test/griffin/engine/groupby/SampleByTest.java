@@ -82,6 +82,17 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.test.tools.TestUtils.assertEquals;
 
 public class SampleByTest extends AbstractCairoTest {
+    /**
+     * The six-row, three-partition fixture the scan-direction upgrade notes use, so the results of
+     * the order-sensitive SAMPLE BY tests below can be read against the numbers recorded there.
+     */
+    public static final String SCAN_DIRECTION_DDL =
+            "create table sdt (ts timestamp, sym symbol index, x long) timestamp(ts) partition by day";
+    public static final String SCAN_DIRECTION_ROWS =
+            "insert into sdt values" +
+                    " ('2024-01-01T00:00:00.000000Z','a',1), ('2024-01-01T01:00:00.000000Z','b',2)," +
+                    " ('2024-01-02T00:00:00.000000Z','a',3), ('2024-01-02T01:00:00.000000Z','c',4)," +
+                    " ('2024-01-03T00:00:00.000000Z','b',5), ('2024-01-03T01:00:00.000000Z','a',6)";
     public static final String FROM_TO_DDL = """
             create table fromto as (
               SELECT timestamp_sequence(
@@ -4013,6 +4024,405 @@ public class SampleByTest extends AbstractCairoTest {
                             2024-01-01T02:00:00.000000Z\t0
                             2024-01-01T03:00:00.000000Z\t30
                             """);
+        });
+    }
+
+    /**
+     * An order-sensitive SAMPLE BY over a UNION ALL. The union concatenates, so it reports no
+     * ascending designated-timestamp order and the generator used to refuse - including for
+     * FILL(linear), which returned the right answer over this fixture.
+     * <p>
+     * The repair is a replan, not a sort: the ORDER BY the upgrade notes tell users to write is
+     * restated on the base, which routes the union to MergeUnionAllRecordCursorFactory. The plan
+     * assertion is the point of the test as much as the rows are - a blind sort here would also
+     * produce 4, 4, 4 on six rows while being a full-cardinality, non-spilling materialisation at
+     * scale, so "Union All Merge" is what distinguishes the repair from the thing that merely looks
+     * like it.
+     * <p>
+     * 4, 4, 4 is ground truth: the fixture has two rows per day and the union doubles them. Master
+     * answered 2, 2, 8 for every one of these except FILL(linear) - the second branch's rows all
+     * landing in whatever bucket was open when time went backwards.
+     */
+    @Test
+    public void testOrderSensitiveSampleByOverUnionAllMerges() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SCAN_DIRECTION_DDL);
+            execute(SCAN_DIRECTION_ROWS);
+            final String base = "(select ts, x from sdt union all select ts, x from sdt) timestamp(ts)";
+            final String[] variants = {
+                    "sample by 1d fill(null)",
+                    "sample by 1d fill(prev)",
+                    "sample by 1d fill(0)",
+                    "sample by 1d fill(linear)",
+                    "sample by 1d align to first observation",
+                    "sample by 1d from '2024-01-01' to '2024-01-04'",
+            };
+            for (String variant : variants) {
+                final String query = "select ts, count() c from " + base + " " + variant;
+                // the fill variants differ in whether the cursor is random-access, so it is inferred
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .withPlanContaining("Union All Merge", "order: [ts asc]")
+                        .returns("""
+                                ts\tc
+                                2024-01-01T00:00:00.000000Z\t4
+                                2024-01-02T00:00:00.000000Z\t4
+                                2024-01-03T00:00:00.000000Z\t4
+                                """);
+            }
+        });
+    }
+
+    /**
+     * The same shape with an outer ORDER BY. Restating a timestamp order on the base is only ours to do
+     * when the user has not written an order or a row set of their own, so the restatement bails on an
+     * outer ORDER BY - except for the one spelling that asks for the very order being restated,
+     * {@code ORDER BY <designated timestamp>} ascending and nothing else. That one merges; everything
+     * else keeps taking the sort.
+     * <p>
+     * The distinction is worth a test because it is invisible in the rows: every arm here returns the
+     * same three buckets, in the order its own ORDER BY asks for, whichever plan it takes. What differs
+     * is what the plan does to 20M union rows before the SAMPLE BY sees them. Measured at
+     * N = 10M rows per branch: the merge answers in 245 ms, the sort in 690 ms with
+     * cairo.sql.sort.key.max.bytes raised to 8 GB, and at the default 64 MB the sort does not answer at
+     * all - "limit of 67108864 memory exceeded in EncodedSort". So "order by ts" taking the sort was not
+     * a slower answer, it was no answer.
+     * <p>
+     * The bailing arms are each a distinct reason to bail, and none of them is about the rows: DESC and
+     * "c" are an order the user wrote that is not this one, "ts, c" and "c, ts" carry a term this
+     * restatement says nothing about, and LIMIT makes the row set theirs rather than the row order.
+     */
+    @Test
+    public void testOrderSensitiveSampleByOverUnionAllWithOuterOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SCAN_DIRECTION_DDL);
+            execute(SCAN_DIRECTION_ROWS);
+            final String base = "(select ts, x from sdt union all select ts, x from sdt) timestamp(ts)";
+            final String stem = "select ts, count() c from " + base + " sample by 1d fill(null) ";
+            final String ascending = """
+                    ts\tc
+                    2024-01-01T00:00:00.000000Z\t4
+                    2024-01-02T00:00:00.000000Z\t4
+                    2024-01-03T00:00:00.000000Z\t4
+                    """;
+
+            // asks for the order the restatement produces, so it is restated and the union merges
+            for (String tail : new String[]{"order by ts", "order by ts asc", "order by 1"}) {
+                assertQuery(stem + tail)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .withPlanContaining("Union All Merge", "order: [ts asc]")
+                        .withPlanNotContaining("Encode sort")
+                        .returns(ascending);
+            }
+
+            // an order or a row set of the user's own: the restatement bails and the sort supplies the order
+            assertQuery(stem + "order by ts desc")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .withPlanContaining("Encode sort", "keys: [ts desc]", "Union All")
+                    .withPlanNotContaining("Union All Merge")
+                    .returns("""
+                            ts\tc
+                            2024-01-03T00:00:00.000000Z\t4
+                            2024-01-02T00:00:00.000000Z\t4
+                            2024-01-01T00:00:00.000000Z\t4
+                            """);
+
+            for (String tail : new String[]{"order by c", "order by ts, c", "order by c, ts"}) {
+                assertQuery(stem + tail)
+                        .noLeakCheck()
+                        .inferTimestamp()
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .withPlanContaining("Encode sort", "Union All")
+                        .withPlanNotContaining("Union All Merge")
+                        .returns(ascending);
+            }
+
+            assertQuery(stem + "order by ts limit 2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .withPlanContaining("Limit", "Encode sort", "keys: [ts]", "Union All")
+                    .withPlanNotContaining("Union All Merge")
+                    .returns("""
+                            ts\tc
+                            2024-01-01T00:00:00.000000Z\t4
+                            2024-01-02T00:00:00.000000Z\t4
+                            """);
+        });
+    }
+
+    /**
+     * The same statement over an aggregating base. There is no ordered plan to select here - a keyed
+     * GROUP BY emits rows in map order and nothing merges that - so this is where the sort belongs,
+     * and it is over the aggregate (three rows) rather than the input.
+     * <p>
+     * 2, 2, 2 is ground truth: the inner GROUP BY produces one row per distinct timestamp, two per
+     * day. Master answered 1, null, 5.
+     */
+    @Test
+    public void testOrderSensitiveSampleByOverKeyedGroupBySorts() throws Exception {
+        assertQuery("""
+                select ts, count() c
+                from (select ts, count() x from sdt group by ts) timestamp(ts)
+                sample by 1d fill(null)
+                """)
+                .ddl(SCAN_DIRECTION_DDL, SCAN_DIRECTION_ROWS)
+                .noLeakCheck()
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By", "keys: [ts]", "Async Group By")
+                .returns("""
+                        ts\tc
+                        2024-01-01T00:00:00.000000Z\t2
+                        2024-01-02T00:00:00.000000Z\t2
+                        2024-01-03T00:00:00.000000Z\t2
+                        """);
+    }
+
+    /**
+     * LATEST ON over a forward base: the factory drains a hash map, so it reports no order at all
+     * and the sort supplies one. Ground truth is 1, 2 - the three latest-by rows are a/2024-01-03T01,
+     * b/2024-01-03T00 and c/2024-01-02T01, which span two days. Master collapsed them into a single
+     * bucket.
+     */
+    @Test
+    public void testOrderSensitiveSampleByOverLatestOnSorts() throws Exception {
+        assertQuery("""
+                select ts, count() c
+                from (select * from (select ts, sym, x from sdt where x > 0) latest on ts partition by sym) timestamp(ts)
+                sample by 1d fill(null)
+                """)
+                .ddl(SCAN_DIRECTION_DDL, SCAN_DIRECTION_ROWS)
+                .noLeakCheck()
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
+                        ts\tc
+                        2024-01-02T00:00:00.000000Z\t1
+                        2024-01-03T00:00:00.000000Z\t2
+                        """);
+    }
+
+    /**
+     * ORDER BY sym, ts over an indexed SYMBOL confined to one partition selects
+     * SortedSymbolIndexRecordCursorFactory, which walks each symbol's whole index range before the
+     * next symbol's. Ground truth is six one-second buckets of 1, because the fixture has one row in
+     * each of six consecutive seconds. Master answered five buckets: 1, null, 2, 2, 1.
+     * <p>
+     * This shape is also the one whose documented remedy did not work: the outer ORDER BY ts is
+     * elided because SortedSymbolIndexRecordCursorFactory.followedOrderByAdvice() returns true
+     * unconditionally. The second assertion pins that the remedy spelling now works too - it reaches
+     * the same sort at the same gate - so the remedy and the bare statement agree.
+     */
+    @Test
+    public void testOrderSensitiveSampleByOverSortedSymbolIndexSorts() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table sdu (ts timestamp, sym symbol index, x long) timestamp(ts) partition by day");
+            execute("insert into sdu values" +
+                    " ('2024-01-02T00:00:00.000000Z','b',1), ('2024-01-02T00:00:01.000000Z','a',2)," +
+                    " ('2024-01-02T00:00:02.000000Z','c',3), ('2024-01-02T00:00:03.000000Z','a',4)," +
+                    " ('2024-01-02T00:00:04.000000Z','b',5), ('2024-01-02T00:00:05.000000Z','c',6)");
+            final String expected = """
+                    ts\tc
+                    2024-01-02T00:00:00.000000Z\t1
+                    2024-01-02T00:00:01.000000Z\t1
+                    2024-01-02T00:00:02.000000Z\t1
+                    2024-01-02T00:00:03.000000Z\t1
+                    2024-01-02T00:00:04.000000Z\t1
+                    2024-01-02T00:00:05.000000Z\t1
+                    """;
+            assertQuery("""
+                    select ts, count() c
+                    from (select ts, sym, x from sdu where ts in '2024-01-02' order by sym, ts) timestamp(ts)
+                    sample by 1s fill(null)
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("""
+                    select ts, count() c
+                    from ((select ts, sym, x from sdu where ts in '2024-01-02' order by sym, ts) timestamp(ts) order by ts)
+                    sample by 1s fill(null)
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
+        });
+    }
+
+    /**
+     * A base that claims BACKWARD keeps refusing, and that is deliberate. Repairing it would be a
+     * reversal of an already-ordered stream rather than a sort of an unordered one, and the order is
+     * written in the query text: an implicit sort here would make a user's ORDER BY ts DESC stop
+     * meaning anything. Only SCAN_DIRECTION_OTHER - no claim at all, so nothing to contradict - is
+     * repaired by sorting.
+     */
+    @Test
+    public void testOrderSensitiveSampleByOverDescendingBaseStillRefuses() throws Exception {
+        assertQuery("""
+                select ts, count() c
+                from (select ts, x from sdt order by ts desc) timestamp(ts)
+                sample by 1d fill(null)
+                """)
+                .ddl(SCAN_DIRECTION_DDL, SCAN_DIRECTION_ROWS)
+                .noLeakCheck()
+                .failsWith("base query does not provide ASC order over designated TIMESTAMP column");
+    }
+
+    /**
+     * The same repair for every shape that puts a projection model between the SAMPLE BY and the
+     * UNION ALL. Each of these threw "ASC order over TIMESTAMP column is required but not provided"
+     * while the single-nesting spelling above merged, because generateSelectChoose enforces the same
+     * requirement one model earlier than generateSampleBy's gate and refusing there skips both tiers.
+     * All of them compile on master, and the VIEW spelling is the one a deployed schema is most
+     * likely to hold - the user never writes TIMESTAMP(col) at the call site, the view carries it.
+     * <p>
+     * Every row asserts the plan as well as the answer, and the plan is the point: 4, 4, 4 on six
+     * rows is what a blind tier-2 sort returns too, and that sort is the thing that fails rather than
+     * slows at scale. "Union All Merge" is the only assertion that separates them.
+     */
+    @Test
+    public void testOrderSensitiveSampleByOverNestedUnionAllMerges() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SCAN_DIRECTION_DDL);
+            execute(SCAN_DIRECTION_ROWS);
+            execute("create view sdtv as (select * from (select ts, x from sdt union all select ts, x from sdt) timestamp(ts))");
+            final String union = "(select ts, x from sdt union all select ts, x from sdt)";
+            final String[] queries = {
+                    // one redundant pair of parentheses
+                    "select ts, count() c from (" + union + " timestamp(ts)) sample by 1d fill(null)",
+                    // an alias on it
+                    "select ts, count() c from (" + union + " timestamp(ts)) q sample by 1d fill(null)",
+                    // a select * wrapper
+                    "select ts, count() c from (select * from " + union + " timestamp(ts)) sample by 1d fill(null)",
+                    // a WHERE in the wrapper
+                    "select ts, count() c from (select * from " + union + " timestamp(ts) where x > 0) sample by 1d fill(null)",
+                    // a VIEW carrying the timestamp
+                    "select ts, count() c from sdtv sample by 1d fill(null)",
+                    // no FILL at all, and ALIGN TO FIRST OBSERVATION, over the view
+                    "select ts, count() c from sdtv sample by 1d",
+                    "select ts, count() c from sdtv sample by 1d align to first observation",
+                    // a LIMIT above the SAMPLE BY - it selects rows of the result, not of the base
+                    "select ts, count() c from (" + union + " timestamp(ts)) sample by 1d fill(null) limit 3",
+            };
+            for (String query : queries) {
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .withPlanContaining("Union All Merge", "order: [ts asc]")
+                        .returns("""
+                                ts\tc
+                                2024-01-01T00:00:00.000000Z\t4
+                                2024-01-02T00:00:00.000000Z\t4
+                                2024-01-03T00:00:00.000000Z\t4
+                                """);
+            }
+        });
+    }
+
+    /**
+     * A LIMIT the user wrote <i>between</i> the SAMPLE BY and the UNION ALL is the carve-out, and it
+     * stays one. The limit makes the row set theirs, so restating an order underneath it would change
+     * which rows they get; the statement answers through the tier-2 sort instead of the merge, and
+     * this pins that it is the sort, so the carve-out cannot quietly become a merge.
+     */
+    @Test
+    public void testOrderSensitiveSampleByOverLimitedUnionAllSorts() throws Exception {
+        assertQuery("""
+                select ts, count() c
+                from (select * from (select ts, x from sdt union all select ts, x from sdt) timestamp(ts) limit 100)
+                sample by 1d fill(null)
+                """)
+                .ddl(SCAN_DIRECTION_DDL, SCAN_DIRECTION_ROWS)
+                .noLeakCheck()
+                .timestamp("ts")
+                .inferRandomAccess()
+                .sizeMayVary()
+                .withPlanContaining("Sample By", "Union All")
+                .withPlanNotContaining("Union All Merge")
+                .returns("""
+                        ts\tc
+                        2024-01-01T00:00:00.000000Z\t4
+                        2024-01-02T00:00:00.000000Z\t4
+                        2024-01-03T00:00:00.000000Z\t4
+                        """);
+    }
+
+    /**
+     * {@code select * from (<order-sensitive SAMPLE BY over a UNION ALL>) order by ts} asks for the
+     * same thing the unwrapped {@code ... sample by 1d fill(null) order by ts} asks for, but the outer
+     * ORDER BY reaches the SAMPLE BY model as order-by advice rather than as its own ORDER BY. Bailing
+     * on all advice cost the merge for this spelling alone; the one advice term that asks for exactly
+     * the restated order is now admitted.
+     */
+    @Test
+    public void testOrderSensitiveSampleByOverUnionAllMergesThroughOrderByAdvice() throws Exception {
+        assertQuery("""
+                select * from (
+                  select ts, count() c
+                  from (select ts, x from sdt union all select ts, x from sdt) timestamp(ts)
+                  sample by 1d fill(null)
+                ) order by ts
+                """)
+                .ddl(SCAN_DIRECTION_DDL, SCAN_DIRECTION_ROWS)
+                .noLeakCheck()
+                .timestamp("ts")
+                .inferRandomAccess()
+                .sizeMayVary()
+                .withPlanContaining("Union All Merge", "order: [ts asc]")
+                .returns("""
+                        ts\tc
+                        2024-01-01T00:00:00.000000Z\t4
+                        2024-01-02T00:00:00.000000Z\t4
+                        2024-01-03T00:00:00.000000Z\t4
+                        """);
+    }
+
+    /**
+     * Advice that is not the restated order still bails, so the admission above cannot be mistaken for
+     * "any advice will do". A DESC term and a term on another column both keep the sort.
+     */
+    @Test
+    public void testOrderSensitiveSampleByBailsOnOtherOrderByAdvice() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SCAN_DIRECTION_DDL);
+            execute(SCAN_DIRECTION_ROWS);
+            final String inner = """
+                    select ts, count() c
+                    from (select ts, x from sdt union all select ts, x from sdt) timestamp(ts)
+                    sample by 1d fill(null)
+                    """;
+            assertQuery("select * from (" + inner + ") order by ts desc")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .withPlanNotContaining("Union All Merge")
+                    .returns("""
+                            ts\tc
+                            2024-01-03T00:00:00.000000Z\t4
+                            2024-01-02T00:00:00.000000Z\t4
+                            2024-01-01T00:00:00.000000Z\t4
+                            """);
+            // the counts tie, so only the routing is asserted for a non-timestamp term
+            assertQuery("select * from (" + inner + ") order by c")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("Union All Merge");
         });
     }
 

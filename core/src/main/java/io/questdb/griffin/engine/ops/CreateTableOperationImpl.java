@@ -668,10 +668,50 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.parquetEncodingConfigs.clear();
         if (this.timestampColumnName == null) {
             int timestampIndex = metadata.getTimestampIndex();
-            if (timestampIndex > -1 && scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
+            // The target inherits the SELECT's designated timestamp whatever direction the SELECT
+            // scans in. Scan direction is a compile-time declaration about a cursor, not a statement
+            // about the data, and it cannot tell an ordered stream from an unordered one:
+            // "(a UNION ALL b) TIMESTAMP(ts)" declares SCAN_DIRECTION_OTHER both when a and b hold
+            // disjoint ascending ranges - the concatenation is then perfectly ordered - and when they
+            // interleave. Only the rows distinguish the two, so refusing here on the declaration
+            // alone would reject correct statements.
+            //
+            // The writer has the rows and adjudicates precisely:
+            //  - partitioned target: TableWriter.newRow() sends a row below maxTimestamp down the O3
+            //    path (ROW_ACTION_SWITCH_PARTITION -> newRowO3), which sorts and merges on commit, so
+            //    any order is accepted and the data lands in timestamp order.
+            //  - non-partitioned target: the writer runs ROW_ACTION_NO_PARTITION and rejects the
+            //    first row that arrives below maxTimestamp with "cannot insert rows out of order to
+            //    non-partitioned table", leaving no table behind.
+            // Requiring SCAN_DIRECTION_FORWARD here dropped the designated timestamp instead. Without
+            // a PARTITION BY that silently handed back a table that is not a time-series table at all
+            // - no designated timestamp, so no SAMPLE BY, no LATEST ON, no ASOF JOIN - and with one it
+            // surfaced as the unrelated "partitioning is possible only on tables with designated
+            // timestamps" error below, e.g. for
+            // "CREATE TABLE t AS (SELECT * FROM a ORDER BY ts DESC) PARTITION BY DAY".
+            if (timestampIndex > -1) {
                 this.timestampIndex = timestampIndex;
                 timestampType = metadata.getTimestampType();
-                this.selectSqlScanDirection = scanDirection;
+                if (scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
+                    // Deliberately narrower than the timestamp inheritance above, and unchanged from
+                    // master: the only value this field ever holds is SCAN_DIRECTION_FORWARD or the
+                    // SCAN_DIRECTION_OTHER it is default-initialised to. BACKWARD is never recorded,
+                    // by either revision.
+                    //
+                    // The single reader is HTTPSerialParquetExporter, which tests the getter against
+                    // SCAN_DIRECTION_BACKWARD to decide whether to re-read the temp table with an
+                    // "order by <ts> desc" appended. That test is therefore dead code at master and
+                    // here alike; the export always re-reads ascending. It is left in place because
+                    // removing it would orphan getSelectSqlScanDirection() on the CreateTableOperation
+                    // interface, which is a wider change than this branch should make - but do not
+                    // read it as evidence that a descending re-read is reachable, and do not widen
+                    // this assignment to make it so without first working out what a descending
+                    // re-read would mean: the temp table is written through TableWriter, so a
+                    // partitioned one has been O3-sorted into ascending order before it is read back
+                    // and a non-partitioned one refuses out-of-order rows outright. In neither case
+                    // does the SELECT's own scan order survive into the stored rows.
+                    this.selectSqlScanDirection = scanDirection;
+                }
             }
         } else {
             this.timestampIndex = metadata.getColumnIndexQuiet(this.timestampColumnName);

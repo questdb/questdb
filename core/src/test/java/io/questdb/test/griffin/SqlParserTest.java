@@ -11864,10 +11864,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSampleByTimestampDescOrderWithJoin() throws Exception {
+        // The SAMPLE BY, not a projection model above the join, is what refuses a descending base now,
+        // so the message is the SAMPLE BY gate's. An order-sensitive SAMPLE BY asks the models between
+        // it and its base for the designated timestamp column without asking them to enforce ascending
+        // order on its behalf - it obtains that order itself, by replan or by sort - and a base claiming
+        // BACKWARD is the one case neither tier repairs, because reversing an ordered stream would make
+        // a written ORDER BY ts DESC stop meaning anything. Still refused, still at position 0.
         assertSyntaxError(
                 "select tab.x,sum(y) from (tab order by ts desc) tab join tab2 on (x) sample by 2m align to first observation",
                 0,
-                "ASC order over TIMESTAMP column is required but not provided",
+                "base query does not provide ASC order over designated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -11880,7 +11886,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select tab.x,sum(y) from (tab order by ts desc) tab join tab2 on (x) sample by 2m",
                 0,
-                "ASC order over TIMESTAMP column is required but not provided",
+                "base query does not provide ASC order over designated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -11893,7 +11899,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select tab.x,sum(y) from (tab order by ts desc) tab join tab2 on (x) sample by 2m align to calendar",
                 0,
-                "ASC order over TIMESTAMP column is required but not provided",
+                "base query does not provide ASC order over designated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
