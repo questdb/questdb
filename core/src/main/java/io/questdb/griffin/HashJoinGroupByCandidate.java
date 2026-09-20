@@ -177,7 +177,12 @@ public final class HashJoinGroupByCandidate {
                 && factory.getFilter().isStableWithinExecution();
     }
 
-    /** Payload and projection types; a key column answers to {@link HashJoinGroupByKeys#supportsKeyType(int)} instead. */
+    /**
+     * Build payload types: the row heap copies a build column, so only a build column answers to
+     * this set. A probe column reaches the joined record straight off its page frame and takes no
+     * type check at all, and a key column and a grouping expression answer to
+     * {@link HashJoinGroupByKeys#supportsKeyType(int)} instead.
+     */
     public static boolean supportsValueType(int type) {
         return switch (ColumnType.tagOf(type)) {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR,
@@ -273,7 +278,8 @@ public final class HashJoinGroupByCandidate {
                             return null;
                         }
                         hasAggregate = true;
-                    } else if (!supportsValueType(function.getType()) || !function.supportsParallelism() || !function.isStableWithinExecution()) {
+                    } else if (!HashJoinGroupByKeys.supportsKeyType(function.getType())
+                            || !function.supportsParallelism() || !function.isStableWithinExecution()) {
                         return null;
                     }
                 }
@@ -456,8 +462,9 @@ public final class HashJoinGroupByCandidate {
         private final RecordMetadata[] sources;
         private ExpressionNode buildOnFilter;
         private boolean hasUndefinedBindVariable;
-        // An input column reference takes the key type set: a key column reaches the map, while
-        // an expression operand reaches the payload or the projection and takes the value types.
+        // An input column reference is a key candidate or a name the input mapping captures, so it
+        // takes no type check: HashJoinGroupByKeys.add() gates the key types, and the mapping must
+        // name every input column that an admitted expression can later reach.
         private boolean isResolvingInputColumn;
         private ExpressionNode resolvedBuildOnFilter;
         private int usedSources;
@@ -566,12 +573,15 @@ public final class HashJoinGroupByCandidate {
         }
 
         private ExpressionNode column(int index, int position) {
-            if (index < 0 || !(isResolvingInputColumn
-                    ? HashJoinGroupByKeys.supportsKeyType(metadata.getColumnType(index))
-                    : supportsValueType(metadata.getColumnType(index)))) {
+            if (index < 0) {
                 return null;
             }
-            int source = columnSources.getQuick(index);
+            final int source = columnSources.getQuick(index);
+            // The row heap copies a build column, so only a build column takes the payload type set.
+            // A probe column of any type reaches the joined record straight off its page frame.
+            if (!isResolvingInputColumn && source == buildIndex && !supportsValueType(metadata.getColumnType(index))) {
+                return null;
+            }
             usedSources |= 1 << source;
             if (source == buildIndex && !requiredBuildColumns.contains(columnIndexes.getQuick(index))) {
                 requiredBuildColumns.add(columnIndexes.getQuick(index));

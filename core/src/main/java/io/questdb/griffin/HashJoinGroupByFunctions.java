@@ -99,11 +99,14 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
                     columnFilter, null, false, metadata.getColumns(), null);
             for (int i = 0; i < innerFunctions.size(); i++) {
                 Function function = innerFunctions.getQuick(i);
+                // A grouping expression reaches the fragments' key sink and never the build's row
+                // heap, so its branch repeats the planner's non-aggregate output gate rather than
+                // the payload one. The two must agree, or a shape the planner admits fails here.
                 if (flags.getQuick(i) == GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY) {
                     if (!HashJoinGroupByCandidate.supportsAggregate(function)) {
                         throw SqlException.$(0, "unsupported fused hash join aggregate");
                     }
-                } else if (!HashJoinGroupByCandidate.supportsValueType(function.getType())
+                } else if (!HashJoinGroupByKeys.supportsKeyType(function.getType())
                         || !function.supportsParallelism() || !function.isStableWithinExecution()) {
                     throw SqlException.$(0, "unsupported fused hash join grouping function");
                 }

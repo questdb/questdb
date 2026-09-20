@@ -61,10 +61,11 @@ public final class HashJoinGroupByKeys {
     private final IntList types = new IntList();
 
     /**
-     * Key types a {@link io.questdb.cairo.RecordSink} stages and the maps store. The set is wider
-     * than {@link HashJoinGroupByCandidate#supportsValueType(int)}, which the payload and the
-     * projection answer to, because a key column reaches the map and never the row heap. BINARY
-     * and ARRAY keys keep the ordinary plan, which joins them itself.
+     * Key types a {@link io.questdb.cairo.RecordSink} stages and the maps store. The join keys and
+     * the fused GROUP BY's own grouping expressions both answer to this set, which is wider than
+     * {@link HashJoinGroupByCandidate#supportsValueType(int)}, the build payload set, because a key
+     * reaches a map and never the row heap. BINARY and ARRAY keys keep the ordinary plan, which
+     * joins and groups them itself.
      */
     public static boolean supportsKeyType(int type) {
         return switch (ColumnType.tagOf(type)) {
