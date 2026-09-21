@@ -395,6 +395,21 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public long getDesignatedTimestampPageAddress() {
+            return baseFrame.getDesignatedTimestampPageAddress();
+        }
+
+        @Override
+        public long getDesignatedTimestampPageSize() {
+            return baseFrame.getDesignatedTimestampPageSize();
+        }
+
+        @Override
+        public long getDesignatedTimestampPageTop() {
+            return baseFrame.getDesignatedTimestampPageTop();
+        }
+
+        @Override
         public byte getFormat() {
             return baseFrame.getFormat();
         }
@@ -415,6 +430,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public long getPageTop(int columnIndex) {
+            return columnIndex < columnSplit ? baseFrame.getPageTop(columnIndex) : 0;
+        }
+
+        @Override
         public ParquetDecoder getParquetDecoder() {
             return baseFrame.getParquetDecoder();
         }
@@ -432,6 +452,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public int getParquetRowGroupLo() {
             return baseFrame.getParquetRowGroupLo();
+        }
+
+        @Override
+        public long getPartitionFrameState() {
+            return baseFrame.getPartitionFrameState();
         }
 
         @Override
