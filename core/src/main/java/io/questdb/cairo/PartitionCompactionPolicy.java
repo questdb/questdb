@@ -255,16 +255,27 @@ public class PartitionCompactionPolicy implements Mutable {
                     continue;
                 }
 
-                assert isStateCurrent(txWriter, stateIndex, partitionTimestamp)
-                        : "stale heap partition state [partitionTimestamp=" + partitionTimestamp + ']';
                 final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
-                if (partitionIndex < 0 || !txWriter.isPartitionComposite(partitionIndex)) {
+                assert partitionIndex >= 0
+                        : "missing heap partition [partitionTimestamp=" + partitionTimestamp + ']';
+                if (partitionIndex < 0) {
+                    heap.pop();
+                    removeState(partitionTimestamp);
+                    continue;
+                }
+                assert txWriter.isPartitionComposite(partitionIndex)
+                        : "plain heap partition [partitionTimestamp=" + partitionTimestamp + ']';
+                if (!txWriter.isPartitionComposite(partitionIndex)) {
                     heap.pop();
                     removeState(partitionTimestamp);
                     continue;
                 }
                 final long currentGeometryRef = txWriter.getGeometryRef(partitionIndex);
                 final long stateGeometryRef = partitionStates.getQuick(stateIndex + STATE_REF_OFFSET);
+                assert currentGeometryRef == stateGeometryRef
+                        : "stale heap partition ref [partitionTimestamp=" + partitionTimestamp
+                        + ", stateGeometryRef=" + stateGeometryRef
+                        + ", currentGeometryRef=" + currentGeometryRef + ']';
                 if (currentGeometryRef != stateGeometryRef) {
                     heap.pop();
                     putState(txWriter, geometry, partitionIndex, avgRecordSize);

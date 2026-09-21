@@ -2954,6 +2954,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter;
     }
 
+    @TestOnly
+    public void setPartitionGeometryRefForTest(long partitionTimestamp, long geometryRef) {
+        setPartitionGeometryRefTracked(partitionTimestamp, geometryRef);
+    }
+
     public long getTxn() {
         return txWriter.getTxn();
     }

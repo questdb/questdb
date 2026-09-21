@@ -1043,7 +1043,7 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
                 }
             }
 
-            tx.setPartitionGeometryRef(partitionTs, TxReader.packGeometryRef(fakeGeneration, fakeOffset));
+            writer.setPartitionGeometryRefForTest(partitionTs, TxReader.packGeometryRef(fakeGeneration, fakeOffset));
             tx.commit(new ObjList<>());
         }
     }
