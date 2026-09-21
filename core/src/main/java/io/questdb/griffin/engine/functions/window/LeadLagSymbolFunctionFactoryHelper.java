@@ -585,6 +585,12 @@ class LeadLagSymbolFunctionFactoryHelper {
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            Function.cursorClosed(partitionByRecord.getFunctions());
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);

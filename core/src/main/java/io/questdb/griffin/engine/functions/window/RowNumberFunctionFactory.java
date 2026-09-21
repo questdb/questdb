@@ -215,6 +215,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
          * change to it has to withdraw this declaration with it.
          */
         @Override
+        public void cursorClosed() {
+            Function.cursorClosed(partitionByRecord.getFunctions());
+        }
+
+        @Override
         public int windowAccumulatorFamily() {
             return WindowAccumulatorDescriptor.FAMILY_ROW_COUNT;
         }
