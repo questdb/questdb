@@ -1774,8 +1774,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return true; // Partition is already in Parquet format.
         }
 
-        // The delta epoch is filed against this frozen base's format and window layout.
-        // Conversion needs the later base-rewrite protocol to publish a compatible epoch.
+        // Delta readers and Run window maps depend on this base's format and window grid.
+        // Conversion requires a replacement PhysicalBase and compatible navigation.
         if (txWriter.isPartitionDeltaActive(partitionIndex)) {
             formatPartitionForTimestamp(partitionTimestamp, -1);
             throw CairoException.nonCritical().put("cannot convert partition to parquet, partition is delta-active [table=")
@@ -2337,9 +2337,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert txWriter.getLagRowCount() == 0;
         checkDistressed();
         for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
-            // The v1 commit-run delta model is insert-only; dedup over a base + delta pair has no
-            // survivor-selection path yet, so a table with any delta-active partition keeps
-            // deduplication off.
+            // Delta writes are insert-only. Reads do not select deduplication survivors
+            // across the base and residual Runs.
             if (txWriter.isPartitionDeltaActive(i)) {
                 throw CairoException.nonCritical().put("cannot enable deduplication, table has a delta-active partition [table=")
                         .put(tableToken.getTableName())
@@ -5454,10 +5453,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             );
             return 1;
         }
-        // A transaction that may touch a delta-active partition must apply alone: one delta
-        // commit run carries exactly one transaction's rows with one exact seqTxn (the MVCC window
-        // filter depends on it). The range test is conservative -- a false positive only
-        // costs batching.
+        // Delta publication assigns one seqTxn to every captured row. Apply transactions
+        // separately to preserve snapshot visibility. The range test is conservative:
+        // a false positive only reduces batching.
         if (walTxnRangeOverlapsDeltaActivePartition(seqTxn, seqTxn)) {
             pressureControl.updateInflightTxnBlockLength(
                     1,
@@ -9519,14 +9517,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Captures one WAL transaction's ts-sorted O3 slice targeting a delta-active
-     * partition in the table's stable delta namespace. The delta seal completes before
-     * this transaction's {@code _txn} commit, so the applied seqTxn never runs
-     * ahead of the last durable run; {@code has_delta} arms in that same commit,
-     * atomically with the first run becoming visible. Without a writer (an OSS
-     * build; only an enterprise delta-switch event can mark a partition
-     * delta-active) the rows keep the pre-delta cold posture: dropped exactly
-     * like writes to a read-only partition.
+     * Publishes one WAL transaction's timestamp-ordered O3 slice before its
+     * {@code _txn} commit. That commit exposes the Runs and sets {@code has_delta}
+     * on the first write. Publication follows the configured commit mode.
+     * Without a Delta writer, this path logs and drops the rows as for a read-only
+     * partition; the partition switch requires a Delta-capable enterprise build.
      */
     private void o3CommitPartitionDelta(
             long partitionTimestamp,
@@ -9567,7 +9562,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (!hasDelta) {
             txWriter.setPartitionHasDeltaByRawIndex(partitionIndexRaw, true);
             // Readers with the partition already open must re-resolve it: a bare
-            // base read past this commit would miss the run just sealed.
+            // base read past this commit would miss the newly published Runs.
             txWriter.bumpPartitionTableVersion();
         }
     }
@@ -11130,7 +11125,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
             if (timestampRangeOverlapsDeltaActivePartition(replaceRangeTsLo, replaceRangeTsHi - 1)
                     || timestampRangeOverlapsDeltaActivePartition(txnMinTs, txnMaxTs)) {
-                // The insert-only commit-run delta model cannot express a range replacement over a
+                // The insert-only Delta writer cannot express a range replacement over a
                 // frozen base; suspend rather than half-apply or silently drop the range.
                 throw CairoException.nonCritical()
                         .put("cannot apply replace-range commit over a delta-active partition [table=")
