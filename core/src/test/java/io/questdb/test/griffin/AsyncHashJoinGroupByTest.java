@@ -74,6 +74,7 @@ import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
@@ -938,6 +939,32 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     @Test
     public void testRejectedJitBuildCancellationAndReuse() throws Exception {
         assertRejectedBuildCancellationAndReuse(2);
+    }
+
+    @Test
+    public void testBuildChoiceConstructionFailureClosesBothOrientations() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final AsyncHashJoinGroupByRecordCursorFactory scalar;
+            final AsyncHashJoinGroupByRecordCursorFactory keyed;
+            try (Fixture a = new Fixture("select count(*) n" + INNER);
+                 Fixture b = new Fixture("select p.country, count(*) n" + INNER)) {
+                // The choice adopts both factories, so the fixtures must not free them too:
+                // the leak check then fails unless the rejecting constructor closed them.
+                scalar = a.factory;
+                keyed = b.factory;
+                a.factory = null;
+                a.queryFactory = null;
+                b.factory = null;
+                b.queryFactory = null;
+            }
+            try {
+                new HashJoinGroupByBuildChoiceRecordCursorFactory(scalar, keyed);
+                Assert.fail("orientations with different outputs must be rejected");
+            } catch (IllegalArgumentException expected) {
+                Assert.assertEquals("fused hash join orientations disagree on output", expected.getMessage());
+            }
+        });
     }
 
     @Test

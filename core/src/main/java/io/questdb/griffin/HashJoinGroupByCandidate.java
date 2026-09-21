@@ -210,6 +210,21 @@ public final class HashJoinGroupByCandidate {
             FunctionParser parser,
             SqlExecutionContext executionContext
     ) {
+        return analyse(groupBy, parser, executionContext, false);
+    }
+
+    /**
+     * With {@code isBuildFlipped}, analyses the orientation that builds the other input of an INNER
+     * join, the one the table sizes do not pick, and returns null for an outer join, whose build is
+     * fixed. See {@link io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory}.
+     */
+    @Nullable
+    static HashJoinGroupByCandidate analyse(
+            IQueryModel groupBy,
+            FunctionParser parser,
+            SqlExecutionContext executionContext,
+            boolean isBuildFlipped
+    ) {
         if (groupBy.getSelectModelType() != IQueryModel.SELECT_MODEL_GROUP_BY || groupBy.getSampleBy() != null
                 || !groupBy.isOptimisable() || groupBy.getSharedRefCount() > 0 || hasFill(groupBy)) {
             return null;
@@ -258,7 +273,13 @@ public final class HashJoinGroupByCandidate {
                 TableReader leftReader = executionContext.getReader(executionContext.getTableToken(left.getTableName()), left.getMetadataVersion());
                 TableReader rightReader = executionContext.getReader(executionContext.getTableToken(right.getTableName()), right.getMetadataVersion())
         ) {
-            final int buildIndex = selectBuildIndex(joinType, order, leftReader.size(), rightReader.size());
+            int buildIndex = selectBuildIndex(joinType, order, leftReader.size(), rightReader.size());
+            if (isBuildFlipped) {
+                if (joinType != IQueryModel.JOIN_INNER) {
+                    return null;
+                }
+                buildIndex = buildIndex == order.getQuick(0) ? order.getQuick(1) : order.getQuick(0);
+            }
             Analyzer analyzer = new Analyzer(join, joinType, buildIndex,
                     leftReader.getMetadata(), rightReader.getMetadata(), parser, executionContext);
             final HashJoinGroupByKeys keys = analyzer.resolveKeys(joinContext);

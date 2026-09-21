@@ -303,6 +303,7 @@ import io.questdb.griffin.engine.table.FilterOnExcludedValuesRecordCursorFactory
 import io.questdb.griffin.engine.table.FilterOnSubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnValuesRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecord;
 import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
@@ -5160,6 +5161,38 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (candidate == null) {
             return null;
         }
+        final AsyncHashJoinGroupByRecordCursorFactory primary = generateHashJoinGroupBy(model, candidate, executionContext);
+        if (primary == null || candidate.getLogicalJoinType() != IQueryModel.JOIN_INNER || !primary.hasIntervalScan()) {
+            return primary;
+        }
+        // Either input of an INNER join may be the build. Table sizes picked this one, but an
+        // interval can leave the other input with fewer rows, and bind variables or now() can
+        // change which one it does between executions. Compile the other orientation too and let
+        // each execution build the input with fewer rows. The primary's compile restored every
+        // WHERE clause it moved, so the models are as the analysis found them.
+        AsyncHashJoinGroupByRecordCursorFactory alternate = null;
+        try {
+            final HashJoinGroupByCandidate flipped = HashJoinGroupByCandidate.analyse(model, functionParser, executionContext, true);
+            if (flipped != null) {
+                alternate = generateHashJoinGroupBy(model, flipped, executionContext);
+            }
+            if (alternate == null || !HashJoinGroupByBuildChoiceRecordCursorFactory.isSameOutput(primary.getMetadata(), alternate.getMetadata())) {
+                Misc.free(alternate);
+                return primary;
+            }
+        } catch (Throwable th) {
+            Misc.free(alternate, th);
+            Misc.free(primary, th);
+            throw th;
+        }
+        return new HashJoinGroupByBuildChoiceRecordCursorFactory(primary, alternate);
+    }
+
+    private AsyncHashJoinGroupByRecordCursorFactory generateHashJoinGroupBy(
+            IQueryModel model,
+            HashJoinGroupByCandidate candidate,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         RecordCursorFactory probe = null;
         RecordCursorFactory build = null;
         HashJoinGroupByFunctions functions = null;

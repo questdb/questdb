@@ -119,6 +119,9 @@ public final class HashJoinGroupByClause {
     private static final ColumnKind[] FUSABLE_KEY_KINDS = {ColumnKind.NUMERIC, ColumnKind.TEMPORAL, ColumnKind.BOOLEAN, ColumnKind.CHAR};
     private static final String[] INTEGER_DDLS = {"BYTE", "SHORT", "INT", "LONG"};
     private static final String INT_KEY = "k";
+    // Interval widths in hours. The fuzz tables start at FuzzConfig's 2024-01-01 and span 30 to
+    // 75 hours, so an interval selects anything from no row to every row of a table.
+    private static final int[] INTERVAL_HOURS = {1, 3, 12, 48};
     private static final String[] JOIN_KINDS = {"JOIN", "LEFT JOIN", "RIGHT JOIN"};
     private static final String LEFT_ALIAS = "l";
     private static final String LONG_KEY = "lk";
@@ -218,6 +221,15 @@ public final class HashJoinGroupByClause {
         }
         if (rnd.nextBoolean()) {
             conjuncts.add(predicate(rnd, r, RIGHT_ALIAS, ctx));
+        }
+        // An interval on a table's designated timestamp becomes an interval scan, and with one
+        // on either input an INNER join compiles both orientations and builds the input with
+        // fewer interval rows on each execution.
+        if (l.isTable && rnd.nextInt(4) == 0) {
+            conjuncts.add(interval(rnd, LEFT_ALIAS));
+        }
+        if (r.isTable && rnd.nextInt(4) == 0) {
+            conjuncts.add(interval(rnd, RIGHT_ALIAS));
         }
         if (rnd.nextInt(8) == 0) {
             conjuncts.add(CONSTANT_PREDICATES[rnd.nextInt(CONSTANT_PREDICATES.length)]);
@@ -498,6 +510,19 @@ public final class HashJoinGroupByClause {
         }
         sql.put(')');
         return new Input(sql.toString(), exposed, isFusableOnly, isProbe, false);
+    }
+
+    private static String interval(Rnd rnd, String alias) {
+        final int lo = rnd.nextInt(60);
+        final int hi = lo + INTERVAL_HOURS[rnd.nextInt(INTERVAL_HOURS.length)];
+        return alias + ".ts >= " + hourOf2024(lo) + " AND " + alias + ".ts < " + hourOf2024(hi);
+    }
+
+    // The literal of the given hour after 2024-01-01T00:00, within January.
+    private static String hourOf2024(int hours) {
+        final int day = 1 + hours / 24;
+        final int hour = hours % 24;
+        return "'2024-01-" + (day < 10 ? "0" : "") + day + 'T' + (hour < 10 ? "0" : "") + hour + ":00:00.000000Z'";
     }
 
     private static String predicate(Rnd rnd, Input input, String alias, BindContext ctx) {

@@ -998,7 +998,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
         LOG.info().$("fuzz fused axis: ").$(runner.getFusedAxisSelected()).$(" of ")
                 .$(runner.getFusedAxisCompletedRuns()).$(" completed comparisons used the fused plan; ")
                 .$(runner.getFusedAxisRuns()).$(" comparisons across ")
-                .$(generatedByShape[QueryShape.HASH_JOIN_GROUP_BY.ordinal()]).$(" equi-join GROUP BY queries")
+                .$(generatedByShape[QueryShape.HASH_JOIN_GROUP_BY.ordinal()]).$(" equi-join GROUP BY queries; ")
+                .$(runner.getBuildChoiceRuns()).$(" runs picked the build per execution")
                 .$();
 
         if (failures.size() > 0) {

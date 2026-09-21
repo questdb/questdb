@@ -180,6 +180,9 @@ public final class QueryRunner {
     // the armed-vs-fired ratio measures how often each fault kind actually bites.
     private final int[] faultsArmedByType = new int[FaultType.values().length];
     // Count of injected faults that actually fired (vs armed but not reached).
+    // Successful runs, on any axis, whose plan picks the build of an INNER fused hash join GROUP BY
+    // per execution. It shows that the generator's interval conjuncts reach that plan.
+    private int buildChoiceRuns;
     private int faultsFired;
     // Per-type count of faults that actually fired, indexed by FaultType.ordinal().
     private final int[] faultsFiredByType = new int[FaultType.values().length];
@@ -275,6 +278,10 @@ public final class QueryRunner {
 
     public int getFaultsFired(FaultType type) {
         return faultsFiredByType[type.ordinal()];
+    }
+
+    public int getBuildChoiceRuns() {
+        return buildChoiceRuns;
     }
 
     /**
@@ -1543,6 +1550,9 @@ public final class QueryRunner {
             // swallow check (runFault), which runs runRaw / runRawMallocFault, not
             // this differential path.
             final CharSequence plan = planSink.getSink();
+            if (Chars.indexOf(plan, 0, plan.length(), "Hash Join Group By Build Choice") >= 0) {
+                buildChoiceRuns++;
+            }
             return Outcome.ok(rowsRead, planUsesIndex(plan), usesParquet, planUsesFusedHashJoin(plan), fpColumnMask);
         } catch (CursorCheckException e) {
             throw e;
