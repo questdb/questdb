@@ -99,21 +99,8 @@ final class HashJoinRowHeap implements Closeable {
         long offset = Long.BYTES;
         for (int i = 0; i < columnCount; i++) {
             final int type = ColumnType.tagOf(payloadTypes.getColumnType(i));
-            final int size = switch (type) {
-                case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE, ColumnType.DECIMAL8 -> 1;
-                case ColumnType.SHORT, ColumnType.CHAR, ColumnType.GEOSHORT, ColumnType.DECIMAL16 -> 2;
-                case ColumnType.INT, ColumnType.FLOAT, ColumnType.SYMBOL, ColumnType.IPv4,
-                     ColumnType.GEOINT, ColumnType.DECIMAL32 -> 4;
-                case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.DOUBLE,
-                     ColumnType.GEOLONG, ColumnType.DECIMAL64 -> 8;
-                case ColumnType.UUID, ColumnType.DECIMAL128 -> 16;
-                case ColumnType.LONG256, ColumnType.DECIMAL256 -> 32;
-                default -> throw new IllegalArgumentException("unsupported hash join payload type: " + ColumnType.nameOf(type));
-            };
-            // A wider payload is a run of longs, so eight bytes is its natural alignment; aligning
-            // it to its own size would pad the row without making any read cheaper.
-            final int align = Math.min(size, Long.BYTES);
-            offset = (offset + align - 1) & -align;
+            final int size = payloadSize(type);
+            offset = align(offset, size);
             if (offset + size > Integer.MAX_VALUE - 7 || sourceColumns.getQuick(i) < 0) {
                 throw new IllegalArgumentException("invalid hash join payload layout");
             }
@@ -130,7 +117,20 @@ final class HashJoinRowHeap implements Closeable {
             offset += size;
         }
         this.hasSymbolPayload = hasSymbolPayload;
-        rowSize = (int) ((offset + 7) & -8L);
+        rowSize = (int) alignRow(offset);
+    }
+
+    /**
+     * Bytes of one row with these payload types, laid out as the constructor lays them out, so
+     * that a planner can bound a build's heap by its row count before choosing to build.
+     */
+    static long getRowSize(ColumnTypes payloadTypes) {
+        long offset = Long.BYTES;
+        for (int i = 0, n = payloadTypes.getColumnCount(); i < n; i++) {
+            final int size = payloadSize(ColumnType.tagOf(payloadTypes.getColumnType(i)));
+            offset = align(offset, size) + size;
+        }
+        return alignRow(offset);
     }
 
     /**
@@ -279,6 +279,31 @@ final class HashJoinRowHeap implements Closeable {
             throw CairoException.nonCritical().put("hash join build buffer overflow");
         }
         rows.ensure(rowBytes + rowCount * rowSize, initialCapacity);
+    }
+
+    // A wider payload is a run of longs, so eight bytes is its natural alignment; aligning it to its
+    // own size would pad the row without making any read cheaper.
+    private static long align(long offset, int size) {
+        final int align = Math.min(size, Long.BYTES);
+        return (offset + align - 1) & -align;
+    }
+
+    private static long alignRow(long offset) {
+        return (offset + 7) & -8L;
+    }
+
+    private static int payloadSize(int type) {
+        return switch (type) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE, ColumnType.DECIMAL8 -> 1;
+            case ColumnType.SHORT, ColumnType.CHAR, ColumnType.GEOSHORT, ColumnType.DECIMAL16 -> 2;
+            case ColumnType.INT, ColumnType.FLOAT, ColumnType.SYMBOL, ColumnType.IPv4,
+                 ColumnType.GEOINT, ColumnType.DECIMAL32 -> 4;
+            case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.DOUBLE,
+                 ColumnType.GEOLONG, ColumnType.DECIMAL64 -> 8;
+            case ColumnType.UUID, ColumnType.DECIMAL128 -> 16;
+            case ColumnType.LONG256, ColumnType.DECIMAL256 -> 32;
+            default -> throw new IllegalArgumentException("unsupported hash join payload type: " + ColumnType.nameOf(type));
+        };
     }
 
     /**

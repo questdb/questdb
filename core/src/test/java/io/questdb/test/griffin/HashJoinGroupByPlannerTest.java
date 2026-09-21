@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -540,6 +541,67 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                         }
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testRightJoinBuildSizeBound() throws Exception {
+        assertMemoryLeak(() -> {
+            Assert.assertEquals(32 * Numbers.SIZE_1MB, new DefaultCairoConfiguration(root).getSqlParallelHashJoinGroupByRightJoinMaxBuildSize());
+            Assert.assertEquals(32 * Numbers.SIZE_1MB, configuration.getSqlParallelHashJoinGroupByRightJoinMaxBuildSize());
+            createTables();
+            // r and p have 5 rows each. A build row is an 8-byte link plus the payload, rounded up
+            // to 8 bytes: 16 bytes with one DOUBLE payload column, 24 with two. The key column is
+            // not a payload column.
+            final String narrow = "SELECT count(*) n, sum(r.energy_kwh) energy, sum(p.installed_kwp) capacity FROM ";
+            final String wide = "SELECT count(*) n, sum(r.energy_kwh) energy, sum(r.irradiance_wm2) irradiance,"
+                    + " sum(p.installed_kwp) capacity FROM ";
+            final String on = " ON r.plant_id = p.plant_id";
+            final String[] joins = {"r RIGHT JOIN p", "p RIGHT JOIN r", "r LEFT JOIN p", "p LEFT JOIN r"};
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // Every narrow build takes 80 bytes, so a bound of 80 fuses every spelling.
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 80);
+                for (String join : joins) {
+                    assertDifferential(narrow + join + on, context, true);
+                }
+                // The wide payload makes a build of r take 120 bytes. The RIGHT join that builds r
+                // keeps the ordinary plan; the one that builds p takes 80 bytes and fuses, and so do
+                // the LEFT joins, which take no bound.
+                assertDifferential(wide + joins[0] + on, context, false);
+                for (int i = 1; i < joins.length; i++) {
+                    assertDifferential(wide + joins[i] + on, context, true);
+                }
+                // A factory compiled under the bound keeps the fused plan after the table outgrows it.
+                try (RecordCursorFactory factory = engine.select(narrow + joins[0] + on, context)) {
+                    Assert.assertTrue(plan(factory, context).contains("Async Hash Join Group By"));
+                    execute("INSERT INTO r VALUES (1, '2021-02-01', 60, 600)");
+                    Assert.assertEquals("""
+                            n\tenergy\tcapacity
+                            11:LONG\t360.0:DOUBLE\t47.0:DOUBLE
+                            """, result(factory, context));
+                    try (RecordCursor ignored = factory.getCursor(context)) {
+                        Assert.assertEquals(6, fused(factory).getAtom().getFrozenBuild().getRowCount());
+                    }
+                }
+                // A new compile reads the new size: 6 rows take 96 bytes.
+                assertDifferential(narrow + joins[0] + on, context, false);
+                // The bound counts the table's rows, not the rows that a filter leaves in the build.
+                assertDifferential(narrow + joins[0] + on + " AND r.energy_kwh > 100", context, false);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 96);
+                assertDifferential(narrow + joins[0] + on + " AND r.energy_kwh > 100", context, true);
+                // One byte short of the 5-row build of p: the RIGHT join keeps the ordinary plan
+                // and the LEFT join that builds p still fuses.
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 79);
+                assertDifferential(narrow + joins[1] + on, context, false);
+                assertDifferential(narrow + joins[2] + on, context, true);
+                assertDifferential(narrow + joins[3] + on, context, true);
+                // A bound of zero fuses a RIGHT join only over an empty build table.
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 0);
+                execute("CREATE TABLE e (plant_id INT, installed_kwp DOUBLE)");
+                assertDifferential("SELECT count(*) n, sum(r.energy_kwh) energy, sum(e.installed_kwp) capacity"
+                        + " FROM e RIGHT JOIN r ON r.plant_id = e.plant_id", context, true);
+                assertDifferential(narrow + joins[1] + on, context, false);
             }
         });
     }

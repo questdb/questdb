@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
@@ -37,6 +38,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.groupby.HashJoinGroupByAggregates;
+import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
@@ -323,6 +325,20 @@ public final class HashJoinGroupByCandidate {
             // captureInputColumns() tolerates unresolvable input columns, so check the flag after it.
             if (analyzer.hasUndefinedBindVariable) {
                 return null;
+            }
+            // A RIGHT join builds the table before it whatever its size, and the owner copies every
+            // row of it before the workers start probing. The ordinary plan hashes the preserved
+            // table instead and streams this one, and it overtook the fused plan between a 31 MiB
+            // and a 61 MiB row heap. The unfiltered row count bounds the heap for every bind value,
+            // as it bounds the INNER build in selectBuildIndex(). LEFT joins take no bound: their
+            // ordinary plan chains every row of the same table, and the fused plan stayed faster.
+            if (joinType == IQueryModel.JOIN_RIGHT_OUTER) {
+                final long buildRows = buildIndex == 0 ? leftReader.size() : rightReader.size();
+                final long maxBuildSize = executionContext.getCairoEngine().getConfiguration()
+                        .getSqlParallelHashJoinGroupByRightJoinMaxBuildSize();
+                if (buildRows > maxBuildSize / analyzer.getBuildRowSize()) {
+                    return null;
+                }
             }
             return new HashJoinGroupByCandidate(analyzer, keys, buildIndex == order.getQuick(0));
         } catch (SqlException e) {
@@ -614,6 +630,16 @@ public final class HashJoinGroupByCandidate {
                 requiredBuildColumns.add(columnIndexes.getQuick(index));
             }
             return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, metadata.getColumnName(index), 0, position);
+        }
+
+        /** Row heap bytes of one build row: the heap copies exactly the required build columns. */
+        private long getBuildRowSize() {
+            final ArrayColumnTypes types = new ArrayColumnTypes();
+            final RecordMetadata build = sources[buildIndex];
+            for (int i = 0, n = requiredBuildColumns.size(); i < n; i++) {
+                types.add(build.getColumnType(requiredBuildColumns.getQuick(i)));
+            }
+            return FrozenHashJoinBuild.getRowSize(types);
         }
 
         private boolean isBindVariableTypeDefined(CharSequence token) {

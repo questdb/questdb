@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -51,6 +52,15 @@ public interface FrozenHashJoinBuild {
 
     /** Allocated native bytes, including unused capacity. */
     long getSizeInBytes();
+
+    /**
+     * Row heap bytes that one build row with these payload types takes. Every implementation
+     * copies its rows into the same layout, so a build of N rows fills N times this, whatever
+     * its key table adds on top.
+     */
+    static long getRowSize(ColumnTypes payloadTypes) {
+        return HashJoinRowHeap.getRowSize(payloadTypes);
+    }
 
     /** A build whose probes look up a single INT key. */
     interface IntKeyed extends FrozenHashJoinBuild {

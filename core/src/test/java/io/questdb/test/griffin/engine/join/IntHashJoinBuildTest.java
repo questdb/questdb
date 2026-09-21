@@ -594,6 +594,40 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRowSizeMatchesHeapLayout() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE layout (k INT, b BOOLEAN, sh SHORT, i INT, d DOUBLE, u UUID, l256 LONG256)");
+            execute("""
+                    INSERT INTO layout VALUES
+                        (1, true, 1, 1, 1.5, NULL, NULL),
+                        (1, false, 2, 2, 2.5, NULL, NULL),
+                        (1, true, 3, 3, 3.5, NULL, NULL)
+                    """);
+            // An eight-byte link, then each payload aligned to its own size up to eight bytes,
+            // and the row rounded up to eight bytes.
+            final int[][] layouts = {{}, {4}, {3}, {1, 2, 3}, {3, 4}, {1, 5}, {6, 1}, {2, 5, 1, 3}};
+            final long[] rowSizes = {8, 16, 16, 16, 24, 32, 48, 40};
+            try (RecordCursorFactory source = select("layout")) {
+                for (int l = 0; l < layouts.length; l++) {
+                    ArrayColumnTypes types = new ArrayColumnTypes();
+                    for (int column : layouts[l]) {
+                        types.add(source.getMetadata().getColumnType(column));
+                    }
+                    Assert.assertEquals(rowSizes[l], FrozenHashJoinBuild.getRowSize(types));
+                    try (IntHashJoinBuild build = new IntHashJoinBuild(types, indexes(layouts[l]), 2, 8);
+                         RecordCursor cursor = source.getCursor(sqlExecutionContext)) {
+                        build.open(null, NOOP);
+                        FrozenHashJoinBuild.IntKeyed frozen = build.build(cursor, 0, cursor.size());
+                        Assert.assertEquals(3, frozen.getRowCount());
+                        // Two eight-byte key slots, and a heap presized to exactly three rows.
+                        Assert.assertEquals(16 + 3 * rowSizes[l], frozen.getSizeInBytes());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCursorBuildLeavesRowChecksToCursorFrames() throws Exception {
         assertMemoryLeak(() -> {
             final int frameRows = 1024;

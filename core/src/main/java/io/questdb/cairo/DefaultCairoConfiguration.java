@@ -1266,6 +1266,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlParallelHashJoinGroupByRightJoinMaxBuildSize() {
+        return 32 * Numbers.SIZE_1MB;
+    }
+
+    @Override
     public long getSqlParallelWorkStealingSpinTimeout() {
         return 50_000; // 50us
     }

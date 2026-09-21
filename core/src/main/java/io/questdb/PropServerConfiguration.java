@@ -569,6 +569,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double sqlParallelFilterPreTouchThreshold;
     private final boolean sqlParallelGroupByEnabled;
     private final boolean sqlParallelHashJoinGroupByEnabled;
+    private final long sqlParallelHashJoinGroupByRightJoinMaxBuildSize;
     private final boolean sqlParallelHorizonJoinEnabled;
     private final boolean sqlParallelReadParquetEnabled;
     private final boolean sqlParallelTopKEnabled;
@@ -2399,6 +2400,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelWindowJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelHashJoinGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED, defaultParallelSqlEnabled);
+            this.sqlParallelHashJoinGroupByRightJoinMaxBuildSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 32 * Numbers.SIZE_1MB, 0);
             this.sqlParallelReadParquetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, defaultParallelSqlEnabled);
             if (!sqlParallelFilterEnabled && !sqlParallelGroupByEnabled && !sqlParallelHorizonJoinEnabled
                     && !sqlParallelReadParquetEnabled && !sqlParallelTopKEnabled && !sqlParallelWindowJoinEnabled) {
@@ -5263,6 +5265,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public double getSqlParallelFilterPreTouchThreshold() {
             return sqlParallelFilterPreTouchThreshold;
+        }
+
+        @Override
+        public long getSqlParallelHashJoinGroupByRightJoinMaxBuildSize() {
+            return sqlParallelHashJoinGroupByRightJoinMaxBuildSize;
         }
 
         @Override

@@ -1052,6 +1052,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.parallel.window.join.enabled\tQDB_CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.enabled\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.hash.join.groupby.enabled\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.hash.join.groupby.right.join.max.build.size\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE\t33554432\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.batch.size\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE\t2048\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.merge.shard.queue.capacity\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_MERGE_SHARD_QUEUE_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.sharding.threshold\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +

@@ -315,6 +315,7 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowJoinEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelGroupByEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelHashJoinGroupByEnabled());
+        Assert.assertEquals(32 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByRightJoinMaxBuildSize());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelReadParquetEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParquetRowGroupPruningEnabled());
         Assert.assertEquals(256L * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParquetCacheMemorySize());
@@ -2093,6 +2094,20 @@ public class PropServerConfigurationTest {
         env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED", "false");
         Assert.assertFalse(newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
                 .getCairoConfiguration().isSqlParallelHashJoinGroupByEnabled());
+    }
+
+    @Test
+    public void testParallelHashJoinGroupByRightJoinMaxBuildSize() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.right.join.max.build.size", "8M");
+        Assert.assertEquals(8 * Numbers.SIZE_1MB, newPropServerConfiguration(properties).getCairoConfiguration()
+                .getSqlParallelHashJoinGroupByRightJoinMaxBuildSize());
+        Map<String, String> env = new HashMap<>();
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE", "0");
+        Assert.assertEquals(0, newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
+                .getCairoConfiguration().getSqlParallelHashJoinGroupByRightJoinMaxBuildSize());
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.right.join.max.build.size", "-1");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE);
     }
 
     @Test

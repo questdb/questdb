@@ -953,6 +953,12 @@ public interface CairoConfiguration {
 
     double getSqlParallelFilterPreTouchThreshold();
 
+    /**
+     * Row heap bytes above which a RIGHT join keeps the ordinary plan instead of the fused hash join
+     * GROUP BY: the table rows of the forced build times the heap row size.
+     */
+    long getSqlParallelHashJoinGroupByRightJoinMaxBuildSize();
+
     long getSqlParallelWorkStealingSpinTimeout();
 
     int getSqlParallelWorkStealingThreshold();
