@@ -5162,7 +5162,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return null;
         }
         final AsyncHashJoinGroupByRecordCursorFactory primary = generateHashJoinGroupBy(model, candidate, executionContext);
-        if (primary == null || candidate.getLogicalJoinType() != IQueryModel.JOIN_INNER || !primary.hasIntervalScan()) {
+        // A SYMBOL key translates every distinct key the probe reads into the build's dictionary,
+        // so probing the input with more rows costs about what building it would: a one-hour probe
+        // over a two-million-key dimension ran slower flipped than not. SYMBOL keys keep the primary.
+        if (primary == null || candidate.getLogicalJoinType() != IQueryModel.JOIN_INNER
+                || candidate.getKeys().hasTranslatedSymbol() || !primary.hasIntervalScan()) {
             return primary;
         }
         // Either input of an INNER join may be the build. Table sizes picked this one, but an

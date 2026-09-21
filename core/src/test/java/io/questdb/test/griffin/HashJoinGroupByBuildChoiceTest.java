@@ -52,8 +52,6 @@ import org.junit.Test;
  */
 public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
     private static final String BUILD_CHOICE = "Hash Join Group By Build Choice";
-    private static final String FIVE_HOURS = " WHERE r.reading_ts >= '2020-01-01T02:00' AND r.reading_ts < '2020-01-01T07:00'";
-    private static final String ONE_DAY = " WHERE r.reading_ts >= '2020-01-02' AND r.reading_ts < '2020-01-03'";
     // r holds 96 hourly rows from 2020-01-01, 24 a day; p holds 8 rows, one of them with a NULL key.
     private static final String KEYED = "SELECT p.country, sum(r.energy_kwh) energy, count(*) n, sum(p.installed_kwp) capacity";
     private static final String SCALAR = "SELECT count(*) n, sum(r.energy_kwh) energy, sum(p.installed_kwp) capacity";
@@ -271,6 +269,12 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
                 // A VARCHAR column reaches the aggregate only from the probe, so r cannot be the build.
                 assertChoice("SELECT count(r.label) labels, count(*) n FROM r JOIN p ON r.plant_id = p.plant_id" + interval,
                         context, false, -1);
+                // A SYMBOL key translates every distinct key the probe reads, so probing p costs
+                // about what building it does. r's dictionary starts at P1 and p's at P0, so the two
+                // number their texts differently, and p lacks P7.
+                assertChoice(KEYED + " FROM r JOIN p ON r.s = p.s" + interval + " ORDER BY country", context, false, -1);
+                assertChoice(KEYED + " FROM r JOIN p ON r.s = p.s AND r.plant_id = p.plant_id" + interval + " ORDER BY country",
+                        context, false, -1);
             }
         });
     }
@@ -324,24 +328,6 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testSymbolKeys() throws Exception {
-        assertMemoryLeak(() -> {
-            // r's dictionary starts at P1 and p's at P0, so the two number their texts differently, and p lacks P7.
-            createTables();
-            try (SqlExecutionContextImpl context = enabledContext()) {
-                String select = KEYED + " FROM r JOIN p ON r.s = p.s";
-                assertChoice(select + FIVE_HOURS + " ORDER BY country", context, true, 5);
-                assertChoice(select + ONE_DAY + " ORDER BY country", context, false, 8);
-                // A composite key with a SYMBOL pair stages its key through the translating record.
-                String composite = KEYED + " FROM r JOIN p ON r.s = p.s AND r.plant_id = p.plant_id";
-                assertChoice(composite + FIVE_HOURS + " ORDER BY country", context, true, 5);
-                assertChoice(composite + ONE_DAY + " ORDER BY country", context, false, 8);
-            }
-        });
-    }
-
-    // Hour-precision arguments, such as 2020-01-01T05.
     private static void bindInterval(String lo, String hi) throws Exception {
         bindVariableService.setTimestamp(0, MicrosFormatUtils.parseTimestamp(lo + ":00:00.000000Z"));
         bindVariableService.setTimestamp(1, MicrosFormatUtils.parseTimestamp(hi + ":00:00.000000Z"));

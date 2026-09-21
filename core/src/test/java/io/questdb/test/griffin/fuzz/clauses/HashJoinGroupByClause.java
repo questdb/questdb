@@ -223,8 +223,8 @@ public final class HashJoinGroupByClause {
             conjuncts.add(predicate(rnd, r, RIGHT_ALIAS, ctx));
         }
         // An interval on a table's designated timestamp becomes an interval scan, and with one
-        // on either input an INNER join compiles both orientations and builds the input with
-        // fewer interval rows on each execution.
+        // on either input an INNER join without a SYMBOL key compiles both orientations and
+        // builds the input with fewer interval rows on each execution.
         if (l.isTable && rnd.nextInt(4) == 0) {
             conjuncts.add(interval(rnd, LEFT_ALIAS));
         }

@@ -161,6 +161,16 @@ public final class HashJoinGroupByKeys {
         return types.getQuick(key);
     }
 
+    /** True when any key is a SYMBOL pair, whose probe keys translate into the build's domain. */
+    public boolean hasTranslatedSymbol() {
+        for (int key = 0, n = size(); key < n; key++) {
+            if (isTranslatedSymbol(key)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** The build side writes its STRING key as a VARCHAR, because the probe side is a VARCHAR. */
     public boolean isBuildStringAsVarchar(int key) {
         return buildStringAsVarchar.get(key);
