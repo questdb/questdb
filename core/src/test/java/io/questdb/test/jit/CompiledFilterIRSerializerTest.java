@@ -1786,6 +1786,29 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testNullableTypeFlagPerOperand() throws Exception {
+        // Nullability is resolved at IR serialization time, per operand: a MEM load of a
+        // nullable column and a NULL-sentinel IMM carry NULLABLE_TYPE_FLAG in their options
+        // word; a NOT NULL column load and a data constant do not. Bind variables always do.
+        execute("create table y (nn int not null, nu int, nl long not null)");
+        factory.close();
+        factory = select("select * from y");
+        metadata = factory.getMetadata();
+
+        serialize("nn < 3 and nu < 4");
+        // emitted right-to-left: (i32 4)(i32 nu)(<)(i32 3)(i32 nn)(<)(&&)
+        assertOperandNullability(new boolean[]{false, true, false, false});
+
+        // a genuine NULL constant against the nullable column keeps the flag on the IMM
+        serialize("nu <> null");
+        assertOperandNullability(new boolean[]{true, true});
+
+        // constant folding onto the LONG sentinel is a NULL, not data
+        serialize("nl <> -9223372036854775807 - 1");
+        assertOperandNullability(new boolean[]{true, false});
+    }
+
+    @Test
     public void testOperationPriority() throws Exception {
         // 42.5 is an operand of the SUBTRACTION, which the Java filter resolves to "-(DD)" and
         // evaluates at f64, so it emits at F8 and the INT quotient promotes through
@@ -3663,6 +3686,26 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR(null, expectedIR);
     }
 
+    // Walks the serialized IR and asserts the NULLABLE_TYPE_FLAG of every MEM / VAR / IMM
+    // operand instruction, in emission order.
+    private void assertOperandNullability(boolean[] expected) {
+        int i = 0;
+        for (long offset = 0, n = irMemory.getAppendOffset(); offset < n; offset += 24) {
+            int opcode = irMemory.getInt(offset);
+            if (opcode == MEM || opcode == VAR || opcode == IMM) {
+                int options = irMemory.getInt(offset + Integer.BYTES);
+                Assert.assertTrue("more operands than expected", i < expected.length);
+                Assert.assertEquals(
+                        "operand " + i + " in " + new TestIRSerializer(irMemory, metadata).serialize(),
+                        expected[i],
+                        (options & NULLABLE_TYPE_FLAG) != 0
+                );
+                i++;
+            }
+        }
+        Assert.assertEquals("operand count", expected.length, i);
+    }
+
     private void assertOptionsDebug(int options, boolean expectedFlag) {
         int f = options & 1;
         Assert.assertEquals(expectedFlag ? 1 : 0, f);
@@ -3730,7 +3773,9 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             while (offset < irMem.getAppendOffset()) {
                 int opcode = irMem.getInt(offset);
                 offset += Integer.BYTES;
-                int type = irMem.getInt(offset);
+                // Strip the per-operand nullability flag: these dumps pin opcodes, types and
+                // payloads; testNullableTypeFlagPerOperand pins the flag bits directly.
+                int type = irMem.getInt(offset) & ~NULLABLE_TYPE_FLAG;
                 offset += Integer.BYTES;
                 switch (opcode) {
                     // Columns

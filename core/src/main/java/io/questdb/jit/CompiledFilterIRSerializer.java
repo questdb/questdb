@@ -107,6 +107,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // Operator codes
     public static final int NEG = 4; // -a
     public static final int NOT = 5; // !a
+    // Per-instruction nullability flag, carried in the instruction's options word next to the
+    // type code (low byte). Set on MEM loads of nullable columns, on every VAR (bind variables
+    // can be NULL at run time) and on IMM operands whose payload is the type's NULL sentinel.
+    // Nullability is static (table-level) information, so it is resolved HERE, at compile
+    // time; the native backends read the flag, propagate it per operand and emit checked or
+    // unchecked code once - the compiled loop never re-decides. Must match NULLABLE_TYPE_FLAG
+    // in jit/common.h. The filter-wide null-check bit (getOptions bit 6) remains for the
+    // aarch64 backend, which still consumes the coarse flag.
+    public static final int NULLABLE_TYPE_FLAG = 1 << 8;
     public static final int OR = 7; // a || b
     public static final int OR_SC = 19;  // short-circuit OR: if true, jump to label[payload] (0 = next_row)
     // Opcodes:
@@ -965,9 +974,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                             .put(node.token);
             }
         } else {
-            // Division and remainder can yield a null sentinel even when every
-            // source column is NOT NULL (for example, division by zero). Keep
-            // backend null checks enabled for these derived expressions.
+            // Division and remainder can yield a null sentinel even when every source column is
+            // NOT NULL (division by zero, and INT_MIN / -1). This keeps the filter-wide
+            // null-check bit (getOptions bit 6) on for such filters, which matters only to the
+            // aarch64 backend - the x86/AVX2 backends now derive their checks from the
+            // per-operand NULLABLE_TYPE_FLAG instead and tag every arithmetic result nullable
+            // by construction. Keep it: aarch64 still consumes the coarse bit, and '%' is
+            // retained because it is the other sentinel-producing operator should
+            // serializeOperator() ever learn to emit it.
             if (Chars.equals(node.token, '/') || Chars.equals(node.token, '%')) {
                 allColumnsNotNull = false;
             }
@@ -1523,14 +1537,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     return false;
                 case VAR:
                 case MEM:
-                    pushType(memory.getInt(offset + Integer.BYTES));
+                    pushType(memory.getInt(offset + Integer.BYTES) & ~NULLABLE_TYPE_FLAG);
                     break;
                 case IMM: {
                     // A narrow-int immediate rides with NARROW_IMM_WIDTH_OFFSET added to its type
                     // code, so isWideLaneUnharmonisedPairing() can separate it from a column read
                     // of the same width. Only the wide-lane half reads the marker; laneTypeCode()
                     // strips it everywhere a width is what the walk needs.
-                    final int typeCode = memory.getInt(offset + Integer.BYTES);
+                    final int typeCode = memory.getInt(offset + Integer.BYTES) & ~NULLABLE_TYPE_FLAG;
                     pushType(isNarrowIntTypeCode(typeCode) ? typeCode + NARROW_IMM_WIDTH_OFFSET : typeCode);
                     break;
                 }
@@ -1748,7 +1762,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         bindVarFunctions.add(new CompiledFilterSymbolBindVariable(varFunction, predicateContext.symbolColumnIndex));
         int index = bindVarFunctions.size() - 1;
 
-        putOperand(offset, VAR, typeCode, index);
+        putOperand(offset, VAR, typeCode | NULLABLE_TYPE_FLAG, index);
     }
 
     /**
@@ -1821,7 +1835,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         typeStack.clear();
         for (long offset = 0, n = memory.getAppendOffset(); offset < n; offset += INSTRUCTION_SIZE) {
             int opCode = memory.getInt(offset);
-            int typeCode = memory.getInt(offset + Integer.BYTES);
+            int typeCode = memory.getInt(offset + Integer.BYTES) & ~NULLABLE_TYPE_FLAG;
             switch (opCode) {
                 case -1:
                     throw SqlException.$(0, "invalid opcode");
@@ -3894,9 +3908,26 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return keyArithType == I1_TYPE || keyArithType == I2_TYPE ? I4_TYPE : UNDEFINED_CODE;
     }
 
+    // Nullability of an integer immediate is decided by its VALUE, here at compile time: only
+    // the type's own NULL sentinel means NULL (constant folding can produce it, e.g.
+    // -9223372036854775807 - 1), and only for the widths whose backend kernels have NULL
+    // semantics. Any other payload - including a sentinel bit pattern at a different width -
+    // is data.
+    private static int immNullability(int opcode, int type, long lo) {
+        if (opcode != IMM) {
+            return type;
+        }
+        if ((type == I4_TYPE && (int) lo == Numbers.INT_NULL)
+                || (type == I8_TYPE && lo == Numbers.LONG_NULL)) {
+            return type | NULLABLE_TYPE_FLAG;
+        }
+        return type;
+    }
+
     private void putDoubleOperand(long offset, int type, double payload) {
         memory.putInt(offset, CompiledFilterIRSerializer.IMM);
-        memory.putInt(offset + Integer.BYTES, type);
+        // a non-finite floating point payload IS the NULL sentinel (Numbers#isNull)
+        memory.putInt(offset + Integer.BYTES, Numbers.isFinite(payload) ? type : type | NULLABLE_TYPE_FLAG);
         memory.putDouble(offset + 2 * Integer.BYTES, payload);
         memory.putLong(offset + 2 * Integer.BYTES + Double.BYTES, 0L);
     }
@@ -3914,7 +3945,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     private void putOperand(int opcode, int type, long payload) {
         memory.putInt(opcode);
-        memory.putInt(type);
+        memory.putInt(immNullability(opcode, type, payload));
         memory.putLong(payload);
         memory.putLong(0L);
     }
@@ -3925,7 +3956,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     private void putOperand(long offset, int opcode, int type, long lo, long hi) {
         memory.putInt(offset, opcode);
-        memory.putInt(offset + Integer.BYTES, type);
+        memory.putInt(offset + Integer.BYTES, immNullability(opcode, type, lo));
         memory.putLong(offset + 2 * Integer.BYTES, lo);
         memory.putLong(offset + 2 * Integer.BYTES + Long.BYTES, hi);
     }
@@ -3990,7 +4021,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             allColumnsNotNull = false;
             bindVarFunctions.add(varFunction);
             int index = bindVarFunctions.size() - 1;
-            putOperand(VAR, typeCode, index);
+            putOperand(VAR, typeCode | NULLABLE_TYPE_FLAG, index);
             maybeEmitI64Widening(node, typeCode);
         } else {
             throw SqlException.position(node.position)
@@ -4006,6 +4037,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 throw SqlException.invalidColumn(position, token);
             }
 
+            // The column's nullability is resolved HERE, at compile time, and stamped on the
+            // load instruction: the backends emit checked code for a nullable column's operand
+            // and unchecked, sentinel-as-data code for a NOT NULL one.
+            final int nullableFlag = metadata.isNotNull(index) ? 0 : NULLABLE_TYPE_FLAG;
             if (!metadata.isNotNull(index)) {
                 allColumnsNotNull = false;
             }
@@ -4024,12 +4059,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 // "true" constant
                 putOperand(IMM, I1_TYPE, 1);
                 // column
-                putOperand(MEM, typeCode, index);
+                putOperand(MEM, typeCode | nullableFlag, index);
                 // =
                 putOperator(EQ);
                 return;
             }
-            putOperand(MEM, typeCode, index);
+            putOperand(MEM, typeCode | nullableFlag, index);
             maybeEmitI64Widening(node, typeCode);
         } else {
             throw SqlException.position(position)
@@ -4723,7 +4758,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         int index = bindVarFunctions.size() - 1;
 
         int typeCode = bindVariableTypeCode(ColumnType.STRING);
-        putOperand(offset, VAR, typeCode, index);
+        putOperand(offset, VAR, typeCode | NULLABLE_TYPE_FLAG, index);
     }
 
     private void serializeUntypedNumber(long offset, int position, final CharSequence token, boolean negated, boolean isWidenedToI64, boolean isNarrowKept) throws SqlException {

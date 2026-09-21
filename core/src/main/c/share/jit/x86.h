@@ -41,7 +41,7 @@ namespace questdb::x86 {
         for (size_t i = 0; i < size; ++i) {
             auto &instr = istream[i];
             if (instr.opcode == opcodes::Mem) {
-                auto type = static_cast<data_type_t>(instr.options);
+                auto type = ir_data_type(instr.options);
                 // Only cache fixed-size column addresses (not variable-size like string/binary/varchar)
                 if (type != data_type_t::string_header &&
                     type != data_type_t::binary_header &&
@@ -66,7 +66,7 @@ namespace questdb::x86 {
         for (size_t i = 0; i < size; ++i) {
             auto &instr = istream[i];
             if (instr.opcode == opcodes::Imm) {
-                auto type = static_cast<data_type_t>(instr.options);
+                auto type = ir_data_type(instr.options);
                 switch (type) {
                     case data_type_t::i8:
                     case data_type_t::i16:
@@ -109,13 +109,13 @@ namespace questdb::x86 {
     }
 
     jit_value_t
-    read_vars_mem(Compiler &c, data_type_t type, int32_t idx, const Gp &vars_ptr) {
+    read_vars_mem(Compiler &c, data_type_t type, int32_t idx, bool nullable, const Gp &vars_ptr) {
         // Bind-variable slots are a fixed 16-byte stride so UUID (i128)
         // values fit alongside narrower types. Java-side layout in
         // AsyncFilterUtils.writeBindVarFunction must match.
         auto shift = type_shift(type);
         auto type_size = 1 << shift;
-        return {Mem(vars_ptr, 16 * idx, type_size), type, data_kind_t::kMemory};
+        return {Mem(vars_ptr, 16 * idx, type_size), type, data_kind_t::kMemory, nullable};
     }
 
     // Reads length of variable size column with header stored in data vector (string, binary).
@@ -163,6 +163,11 @@ namespace questdb::x86 {
         // offsets, and the slow path sign-extends the header with movsxd. Typing the result i64
         // matches serializeNull(), which spells every var-size header NULL sentinel as an I8
         // immediate, so convert() harmonises nothing and the loop pays no per-row int32_to_int64.
+        //
+        // The three-arg ctor leaves the value not nullable, which drops the column's own
+        // nullability. That is safe because ensureOnlyVarSizeHeaderChecks() on the Java side
+        // restricts var-size header operands to EQ / NE, and both are emitted the same way for
+        // either nullability: the header sentinel is compared as a plain value.
         return {length, data_type_t::i64, data_kind_t::kMemory};
     }
 
@@ -187,11 +192,13 @@ namespace questdb::x86 {
         Gp header = c.new_gp64("header");
         c.mov(header, ptr(varsize_aux_address, header_offset, 0));
 
+        // Not nullable by construction - see read_mem_varsize: ensureOnlyVarSizeHeaderChecks()
+        // restricts var-size header operands to EQ / NE, which are nullability-independent.
         return {header, data_type_t::i64, data_kind_t::kMemory};
     }
 
     jit_value_t read_mem(
-            Compiler &c, data_type_t type, int32_t column_idx, const Gp &data_ptr,
+            Compiler &c, data_type_t type, int32_t column_idx, bool nullable, const Gp &data_ptr,
             const Gp &varsize_aux_ptr, const Gp &input_index,
             const ColumnAddressCache &addr_cache,
             ColumnValueCache &value_cache
@@ -220,11 +227,11 @@ namespace questdb::x86 {
         Vec cached_xmm;
         if (type == data_type_t::f32 || type == data_type_t::f64) {
             if (value_cache.findXmm(column_idx, type, cached_xmm)) {
-                return {cached_xmm, type, data_kind_t::kMemory};
+                return {cached_xmm, type, data_kind_t::kMemory, nullable};
             }
         } else {
             if (value_cache.find(column_idx, type, cached_gp)) {
-                return {cached_gp, type, data_kind_t::kMemory};
+                return {cached_gp, type, data_kind_t::kMemory, nullable};
             }
         }
 
@@ -256,43 +263,43 @@ namespace questdb::x86 {
                 Gp reg = c.new_gp32("col_%d_i8", column_idx);
                 c.movsx(reg, mem_op);
                 value_cache.add(column_idx, type, reg);
-                return {reg, type, data_kind_t::kMemory};
+                return {reg, type, data_kind_t::kMemory, nullable};
             }
             case data_type_t::i16: {
                 Gp reg = c.new_gp32("col_%d_i16", column_idx);
                 c.movsx(reg, mem_op);
                 value_cache.add(column_idx, type, reg);
-                return {reg, type, data_kind_t::kMemory};
+                return {reg, type, data_kind_t::kMemory, nullable};
             }
             case data_type_t::i32: {
                 Gp reg = c.new_gp32("col_%d_i32", column_idx);
                 c.mov(reg, mem_op);
                 value_cache.add(column_idx, type, reg);
-                return {reg, type, data_kind_t::kMemory};
+                return {reg, type, data_kind_t::kMemory, nullable};
             }
             case data_type_t::i64: {
                 Gp reg = c.new_gp64("col_%d_i64", column_idx);
                 c.mov(reg, mem_op);
                 value_cache.add(column_idx, type, reg);
-                return {reg, type, data_kind_t::kMemory};
+                return {reg, type, data_kind_t::kMemory, nullable};
             }
             case data_type_t::i128: {
                 Vec reg =c.new_xmm("col_%d_i128", column_idx);
                 c.movdqu(reg, mem_op);
                 value_cache.addXmm(column_idx, type, reg);
-                return {reg, type, data_kind_t::kMemory};
+                return {reg, type, data_kind_t::kMemory, nullable};
             }
             case data_type_t::f32: {
                 Vec reg =c.new_xmm_ss("col_%d_f32", column_idx);
                 c.movss(reg, mem_op);
                 value_cache.addXmm(column_idx, type, reg);
-                return {reg, type, data_kind_t::kMemory};
+                return {reg, type, data_kind_t::kMemory, nullable};
             }
             case data_type_t::f64: {
                 Vec reg =c.new_xmm_sd("col_%d_f64", column_idx);
                 c.movsd(reg, mem_op);
                 value_cache.addXmm(column_idx, type, reg);
-                return {reg, type, data_kind_t::kMemory};
+                return {reg, type, data_kind_t::kMemory, nullable};
             }
             default:
                 __builtin_unreachable();
@@ -301,42 +308,43 @@ namespace questdb::x86 {
 
     jit_value_t mem2reg(Compiler &c, const jit_value_t &v) {
         auto type = v.dtype();
+        auto nullable = v.nullable();
         auto mem = v.op().as<Mem>();
         switch (type) {
             case data_type_t::i8: {
                 Gp row_data = c.new_gp32("i8_mem");
                 c.movsx(row_data, mem);
-                return {row_data, type, data_kind_t::kMemory};
+                return {row_data, type, data_kind_t::kMemory, nullable};
             }
             case data_type_t::i16: {
                 Gp row_data = c.new_gp32("i16_mem");
                 c.movsx(row_data, mem);
-                return {row_data, type, data_kind_t::kMemory};
+                return {row_data, type, data_kind_t::kMemory, nullable};
             }
             case data_type_t::i32: {
                 Gp row_data = c.new_gp32("i32_mem");
                 c.mov(row_data, mem);
-                return {row_data, type, data_kind_t::kMemory};
+                return {row_data, type, data_kind_t::kMemory, nullable};
             }
             case data_type_t::i64: {
                 Gp row_data = c.new_gp64("i64_mem");
                 c.mov(row_data, mem);
-                return {row_data, type, data_kind_t::kMemory};
+                return {row_data, type, data_kind_t::kMemory, nullable};
             }
             case data_type_t::i128: {
                 Vec row_data =c.new_xmm("i128_mem");
                 c.movdqu(row_data, mem);
-                return {row_data, type, data_kind_t::kMemory};
+                return {row_data, type, data_kind_t::kMemory, nullable};
             }
             case data_type_t::f32: {
                 Vec row_data =c.new_xmm_ss("f32_mem");
                 c.movss(row_data, mem);
-                return {row_data, type, data_kind_t::kMemory};
+                return {row_data, type, data_kind_t::kMemory, nullable};
             }
             case data_type_t::f64: {
                 Vec row_data =c.new_xmm_sd("f64_mem");
                 c.movsd(row_data, mem);
-                return {row_data, type, data_kind_t::kMemory};
+                return {row_data, type, data_kind_t::kMemory, nullable};
             }
             default:
                 __builtin_unreachable();
@@ -344,7 +352,8 @@ namespace questdb::x86 {
     }
 
     jit_value_t read_imm(Compiler &c, const instruction_t &instr, const ConstantCache &cache) {
-        auto type = static_cast<data_type_t>(instr.options);
+        auto type = ir_data_type(instr.options);
+        auto nullable = ir_nullable(instr.options);
         switch (type) {
             case data_type_t::i8:
             case data_type_t::i16:
@@ -353,15 +362,16 @@ namespace questdb::x86 {
                 // Check if constant is already in a register
                 Gp reg;
                 if (cache.findInt(instr.ipayload.lo, reg)) {
-                    return {reg, type, data_kind_t::kConst};
+                    return {reg, type, data_kind_t::kConst, nullable};
                 }
-                return {imm(instr.ipayload.lo), type, data_kind_t::kConst};
+                return {imm(instr.ipayload.lo), type, data_kind_t::kConst, nullable};
             }
             case data_type_t::i128: {
                 return {
                     c.new_const(ConstPoolScope::kLocal, &instr.ipayload, 16),
                     type,
-                    data_kind_t::kMemory
+                    data_kind_t::kMemory,
+                    nullable
                 };
             }
             case data_type_t::f32:
@@ -369,9 +379,9 @@ namespace questdb::x86 {
                 // Check if constant is already in a register
                 Vec reg;
                 if (cache.findFloat(instr.dpayload, type, reg)) {
-                    return {reg, type, data_kind_t::kConst};
+                    return {reg, type, data_kind_t::kConst, nullable};
                 }
-                return {imm(instr.dpayload), type, data_kind_t::kConst};
+                return {imm(instr.dpayload), type, data_kind_t::kConst, nullable};
             }
             default:
                 __builtin_unreachable();
@@ -388,6 +398,7 @@ namespace questdb::x86 {
 
     jit_value_t imm2reg(Compiler &c, data_type_t dst_type, const jit_value_t &v) {
         Imm k = v.op().as<Imm>();
+        auto nullable = v.nullable();
         if (k.is_int()) {
             auto value = k.value_as<int64_t>();
             switch (dst_type) {
@@ -395,23 +406,23 @@ namespace questdb::x86 {
                     Vec reg =c.new_xmm_ss("f32_imm %f", value);
                     Mem mem = c.new_float_const(ConstPoolScope::kLocal, static_cast<float>(value));
                     c.movss(reg, mem);
-                    return {reg, data_type_t::f32, data_kind_t::kConst};
+                    return {reg, data_type_t::f32, data_kind_t::kConst, nullable};
                 }
                 case data_type_t::f64: {
                     Vec reg =c.new_xmm_sd("f64_imm %f", (double) value);
                     Mem mem = c.new_double_const(ConstPoolScope::kLocal, static_cast<double>(value));
                     c.movsd(reg, mem);
-                    return {reg, data_type_t::f64, data_kind_t::kConst};
+                    return {reg, data_type_t::f64, data_kind_t::kConst, nullable};
                 }
                 default: {
                     if (dst_type == data_type_t::i64 || !is_int32(value)) {
                         Gp reg = c.new_gp64("i64_imm %d", value);
                         c.movabs(reg, value);
-                        return {reg, data_type_t::i64, data_kind_t::kConst};
+                        return {reg, data_type_t::i64, data_kind_t::kConst, nullable};
                     } else {
                         Gp reg = c.new_gp32("i32_imm %d", value);
                         c.mov(reg, value);
-                        return {reg, dst_type, data_kind_t::kConst};
+                        return {reg, dst_type, data_kind_t::kConst, nullable};
                     }
                 }
             }
@@ -421,12 +432,12 @@ namespace questdb::x86 {
                 Vec reg =c.new_xmm_sd("f64_imm %f", value);
                 Mem mem = c.new_double_const(ConstPoolScope::kLocal, static_cast<double>(value));
                 c.movsd(reg, mem);
-                return {reg, data_type_t::f64, data_kind_t::kConst};
+                return {reg, data_type_t::f64, data_kind_t::kConst, nullable};
             } else {
                 Vec reg =c.new_xmm_ss("f32_imm %f", value);
                 Mem mem = c.new_float_const(ConstPoolScope::kLocal, static_cast<float>(value));
                 c.movss(reg, mem);
-                return {reg, data_type_t::f32, data_kind_t::kConst};
+                return {reg, data_type_t::f32, data_kind_t::kConst, nullable};
             }
         }
     }
@@ -463,20 +474,25 @@ namespace questdb::x86 {
         return {l, r};
     }
 
-    jit_value_t neg(Compiler &c, const jit_value_t &lhs, bool null_check) {
+    // The result of a derived arithmetic expression is nullable regardless of operand
+    // nullability: the interpreted filter's derived functions report isNotNull() == false, so
+    // a downstream comparison null-checks their value there, and the compiled comparison must
+    // do the same for the row sets to agree. Still a compile-time decision - the flag rides
+    // on the jit_value_t, not in the emitted loop.
+    jit_value_t neg(Compiler &c, const jit_value_t &lhs) {
         auto dt = lhs.dtype();
         auto dk = lhs.dkind();
         switch (dt) {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-                return {int32_neg(c, lhs.gp().r32(), null_check), dt, dk};
+                return {int32_neg(c, lhs.gp().r32(), lhs.nullable()), dt, dk, true};
             case data_type_t::i64:
-                return {int64_neg(c, lhs.gp(), null_check), dt, dk};
+                return {int64_neg(c, lhs.gp(), lhs.nullable()), dt, dk, true};
             case data_type_t::f32:
-                return {float_neg(c, lhs.vec()), dt, dk};
+                return {float_neg(c, lhs.vec()), dt, dk, true};
             case data_type_t::f64:
-                return {double_neg(c, lhs.vec()), dt, dk};
+                return {double_neg(c, lhs.vec()), dt, dk, true};
             default:
                 __builtin_unreachable();
         }
@@ -500,21 +516,29 @@ namespace questdb::x86 {
         return {int32_or(c, lhs.gp().r32(), rhs.gp().r32()), dt, dk};
     }
 
-    jit_value_t finite_ordering(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, const jit_value_t &ordering, bool null_check) {
-        if (!null_check) {
+    // Restricts a floating-point ordering to rows where every NULLABLE operand is finite
+    // (QuestDB reads any non-finite value on a nullable source as NULL). Which side gets the
+    // finiteness test is decided here, at compile time, from per-operand nullability: a
+    // NOT NULL operand's Infinity is data and must keep ordering.
+    jit_value_t finite_ordering(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, const jit_value_t &ordering) {
+        if (!lhs.nullable() && !rhs.nullable()) {
             return ordering;
         }
         auto dk = dst_kind(lhs, rhs);
-        jit_value_t lhs_finite;
-        jit_value_t rhs_finite;
-        if (lhs.dtype() == data_type_t::f32) {
-            lhs_finite = {float_is_finite(c, lhs.vec()), data_type_t::i32, dk};
-            rhs_finite = {float_is_finite(c, rhs.vec()), data_type_t::i32, dk};
-        } else {
-            lhs_finite = {double_is_finite(c, lhs.vec()), data_type_t::i32, dk};
-            rhs_finite = {double_is_finite(c, rhs.vec()), data_type_t::i32, dk};
+        jit_value_t result = ordering;
+        if (lhs.nullable()) {
+            jit_value_t lhs_finite = lhs.dtype() == data_type_t::f32
+                    ? jit_value_t{float_is_finite(c, lhs.vec()), data_type_t::i32, dk}
+                    : jit_value_t{double_is_finite(c, lhs.vec()), data_type_t::i32, dk};
+            result = bin_and(c, result, lhs_finite);
         }
-        return bin_and(c, ordering, bin_and(c, lhs_finite, rhs_finite));
+        if (rhs.nullable()) {
+            jit_value_t rhs_finite = rhs.dtype() == data_type_t::f32
+                    ? jit_value_t{float_is_finite(c, rhs.vec()), data_type_t::i32, dk}
+                    : jit_value_t{double_is_finite(c, rhs.vec()), data_type_t::i32, dk};
+            result = bin_and(c, result, rhs_finite);
+        }
+        return result;
     }
 
     jit_value_t cmp_eq(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
@@ -595,16 +619,16 @@ namespace questdb::x86 {
         }
     }
 
-    jit_value_t cmp_gt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+    jit_value_t cmp_gt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
         switch (dt) {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-                return {int32_gt(c, lhs.gp().r32(), rhs.gp().r32(), null_check), data_type_t::i32, dk};
+                return {int32_gt(c, lhs.gp().r32(), rhs.gp().r32(), lhs.nullable(), rhs.nullable()), data_type_t::i32, dk};
             case data_type_t::i64:
-                return {int64_gt(c, lhs.gp(), rhs.gp(), null_check), data_type_t::i32, dk};
+                return {int64_gt(c, lhs.gp(), rhs.gp(), lhs.nullable(), rhs.nullable()), data_type_t::i32, dk};
             case data_type_t::f32: {
                 Vec l =c.new_xmm_ss("lhs_copy");
                 c.movss(l, lhs.vec());
@@ -612,7 +636,7 @@ namespace questdb::x86 {
                 c.movss(r, rhs.vec());
                 return { bin_and(c,
                     {float_ne_epsilon(c, lhs.vec(), rhs.vec(), FLOAT_EPSILON), data_type_t::i32, dk},
-                    finite_ordering(c, lhs, rhs, {float_gt(c, l, r), data_type_t::i32, dk}, null_check))
+                    finite_ordering(c, lhs, rhs, {float_gt(c, l, r), data_type_t::i32, dk}))
                 };
             }
             case data_type_t::f64: {
@@ -622,7 +646,7 @@ namespace questdb::x86 {
                 c.movsd(r, rhs.vec());
                 return { bin_and(c,
                     {double_ne_epsilon(c, lhs.vec(), rhs.vec(), DOUBLE_EPSILON), data_type_t::i32, dk},
-                    finite_ordering(c, lhs, rhs, {double_gt(c, l, r), data_type_t::i32, dk}, null_check))
+                    finite_ordering(c, lhs, rhs, {double_gt(c, l, r), data_type_t::i32, dk}))
                 };
             }
             default:
@@ -630,16 +654,16 @@ namespace questdb::x86 {
         }
     }
 
-    jit_value_t cmp_ge(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+    jit_value_t cmp_ge(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
         switch (dt) {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-                return {int32_ge(c, lhs.gp().r32(), rhs.gp().r32(), null_check), data_type_t::i32, dk};
+                return {int32_ge(c, lhs.gp().r32(), rhs.gp().r32(), lhs.nullable(), rhs.nullable()), data_type_t::i32, dk};
             case data_type_t::i64:
-                return {int64_ge(c, lhs.gp(), rhs.gp(), null_check), data_type_t::i32, dk};
+                return {int64_ge(c, lhs.gp(), rhs.gp(), lhs.nullable(), rhs.nullable()), data_type_t::i32, dk};
             case data_type_t::f32: {
                 Vec l =c.new_xmm_ss("lhs_copy");
                 c.movss(l, lhs.vec());
@@ -647,7 +671,7 @@ namespace questdb::x86 {
                 c.movss(r, rhs.vec());
                 return { bin_or(c,
                     {float_eq_epsilon(c, lhs.vec(), rhs.vec(), FLOAT_EPSILON), data_type_t::i32, dk},
-                    finite_ordering(c, lhs, rhs, {float_ge(c, l, r), data_type_t::i32, dk}, null_check))
+                    finite_ordering(c, lhs, rhs, {float_ge(c, l, r), data_type_t::i32, dk}))
                 };
             }
             case data_type_t::f64: {
@@ -657,7 +681,7 @@ namespace questdb::x86 {
                 c.movsd(r, rhs.vec());
                 return { bin_or(c,
                     {double_eq_epsilon(c, lhs.vec(), rhs.vec(), DOUBLE_EPSILON), data_type_t::i32, dk},
-                    finite_ordering(c, lhs, rhs, {double_ge(c, l, r), data_type_t::i32, dk}, null_check))
+                    finite_ordering(c, lhs, rhs, {double_ge(c, l, r), data_type_t::i32, dk}))
                 };
             }
             default:
@@ -665,16 +689,16 @@ namespace questdb::x86 {
         }
     }
 
-    jit_value_t cmp_lt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+    jit_value_t cmp_lt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
         switch (dt) {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-                return {int32_lt(c, lhs.gp().r32(), rhs.gp().r32(), null_check), data_type_t::i32, dk};
+                return {int32_lt(c, lhs.gp().r32(), rhs.gp().r32(), lhs.nullable(), rhs.nullable()), data_type_t::i32, dk};
             case data_type_t::i64:
-                return {int64_lt(c, lhs.gp(), rhs.gp(), null_check), data_type_t::i32, dk};
+                return {int64_lt(c, lhs.gp(), rhs.gp(), lhs.nullable(), rhs.nullable()), data_type_t::i32, dk};
             case data_type_t::f32: {
                 Vec l =c.new_xmm_ss("lhs_copy");
                 c.movss(l, lhs.vec());
@@ -682,7 +706,7 @@ namespace questdb::x86 {
                 c.movss(r, rhs.vec());
                 return { bin_and(c,
                     {float_ne_epsilon(c, lhs.vec(), rhs.vec(), FLOAT_EPSILON), data_type_t::i32, dk},
-                    finite_ordering(c, lhs, rhs, {float_lt(c, l, r), data_type_t::i32, dk}, null_check))
+                    finite_ordering(c, lhs, rhs, {float_lt(c, l, r), data_type_t::i32, dk}))
                 };
             }
             case data_type_t::f64: {
@@ -692,7 +716,7 @@ namespace questdb::x86 {
                 c.movsd(r, rhs.vec());
                 return { bin_and(c,
                     {double_ne_epsilon(c, lhs.vec(), rhs.vec(), DOUBLE_EPSILON), data_type_t::i32, dk},
-                    finite_ordering(c, lhs, rhs, {double_lt(c, l, r), data_type_t::i32, dk}, null_check))
+                    finite_ordering(c, lhs, rhs, {double_lt(c, l, r), data_type_t::i32, dk}))
                 };
             }
             default:
@@ -700,16 +724,16 @@ namespace questdb::x86 {
         }
     }
 
-    jit_value_t cmp_le(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+    jit_value_t cmp_le(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
         switch (dt) {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-                return {int32_le(c, lhs.gp().r32(), rhs.gp().r32(), null_check), data_type_t::i32, dk};
+                return {int32_le(c, lhs.gp().r32(), rhs.gp().r32(), lhs.nullable(), rhs.nullable()), data_type_t::i32, dk};
             case data_type_t::i64:
-                return {int64_le(c, lhs.gp(), rhs.gp(), null_check), data_type_t::i32, dk};
+                return {int64_le(c, lhs.gp(), rhs.gp(), lhs.nullable(), rhs.nullable()), data_type_t::i32, dk};
             case data_type_t::f32: {
                 Vec l =c.new_xmm_ss("lhs_copy");
                 c.movss(l, lhs.vec());
@@ -717,7 +741,7 @@ namespace questdb::x86 {
                 c.movss(r, rhs.vec());
                 return { bin_or(c,
                     {float_eq_epsilon(c, lhs.vec(), rhs.vec(), FLOAT_EPSILON), data_type_t::i32, dk},
-                    finite_ordering(c, lhs, rhs, {float_le(c, l, r), data_type_t::i32, dk}, null_check))
+                    finite_ordering(c, lhs, rhs, {float_le(c, l, r), data_type_t::i32, dk}))
                 };
             }
             case data_type_t::f64: {
@@ -727,7 +751,7 @@ namespace questdb::x86 {
                 c.movsd(r, rhs.vec());
                 return { bin_or(c,
                     {double_eq_epsilon(c, lhs.vec(), rhs.vec(), DOUBLE_EPSILON), data_type_t::i32, dk},
-                    finite_ordering(c, lhs, rhs, {double_le(c, l, r), data_type_t::i32, dk}, null_check))
+                    finite_ordering(c, lhs, rhs, {double_le(c, l, r), data_type_t::i32, dk}))
                 };
             }
             default:
@@ -735,90 +759,95 @@ namespace questdb::x86 {
         }
     }
 
-    // Narrow int arithmetic always runs at i32 width via int32_*. With
-    // null_check on, the result can carry INT_NULL (e.g. INT operand was
-    // INT_NULL, or division by zero), so it must be tagged i32 -- otherwise
-    // a downstream f32/f64 conversion would skip the null check via
-    // cvt_null_check(i8) / cvt_null_check(i16) and miss the NaN substitution.
-    inline data_type_t narrow_arith_result(data_type_t dt, bool null_check) {
-        return null_check ? data_type_t::i32 : dt;
+    // Narrow int arithmetic always runs at i32 width via int32_*, and the derived result is
+    // always nullable (see neg()), so it must be tagged i32 -- otherwise a downstream f32/f64
+    // conversion would skip the null check via cvt_null_check(i8) / cvt_null_check(i16) and
+    // miss the NaN substitution.
+    inline data_type_t narrow_arith_result(data_type_t dt) {
+        switch (dt) {
+            case data_type_t::i8:
+            case data_type_t::i16:
+                return data_type_t::i32;
+            default:
+                return dt;
+        }
     }
 
-    jit_value_t add(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+    jit_value_t add(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
         switch (dt) {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-                return {int32_add(c, lhs.gp().r32(), rhs.gp().r32(), null_check),
-                        narrow_arith_result(dt, null_check), dk};
+                return {int32_add(c, lhs.gp().r32(), rhs.gp().r32(), lhs.nullable(), rhs.nullable()),
+                        narrow_arith_result(dt), dk, true};
             case data_type_t::i64:
-                return {int64_add(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
+                return {int64_add(c, lhs.gp(), rhs.gp(), lhs.nullable(), rhs.nullable()), dt, dk, true};
             case data_type_t::f32:
-                return {float_add(c, lhs.vec(), rhs.vec()), dt, dk};
+                return {float_add(c, lhs.vec(), rhs.vec()), dt, dk, true};
             case data_type_t::f64:
-                return {double_add(c, lhs.vec(), rhs.vec()), dt, dk};
+                return {double_add(c, lhs.vec(), rhs.vec()), dt, dk, true};
             default:
                 __builtin_unreachable();
         }
     }
 
-    jit_value_t sub(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+    jit_value_t sub(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
         switch (dt) {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-                return {int32_sub(c, lhs.gp().r32(), rhs.gp().r32(), null_check),
-                        narrow_arith_result(dt, null_check), dk};
+                return {int32_sub(c, lhs.gp().r32(), rhs.gp().r32(), lhs.nullable(), rhs.nullable()),
+                        narrow_arith_result(dt), dk, true};
             case data_type_t::i64:
-                return {int64_sub(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
+                return {int64_sub(c, lhs.gp(), rhs.gp(), lhs.nullable(), rhs.nullable()), dt, dk, true};
             case data_type_t::f32:
-                return {float_sub(c, lhs.vec(), rhs.vec()), dt, dk};
+                return {float_sub(c, lhs.vec(), rhs.vec()), dt, dk, true};
             case data_type_t::f64:
-                return {double_sub(c, lhs.vec(), rhs.vec()), dt, dk};
+                return {double_sub(c, lhs.vec(), rhs.vec()), dt, dk, true};
             default:
                 __builtin_unreachable();
         }
     }
 
-    jit_value_t mul(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+    jit_value_t mul(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
         switch (dt) {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-                return {int32_mul(c, lhs.gp().r32(), rhs.gp().r32(), null_check),
-                        narrow_arith_result(dt, null_check), dk};
+                return {int32_mul(c, lhs.gp().r32(), rhs.gp().r32(), lhs.nullable(), rhs.nullable()),
+                        narrow_arith_result(dt), dk, true};
             case data_type_t::i64:
-                return {int64_mul(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
+                return {int64_mul(c, lhs.gp(), rhs.gp(), lhs.nullable(), rhs.nullable()), dt, dk, true};
             case data_type_t::f32:
-                return {float_mul(c, lhs.vec(), rhs.vec()), dt, dk};
+                return {float_mul(c, lhs.vec(), rhs.vec()), dt, dk, true};
             case data_type_t::f64:
-                return {double_mul(c, lhs.vec(), rhs.vec()), dt, dk};
+                return {double_mul(c, lhs.vec(), rhs.vec()), dt, dk, true};
             default:
                 __builtin_unreachable();
         }
     }
 
-    jit_value_t div(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+    jit_value_t div(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
         switch (dt) {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-                return {int32_div(c, lhs.gp().r32(), rhs.gp().r32(), null_check),
-                        narrow_arith_result(dt, null_check), dk};
+                return {int32_div(c, lhs.gp().r32(), rhs.gp().r32(), lhs.nullable(), rhs.nullable()),
+                        narrow_arith_result(dt), dk, true};
             case data_type_t::i64:
-                return {int64_div(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
+                return {int64_div(c, lhs.gp(), rhs.gp(), lhs.nullable(), rhs.nullable()), dt, dk, true};
             case data_type_t::f32:
-                return {float_div(c, lhs.vec(), rhs.vec()), dt, dk};
+                return {float_div(c, lhs.vec(), rhs.vec()), dt, dk, true};
             case data_type_t::f64:
-                return {double_div(c, lhs.vec(), rhs.vec()), dt, dk};
+                return {double_div(c, lhs.vec(), rhs.vec()), dt, dk, true};
             default:
                 __builtin_unreachable();
         }
@@ -828,8 +857,12 @@ namespace questdb::x86 {
         return !(type == data_type_t::i8 || type == data_type_t::i16);
     }
 
+    // Harmonises operand widths. Conversions are null-checked PER OPERAND, at compile time:
+    // a nullable narrow operand's sentinel maps onto the wider sentinel / NaN, a never-null
+    // operand converts raw so its sentinel bit pattern stays data. The converted value keeps
+    // its source's nullability.
     inline std::pair<jit_value_t, jit_value_t>
-    convert(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+    convert(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         switch (lhs.dtype()) {
             case data_type_t::i8:
             case data_type_t::i16:
@@ -842,21 +875,21 @@ namespace questdb::x86 {
                     case data_type_t::i64:
                         return std::make_pair(
                                 jit_value_t(
-                                        int32_to_int64(c, lhs.gp().r32(), null_check && cvt_null_check(lhs.dtype())),
+                                        int32_to_int64(c, lhs.gp().r32(), lhs.nullable() && cvt_null_check(lhs.dtype())),
                                         data_type_t::i64,
-                                        lhs.dkind()), rhs);
+                                        lhs.dkind(), lhs.nullable()), rhs);
                     case data_type_t::f32:
                         return std::make_pair(
                                 jit_value_t(
-                                        int32_to_float(c, lhs.gp().r32(), null_check && cvt_null_check(lhs.dtype())),
+                                        int32_to_float(c, lhs.gp().r32(), lhs.nullable() && cvt_null_check(lhs.dtype())),
                                         data_type_t::f32,
-                                        lhs.dkind()), rhs);
+                                        lhs.dkind(), lhs.nullable()), rhs);
                     case data_type_t::f64:
                         return std::make_pair(
                                 jit_value_t(
-                                        int32_to_double(c, lhs.gp().r32(), null_check && cvt_null_check(lhs.dtype())),
+                                        int32_to_double(c, lhs.gp().r32(), lhs.nullable() && cvt_null_check(lhs.dtype())),
                                         data_type_t::f64,
-                                        lhs.dkind()), rhs);
+                                        lhs.dkind(), lhs.nullable()), rhs);
                     default:
                         __builtin_unreachable();
                 }
@@ -869,18 +902,19 @@ namespace questdb::x86 {
                         return std::make_pair(lhs,
                                               jit_value_t(
                                                       int32_to_int64(c, rhs.gp().r32(),
-                                                                     null_check && cvt_null_check(rhs.dtype())),
-                                                      data_type_t::i64, rhs.dkind()));
+                                                                     rhs.nullable() && cvt_null_check(rhs.dtype())),
+                                                      data_type_t::i64, rhs.dkind(), rhs.nullable()));
                     case data_type_t::i64:
                         return std::make_pair(lhs, rhs);
                     case data_type_t::f32:
                         return std::make_pair(
-                                jit_value_t(int64_to_double(c, lhs.gp().r64(), null_check), data_type_t::f64,
-                                            lhs.dkind()),
-                                jit_value_t(float_to_double(c, rhs.vec()), data_type_t::f64, rhs.dkind()));
+                                jit_value_t(int64_to_double(c, lhs.gp().r64(), lhs.nullable()), data_type_t::f64,
+                                            lhs.dkind(), lhs.nullable()),
+                                jit_value_t(float_to_double(c, rhs.vec()), data_type_t::f64, rhs.dkind(), rhs.nullable()));
                     case data_type_t::f64:
                         return std::make_pair(
-                                jit_value_t(int64_to_double(c, lhs.gp(), null_check), data_type_t::f64, lhs.dkind()),
+                                jit_value_t(int64_to_double(c, lhs.gp(), lhs.nullable()), data_type_t::f64, lhs.dkind(),
+                                            lhs.nullable()),
                                 rhs);
                     default:
                         __builtin_unreachable();
@@ -894,16 +928,18 @@ namespace questdb::x86 {
                         return std::make_pair(lhs,
                                               jit_value_t(
                                                       int32_to_float(c, rhs.gp().r32(),
-                                                                     null_check && cvt_null_check(rhs.dtype())),
-                                                      data_type_t::f32, rhs.dkind()));
+                                                                     rhs.nullable() && cvt_null_check(rhs.dtype())),
+                                                      data_type_t::f32, rhs.dkind(), rhs.nullable()));
                     case data_type_t::i64:
-                        return std::make_pair(jit_value_t(float_to_double(c, lhs.vec()), data_type_t::f64, lhs.dkind()),
-                                              jit_value_t(int64_to_double(c, rhs.gp(), null_check), data_type_t::f64,
-                                                          rhs.dkind()));
+                        return std::make_pair(jit_value_t(float_to_double(c, lhs.vec()), data_type_t::f64, lhs.dkind(),
+                                                          lhs.nullable()),
+                                              jit_value_t(int64_to_double(c, rhs.gp(), rhs.nullable()), data_type_t::f64,
+                                                          rhs.dkind(), rhs.nullable()));
                     case data_type_t::f32:
                         return std::make_pair(lhs, rhs);
                     case data_type_t::f64:
-                        return std::make_pair(jit_value_t(float_to_double(c, lhs.vec()), data_type_t::f64, lhs.dkind()),
+                        return std::make_pair(jit_value_t(float_to_double(c, lhs.vec()), data_type_t::f64, lhs.dkind(),
+                                                          lhs.nullable()),
                                               rhs);
                     default:
                         __builtin_unreachable();
@@ -917,17 +953,17 @@ namespace questdb::x86 {
                         return std::make_pair(lhs,
                                               jit_value_t(
                                                       int32_to_double(c, rhs.gp().r32(),
-                                                                      null_check && cvt_null_check(rhs.dtype())),
-                                                      data_type_t::f64, rhs.dkind()));
+                                                                      rhs.nullable() && cvt_null_check(rhs.dtype())),
+                                                      data_type_t::f64, rhs.dkind(), rhs.nullable()));
                     case data_type_t::i64:
                         return std::make_pair(lhs,
-                                              jit_value_t(int64_to_double(c, rhs.gp(), null_check), data_type_t::f64,
-                                                          rhs.dkind()));
+                                              jit_value_t(int64_to_double(c, rhs.gp(), rhs.nullable()), data_type_t::f64,
+                                                          rhs.dkind(), rhs.nullable()));
                     case data_type_t::f32:
                         return std::make_pair(lhs,
                                               jit_value_t(float_to_double(c, rhs.vec()),
                                                           data_type_t::f64,
-                                                          rhs.dkind()));
+                                                          rhs.dkind(), rhs.nullable()));
                     case data_type_t::f64:
                         return std::make_pair(lhs, rhs);
                     default:
@@ -950,11 +986,11 @@ namespace questdb::x86 {
     }
 
     inline std::pair<jit_value_t, jit_value_t>
-    get_arguments(Compiler &c, ArenaVector<jit_value_t> &values, bool null_check) {
+    get_arguments(Compiler &c, ArenaVector<jit_value_t> &values) {
         auto lhs = values.pop();
         auto rhs = values.pop();
         auto args = load_registers(c, lhs, rhs);
-        return convert(c, args.first, args.second, null_check);
+        return convert(c, args.first, args.second);
     }
 
     inline bool is_number(data_type_t dt) {
@@ -1015,7 +1051,7 @@ namespace questdb::x86 {
         c.report_error(asmjit::Error::kInvalidState, reason);
     }
 
-    void emit_bin_op(Compiler &c, Arena &arena, const instruction_t &instr, ArenaVector<jit_value_t> &values, bool null_check,
+    void emit_bin_op(Compiler &c, Arena &arena, const instruction_t &instr, ArenaVector<jit_value_t> &values,
                      bool has_short_circuit_label, opcodes next_opcode) {
         // Special case: comparison with immediate zero can use TEST instead of CMP
         if (instr.opcode == opcodes::Eq || instr.opcode == opcodes::Ne) {
@@ -1040,7 +1076,7 @@ namespace questdb::x86 {
 
             // Not a zero comparison, proceed with normal path
             auto args = load_registers(c, lhs_raw, rhs_raw);
-            auto converted = convert(c, args.first, args.second, null_check);
+            auto converted = convert(c, args.first, args.second);
             auto lhs = converted.first;
             auto rhs = converted.second;
 
@@ -1086,7 +1122,7 @@ namespace questdb::x86 {
             return;
         }
 
-        auto args = get_arguments(c, values, null_check);
+        auto args = get_arguments(c, values);
         auto lhs = args.first;
         auto rhs = args.second;
         switch (instr.opcode) {
@@ -1097,28 +1133,28 @@ namespace questdb::x86 {
                 values.append(arena, bin_or(c, lhs, rhs));
                 break;
             case opcodes::Gt:
-                values.append(arena, cmp_gt(c, lhs, rhs, null_check));
+                values.append(arena, cmp_gt(c, lhs, rhs));
                 break;
             case opcodes::Ge:
-                values.append(arena, cmp_ge(c, lhs, rhs, null_check));
+                values.append(arena, cmp_ge(c, lhs, rhs));
                 break;
             case opcodes::Lt:
-                values.append(arena, cmp_lt(c, lhs, rhs, null_check));
+                values.append(arena, cmp_lt(c, lhs, rhs));
                 break;
             case opcodes::Le:
-                values.append(arena, cmp_le(c, lhs, rhs, null_check));
+                values.append(arena, cmp_le(c, lhs, rhs));
                 break;
             case opcodes::Add:
-                values.append(arena, add(c, lhs, rhs, null_check));
+                values.append(arena, add(c, lhs, rhs));
                 break;
             case opcodes::Sub:
-                values.append(arena, sub(c, lhs, rhs, null_check));
+                values.append(arena, sub(c, lhs, rhs));
                 break;
             case opcodes::Mul:
-                values.append(arena, mul(c, lhs, rhs, null_check));
+                values.append(arena, mul(c, lhs, rhs));
                 break;
             case opcodes::Div:
-                values.append(arena, div(c, lhs, rhs, null_check));
+                values.append(arena, div(c, lhs, rhs));
                 break;
             default:
                 // Fail closed, for the same reason avx2::emit_bin_op does. emit_code() routes EVERY
@@ -1141,7 +1177,6 @@ namespace questdb::x86 {
 
     void
     emit_code(Compiler &c, Arena &arena, const instruction_t *istream, size_t size, ArenaVector<jit_value_t> &values,
-              bool null_check,
               const Gp &data_ptr,
               const Gp &varsize_aux_ptr,
               const Gp &vars_ptr,
@@ -1179,22 +1214,22 @@ namespace questdb::x86 {
                 case opcodes::Ret:
                     return;
                 case opcodes::Var: {
-                    auto type = static_cast<data_type_t>(instr.options);
+                    auto type = ir_data_type(instr.options);
                     auto idx  = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(arena, read_vars_mem(c, type, idx, vars_ptr));
+                    values.append(arena, read_vars_mem(c, type, idx, ir_nullable(instr.options), vars_ptr));
                 }
                     break;
                 case opcodes::Mem: {
-                    auto type = static_cast<data_type_t>(instr.options);
+                    auto type = ir_data_type(instr.options);
                     auto idx  = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(arena, read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index, addr_cache, value_cache));
+                    values.append(arena, read_mem(c, type, idx, ir_nullable(instr.options), data_ptr, varsize_aux_ptr, input_index, addr_cache, value_cache));
                 }
                     break;
                 case opcodes::Imm:
                     values.append(arena, read_imm(c, instr, const_cache));
                     break;
                 case opcodes::Neg:
-                    values.append(arena, neg(c, get_argument(c, values), null_check));
+                    values.append(arena, neg(c, get_argument(c, values)));
                     break;
                 case opcodes::Not:
                     values.append(arena, bin_not(c, get_argument(c, values)));
@@ -1210,9 +1245,10 @@ namespace questdb::x86 {
                     auto dt = arg.dtype();
                     if (dt == data_type_t::i8 || dt == data_type_t::i16 || dt == data_type_t::i32) {
                         values.append(arena, jit_value_t(
-                                int32_to_int64(c, arg.gp().r32(), null_check),
+                                int32_to_int64(c, arg.gp().r32(), arg.nullable()),
                                 data_type_t::i64,
-                                arg.dkind()));
+                                arg.dkind(),
+                                arg.nullable()));
                     } else {
                         values.append(arena, arg);
                     }
@@ -1280,7 +1316,7 @@ namespace questdb::x86 {
                 default: {
                     // Get next opcode for lookahead optimization
                     opcodes next_op = (i + 1 < size) ? istream[i + 1].opcode : opcodes::Ret;
-                    emit_bin_op(c, arena, instr, values, null_check, labels.has(0), next_op);
+                    emit_bin_op(c, arena, instr, values, labels.has(0), next_op);
                     break;
                 }
             }

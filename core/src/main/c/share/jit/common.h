@@ -53,6 +53,22 @@ enum class data_kind_t : uint8_t {
     kFlagsNe,  // CMP emitted for inequality; use JE to skip if equal
 };
 
+// Per-instruction nullability flag carried in instruction_t::options next to the data type
+// code (low byte). The Java serializer (CompiledFilterIRSerializer.NULLABLE_TYPE_FLAG) sets it
+// on MEM loads of nullable columns, on every VAR (bind variables can be NULL at run time) and
+// on IMM operands whose payload is the type's NULL sentinel. Nullability is compile-time
+// information: the backends read it here, propagate it through jit_value_t and emit checked or
+// unchecked code per operand - no run-time nullability decisions exist in the generated loop.
+constexpr int32_t NULLABLE_TYPE_FLAG = 1 << 8;
+
+inline data_type_t ir_data_type(int32_t options) {
+    return static_cast<data_type_t>(options & 0xff);
+}
+
+inline bool ir_nullable(int32_t options) {
+    return (options & NULLABLE_TYPE_FLAG) != 0;
+}
+
 enum class opcodes : int32_t {
     Inv = -1,
     Ret = 0,
@@ -95,10 +111,13 @@ struct instruction_t {
 struct jit_value_t {
 
     inline jit_value_t() noexcept
-            : op_(), type_(), kind_() {}
+            : op_(), type_(), kind_(), nullable_(false) {}
 
     inline jit_value_t(asmjit::Operand op, data_type_t type, data_kind_t kind) noexcept
-            : op_(op), type_(type), kind_(kind) {}
+            : op_(op), type_(type), kind_(kind), nullable_(false) {}
+
+    inline jit_value_t(asmjit::Operand op, data_type_t type, data_kind_t kind, bool nullable) noexcept
+            : op_(op), type_(type), kind_(kind), nullable_(nullable) {}
 
     inline jit_value_t(const jit_value_t &other) noexcept = default;
 
@@ -116,12 +135,19 @@ struct jit_value_t {
 
     inline data_kind_t dkind() const noexcept { return kind_; }
 
+    // Compile-time nullability of this operand: true when the value can carry the type's NULL
+    // sentinel AS NULL (nullable column load, bind variable, NULL-sentinel immediate, or a
+    // derived expression whose result can be NULL). The emitters select checked or unchecked
+    // code from it while compiling; the generated loop never re-decides.
+    inline bool nullable() const noexcept { return nullable_; }
+
     inline const asmjit::Operand &op() const noexcept { return op_; }
 
 private:
     asmjit::Operand op_;
     data_type_t type_;
     data_kind_t kind_;
+    bool nullable_;
 };
 
 inline uint32_t type_shift(data_type_t type) {

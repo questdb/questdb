@@ -164,11 +164,19 @@ namespace questdb::x86 {
         return r;
     }
 
-    inline void check_int32_null(Compiler &c, const Gp &dst, const Gp &lhs, const Gp &rhs) {
-        c.cmp(lhs, INT_NULL);
-        c.cmove(dst, lhs);
-        c.cmp(rhs, INT_NULL);
-        c.cmove(dst, rhs);
+    // Per-operand NULL propagation for int arithmetic: only a NULLABLE operand's sentinel
+    // means NULL (a NOT NULL operand's identical bit pattern is data), so the emitter
+    // resolves at compile time which side gets the check. Mirrors the interpreted
+    // AddIntFunctionFactory-family: (!left.isNotNull() && left == INT_NULL) || ...
+    inline void check_int32_null(Compiler &c, const Gp &dst, const Gp &lhs, const Gp &rhs, bool check_lhs, bool check_rhs) {
+        if (check_lhs) {
+            c.cmp(lhs, INT_NULL);
+            c.cmove(dst, lhs);
+        }
+        if (check_rhs) {
+            c.cmp(rhs, INT_NULL);
+            c.cmove(dst, rhs);
+        }
     }
 
     inline Gp int32_neg(Compiler &c, const Gp &rhs, bool check_null) {
@@ -201,61 +209,76 @@ namespace questdb::x86 {
         return r.as<Gp>();
     }
 
-    inline Gp int32_add(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
+    inline Gp int32_add(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_lhs, bool check_rhs) {
         c.comment("int32_add");
 
         Gp r = c.new_gp64();
         c.lea(r, ptr(lhs, rhs));
-        if (check_null) check_int32_null(c, r, lhs, rhs);
+        check_int32_null(c, r, lhs, rhs, check_lhs, check_rhs);
         return r.as<Gp>();
     }
 
-    inline Gp int32_sub(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
+    inline Gp int32_sub(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_lhs, bool check_rhs) {
         c.comment("int32_sub");
 
         Gp r = c.new_gp32();
         c.mov(r, lhs);
         c.sub(r, rhs);
-        if (check_null) check_int32_null(c, r, lhs, rhs);
+        check_int32_null(c, r, lhs, rhs, check_lhs, check_rhs);
         return r.as<Gp>();
     }
 
-    inline Gp int32_mul(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
+    inline Gp int32_mul(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_lhs, bool check_rhs) {
         c.comment("int32_mul");
 
         Gp r = c.new_gp32();
         c.mov(r, lhs);
         c.imul(r, rhs);
-        if (check_null) check_int32_null(c, r, lhs, rhs);
+        check_int32_null(c, r, lhs, rhs, check_lhs, check_rhs);
         return r.as<Gp>();
     }
 
-    inline Gp int32_div(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
+    // A zero divisor yields NULL for every nullability combination (matches the interpreted
+    // DivIntFunctionFactory); a sentinel-valued operand yields NULL only when that operand is
+    // nullable - resolved at compile time via check_lhs / check_rhs.
+    //
+    // idiv raises #DE (a fatal SIGFPE, not a Java exception - the code lives in anonymous
+    // asmjit memory HotSpot knows nothing about) when the quotient does not fit the
+    // destination register, which for a 32-bit idiv happens only at INT_MIN / -1. A checked
+    // dividend can never reach idiv holding INT_MIN, but an unchecked one can: on a NOT NULL
+    // column the INT_MIN bit pattern is data. Java's DivIntFunctionFactory returns l / r
+    // there, and Java defines Integer.MIN_VALUE / -1 == Integer.MIN_VALUE == INT_NULL, so
+    // routing that one case to l_null (which leaves r == INT_NULL) is value-identical to the
+    // interpreted path while keeping idiv out of its overflow case.
+    inline Gp int32_div(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_lhs, bool check_rhs) {
         c.comment("int32_div");
 
         Label l_null = c.new_label();
-        Label l_exit = c.new_label();
 
         Gp r = c.new_gp32();
         Gp t = c.new_gp32();
 
-        if (!check_null) {
-            c.mov(r, lhs);
+        c.mov(r, INT_NULL);
+        if (check_rhs) {
+            // one test for both: rhs == 0 and rhs == INT_NULL clear all low 31 bits
+            c.test(rhs, 2147483647); //INT_NULL - 1
+            c.je(l_null);
+        } else {
             c.test(rhs, rhs);
             c.je(l_null);
-            c.cdq(t, r);
-            c.idiv(t, r, rhs);
-            c.jmp(l_exit);
-            c.bind(l_null);
-            c.mov(r, INT_NULL);
-            c.bind(l_exit);
-            return r.as<Gp>();
         }
-        c.mov(r, INT_NULL);
-        c.test(rhs, 2147483647); //INT_NULL - 1
-        c.je(l_null);
-        c.cmp(lhs, INT_NULL);
-        c.je(l_null);
+        if (check_lhs) {
+            c.cmp(lhs, INT_NULL);
+            c.je(l_null);
+        } else {
+            // dividend unchecked: guard the single idiv overflow case, INT_MIN / -1
+            Label l_div = c.new_label();
+            c.cmp(rhs, -1);
+            c.jne(l_div);
+            c.cmp(lhs, INT_NULL);
+            c.je(l_null);
+            c.bind(l_div);
+        }
         c.mov(r, lhs);
         c.cdq(t, r);
         c.idiv(t, r, rhs);
@@ -263,44 +286,56 @@ namespace questdb::x86 {
         return r.as<Gp>();
     }
 
-    inline void check_int64_null(Compiler &c, const Gp &dst, const Gp &lhs, const Gp &rhs) {
+    // See check_int32_null: per-operand NULL propagation, resolved at compile time.
+    inline void check_int64_null(Compiler &c, const Gp &dst, const Gp &lhs, const Gp &rhs, bool check_lhs, bool check_rhs) {
+        if (!check_lhs && !check_rhs) {
+            return;
+        }
         c.comment("check_int64_null");
         Gp n = c.new_gp64();
         c.movabs(n, LONG_NULL);
-        c.cmp(lhs, n);
-        c.cmove(dst, lhs);
-        c.cmp(rhs, n);
-        c.cmove(dst, rhs);
+        if (check_lhs) {
+            c.cmp(lhs, n);
+            c.cmove(dst, lhs);
+        }
+        if (check_rhs) {
+            c.cmp(rhs, n);
+            c.cmove(dst, rhs);
+        }
     }
 
-    inline Gp int64_add(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
+    inline Gp int64_add(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_lhs, bool check_rhs) {
         c.comment("int64_add");
 
         Gp r = c.new_gp64();
         c.lea(r, ptr(lhs, rhs));
-        if (check_null) check_int64_null(c, r, lhs, rhs);
+        check_int64_null(c, r, lhs, rhs, check_lhs, check_rhs);
         return r.as<Gp>();
     }
 
-    inline Gp int64_sub(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
+    inline Gp int64_sub(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_lhs, bool check_rhs) {
         c.comment("int64_sub");
         Gp r = c.new_gp64();
         c.mov(r, lhs);
         c.sub(r, rhs);
-        if (check_null) check_int64_null(c, r, lhs, rhs);
+        check_int64_null(c, r, lhs, rhs, check_lhs, check_rhs);
         return r.as<Gp>();
     }
 
-    inline Gp int64_mul(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
+    inline Gp int64_mul(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_lhs, bool check_rhs) {
         c.comment("int64_mul");
         Gp r = c.new_gp64();
         c.mov(r, lhs);
         c.imul(r, rhs);
-        if (check_null) check_int64_null(c, r, lhs, rhs);
+        check_int64_null(c, r, lhs, rhs, check_lhs, check_rhs);
         return r.as<Gp>();
     }
 
-    inline Gp int64_div(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
+    // See int32_div: zero divisor yields NULL always, sentinel operands only when nullable, and
+    // an unchecked dividend still has to dodge the idiv overflow case (here LONG_MIN / -1,
+    // whose quotient 2^63 does not fit rax). Java's DivLongFunctionFactory yields
+    // Long.MIN_VALUE == LONG_NULL for it, which is exactly what l_null stores.
+    inline Gp int64_div(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_lhs, bool check_rhs) {
         c.comment("int64_div");
 
         Label l_null = c.new_label();
@@ -308,26 +343,31 @@ namespace questdb::x86 {
 
         Gp r = c.new_gp64();
         Gp t = c.new_gp64();
-        if (!check_null) {
-            c.mov(r, lhs);
+        c.mov(r, lhs);
+        if (check_rhs) {
+            // one test for both: rhs == 0 and rhs == LONG_NULL clear all low 63 bits
+            c.mov(t, rhs);
+            c.btr(t, 63);
+            c.test(t, t);
+            c.je(l_null);
+        } else {
             c.test(rhs, rhs);
             c.je(l_null);
-            c.cqo(t, r);
-            c.idiv(t, r, rhs);
-            c.jmp(l_exit);
-            c.bind(l_null);
-            c.movabs(r, LONG_NULL);
-            c.bind(l_exit);
-            return r.as<Gp>();
         }
-        c.mov(t, rhs);
-        c.mov(r, lhs);
-        c.btr(t, 63);
-        c.test(t, t);
-        c.je(l_null);
-        c.movabs(t, LONG_NULL);
-        c.cmp(lhs, t);
-        c.je(l_null);
+        if (check_lhs) {
+            c.movabs(t, LONG_NULL);
+            c.cmp(lhs, t);
+            c.je(l_null);
+        } else {
+            // dividend unchecked: guard the single idiv overflow case, LONG_MIN / -1
+            Label l_div = c.new_label();
+            c.cmp(rhs, -1);
+            c.jne(l_div);
+            c.movabs(t, LONG_NULL);
+            c.cmp(lhs, t);
+            c.je(l_null);
+            c.bind(l_div);
+        }
         c.cqo(t, r);
         c.idiv(t, r, rhs);
         c.jmp(l_exit);
@@ -477,56 +517,53 @@ namespace questdb::x86 {
         return r.as<Gp>();
     }
 
-    inline Gp int32_lt_gt(Compiler &c, const Gp &lhs, const Gp &rhs, bool gt, bool check_null) {
-        if (!check_null) {
-            Gp r = c.new_gp32();
-            c.xor_(r, r);
-            c.cmp(lhs, rhs);
-            if (gt) {
-                c.setg(r.r8_lo());
-            } else {
-                c.setl(r.r8_lo());
-            }
-            return r.as<Gp>();
+    // Strict comparison with per-operand NULL exclusion, resolved at compile time: a NULL on
+    // a nullable side orders nothing; an unchecked side reads the sentinel bit pattern as
+    // data. result = (lhs OP rhs) & !lhs_is_null & !rhs_is_null, per-side terms emitted only
+    // for nullable operands.
+    inline Gp int32_lt_gt(Compiler &c, const Gp &lhs, const Gp &rhs, bool gt, bool check_lhs, bool check_rhs) {
+        Gp v = c.new_gp32();
+        c.xor_(v, v);
+        c.cmp(lhs, rhs);
+        if (gt) {
+            c.setg(v.r8_lo());
         } else {
-            Gp v = c.new_gp32();
+            c.setl(v.r8_lo());
+        }
+        if (check_lhs) {
             Gp l = c.new_gp32();
-            Gp r = c.new_gp32();
             c.xor_(l, l);
             c.cmp(lhs, INT_NULL);
             c.setne(l.r8_lo());
+            c.and_(v, l);
+        }
+        if (check_rhs) {
+            Gp r = c.new_gp32();
             c.xor_(r, r);
             c.cmp(rhs, INT_NULL);
             c.setne(r.r8_lo());
-            c.and_(r, l);
-            c.xor_(v, v);
-            c.cmp(lhs, rhs);
-            if (gt) {
-                c.setg(v.r8_lo());
-            } else {
-                c.setl(v.r8_lo());
-            }
             c.and_(v, r);
-            return v.as<Gp>();
         }
+        return v.as<Gp>();
     }
 
-    inline Gp int32_le_ge(Compiler &c, const Gp &lhs, const Gp &rhs, bool ge, bool check_null) {
-        if (!check_null) {
-            Gp r = c.new_gp32();
-            c.xor_(r, r);
-            c.cmp(lhs, rhs);
-            if (ge) {
-                c.setge(r.r8_lo());
-            } else {
-                c.setle(r.r8_lo());
-            }
-            return r.as<Gp>();
+    // Inclusive comparison with per-operand NULL exclusion, resolved at compile time. The
+    // allow mask is !(lhs_is_null XOR rhs_is_null): two genuine NULLs compare equal (so <=
+    // and >= hold), one NULL orders nothing, and an unchecked side contributes constant
+    // false to the XOR, which reduces to !other_is_null. No checked side, no mask - that is
+    // the sentinel-as-data path.
+    inline Gp int32_le_ge(Compiler &c, const Gp &lhs, const Gp &rhs, bool ge, bool check_lhs, bool check_rhs) {
+        Gp v = c.new_gp32();
+        c.xor_(v, v);
+        c.cmp(lhs, rhs);
+        if (ge) {
+            c.setge(v.r8_lo());
         } else {
-            Gp v = c.new_gp32();
+            c.setle(v.r8_lo());
+        }
+        if (check_lhs && check_rhs) {
             Gp l = c.new_gp32();
             Gp r = c.new_gp32();
-
             c.xor_(l, l);
             c.cmp(lhs, INT_NULL);
             c.sete(l.r8_lo());
@@ -534,32 +571,37 @@ namespace questdb::x86 {
             c.cmp(rhs, INT_NULL);
             c.setne(r.r8_lo());
             c.xor_(r, l);
-            c.xor_(v, v);
-            c.cmp(lhs, rhs);
-            if (ge) {
-                c.setge(v.r8_lo());
-            } else {
-                c.setle(v.r8_lo());
-            }
             c.and_(v, r);
-            return v.as<Gp>();
+        } else if (check_lhs) {
+            Gp l = c.new_gp32();
+            c.xor_(l, l);
+            c.cmp(lhs, INT_NULL);
+            c.setne(l.r8_lo());
+            c.and_(v, l);
+        } else if (check_rhs) {
+            Gp r = c.new_gp32();
+            c.xor_(r, r);
+            c.cmp(rhs, INT_NULL);
+            c.setne(r.r8_lo());
+            c.and_(v, r);
         }
+        return v.as<Gp>();
     }
 
-    inline Gp int32_lt(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
-        return int32_lt_gt(c, lhs, rhs, false, check_null);
+    inline Gp int32_lt(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_lhs, bool check_rhs) {
+        return int32_lt_gt(c, lhs, rhs, false, check_lhs, check_rhs);
     }
 
-    inline Gp int32_le(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
-        return int32_le_ge(c, lhs, rhs, false, check_null);
+    inline Gp int32_le(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_lhs, bool check_rhs) {
+        return int32_le_ge(c, lhs, rhs, false, check_lhs, check_rhs);
     }
 
-    inline Gp int32_gt(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
-        return int32_lt_gt(c, lhs, rhs, true, check_null);
+    inline Gp int32_gt(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_lhs, bool check_rhs) {
+        return int32_lt_gt(c, lhs, rhs, true, check_lhs, check_rhs);
     }
 
-    inline Gp int32_ge(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
-        return int32_le_ge(c, lhs, rhs, true, check_null);
+    inline Gp int32_ge(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_lhs, bool check_rhs) {
+        return int32_le_ge(c, lhs, rhs, true, check_lhs, check_rhs);
     }
 
     inline Gp int64_eq(Compiler &c, const Gp &lhs, const Gp &rhs) {
@@ -617,61 +659,51 @@ namespace questdb::x86 {
         return r.as<Gp>();
     }
 
-    inline Gp int64_lt_gt(Compiler &c, const Gp &lhs, const Gp &rhs, bool gt, bool check_null) {
-        if (!check_null) {
-            Gp r = c.new_gp64();
-            c.xor_(r, r);
-            c.cmp(lhs, rhs);
-            if (gt) {
-                c.setg(r.r8_lo());
-            } else {
-                c.setl(r.r8_lo());
-            }
-            return r.as<Gp>();
+    // See int32_lt_gt: strict comparison, per-operand NULL exclusion at compile time.
+    inline Gp int64_lt_gt(Compiler &c, const Gp &lhs, const Gp &rhs, bool gt, bool check_lhs, bool check_rhs) {
+        Gp v = c.new_gp64();
+        c.xor_(v, v);
+        c.cmp(lhs, rhs);
+        if (gt) {
+            c.setg(v.r8_lo());
         } else {
-            Gp v = c.new_gp64();
-            Gp l = c.new_gp64();
-            Gp r = c.new_gp64();
-            Gp n = c.new_gp64();
-
-            c.movabs(n, LONG_NULL);
-            c.xor_(l, l);
-            c.cmp(lhs, n);
-            c.setne(l.r8_lo());
-            c.xor_(r, r);
-            c.cmp(rhs, n);
-            c.setne(r.r8_lo());
-            c.and_(r, l);
-            c.xor_(v, v);
-            c.cmp(lhs, rhs);
-            if (gt) {
-                c.setg(v.r8_lo());
-            } else {
-                c.setl(v.r8_lo());
-            }
-            c.and_(v, r);
-
-            return v.as<Gp>();
+            c.setl(v.r8_lo());
         }
+        if (check_lhs || check_rhs) {
+            Gp n = c.new_gp64();
+            c.movabs(n, LONG_NULL);
+            if (check_lhs) {
+                Gp l = c.new_gp64();
+                c.xor_(l, l);
+                c.cmp(lhs, n);
+                c.setne(l.r8_lo());
+                c.and_(v, l);
+            }
+            if (check_rhs) {
+                Gp r = c.new_gp64();
+                c.xor_(r, r);
+                c.cmp(rhs, n);
+                c.setne(r.r8_lo());
+                c.and_(v, r);
+            }
+        }
+        return v.as<Gp>();
     }
 
-    inline Gp int64_le_ge(Compiler &c, const Gp &lhs, const Gp &rhs, bool ge, bool check_null) {
-        if (!check_null) {
-            Gp r = c.new_gp64();
-            c.xor_(r, r);
-            c.cmp(lhs, rhs);
-            if (ge) {
-                c.setge(r.r8_lo());
-            } else {
-                c.setle(r.r8_lo());
-            }
-            return r.as<Gp>();
+    // See int32_le_ge: inclusive comparison, per-operand NULL exclusion at compile time.
+    inline Gp int64_le_ge(Compiler &c, const Gp &lhs, const Gp &rhs, bool ge, bool check_lhs, bool check_rhs) {
+        Gp v = c.new_gp64();
+        c.xor_(v, v);
+        c.cmp(lhs, rhs);
+        if (ge) {
+            c.setge(v.r8_lo());
         } else {
-            Gp v = c.new_gp64();
+            c.setle(v.r8_lo());
+        }
+        if (check_lhs && check_rhs) {
             Gp l = c.new_gp64();
             Gp r = c.new_gp64();
             Gp n = c.new_gp64();
-
             c.movabs(n, LONG_NULL);
             c.xor_(l, l);
             c.cmp(lhs, n);
@@ -680,33 +712,41 @@ namespace questdb::x86 {
             c.cmp(rhs, n);
             c.setne(r.r8_lo());
             c.xor_(r, l);
-            c.xor_(v, v);
-            c.cmp(lhs, rhs);
-            if (ge) {
-                c.setge(v.r8_lo());
-            } else {
-                c.setle(v.r8_lo());
-            }
             c.and_(v, r);
-
-            return v.as<Gp>();
+        } else if (check_lhs) {
+            Gp l = c.new_gp64();
+            Gp n = c.new_gp64();
+            c.movabs(n, LONG_NULL);
+            c.xor_(l, l);
+            c.cmp(lhs, n);
+            c.setne(l.r8_lo());
+            c.and_(v, l);
+        } else if (check_rhs) {
+            Gp r = c.new_gp64();
+            Gp n = c.new_gp64();
+            c.movabs(n, LONG_NULL);
+            c.xor_(r, r);
+            c.cmp(rhs, n);
+            c.setne(r.r8_lo());
+            c.and_(v, r);
         }
+        return v.as<Gp>();
     }
 
-    inline Gp int64_lt(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
-        return int64_lt_gt(c, lhs, rhs, false, check_null);
+    inline Gp int64_lt(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_lhs, bool check_rhs) {
+        return int64_lt_gt(c, lhs, rhs, false, check_lhs, check_rhs);
     }
 
-    inline Gp int64_le(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
-        return int64_le_ge(c, lhs, rhs, false, check_null);
+    inline Gp int64_le(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_lhs, bool check_rhs) {
+        return int64_le_ge(c, lhs, rhs, false, check_lhs, check_rhs);
     }
 
-    inline Gp int64_gt(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
-        return int64_lt_gt(c, lhs, rhs, true, check_null);
+    inline Gp int64_gt(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_lhs, bool check_rhs) {
+        return int64_lt_gt(c, lhs, rhs, true, check_lhs, check_rhs);
     }
 
-    inline Gp int64_ge(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
-        return int64_le_ge(c, lhs, rhs, true, check_null);
+    inline Gp int64_ge(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_lhs, bool check_rhs) {
+        return int64_le_ge(c, lhs, rhs, true, check_lhs, check_rhs);
     }
 
     //coverage: double_cmp_epsilon used instead
