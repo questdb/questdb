@@ -1157,83 +1157,63 @@ public class LogFactoryTest {
     }
 
     @Test
-    public void testRollingFileWriterDateParsePushFilesMid() {
-        String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
-        String expectedLogFile = base + "mylog-2015-05-03.log";
-        try (LogFactory factory = new LogFactory()) {
+    public void testRollingFileWriterDateParsePushFilesMid() throws Exception {
+        final AtomicLong ticks = new AtomicLong(MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"));
+        final String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
+        final String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
+        final File activeLogFile = new File(base + "mylog-2015-05-03.log");
 
-            String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
+        // .3 is free, so the roll has to fill the gap and leave .4 untouched
+        TestUtils.writeStringToFile(new File(activeLogFile + ".1"), "one");
+        TestUtils.writeStringToFile(new File(activeLogFile + ".2"), "two");
+        TestUtils.writeStringToFile(new File(activeLogFile + ".4"), "four");
 
-            final MicrosecondClock clock = new TestMicrosecondClock(MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1, MicrosTimestampDriver.floor("2015-05-04"));
+        withRollingFileWriter(ticks::get, logFile, "1", (writer, queue, pubSeq) -> {
+            // the first flush finds an empty file, so it appends instead of rolling
+            publishInfoRecord(queue, pubSeq, "first");
+            Assert.assertTrue(writer.runSerially());
+            ticks.addAndGet(2 * Micros.MILLI_MICROS);
+            Assert.assertTrue(writer.runSerially());
+            Assert.assertEquals(0, writer.getRolledCount());
+            Assert.assertEquals("first", TestUtils.readStringFromFile(activeLogFile));
 
-            try (Path path = new Path()) {
+            // the second flush exceeds rollSize and pushes the whole stack up
+            publishInfoRecord(queue, pubSeq, "second");
+            Assert.assertTrue(writer.runSerially());
+            ticks.addAndGet(2 * Micros.MILLI_MICROS);
+            Assert.assertTrue(writer.runSerially());
+            Assert.assertEquals(1, writer.getRolledCount());
+        });
 
-                path.of(base);
-                Assert.assertTrue(Files.touch(path.concat("mylog-2015-05-03.log").$()));
-
-                path.of(base);
-                Assert.assertTrue(Files.touch(path.concat("mylog-2015-05-03.log.1").$()));
-
-                path.of(base);
-                Assert.assertTrue(Files.touch(path.concat("mylog-2015-05-03.log.2").$()));
-
-                // there is a gap here, .3 is available
-                path.of(base);
-                Assert.assertTrue(Files.touch(path.concat("mylog-2015-05-03.log.4").$()));
-            }
-
-            factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
-                LogRollingFileWriter w = new LogRollingFileWriter(TestFilesFacadeImpl.INSTANCE, clock, ring, seq, level);
-                w.setLocation(logFile);
-                w.setSpinBeforeFlush("1000000");
-                return w;
-            }));
-
-            factory.bind();
-            factory.startThread();
-
-            Log logger = factory.create("x");
-            for (int i = 0; i < 100000; i++) {
-                logger.xinfo().$("test ").$(' ').$(i).$();
-            }
-
-            factory.flushJobs();
-        }
-        Assert.assertTrue(new File(expectedLogFile).length() > 0);
+        Assert.assertEquals("second", TestUtils.readStringFromFile(activeLogFile));
+        Assert.assertEquals("first", TestUtils.readStringFromFile(new File(activeLogFile + ".1")));
+        Assert.assertEquals("one", TestUtils.readStringFromFile(new File(activeLogFile + ".2")));
+        Assert.assertEquals("two", TestUtils.readStringFromFile(new File(activeLogFile + ".3")));
+        Assert.assertEquals("four", TestUtils.readStringFromFile(new File(activeLogFile + ".4")));
+        Assert.assertFalse(new File(activeLogFile + ".5").exists());
     }
 
     @Test
     public void testRollingFileWriterDoesNotRollOnOpen() throws Exception {
-        final long ticks = MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z");
-        final MicrosecondClock clock = () -> ticks;
+        final AtomicLong ticks = new AtomicLong(MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"));
         final String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
         final String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
         final File expectedLogFile = new File(base + "mylog-2015-05-03.log");
         TestUtils.writeStringToFile(expectedLogFile, "existing log");
 
-        try (RingQueue<LogRecordUtf8Sink> queue = new RingQueue<>(
-                LogRecordUtf8Sink::new,
-                1024,
-                2,
-                MemoryTag.NATIVE_DEFAULT
-        )) {
-            final SPSequence pubSeq = new SPSequence(queue.getCycle());
-            final SCSequence subSeq = new SCSequence();
-            pubSeq.then(subSeq).then(pubSeq);
+        withRollingFileWriter(ticks::get, logFile, null, (writer, queue, pubSeq) -> {
+            // opening the writer neither rolls nor truncates what is already on disk
+            Assert.assertEquals("existing log", TestUtils.readStringFromFile(expectedLogFile));
 
-            try (LogRollingFileWriter writer = new LogRollingFileWriter(
-                    TestFilesFacadeImpl.INSTANCE,
-                    clock,
-                    queue,
-                    subSeq,
-                    LogLevel.INFO
-            )) {
-                writer.setLocation(logFile);
-                writer.bindProperties(LogFactory.getInstance());
-            }
-        }
+            publishInfoRecord(queue, pubSeq, "test");
+            Assert.assertTrue(writer.runSerially());
+            ticks.addAndGet(2 * Micros.MILLI_MICROS);
+            Assert.assertTrue(writer.runSerially());
+            Assert.assertEquals(0, writer.getRolledCount());
+        });
 
-        Assert.assertEquals("existing log", TestUtils.readStringFromFile(expectedLogFile));
+        // the writer appends behind the records the previous run left there
+        Assert.assertEquals("existing logtest", TestUtils.readStringFromFile(expectedLogFile));
         Assert.assertFalse(new File(expectedLogFile + ".1").exists());
     }
 
@@ -1244,41 +1224,16 @@ public class LogFactoryTest {
         final String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
         final File expectedLogFile = new File(base + "mylog-2015-05-03.log");
 
-        try (RingQueue<LogRecordUtf8Sink> queue = new RingQueue<>(
-                LogRecordUtf8Sink::new,
-                1024,
-                2,
-                MemoryTag.NATIVE_DEFAULT
-        )) {
-            final SPSequence pubSeq = new SPSequence(queue.getCycle());
-            final SCSequence subSeq = new SCSequence();
-            pubSeq.then(subSeq).then(pubSeq);
+        withRollingFileWriter(ticks::get, logFile, null, (writer, queue, pubSeq) -> {
+            publishInfoRecord(queue, pubSeq, "test");
 
-            try (LogRollingFileWriter writer = new LogRollingFileWriter(
-                    TestFilesFacadeImpl.INSTANCE,
-                    ticks::get,
-                    queue,
-                    subSeq,
-                    LogLevel.INFO
-            )) {
-                writer.setLocation(logFile);
-                writer.bindProperties(LogFactory.getInstance());
+            Assert.assertTrue(writer.runSerially());
+            Assert.assertEquals(0, expectedLogFile.length());
 
-                final long cursor = pubSeq.next();
-                Assert.assertTrue(cursor > -1);
-                final LogRecordUtf8Sink sink = queue.get(cursor);
-                sink.setLevel(LogLevel.INFO);
-                sink.put("test");
-                pubSeq.done(cursor);
-
-                Assert.assertTrue(writer.runSerially());
-                Assert.assertEquals(0, expectedLogFile.length());
-
-                ticks.addAndGet(2 * Micros.MILLI_MICROS);
-                Assert.assertTrue(writer.runSerially());
-                Assert.assertEquals("test", TestUtils.readStringFromFile(expectedLogFile));
-            }
-        }
+            ticks.addAndGet(2 * Micros.MILLI_MICROS);
+            Assert.assertTrue(writer.runSerially());
+            Assert.assertEquals("test", TestUtils.readStringFromFile(expectedLogFile));
+        });
     }
 
     @Test
@@ -1308,6 +1263,29 @@ public class LogFactoryTest {
             factory.create("x").xinfo().$("test").$();
             TestUtils.assertEventually(() -> Assert.assertTrue(expectedLogFile.length() > 0), 5);
         }
+    }
+
+    @Test
+    public void testRollingFileWriterRollsWhenExistingFileExceedsRollSize() throws Exception {
+        final AtomicLong ticks = new AtomicLong(MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"));
+        final String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
+        final String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
+        final File expectedLogFile = new File(base + "mylog-2015-05-03.log");
+        // the writer has to count these bytes as part of the file it re-opens, not start from zero
+        TestUtils.writeStringToFile(expectedLogFile, "0123456789");
+
+        withRollingFileWriter(ticks::get, logFile, "8", (writer, queue, pubSeq) -> {
+            publishInfoRecord(queue, pubSeq, "test");
+            Assert.assertTrue(writer.runSerially());
+            Assert.assertEquals(0, writer.getRolledCount());
+
+            ticks.addAndGet(2 * Micros.MILLI_MICROS);
+            Assert.assertTrue(writer.runSerially());
+            Assert.assertEquals(1, writer.getRolledCount());
+        });
+
+        Assert.assertEquals("test", TestUtils.readStringFromFile(expectedLogFile));
+        Assert.assertEquals("0123456789", TestUtils.readStringFromFile(new File(expectedLogFile + ".1")));
     }
 
     @Test
@@ -1809,6 +1787,16 @@ public class LogFactoryTest {
         Assert.assertTrue("oops: " + len, len > 0L && len < 1073741824L);
     }
 
+    private void publishInfoRecord(RingQueue<LogRecordUtf8Sink> queue, SPSequence pubSeq, String message) {
+        final long cursor = pubSeq.next();
+        Assert.assertTrue(cursor > -1);
+        final LogRecordUtf8Sink sink = queue.get(cursor);
+        sink.clear();
+        sink.setLevel(LogLevel.INFO);
+        sink.put(message);
+        pubSeq.done(cursor);
+    }
+
     private void testAutoDelete(String sizeLimit, String lifeDuration, String rollSize) throws Exception {
         final int extraFiles = 2;
         String fileTemplate = "mylog-${date:yyyy-MM-dd}.log";
@@ -2018,9 +2006,47 @@ public class LogFactoryTest {
         Assert.assertEquals(expectedMemUsage, Unsafe.getMemUsed());
     }
 
+    private void withRollingFileWriter(
+            MicrosecondClock clock,
+            String location,
+            String rollSize,
+            RollingWriterCode code
+    ) throws Exception {
+        try (RingQueue<LogRecordUtf8Sink> queue = new RingQueue<>(
+                LogRecordUtf8Sink::new,
+                1024,
+                2,
+                MemoryTag.NATIVE_DEFAULT
+        )) {
+            final SPSequence pubSeq = new SPSequence(queue.getCycle());
+            final SCSequence subSeq = new SCSequence();
+            pubSeq.then(subSeq).then(pubSeq);
+
+            try (LogRollingFileWriter writer = new LogRollingFileWriter(
+                    TestFilesFacadeImpl.INSTANCE,
+                    clock,
+                    queue,
+                    subSeq,
+                    LogLevel.INFO
+            )) {
+                writer.setLocation(location);
+                if (rollSize != null) {
+                    writer.setRollSize(rollSize);
+                }
+                writer.bindProperties(LogFactory.getInstance());
+                code.run(writer, queue, pubSeq);
+            }
+        }
+    }
+
     @FunctionalInterface
     private interface LogOperation {
         void run(LogRecord record);
+    }
+
+    @FunctionalInterface
+    private interface RollingWriterCode {
+        void run(LogRollingFileWriter writer, RingQueue<LogRecordUtf8Sink> queue, SPSequence pubSeq) throws Exception;
     }
 
     private static class TestMicrosecondClock implements MicrosecondClock {
