@@ -12639,13 +12639,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     durableMinTimestamp,
                     durableMaxTimestamp
             );
-            case LiveViewRebuildRestatementGuard.BACKLOG_UNREADABLE_MAY_DEDUP_REPLACE -> standDownRestatementRowShortfall(
-                    instance,
-                    reader,
-                    LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE,
-                    durableMinTimestamp,
-                    durableMaxTimestamp
-            );
+            case LiveViewRebuildRestatementGuard.BACKLOG_UNREADABLE_MAY_DEDUP_REPLACE ->
+                    standDownRestatementRowShortfall(
+                            instance,
+                            reader,
+                            LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE,
+                            durableMinTimestamp,
+                            durableMaxTimestamp
+                    );
         }
     }
 
