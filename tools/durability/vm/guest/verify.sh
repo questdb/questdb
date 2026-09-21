@@ -252,7 +252,7 @@ case "$ARM" in
                 -Dschema.profile="$PROFILE" -Dqwp="$QWP" -Dqwp.sf="$QWPSF" \
                 org.questdb.CrashVerifier "$DB" >"$vout" 2>"$verr" || rc=$?
         out=$(cat "$vout" "$verr")
-        line=$(grep -m1 -hE '^(DURABLE|RPO_OK|DURABILITY_FAILURE|SILENT_CORRUPTION|LOUD_FAILURE|CONSISTENT)' \
+        line=$(grep -m1 -hE '^(DURABLE|RPO_OK|PRECONDITION_NOT_MET|DURABILITY_FAILURE|SILENT_CORRUPTION|LOUD_FAILURE|CONSISTENT)' \
             "$vout" "$verr" || true)
 
         if [ -z "$line" ]; then

@@ -242,6 +242,8 @@ junit_case c "flush-13" LOUD_FAILURE       1 "LOUD_FAILURE: shipped artifacts we
 junit_case c "flush-14" UNPARSEABLE        1 "DETAIL something
 what even is this"
 junit_case c "flush-17" DURABLE            1 "DURABLE count=7"
+junit_case c "flush-19" PRECONDITION_NOT_MET 1 \
+    "PRECONDITION_NOT_MET mat-view needs recovered F < C, got F=8 C=8 with Wm=7"
 # The oracle never reached a verdict, so nothing was measured and the rig owner is the one to
 # page. Rendering this as <failure> would raise a data-loss alarm for a JVM the agent killed.
 junit_case c "flush-18" NOT_EVALUATED     1 "NOT_EVALUATED: verifier produced no verdict (exit=134 killed-by-signal-6)"
@@ -254,10 +256,10 @@ s = r if r.tag == 'testsuite' else r.find('testsuite')
 print(s.get('tests'), s.get('failures'), s.get('errors'), s.get('skipped'))
 PY
 )
-check "mixed suite: tests counted"                    "$t2" "7"
+check "mixed suite: tests counted"                    "$t2" "8"
 check "mixed suite: product faults -> failures=4"     "$f2" "4"
 check "mixed suite: instrument faults -> errors=2"    "$e2" "2"
-check "mixed suite: a pass and no skips are not counted as either" "$s2" "0"
+check "mixed suite: precondition miss -> skipped=1"   "$s2" "1"
 
 element_of() {  # XML NAME -> error|failure|skipped|pass
     python3 - "$1" "$2" <<'PY'
@@ -275,6 +277,7 @@ check "MOUNT_FAILED       -> <failure> (product)"  "$(element_of "$XML2" flush-1
 check "LOUD_FAILURE       -> <failure> (louder alarm)" "$(element_of "$XML2" flush-13)" "failure"
 check "UNPARSEABLE        -> <error> (instrument)" "$(element_of "$XML2" flush-14)" "error"
 check "DURABLE            -> pass"                 "$(element_of "$XML2" flush-17)" "pass"
+check "PRECONDITION_NOT_MET -> <skipped>"           "$(element_of "$XML2" flush-19)" "skipped"
 check "NOT_EVALUATED      -> <error> (instrument)" "$(element_of "$XML2" flush-18)" "error"
 # Two boundaries, both red, different alarms. If these ever collapse to the same element the
 # routing has been undone.

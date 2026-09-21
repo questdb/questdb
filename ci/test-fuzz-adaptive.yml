@@ -1054,24 +1054,23 @@ stages:
               # -- but their failure is expected and does not fail the job, or the battery is
               # red every night for something already known and nobody reads it again.
               #
-              # rewrite-mat-view is dimension 15, documented in tools/durability/vm/README.md:
-              # after a crash the base correctly discards the txns the RPO window permits it
-              # to lose, while the view keeps aggregates derived from those same txns and
-              # still reports view_status=valid. The README argues it is permanent --
-              # incremental refresh only moves forward from a watermark already above the
-              # base, and the invalidation path is gated on a TRUNCATE barrier that a crash
-              # rollback is not.
+              # rewrite-mat-view is dimension 15, documented in tools/durability/vm/README.md.
+              # It verifies the startup repair for a view refreshed past the base's recovered
+              # RPO frontier. The cell disables durable epochs so they cannot advance Wm through
+              # the pending base txn. A boundary counts only if it captures Wm<C, actually recovers
+              # with F<C, and startup arms and completes a surgical view repair; otherwise the
+              # verifier reports PRECONDITION_NOT_MET. An all-skipped sweep fails as NOT_EVALUATED.
               #
-              # rewrite-mat-view-control is the other half of that finding and is NOT expected
-              # to fail: at mode=sync, W=0, Wm==C, there is no window for the view to lead
-              # and the defect does not appear. If the control ever fails, the defect is not
-              # what the README says it is.
+              # rewrite-mat-view-control runs the same WAL + mat-view workload at adaptive W=0.
+              # Every commit is durable before acknowledgement, so Wm==C and no rollback can leave
+              # the view ahead. Keep it adaptive rather than mode=sync: sync defaults to a bypass-WAL
+              # table, and materialized views are only created for the WAL workload.
               #
               # An expected failure that starts PASSING fails the run. Either the defect is
               # fixed -- remove the cell from this list -- or the cell stopped exercising it,
               # and a known defect that silently stops reproducing is how a test quietly
-              # becomes decoration.
-              KNOWN_DEFECTS="rewrite-mat-view"
+              # becomes decoration. There are currently no known-defect cells.
+              KNOWN_DEFECTS=""
 
               # Half depth for the extra window sizes: the bar they test is the same one the
               # W=50000 cell tests at full depth, and what they add is the second and third
@@ -1182,8 +1181,8 @@ stages:
               if [ "$MTX" -gt 0 ]; then
                 DIMS="
               rewrite-o3|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=o3
-              rewrite-mat-view|reference|adaptive|50000|$MTX|QDB_MAT_VIEW=true QDB_JUNIT_SUITE_SUFFIX=matview
-              rewrite-mat-view-control|reference|sync|0|$MTX|QDB_MAT_VIEW=true QDB_JUNIT_SUITE_SUFFIX=matview
+              rewrite-mat-view|reference|adaptive|50000|$MTX|QDB_MAT_VIEW=true QDB_EPOCH_MS=-1 QDB_JUNIT_SUITE_SUFFIX=matview
+              rewrite-mat-view-control|reference|adaptive|0|$MTX|QDB_MAT_VIEW=true QDB_EPOCH_MS=-1 QDB_JUNIT_SUITE_SUFFIX=matview-control
               rewrite-ddl-add-column|reference|adaptive|50000|$MTX|QDB_DDL_EVERY_ROWS=50000 QDB_JUNIT_SUITE_SUFFIX=ddl
               rewrite-profile-varchar|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=varchar
               rewrite-profile-array|reference|adaptive|0|$MTX|QDB_SCHEMA_PROFILE=array

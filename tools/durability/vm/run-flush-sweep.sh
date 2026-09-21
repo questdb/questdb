@@ -327,6 +327,8 @@ fails=0; checked=0
 # loop.
 informative=0
 failed_points=""
+mat_view_repairs_evaluated=0
+mat_view_precondition_misses=0
 # Machine-readable output, alongside the text log. It lands in $OUTDIR, outside $RUN, so the
 # success-path cleanup does not delete the report a green run produced.
 JUNIT_XML="${QDB_JUNIT_XML:-$OUTDIR/junit.xml}"
@@ -348,6 +350,7 @@ junit_property window_us    "$WINDOW"
 junit_property profile      "$PROFILE"
 junit_property epoch_ms     "$EPOCH"
 junit_property wal_table    "$WAL_TABLE"
+junit_property mat_view     "${QDB_MAT_VIEW:-false}"
 junit_property sweep_mode   "$SWEEP_MODE"
 junit_property nflush       "$nflush"
 junit_property points       "$(echo "$points" | wc -w)"
@@ -399,11 +402,21 @@ for n in $points; do
     v=$(verdict_classify "$line")
     checked=$((checked + 1))
     [ "$v" = NO_COMMIT ] || informative=$((informative + 1))
+    if [ "${QDB_MAT_VIEW:-false}" = true ] \
+            && [ "$(echo "$MODE" | tr 'A-Z' 'a-z')" = adaptive ] \
+            && [ "$WINDOW" -gt 0 ]; then
+        case "$v" in
+            PRECONDITION_NOT_MET) mat_view_precondition_misses=$((mat_view_precondition_misses + 1)) ;;
+            # For this cell CrashVerifier emits RPO_OK only after observing F < C, seeing startup
+            # arm at least one surgical repair, and driving every armed repair to completion.
+            RPO_OK)               mat_view_repairs_evaluated=$((mat_view_repairs_evaluated + 1)) ;;
+        esac
+    fi
     junit_case "$JUNIT_CLASS" "flush-$n" "$v" "$(( $(date +%s) - point_started ))" "$out"
     echo "$STAMP sweep profile=$PROFILE epoch=$EPOCH mode=$MODE W=$WINDOW flush=$n/$nflush verdict=$v line=$line" >> "$LOG"
     printf '  flush %4d/%-4d -> %s\n' "$n" "$nflush" "$v"
     case "$v" in
-        DURABLE|RPO_OK|NO_COMMIT) ;;
+        DURABLE|RPO_OK|PRECONDITION_NOT_MET|NO_COMMIT) ;;
         *) if [ "$v" = MOUNT_FAILED ]; then
                # A filesystem that will not mount at a crash point is a real outcome, not a harness
                # error, so report it and keep going. Compared as a token, not a raw string, because
@@ -449,6 +462,24 @@ if [ -n "$failed_points" ] && [ "${QDB_SWEEP_DENSIFY:-true}" = "true" ]; then
             printf '    neighbour %4d -> %s\n' "$n" "$v"
         done
     done
+fi
+
+# The W>0 mat-view cell is meaningful only when at least one sampled boundary captures Wm < C,
+# actually recovers with F < C, and makes startup arm and complete a surgical view repair.
+# Individual boundaries that stop short are legitimate skips; a whole sweep of them is a setup
+# fault, not evidence that the repair works. Publish one explicit suite-level error instead of
+# letting an all-skipped mat-view experiment report green.
+if [ "${QDB_MAT_VIEW:-false}" = true ] \
+        && [ "$(echo "$MODE" | tr 'A-Z' 'a-z')" = adaptive ] \
+        && [ "$WINDOW" -gt 0 ]; then
+    junit_property mat_view_repairs_evaluated "$mat_view_repairs_evaluated"
+    junit_property mat_view_precondition_misses "$mat_view_precondition_misses"
+    if [ "$fails" -eq 0 ] && [ "$mat_view_repairs_evaluated" -eq 0 ]; then
+        precondition_error="NOT_EVALUATED: none of $checked sampled mat-view boundaries completed startup repair after an actual RPO rollback"
+        junit_case "$JUNIT_CLASS" "mat-view-rpo-precondition" NOT_EVALUATED 0 "$precondition_error"
+        echo "  $precondition_error"
+        fails=$((fails + 1))
+    fi
 fi
 
 vm_kill "$RUN"

@@ -7,9 +7,10 @@
 #     classname = "durability.adaptive.W50000.bitmap"
 #     failure   = the verdict line plus the DETAIL lines already captured in $OUTDIR
 #
-# NO_COMMIT maps to <skipped>, not to a pass: the cut landed before anything was committed, so
-# the boundary is a valid sample that measured nothing. Counting it as a pass would let a sweep
-# that measured nothing report as a wall of green.
+# NO_COMMIT and PRECONDITION_NOT_MET map to <skipped>, not to passes. The first cut landed before
+# anything was committed; the second did not reach a completed mat-view startup repair. Counting
+# either as a pass would let a sweep that measured nothing report as
+# a wall of green.
 #
 # Instrument faults render as <error> and product faults as <failure>, because for a durability
 # gate that decides who gets paged. The token list lives in verdict_is_instrument_fault in
@@ -68,10 +69,16 @@ junit_case() {
         # arithmetic: a malformed attribute does not lose one boundary, it loses the report.
         printf '    <testcase classname="%s" name="%s" time="%s"' \
             "$(junit_escape "$classname")" "$(junit_escape "$name")" "$(junit_escape "$secs")"
-        if [ "$verdict" = "NO_COMMIT" ]; then
+        if [ "$verdict" = "NO_COMMIT" ] || [ "$verdict" = "PRECONDITION_NOT_MET" ]; then
             JUNIT_SKIPPED=$((JUNIT_SKIPPED + 1))
+            local skipped_message
+            if [ "$verdict" = "NO_COMMIT" ]; then
+                skipped_message="NO_COMMIT — the cut landed before anything was committed; this boundary measured nothing"
+            else
+                skipped_message="PRECONDITION_NOT_MET — this boundary did not reach a completed mat-view startup repair across an RPO rollback"
+            fi
             printf '>\n      <skipped message="%s"/>\n    </testcase>\n' \
-                "$(junit_escape "NO_COMMIT — the cut landed before anything was committed; this boundary measured nothing")"
+                "$(junit_escape "$skipped_message")"
         elif verdict_is_pass "$verdict"; then
             printf '/>\n'
         else

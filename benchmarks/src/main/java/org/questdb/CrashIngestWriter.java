@@ -403,10 +403,10 @@ public class CrashIngestWriter {
      * Wm stays -1 for the whole run and the recorded pair degenerates to (C, -1). That is the
      * configuration under test, not a fault: see CrashVerifier's NOSYNC-on-WAL bar.
      * <p>
-     * Rows flow through a WalWriter into the WAL sequencer;
-     * after each commit the apply job materializes them and fires durable epochs, and the group-commit
-     * flush (WalPurgeJob, age-gated by W) advances the durable-ack frontier. This mirrors a running
-     * server: WAL commits + a background apply worker + the group-commit flusher coexist.
+     * Rows flow through a WalWriter into the WAL sequencer. After each commit the apply job materializes
+     * them and may fire a durable epoch; both a durable epoch and the group-commit flush can advance the
+     * durable-ack frontier. This mirrors a running server: WAL commits, a background apply worker, and the
+     * group-commit flusher coexist.
      *
      * <p>After each commit we capture BOTH:
      * <ul>
@@ -414,8 +414,9 @@ public class CrashIngestWriter {
      *   <li>Wm = tracker.getLocalDurableSeqTxn() — the durable-ack frontier (the WAL fdatasync high-water)</li>
      * </ul>
      * Under W=0, Wm advances synchronously with C on each commit (adaptive == SYNC, zero loss). Under
-     * W>0, Wm lags C by up to ~W (the at-risk window); WalPurgeJob.runSerially() self-limits to the W
-     * cadence via its age gate, so calling it every commit reproduces the server's bounded flush.
+     * W>0, Wm may lag C (the at-risk window) until either a group flush or a durable epoch catches up.
+     * WalPurgeJob.runSerially() self-limits to the W cadence via its age gate, so calling it every commit
+     * reproduces the server's bounded group flush.
      */
     private static void runAdaptiveWal(CairoConfiguration cfg, String dbRoot, long maxRows) throws Exception {
         // Create the WAL table (its own short-lived engine, mirroring the bypass-wal flow).
@@ -517,6 +518,31 @@ public class CrashIngestWriter {
                         applyJob.drain(0);
                         checkJob.runSerially();
                         applyJob.drain(0);
+
+                        // Sample the base frontier BEFORE mat-view work. Refreshing all six variants can
+                        // take many times W; putting that work first makes every pending base commit old
+                        // enough for this age-gated group flush and erases the RPO window the mat-view
+                        // crash cell exists to exercise. Capture after the base apply so the refresh
+                        // notification exists, and after the flush so Wm names the frontier this loop has
+                        // actually made durable.
+                        purgeJob.flushNow();
+
+                        committedRows = id + 1;
+                        final long committedSeqTxn = tracker.getSeqTxn();       // C
+                        final long localDurableSeqTxn = tracker.getLocalDurableSeqTxn(); // Wm
+
+                        // _progress: first line = bare committed row count (so `head -1` works in all
+                        // modes), then the adaptive frontiers C and Wm.
+                        final String content = committedRows
+                                + "\nC=" + committedSeqTxn
+                                + "\nWm=" + localDurableSeqTxn + "\n";
+                        writeProgressDurably(dbRoot, progressPath, progressTmp,
+                                content.getBytes(StandardCharsets.US_ASCII));
+
+                        System.out.println("committed rows=" + committedRows
+                                + " C=" + committedSeqTxn + " Wm=" + localDurableSeqTxn);
+                        System.out.flush();
+
                         if (mvJob != null) {
                             // The refresh job DRAINS a queue; it does not scan for
                             // stale views. Nothing enqueues work here because the
@@ -540,27 +566,6 @@ public class CrashIngestWriter {
                             while (mvJob.run()) ;
                             applyJob.drain(0);
                         }
-
-                        // Group-commit device flush: advances localDurableSeqTxn for commits older than W
-                        // (a no-op set under W=0, where commit already fdatasync'd). Age-gated, so calling
-                        // it every commit self-limits to the W cadence.
-                        purgeJob.flushNow();
-
-                        committedRows = id + 1;
-                        final long committedSeqTxn = tracker.getSeqTxn();       // C
-                        final long localDurableSeqTxn = tracker.getLocalDurableSeqTxn(); // Wm
-
-                        // _progress: first line = bare committed row count (so `head -1` works in all
-                        // modes), then the adaptive frontiers C and Wm.
-                        final String content = committedRows
-                                + "\nC=" + committedSeqTxn
-                                + "\nWm=" + localDurableSeqTxn + "\n";
-                        writeProgressDurably(dbRoot, progressPath, progressTmp,
-                                content.getBytes(StandardCharsets.US_ASCII));
-
-                        System.out.println("committed rows=" + committedRows
-                                + " C=" + committedSeqTxn + " Wm=" + localDurableSeqTxn);
-                        System.out.flush();
 
                         if (REBASE_AT_ROWS > 0 && (id + 1) >= REBASE_AT_ROWS) {
                             rebaseRequested = true;

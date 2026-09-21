@@ -7,6 +7,11 @@
 #
 #   DURABLE             every committed txn survived (W=0, or no loss at W>0)
 #   RPO_OK              every ACKED txn survived; loss confined to (Wm, C]
+#   PRECONDITION_NOT_MET
+#                       this boundary did not reach the mat-view repair: no captured durability
+#                       gap, no actual base rollback, or no persisted view ahead of the recovered
+#                       base. A boundary-level skip; the sweep fails as NOT_EVALUATED if every
+#                       sampled boundary has this result.
 #   DURABILITY_FAILURE  an acked txn was lost, or a suspend never cleared
 #   SILENT_CORRUPTION   wrong value, gap, or torn commit boundary — the worst
 #   LOUD_FAILURE        the engine refused to open or query, loudly. A PRODUCT finding: the
@@ -30,6 +35,7 @@ verdict_classify() {  # LINE -> one token on stdout
     case "$line" in
         DURABLE*)             echo DURABLE ;;
         RPO_OK*)              echo RPO_OK ;;
+        PRECONDITION_NOT_MET*) echo PRECONDITION_NOT_MET ;;
         DURABILITY_FAILURE*)  echo DURABILITY_FAILURE ;;
         SILENT_CORRUPTION*)   echo SILENT_CORRUPTION ;;
         LOUD_FAILURE*)        echo LOUD_FAILURE ;;
@@ -61,7 +67,7 @@ verdict_line() {  # BLOB -> the verdict line (empty if there is none)
 # A verdict that means "the run passed". Anything else keeps the disks.
 verdict_is_pass() {  # TOKEN -> exit 0 if pass
     case "$1" in
-        DURABLE|RPO_OK|NO_COMMIT) return 0 ;;
+        DURABLE|RPO_OK|PRECONDITION_NOT_MET|NO_COMMIT) return 0 ;;
         *) return 1 ;;
     esac
 }

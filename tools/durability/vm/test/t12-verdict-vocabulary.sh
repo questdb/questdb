@@ -35,6 +35,9 @@ row DURABLE \
 row RPO_OK \
     "RPO_OK F=345 >= Wm=177 (every acked txn survived); at-risk txns lost=3 in (Wm=177, C=348] (RPO<=W=50000)" \
     "RPO_OK                <- CrashVerifier"
+row PRECONDITION_NOT_MET \
+    "PRECONDITION_NOT_MET mat-view needs recovered F < C, got F=348 C=348 with Wm=347; the base did not roll back" \
+    "PRECONDITION_NOT_MET  <- CrashVerifier"
 row DURABILITY_FAILURE \
     "DURABILITY_FAILURE table left suspended after recovery (F=12 C=14 Wm=12)" \
     "DURABILITY_FAILURE    <- CrashVerifier"
@@ -161,6 +164,9 @@ fault_is() {  # TOKEN yes|no
 
 pass_is DURABLE            yes
 pass_is RPO_OK             yes
+# A single boundary that does not complete the startup repair is a legitimate skip.
+# run-flush-sweep.sh adds a failing NOT_EVALUATED suite case if every mat-view boundary returns it.
+pass_is PRECONDITION_NOT_MET yes
 # NO_COMMIT passes deliberately: the cut landed before anything was committed, a legitimate
 # sample that measured nothing, so it must not fail the run. lib/junit.sh still renders it as
 # <skipped> so it cannot inflate the durable count either.
@@ -178,6 +184,7 @@ pass_is UNPARSEABLE        no
 fault_is UNPARSEABLE       yes
 fault_is DURABLE           no
 fault_is RPO_OK            no
+fault_is PRECONDITION_NOT_MET no
 fault_is NO_COMMIT         no
 fault_is DURABILITY_FAILURE no
 fault_is SILENT_CORRUPTION no
@@ -265,7 +272,7 @@ emitted=$(sed -n '/^verdict_classify()/,/^}/p' "$HERE/../lib/verdict.sh" \
     | grep -vE '^[[:space:]]*#' \
     | grep -oE '\)[[:space:]]+echo[[:space:]]+[A-Z_]+' \
     | awk '{print $NF}' | sort -u | tr '\n' ' ')
-covered="DURABILITY_FAILURE DURABLE LOUD_FAILURE MOUNT_FAILED NO_COMMIT NOT_EVALUATED RPO_OK SILENT_CORRUPTION UNPARSEABLE "
+covered="DURABILITY_FAILURE DURABLE LOUD_FAILURE MOUNT_FAILED NO_COMMIT NOT_EVALUATED PRECONDITION_NOT_MET RPO_OK SILENT_CORRUPTION UNPARSEABLE "
 check "every token verdict_classify can emit has a row above" "$emitted" "$covered"
 
 echo
