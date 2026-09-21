@@ -123,7 +123,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public boolean hasNext() {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             ++tableIndex;
             int n = tableBucket.size();
 

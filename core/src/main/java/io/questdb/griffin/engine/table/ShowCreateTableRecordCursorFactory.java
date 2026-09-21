@@ -156,7 +156,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         return cursor.of(executionContext, tableToken, tokenPosition);
     }
 

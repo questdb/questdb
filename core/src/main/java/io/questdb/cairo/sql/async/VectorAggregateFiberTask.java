@@ -38,6 +38,7 @@ final class VectorAggregateFiberTask extends AbstractQueryParallelFiberTask {
     private RingQueue<VectorAggregateTask> batchQueue;
     private long cursor = -1;
     private VectorAggregateEntry entry;
+    private long frameRowCount;
     private boolean started;
     private Sequence subSeq;
     private int workerId = -1;
@@ -57,21 +58,15 @@ final class VectorAggregateFiberTask extends AbstractQueryParallelFiberTask {
         this.cursor = cursor;
         this.batchQueue = queue;
         bindBatch(workerId, subSeq);
-        bindCancellation(entry.getCircuitBreaker());
+        bindCancellation(entry.getCircuitBreaker(), task.getDispatchContext());
         bindProgress(entry.getProgressState());
-        task.entry = null;
+        task.clear();
         releaseCursor();
     }
 
     @Override
     boolean isBound() {
         return entry != null || cursor > -1;
-    }
-
-    @Override
-    protected long boundEntryWeight() {
-        final VectorAggregateEntry boundEntry = entry;
-        return boundEntry != null ? boundEntry.getFrameRowCount() : 0;
     }
 
     @Override
@@ -125,9 +120,15 @@ final class VectorAggregateFiberTask extends AbstractQueryParallelFiberTask {
     }
 
     @Override
+    protected long batchRowCount() {
+        return frameRowCount;
+    }
+
+    @Override
     protected boolean runTask() {
         started = true;
         try {
+            frameRowCount = entry.getFrameRowCount();
             entry.runDetached(workerId);
         } finally {
             entry = null;

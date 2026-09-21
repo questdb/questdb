@@ -363,6 +363,7 @@ import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.QueryModelGenerationState;
 import io.questdb.griffin.model.QueryModelWrapper;
 import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
@@ -526,6 +527,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // Cache of factories generated for shared models (models with shared refs).
     // Key: the delegate QueryModel; Value: the primary factory.
     // When a QueryModelWrapper is encountered, we look up its delegate here.
+    private final QueryModelGenerationState generationState = new QueryModelGenerationState();
     private final ObjObjHashMap<QueryModel, RecordCursorFactory> sharedFactoryCache = new ObjObjHashMap<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack2 = new ArrayDeque<>();
@@ -736,10 +738,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         pushdownFilterExtractor.clear();
         markoutHorizonContext.clear();
         sharedFactoryCache.clear();
+        generationState.clear();
     }
 
     @Override
     public void close() {
+        generationState.setPreparationHook(null);
+        generationState.clear();
+        sharedFactoryCache.clear();
         Throwable failure = null;
         for (int i = 0, n = whereClauseParsers.size(); i < n; i++) {
             try {
@@ -899,6 +905,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     public RecordCursorFactory generate(@Transient IQueryModel model, @Transient SqlExecutionContext executionContext) throws SqlException {
+        final boolean isOutermost = whereClauseParserDepth == 0;
+        try {
+            return generateAttempt(model, executionContext);
+        } finally {
+            if (isOutermost) {
+                // The cache borrows factories from the returned tree. A retry can reuse model
+                // identities, so neither borrowed factories nor snapshots may survive an attempt.
+                generationState.clear();
+                sharedFactoryCache.clear();
+            }
+        }
+    }
+
+    private RecordCursorFactory generateAttempt(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final int parserIndex = whereClauseParserDepth;
         while (whereClauseParsers.size() <= parserIndex) {
             whereClauseParsers.add(new WhereClauseParser());
@@ -911,12 +931,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         parser.setScalarBoundDepth(parserIndex == 0 ? 0 : whereClauseParsers.getQuick(parserIndex - 1).childScalarBoundDepth());
         whereClauseParserDepth++;
         Throwable failure = null;
+        boolean hasEntered = false;
         try {
+            if (parserIndex == 0) {
+                sharedFactoryCache.clear();
+                generationState.begin(model, expressionNodePool);
+            } else {
+                hasEntered = generationState.enterRegion(model, expressionNodePool);
+            }
             return generateQuery(model, executionContext, true);
         } catch (Throwable th) {
             failure = th;
             throw th;
         } finally {
+            generationState.exitRegion(hasEntered);
             whereClauseParserDepth--;
             // The borrowed models own scalar sub-query factories until buildIntervalModel() hands
             // them downstream; free them here so a throw before that handoff does not leak the
@@ -981,6 +1009,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     public EntityColumnFilter getEntityColumnFilter() {
         return entityColumnFilter;
+    }
+
+    @TestOnly
+    public QueryModelGenerationState getGenerationStateForTesting() {
+        return generationState;
     }
 
     public ListColumnFilter getIndexColumnFilter() {
@@ -4865,7 +4898,56 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateFilter(RecordCursorFactory factory, IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        return model.getWhereClause() == null ? factory : generateFilter0(factory, model, executionContext);
+        final ExpressionNode where = model.getWhereClause();
+        if (where == null) {
+            return factory;
+        }
+        // Keep-flag filter fusion: when the desugared SUBSAMPLE shape produces exactly
+        //   WHERE <keepBool>  over a CachedWindowLight whose sole window function is a row-selecting
+        // keep flag and <keepBool> is exactly that function's BOOLEAN output column, run a fused
+        // cursor that emits only the kept rows - no per-row boolean materialization, no Filter pass.
+        if (tryFuseKeepFlagFilter(factory, where, model)) {
+            return factory;
+        }
+        return generateFilter0(factory, model, executionContext);
+    }
+
+    // Conservative pattern match for the single-keep-flag fusion. Fuses ONLY when:
+    //  - the WHERE clause is exactly one column literal (no AND/OR/other terms),
+    //  - the input factory is a CachedWindowLightRecordCursorFactory with EXACTLY one window
+    //    function and that function is the desugared SUBSAMPLE keep flag - both row-selecting
+    //    (WindowFunction.isRowSelecting()) AND marked internal (isSubsampleKeepFlag), enforced by
+    //    getSingleRowSelectingFunction(),
+    //  - the literal resolves to that function's own BOOLEAN output column (not a base column).
+    // Anything else (multiple window fns, extra filter terms, the boolean referenced elsewhere, a
+    // non-row-selecting fn, an UNMARKED hand-written row-selecting keep boolean that a user could also
+    // PROJECT, PARTITION BY, a non-light window factory) leaves the untouched CachedWindowLight +
+    // Filter path in place. On a match, the factory is switched into row-selecting mode and the WHERE
+    // clause is consumed.
+    // Why the marker matters: the fused cursor skips writing the per-row boolean. If a hand-written
+    // query both filters on AND projects the keep boolean, the projected copy would read the unwritten
+    // slot (false for every kept row). Gating on the desugar-only marker guarantees the boolean is
+    // dropped by the outer projection before it can surface, so fusion stays correct.
+    private boolean tryFuseKeepFlagFilter(RecordCursorFactory factory, ExpressionNode where, IQueryModel model) {
+        if (where.type != ExpressionNode.LITERAL) {
+            return false;
+        }
+        if (!(factory instanceof CachedWindowLightRecordCursorFactory windowFactory)) {
+            return false;
+        }
+        final WindowFunction fn = windowFactory.getSingleRowSelectingFunction();
+        if (fn == null) {
+            return false;
+        }
+        final RecordMetadata metadata = windowFactory.getMetadata();
+        final int colIdx = metadata.getColumnIndexQuiet(where.token);
+        // The literal must reference exactly the keep-flag function's own boolean output column.
+        if (colIdx < 0 || colIdx != fn.getColumnIndex() || metadata.getColumnType(colIdx) != ColumnType.BOOLEAN) {
+            return false;
+        }
+        windowFactory.enableRowSelecting(fn);
+        model.setWhereClause(null);
+        return true;
     }
 
     @NotNull
@@ -8835,18 +8917,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory primaryFactory = sharedFactoryCache.get(delegate);
             boolean cached = true;
             if (primaryFactory == null) {
-                primaryFactory = generateQuery0Inner(delegate, executionContext, processJoins);
+                primaryFactory = generateSharedSource(delegate, executionContext, processJoins);
                 cached = false;
             }
             if (primaryFactory.supportsSharedCursors()) {
                 sharedFactoryCache.put(delegate, primaryFactory);
                 return new SharedRecordCursorFactory(primaryFactory, sid);
             }
-            return cached ? generateQuery0Inner(delegate, executionContext, processJoins) : primaryFactory;
+            return cached ? generateSharedSource(delegate, executionContext, processJoins) : primaryFactory;
         }
 
         if (model instanceof QueryModel qm && qm.hasSharedRefs()) {
-            RecordCursorFactory factory = generateQuery0Inner(model, executionContext, processJoins);
+            RecordCursorFactory factory = generateSharedSource(model, executionContext, processJoins);
             if (factory.supportsSharedCursors()) {
                 sharedFactoryCache.put(qm, factory);
             }
@@ -8856,7 +8938,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return generateQuery0Inner(model, executionContext, processJoins);
     }
 
+    private RecordCursorFactory generateSharedSource(IQueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
+        final boolean hasEntered = generationState.enterRegion(model, expressionNodePool);
+        try {
+            return generateQuery0Inner(model, executionContext, processJoins);
+        } finally {
+            generationState.exitRegion(hasEntered);
+        }
+    }
+
     private RecordCursorFactory generateQuery0Inner(IQueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
+        generationState.enterModel(model);
         // Remember the last model with non-empty ORDER BY as we descend through nested models.
         // We need the ORDER BY clause in the Markout Horizon Join optimization, but it's stored
         // several levels up from the model that holds the join clause.
@@ -8886,6 +8978,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             return factory;
         } finally {
+            generationState.exitModel(model);
             if (originatingViewNameExpr != null) {
                 functionParser.restoreExecutionRequirementPosition(previousExecutionRequirementPosition);
             }
@@ -9627,6 +9720,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         };
     }
 
+    /**
+     * Returns true when every projected token names a column of {@code metadata}. Column order is
+     * deliberately not considered, so this preserves the historical timestamp-first reordering of
+     * `(...) TIMESTAMP(ts)` sub-queries; it only rejects projections whose names the nested
+     * metadata cannot supply.
+     */
+    private static boolean projectsNestedColumnNames(ObjList<QueryColumn> columns, int selectColumnCount, RecordMetadata metadata) {
+        for (int i = 0; i < selectColumnCount; i++) {
+            final CharSequence token = columns.getQuick(i).getAst().token;
+            if (Chars.equals(metadata.getColumnName(i), token)) {
+                continue;
+            }
+            boolean found = false;
+            for (int j = 0, n = metadata.getColumnCount(); j < n; j++) {
+                if (j != i && Chars.equals(metadata.getColumnName(j), token)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private RecordCursorFactory generateSelectChoose(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         boolean overrideTimestampRequired = model.hasExplicitTimestamp() && executionContext.isTimestampRequired();
         final RecordCursorFactory factory;
@@ -9710,7 +9829,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         } else {
             final int tsIndex = metadata.getTimestampIndex();
-            entity = timestamp != null && tsIndex != -1 && Chars.equalsIgnoreCase(timestamp.token, metadata.getColumnName(tsIndex));
+            entity = timestamp != null && tsIndex != -1
+                    && Chars.equalsIgnoreCase(timestamp.token, metadata.getColumnName(tsIndex))
+                    // Matching the designated timestamp alone does not make the wrapper
+                    // redundant: the nested metadata is handed straight back to the caller, so
+                    // it must also carry the projection's column count and names. A
+                    // JoinRecordMetadata names columns `<alias>.<column>`, which would
+                    // otherwise reach the wire and change the result's shape.
+                    && metadata.getColumnCount() == selectColumnCount
+                    && projectsNestedColumnNames(columns, selectColumnCount, metadata);
         }
 
         if (entity) {
@@ -10866,6 +10993,47 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // the traversal that drives it.
         CachedWindowMapGroups cachedWindowMapGroups = null;
         try {
+            // Generate the input once and validate against its actual completed metadata. Neither
+            // validation nor either executable parser pass may mutate the stored bound recipe.
+            ObjList<ExpressionNode> subsampleCalls = null;
+            for (int i = 0; i < columnCount; i++) {
+                if (!(columns.getQuick(i) instanceof WindowExpression window) || window.getPendingSubsample() == null) {
+                    continue;
+                }
+                final ExpressionNode raw = window.getPendingSubsample();
+                final ExpressionNode bound = window.getAst();
+                if (window.isSubsampleProjectionPending() || !window.isSubsampleKeepFlag() || bound.paramCount != 2) {
+                    throw SqlException.$(raw.position, "internal error: unbound SUBSAMPLE projection");
+                }
+                final int valueIndex = SqlUtil.getColumnIndexQuiet(baseMetadata, bound.rhs.token);
+                if (valueIndex < 0) {
+                    throw SqlException.$(raw.position, "internal error: missing bound SUBSAMPLE value");
+                }
+                SubsampleValidator.validateNumericType(baseMetadata.getColumnType(valueIndex), raw.args.getQuick(0).position);
+                // V belongs solely to validation, which can reassociate before success or failure.
+                final ExpressionNode validationTarget = deepClone(expressionNodePool, raw.args.getQuick(1));
+                SubsampleValidator.validatePositionTargetOrThrow(validationTarget, false, functionParser, executionContext);
+                // G must pass the raw syntax check before FunctionParser can fold it.
+                final ExpressionNode gap = raw.paramCount == 3 ? deepClone(expressionNodePool, raw.args.getQuick(2)) : null;
+                if (gap != null) {
+                    SubsampleValidator.validateLttbGapOrThrow(gap);
+                }
+                // E has fresh references and a fresh original target, never V's parsed tree.
+                final ExpressionNode call = expressionNodePool.next().of(FUNCTION, bound.token, bound.precedence, bound.position);
+                call.windowExpression = window;
+                call.paramCount = gap != null ? 4 : 3;
+                if (gap != null) {
+                    call.args.add(gap);
+                }
+                call.args.add(deepClone(expressionNodePool, raw.args.getQuick(1)));
+                call.args.add(deepClone(expressionNodePool, bound.rhs));
+                call.args.add(deepClone(expressionNodePool, bound.lhs));
+                if (subsampleCalls == null) {
+                    subsampleCalls = new ObjList<>(columnCount);
+                    subsampleCalls.setPos(columnCount);
+                }
+                subsampleCalls.setQuick(i, call);
+            }
             // if all window function don't require sorting or more than one pass then use streaming factory
             boolean isFastPath = true;
 
@@ -10873,7 +11041,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final QueryColumn qc = columns.getQuick(i);
                 if (qc.isWindowExpression()) {
                     final WindowExpression ac = (WindowExpression) qc;
-                    final ExpressionNode ast = qc.getAst();
+                    final ExpressionNode ast = subsampleCalls != null && subsampleCalls.getQuick(i) != null
+                            ? subsampleCalls.getQuick(i) : qc.getAst();
                     if (executionContext.isLiveViewCompile()) {
                         LiveViewCheckpointFunctionCompiler.validateRange(ac, ast.token, baseMetadata);
                     }
@@ -11262,7 +11431,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final QueryColumn qc = columns.getQuick(i);
                 if (qc.isWindowExpression()) {
                     final WindowExpression ac = (WindowExpression) qc;
-                    final ExpressionNode ast = qc.getAst();
+                    final ExpressionNode ast = subsampleCalls != null && subsampleCalls.getQuick(i) != null
+                            ? subsampleCalls.getQuick(i) : qc.getAst();
 
                     partitionByFunctions = null;
                     int psz = ac.getPartitionBy().size();
@@ -11390,6 +11560,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
 
                     WindowFunction windowFunction = (WindowFunction) f;
+                    // Carry the desugared SUBSAMPLE keep-flag marker from the WindowExpression onto the
+                    // function so the keep-flag filter fusion (getSingleRowSelectingFunction) can fuse
+                    // ONLY the internal __keep_subsample column, never a hand-written projected keep boolean.
+                    if (ac.isSubsampleKeepFlag()) {
+                        windowFunction.markSubsampleKeepFlag();
+                    }
                     // Until windowFunction is added to groupedWindow or naturalOrderFunctions,
                     // the outer catch cannot find it. toOrderIndices and initRecordComparator
                     // both throw, and some functions (e.g. cume_dist over partition by) own
@@ -11411,7 +11587,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             }
                             funcs.add(windowFunction);
                             windowFunctionOwned = false;
-                            windowFunction.initRecordComparator(this, chainMetadata, chainTypes, order, ac.getOrderBy(), null);
+                            // Pass the pass1 traversal directions (flipped above for BACKWARD-pass1
+                            // functions), so order-direction-sensitive functions (the SUBSAMPLE
+                            // downsampling family) can validate how their pass1 will traverse.
+                            windowFunction.initRecordComparator(this, chainMetadata, chainTypes, order, ac.getOrderBy(), ac.getOrderByDirection());
                         } else {
                             if (naturalOrderFunctions == null) {
                                 naturalOrderFunctions = new ObjList<>();
@@ -11613,7 +11792,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (symbolUnionColumns == null && factoryA instanceof MergeUnionAllRecordCursorFactory mergeFactory) {
                 symbolUnionColumns = mergeFactory.getSymbolUnionColumns();
             }
-            factoryB = generateQuery0(model.getUnionModel(), executionContext, true);
+            final boolean hasEntered = generationState.enterUnionBranch(model.getUnionModel(), expressionNodePool);
+            try {
+                factoryB = generateQuery0(model.getUnionModel(), executionContext, true);
+            } finally {
+                generationState.exitRegion(hasEntered);
+            }
 
             if (setOperationType != IQueryModel.SET_OPERATION_UNION_ALL) {
                 prepareMergeUnionAllFactory(factoryA);
@@ -13233,7 +13417,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (!isTimestamp(metadata.getColumnType(timestampIndex))) {
                 throw SqlException.$(timestamp.position, "not a TIMESTAMP");
             }
-            return timestampIndex;
+            // SUBSAMPLE's synthetic references preserve column liveness, not output order.
+            // User TIMESTAMP() declarations still designate the named column.
+            return timestamp.isTimestampOrderInherited ? metadata.getTimestampIndex() : timestampIndex;
         }
         return metadata.getTimestampIndex();
     }

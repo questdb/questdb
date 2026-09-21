@@ -25,7 +25,7 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.TableToken;
-import io.questdb.std.CarrierLocal;
+import io.questdb.std.FiberLocal;
 
 /**
  * Cooperative-yield signal thrown by the live-view refresh worker when a
@@ -51,8 +51,8 @@ import io.questdb.std.CarrierLocal;
  */
 public class LiveViewApplyLagException extends RuntimeException {
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
-    private static final CarrierLocal<LiveViewApplyLagException> tlException =
-            new CarrierLocal<>(LiveViewApplyLagException::new);
+    private static final FiberLocal<LiveViewApplyLagException> tlException =
+            new FiberLocal<>(LiveViewApplyLagException::new);
     private long appliedSeqTxn;
     private CharSequence baseTableName;
     private long targetSeqTxn;

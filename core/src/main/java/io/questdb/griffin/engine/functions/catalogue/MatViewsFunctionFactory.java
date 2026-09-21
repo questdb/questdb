@@ -144,7 +144,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             cursor.circuitBreaker = executionContext.getCircuitBreaker();
             // The expire_enforcement column classifies a scalar policy through the compiler, which binds the
             // predicate against the view's columns; that needs an execution context.
@@ -205,7 +205,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 final int n = viewTokens.size();
                 for (; viewIndex < n; viewIndex++) {
                     // reads a view state file per row, so observe the breaker each iteration
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     final TableToken viewToken = viewTokens.get(viewIndex);
                     if (engine.getTableTokenIfExists(viewToken.getTableName()) != null) {
                         final MatViewDefinition viewDefinition = engine.getDependentViewGraph().getViewDefinition(viewToken);
