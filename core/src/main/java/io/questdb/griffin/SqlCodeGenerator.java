@@ -731,6 +731,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         whereClauseParserDepth = 0;
         symbolEstimator.clear();
+        clearDeferredWindowScratch();
         intListPool.clear();
         pushdownFilterExtractor.clear();
         markoutHorizonContext.clear();
@@ -10948,6 +10949,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    private void clearDeferredWindowScratch() {
+        deferredWindowFunctions.clear();
+        deferredWindowMetadata.clear();
+    }
+
     private RecordCursorFactory generateSelectWindow(
             IQueryModel model,
             SqlExecutionContext executionContext
@@ -11401,7 +11407,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // not main metadata to avoid partitionBy functions accidentally looking up
             // window columns recursively
 
-            deferredWindowFunctions.clear();
+            clearDeferredWindowScratch();
             // One entry per window column, in SELECT order: the compiled function and the
             // normalized window it was compiled under, or null for a shape the Map group
             // compiler does not admit. The pair is what CachedWindowMapGroups reads to find
@@ -11415,7 +11421,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final boolean isGroupingCachedWindows = !executionContext.isLiveViewCompile();
             final ObjList<WindowFunction> cachedWindowSpecFunctions = isGroupingCachedWindows ? new ObjList<>() : null;
             final ObjList<WindowMapSpec> cachedWindowMapSpecs = isGroupingCachedWindows ? new ObjList<>() : null;
-            deferredWindowMetadata.clear();
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn qc = columns.getQuick(i);
                 if (qc.isWindowExpression()) {
@@ -11751,6 +11756,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.freeObjList(naturalOrderFunctions);
             Misc.freeObjList(partitionByFunctions);
             throw th;
+        } finally {
+            clearDeferredWindowScratch();
         }
     }
 
