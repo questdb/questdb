@@ -164,9 +164,20 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             boolean isCritical = e.isCritical();
             // "duplicate column name:" is BAU when column is added from ILP, don't log it as an error
             boolean isInfo = command == ADD_COLUMN && e.isMetadataValidation();
+            // Resolve the service token before the log record reserves a ring-buffer slot. Metadata
+            // services that only replay the sequencer metadata change log (MetadataServiceStub
+            // implementations such as the deferred-rename tracker) leave getTableToken()
+            // unimplemented; thrown inside the chain that exception would unwind past the I$()
+            // terminator, leak the slot forever and mask the CairoException we are reporting.
+            TableToken svcTableToken;
+            try {
+                svcTableToken = svc.getTableToken();
+            } catch (UnsupportedOperationException ignore) {
+                svcTableToken = tableToken;
+            }
 
             final LogRecord log = isInfo ? LOG.info() : (isCritical ? LOG.critical() : LOG.error());
-            log.$("could not alter table [table=").$(svc.getTableToken())
+            log.$("could not alter table [table=").$(svcTableToken)
                     .$(", command=").$(command)
                     .$(", msg=").$safe(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
