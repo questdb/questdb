@@ -891,6 +891,60 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterColumnTypeMovesACompositePartitionsStalenessKey() throws Exception {
+        // ALTER COLUMN TYPE rewrites a partition's bytes under a new writer index and then calls
+        // markPartitionDataChanged, whose whole job is to move the version identifying those bytes. On a
+        // COMPOSITE partition the offset-3 word is the geometry pointer, so setPartitionSeqTxn has nowhere to
+        // stamp and returns false - the key would stand still while the bytes changed underneath it. UPDATE is
+        // not exposed: it folds to plain first (UpdateOperatorImpl.compactPartitionNoCommit). ALTER does not,
+        // it converts the whole physical extent piece by piece and keeps the partition composite, along with
+        // its name txn and row count. The squash counter lives in the masked-size word, which a composite
+        // partition does not spend, and it is already half the staleness key every incremental consumer reads.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T00', 60*1_000_000L), x FROM long_sequence(600)");
+            drainWalQueue();
+            // A later day, so 2024-01-01 stops being the active partition.
+            execute("INSERT INTO t VALUES ('2024-01-03T00:00:00', 1)");
+            drainWalQueue();
+            // Backdated: merge-append leaves 2024-01-01 composite, its pointer in the offset-3 word.
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T02', 1_000_000L), x FROM long_sequence(200)");
+            drainWalQueue();
+
+            final int squashCountBefore;
+            final long nameTxnBefore;
+            try (TableReader reader = getReader("t")) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertTrue("fixture left 2024-01-01 plain", tx.isPartitionComposite(0));
+                Assert.assertEquals("a composite partition records no offset-3 stamp, so the squash counter is"
+                        + " the only key left to move", -1L, tx.getNativePartitionSeqTxn(0));
+                squashCountBefore = tx.getPartitionSquashCount(0);
+                nameTxnBefore = tx.getPartitionNameTxn(0);
+            }
+
+            engine.releaseInactive();
+            execute("ALTER TABLE t ALTER COLUMN x TYPE DOUBLE");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("t")) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertTrue("ALTER folded the partition, so this test no longer covers the composite path",
+                        tx.isPartitionComposite(0));
+                Assert.assertEquals("ALTER published a new partition version; the counter reset with it and this"
+                        + " test proves nothing", nameTxnBefore, tx.getPartitionNameTxn(0));
+                Assert.assertTrue("the partition's bytes were rewritten but its staleness key did not move",
+                        tx.getPartitionSquashCount(0) > squashCountBefore);
+            }
+
+            // The rewrite has to be correct, not merely versioned.
+            assertQuery("SELECT count() FROM t WHERE ts IN '2024-01-01'")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n800\n");
+        });
+    }
+
+    @Test
     public void testParquetGeneratedMustNotMaskACompositePartition() throws Exception {
         // isPartitionCompositeByRawIndex reads false as soon as parquet_generated is set, but that bit lives in
         // the masked-size word while the geometry pointer lives in offset 3: setting it on a partition that

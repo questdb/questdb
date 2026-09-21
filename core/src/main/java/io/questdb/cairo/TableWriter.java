@@ -3242,7 +3242,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long dataChangeSeqTxn = walApplySeqTxn > 0
                 ? walApplySeqTxn
                 : (tableToken.isWal() ? txWriter.getSeqTxn() : 0);
-        txWriter.setPartitionSeqTxn(partitionIndex, dataChangeSeqTxn);
+        if (!txWriter.setPartitionSeqTxn(partitionIndex, dataChangeSeqTxn)) {
+            // A COMPOSITE partition spends its offset-3 word on the geometry pointer, so there is nowhere to
+            // stamp a seqTxn and the rewrite would otherwise leave the staleness key standing still. The squash
+            // counter lives in the masked-size word, which a composite partition does NOT spend, and it is the
+            // other half of the key every incremental consumer already reads (backup's CheckpointManifest, the
+            // storage-policy scan). Bump it so a partition whose bytes just changed stops looking identical.
+            // ALTER COLUMN TYPE keeps the partition's name txn and row count, so this is the only word that moves.
+            if (!txWriter.incrementPartitionSquashCounter(partitionIndex)) {
+                // 16 bits exhausted - fall back to the squash timestamp file, exactly as squashSplitPartitions does.
+                squashSplitPartitions_updateSquashTimestampFile(
+                        txWriter.getPartitionTimestampByIndex(partitionIndex),
+                        txWriter.getPartitionNameTxn(partitionIndex)
+                );
+            }
+        }
         txWriter.bumpPartitionTableVersion();
     }
 
