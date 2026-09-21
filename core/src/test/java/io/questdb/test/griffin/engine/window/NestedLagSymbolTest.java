@@ -301,6 +301,53 @@ public class NestedLagSymbolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLagLeadSymbolNullEquality() throws Exception {
+        // Neither source column stores a NULL, so both dictionaries report
+        // containsNullValue() == false, yet lag()/lead() mint a NULL for the missing neighbor.
+        // NULL = NULL has to hold regardless, in line with the STRING comparison.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, grp SYMBOL, left_sym SYMBOL, right_sym SYMBOL)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, 'g1', 'a', 'x'),
+                    (2, 'g1', 'b', 'z'),
+                    (3, 'g1', 'c', 'a'),
+                    (4, 'g2', 'd', 'd')
+                    """);
+
+            // streaming window
+            assertQuery("""
+                    SELECT id, a, b, a = b eq, a != b ne, a::STRING = b::STRING str_eq FROM (
+                        SELECT id, LAG(left_sym) OVER (PARTITION BY id) a, LEAD(right_sym) OVER (PARTITION BY id) b FROM t
+                    )
+                    """)
+                    .expectSize()
+                    .returns("""
+                            id\ta\tb\teq\tne\tstr_eq
+                            1\t\t\ttrue\tfalse\ttrue
+                            2\t\t\ttrue\tfalse\ttrue
+                            3\t\t\ttrue\tfalse\ttrue
+                            4\t\t\ttrue\tfalse\ttrue
+                            """);
+            // cached window: id 2 pairs 'a' with 'a', id 4 has neither neighbor
+            assertQuery("""
+                    SELECT id, a, b FROM (
+                        SELECT
+                            id,
+                            LAG(left_sym) OVER (PARTITION BY grp ORDER BY id) a,
+                            LEAD(right_sym) OVER (PARTITION BY grp ORDER BY id) b
+                        FROM t
+                    ) WHERE a = b
+                    """)
+                    .returns("""
+                            id\ta\tb
+                            2\ta\ta
+                            4\t\t
+                            """);
+        });
+    }
+
+    @Test
     public void testLagLeadSymbolOverPartitionRepeatedCursorsStayUnderQueryMemoryLimit() throws Exception {
         // Each cursor run must release what it charged: a leaked or asymmetric charge would
         // accumulate across the runs and breach the limit, or drive the counter negative.
