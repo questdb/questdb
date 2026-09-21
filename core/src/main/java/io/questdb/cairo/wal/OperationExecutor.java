@@ -170,4 +170,13 @@ class OperationExecutor implements Closeable {
     public void setNowAndFixClock(long now, int nowTimestampType) {
         executionContext.setNowAndFixClock(now, nowTimestampType);
     }
+
+    /**
+     * Reports whether {@code tableName} is the name the statement last compiled here declared as its
+     * target. Only the apply context knows it - the compiler tells the context before resolving any
+     * name - so {@link ApplyWal2TableJob} asks through here.
+     */
+    boolean isStatementTargetTableName(CharSequence tableName) {
+        return executionContext.isStatementTarget(tableName);
+    }
 }

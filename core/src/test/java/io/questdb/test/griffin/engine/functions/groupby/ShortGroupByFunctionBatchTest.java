@@ -24,8 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.ShortColumn;
 import io.questdb.griffin.engine.functions.groupby.AvgShortGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstShortGroupByFunction;
@@ -34,19 +32,13 @@ import io.questdb.griffin.engine.functions.groupby.MaxShortGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.MinShortGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.SumShortGroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
-import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
-public class ShortGroupByFunctionBatchTest {
-    private static final int COLUMN_INDEX = 789;
-    private long lastAllocated;
-    private long lastSize;
-
+public class ShortGroupByFunctionBatchTest extends AbstractGroupByFunctionBatchTest {
     @Test
     public void testAvgShortBatch() throws Exception {
         assertMemoryLeak(() -> {
@@ -465,34 +457,5 @@ public class ShortGroupByFunctionBatchTest {
                 Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
             }
         });
-    }
-
-    private long allocateShorts(short... values) {
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-        }
-        lastSize = (long) values.length * Short.BYTES;
-        lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
-        for (int i = 0; i < values.length; i++) {
-            Unsafe.putShort(lastAllocated + (long) i * Short.BYTES, values[i]);
-        }
-        return lastAllocated;
-    }
-
-    private void freeLast() {
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-            lastAllocated = 0;
-            lastSize = 0;
-        }
-    }
-
-    private SimpleMapValue prepare(GroupByFunction function) {
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        return value;
     }
 }

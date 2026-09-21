@@ -93,12 +93,12 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
     }
 
     @Override
-    public InsertMethod createMethod(SqlExecutionContext executionContext) {
+    public InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException {
         return createMethod(executionContext, engine);
     }
 
     @Override
-    public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) {
+    public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
         SecurityContext securityContext = executionContext.getSecurityContext();
         securityContext.authorizeInsert(tableToken);
 
@@ -159,7 +159,7 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
             // no writer-generation barrier is needed.
             if (engine.isReadOnlyMode()) {
                 writer.rollback();
-                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                throw CairoException.readOnlyAccess();
             }
             final Lock lock = engine.getRoleSwitchReadLock();
             lock.lock();
@@ -171,7 +171,7 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
                 // tables/protocols share the read side and never serialize against each other.
                 if (engine.isReadOnlyMode()) {
                     writer.rollback();
-                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                    throw CairoException.readOnlyAccess();
                 }
                 writer.commit();
             } finally {

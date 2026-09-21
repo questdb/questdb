@@ -48,14 +48,25 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.BeforeClass;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 import static io.questdb.test.cairo.fuzz.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE_CEIL;
 
 public class AbstractFuzzTest extends AbstractCairoTest {
     public final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL = 20000;
     public final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN = 200;
     protected final FuzzRunner fuzzer = new FuzzRunner();
-    protected final WorkerPool sharedWorkerPool = new TestWorkerPool(4, node1.getMetrics());
+    protected final WorkerPool sharedWorkerPool;
     private final Rnd setUpRnd = TestUtils.generateRandom(LOG);
+
+    protected AbstractFuzzTest() {
+        sharedWorkerPool = new TestWorkerPool(
+                "testing",
+                4,
+                node1.getMetrics(),
+                TestUtils.getWorkerPoolMode(setUpRnd)
+        );
+    }
 
     public static int getRndO3PartitionSplit(Rnd rnd) {
         return MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN + rnd.nextInt(MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL - MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN);
@@ -419,5 +430,15 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1L << (minPage + rnd.nextInt(22 - minPage))); // MAX page size 4Mb
         long dataAppendPageSize = configuration.getDataAppendPageSize();
         LOG.info().$("dataAppendPageSize=").$(dataAppendPageSize).$();
+    }
+
+    // Joins every job the caller started, including a partially started batch, so a failure mid-run
+    // does not leave background jobs alive against test teardown.
+    protected void stopAndJoinJobs(AtomicBoolean stop, ObjList<Thread> jobs) {
+        stop.set(true);
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            int k = i;
+            TestUtils.unchecked(() -> jobs.getQuick(k).join());
+        }
     }
 }

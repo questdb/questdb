@@ -25,21 +25,35 @@
 package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.tasks.VectorAggregateTask;
+import org.jetbrains.annotations.NotNull;
 
 public class GroupByVectorAggregateJob extends AbstractQueueConsumerJob<VectorAggregateTask> {
     private final static Log LOG = LogFactory.getLog(GroupByVectorAggregateJob.class);
+    private final MessageBus messageBus;
 
     public GroupByVectorAggregateJob(MessageBus messageBus) {
         super(messageBus.getVectorAggregateQueue(), messageBus.getVectorAggregateSubSeq());
+        this.messageBus = messageBus;
+    }
+
+    @Override
+    public boolean run(@NotNull WorkerContext workerContext) {
+        final QueryParallelFiberDispatcher dispatcher = messageBus.getQueryParallelFiberDispatcher();
+        return dispatcher != null
+                ? !dispatcher.consumeVectorAggregate(workerContext.carrierId())
+                : super.run(workerContext);
     }
 
     @Override
     protected boolean doRun(long cursor, WorkerContext workerContext) {
-        final VectorAggregateEntry entry = queue.get(cursor).entry;
+        final VectorAggregateTask task = queue.get(cursor);
+        final VectorAggregateEntry entry = task.entry;
+        task.clear();
         try {
             entry.run(workerContext.carrierId(), subSeq, cursor);
         } catch (Throwable th) {

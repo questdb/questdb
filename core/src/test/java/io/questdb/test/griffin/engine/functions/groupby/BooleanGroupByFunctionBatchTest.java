@@ -24,24 +24,16 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.BooleanColumn;
 import io.questdb.griffin.engine.functions.groupby.FirstBooleanGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.LastBooleanGroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
-public class BooleanGroupByFunctionBatchTest {
-    private static final int COLUMN_INDEX = 222;
-    private long lastAllocated;
-    private long lastSize;
-
+public class BooleanGroupByFunctionBatchTest extends AbstractGroupByFunctionBatchTest {
     @Test
     public void testFirstBooleanBatch() throws Exception {
         assertMemoryLeak(() -> {
@@ -164,41 +156,5 @@ public class BooleanGroupByFunctionBatchTest {
                 Assert.assertFalse(function.getBool(value));
             }
         });
-    }
-
-    private long allocateBooleans(boolean... values) {
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-        }
-        if (values.length == 0) {
-            lastAllocated = 0;
-            lastSize = 0;
-            return 0;
-        }
-        lastSize = values.length;
-        lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
-        long addr = lastAllocated;
-        for (boolean value : values) {
-            Unsafe.putByte(addr, value ? (byte) 1 : 0);
-            addr++;
-        }
-        return lastAllocated;
-    }
-
-    private void freeLast() {
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-            lastAllocated = 0;
-            lastSize = 0;
-        }
-    }
-
-    private SimpleMapValue prepare(GroupByFunction function) {
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        return value;
     }
 }

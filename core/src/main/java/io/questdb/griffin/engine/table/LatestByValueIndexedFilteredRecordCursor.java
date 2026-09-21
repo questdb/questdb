@@ -55,7 +55,7 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
 
     @Override
     public boolean hasNext() {
-        circuitBreaker.statefulThrowExceptionIfTripped();
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         if (!isFindPending) {
             findRecord();
             hasNext = isRecordFound;
@@ -111,7 +111,7 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
     private void findRecord() {
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
@@ -121,7 +121,12 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
 
             try (RowCursor cursor = indexReader.getCursor(symbolKey, partitionLo, partitionHi)) {
                 while (cursor.hasNext()) {
-                    recordA.setRowIndex(cursor.next() - partitionLo);
+                    // Per the IndexReader.getCursor(key, minValue, maxValue) contract, returned rows are
+                    // already relative to minValue == partitionLo here, so cursor.next() is already
+                    // frame-relative. Subtracting partitionLo again here positioned the record partitionLo
+                    // rows too early whenever the match fell in a page frame with partitionLo > 0,
+                    // returning a neighbouring row (often a different symbol).
+                    recordA.setRowIndex(cursor.next());
                     if (filter.getBool(recordA)) {
                         isRecordFound = true;
                         return;

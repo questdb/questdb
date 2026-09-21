@@ -388,6 +388,8 @@ mod tests {
             aux_vec: AcVec::new_in(allocator.clone()),
             page_buffers_size: 0,
             page_buffers: Vec::new(),
+            column_top: 0,
+            page_buffers_capacity: 0,
             page_buffers_charged: 0,
             page_buffers_counted: 0,
         }

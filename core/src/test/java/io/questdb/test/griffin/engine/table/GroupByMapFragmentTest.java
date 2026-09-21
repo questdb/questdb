@@ -30,11 +30,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.griffin.engine.table.GroupByMapFragment;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.MemoryTracker;
-import io.questdb.std.MemoryTrackerWorkload;
-import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.LimitedMemoryTracker;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -166,54 +163,5 @@ public class GroupByMapFragmentTest extends AbstractCairoTest {
                 Assert.assertEquals(0, tracker.getUsed());
             }
         });
-    }
-
-    /**
-     * Minimal {@link MemoryTracker} with a fixed limit, backed by its own native
-     * {@code {used, limit}} block. The production {@code Unsafe} allocation path reads and
-     * updates the block through {@link #nativeAddress()} exactly as it does for a pooled
-     * per-query tracker.
-     */
-    private static final class LimitedMemoryTracker extends MemoryTracker {
-        private long nativeAddress;
-
-        LimitedMemoryTracker(long limitBytes) {
-            nativeAddress = Unsafe.malloc(Unsafe.MEMORY_TRACKER_BLOCK_SIZE, MemoryTag.NATIVE_MEMORY_TRACKER);
-            Unsafe.putLong(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET, 0L);
-            Unsafe.putLong(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, limitBytes);
-        }
-
-        @Override
-        public void close() {
-            if (nativeAddress != 0) {
-                freeNativeAllocators();
-                nativeAddress = Unsafe.free(nativeAddress, Unsafe.MEMORY_TRACKER_BLOCK_SIZE, MemoryTag.NATIVE_MEMORY_TRACKER);
-            }
-        }
-
-        @Override
-        public long getLimit() {
-            return Unsafe.getLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET);
-        }
-
-        @Override
-        public long getQueryId() {
-            return 1;
-        }
-
-        @Override
-        public long getUsed() {
-            return Unsafe.getLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET);
-        }
-
-        @Override
-        public MemoryTrackerWorkload getWorkload() {
-            return MemoryTrackerWorkload.QUERY;
-        }
-
-        @Override
-        public long nativeAddress() {
-            return nativeAddress;
-        }
     }
 }

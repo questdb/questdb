@@ -24,36 +24,18 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.ByteColumn;
 import io.questdb.griffin.engine.functions.columns.GeoByteColumn;
 import io.questdb.griffin.engine.functions.groupby.CountGeoHashGroupByFunctionByte;
 import io.questdb.griffin.engine.functions.groupby.FirstByteGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.LastByteGroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class ByteGroupByFunctionBatchTest {
-    private static final int COLUMN_INDEX = 910;
-    private long lastAllocated;
-    private long lastSize;
-
-    @After
-    public void tearDown() {
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-            lastAllocated = 0;
-            lastSize = 0;
-        }
-    }
-
+public class ByteGroupByFunctionBatchTest extends AbstractGroupByFunctionBatchTest {
     @Test
     public void testFirstByteBatch() {
         FirstByteGroupByFunction function = new FirstByteGroupByFunction(ByteColumn.newInstance(COLUMN_INDEX));
@@ -167,26 +149,5 @@ public class ByteGroupByFunctionBatchTest {
 
             Assert.assertEquals(4L, function.getLong(value));
         }
-    }
-
-    private long allocateBytes(byte... values) {
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-        }
-        lastSize = values.length;
-        lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
-        for (int i = 0; i < values.length; i++) {
-            Unsafe.putByte(lastAllocated + i, values[i]);
-        }
-        return lastAllocated;
-    }
-
-    private SimpleMapValue prepare(GroupByFunction function) {
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        return value;
     }
 }

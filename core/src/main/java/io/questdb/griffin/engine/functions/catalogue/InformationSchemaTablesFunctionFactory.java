@@ -98,7 +98,7 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             circuitBreaker = executionContext.getCircuitBreaker();
             engine = executionContext.getCairoEngine();
             cursor.toTop();
@@ -139,7 +139,7 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (tableIndex < 0) {
                     engine.getTableTokens(tableBucket, false);
                     tableIndex = -1;
@@ -186,7 +186,10 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
                     if (col == COLUMN_IS_TYPED) {
                         return false;
                     }
-                    return col == COLUMN_IS_INSERTABLE_INTO;
+                    if (col == COLUMN_IS_INSERTABLE_INTO) {
+                        return !tableToken.isView() && !tableToken.isMatView() && !tableToken.isLiveView();
+                    }
+                    return false;
                 }
 
                 @Override
@@ -201,6 +204,13 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
                         return Constants.PUBLIC_SCHEMA;
                     }
                     if (col == COLUMN_TYPE) {
+                        if (tableToken.isLiveView()) {
+                            return "LIVE VIEW";
+                        } else if (tableToken.isMatView()) {
+                            return "MATERIALIZED VIEW";
+                        } else if (tableToken.isView()) {
+                            return "VIEW";
+                        }
                         return "BASE TABLE";
                     }
                     return null;

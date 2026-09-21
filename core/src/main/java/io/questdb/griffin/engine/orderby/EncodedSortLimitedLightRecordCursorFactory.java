@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
@@ -56,12 +57,12 @@ import org.jetbrains.annotations.Nullable;
  * factory remains the fallback for unsupported keys.
  */
 public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
-    private final EncodedSortLimitedLightRecordCursor cursor;
     private final Function hiFunction;
     private final Function loFunction;
     private final ListColumnFilter sortColumnFilter;
     private final int timestampIndex;
+    private RecordCursorFactory base;
+    private EncodedSortLimitedLightRecordCursor cursor;
 
     public EncodedSortLimitedLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -213,7 +214,12 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
 
     @Override
     protected void _close() {
-        Misc.free(base);
-        Misc.free(cursor);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final EncodedSortLimitedLightRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

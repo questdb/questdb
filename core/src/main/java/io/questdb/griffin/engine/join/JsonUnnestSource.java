@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -97,12 +98,12 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
     private final int maxJsonValueSize;
     private final SimdJsonParser parser;
     private final SimdJsonResult result;
-    // Shared buffer for all VARCHAR/TIMESTAMP string data from bulk extraction.
-    // Each column_result_t stores (offset << 32 | length) into this buffer.
-    private final DirectUtf8Sink stringBuf;
     // Flyweight views for returning STRING values (UTF-16 conversion of VARCHAR data).
     private final StringSink strSinkA = new StringSink();
     private final StringSink strSinkB = new StringSink();
+    // Shared buffer for all VARCHAR/TIMESTAMP string data from bulk extraction.
+    // Each column_result_t stores (offset << 32 | length) into this buffer.
+    private final DirectUtf8Sink stringBuf;
     // Flyweight views into stringBuf for returning VARCHAR values.
     private final DirectUtf8String varcharViewA = new DirectUtf8String();
     private final DirectUtf8String varcharViewB = new DirectUtf8String();
@@ -131,8 +132,12 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
             this.result = new SimdJsonResult();
             this.stringBuf = new DirectUtf8Sink(maxJsonValueSize);
             // Allocate native memory for column names (stable pointers for C++ access).
+            // The parser keeps protective quotes on a dotted COLUMNS field name (e.g. "a.b")
+            // so its dots stay content for display; the JSON extraction key must strip them,
+            // or the C++ matcher looks up a field literally spelled "a.b" and never matches
+            // the JSON key a.b, silently returning NULL.
             for (int i = 0; i < columnCount; i++) {
-                CharSequence name = columnNames.getQuick(i);
+                CharSequence name = SqlUtil.toColumnName(columnNames.getQuick(i));
                 @SuppressWarnings("resource") DirectUtf8Sink nameSink = new DirectUtf8Sink(name.length());
                 nameSink.put(name);
                 columnNameSinks[i] = nameSink;
@@ -215,18 +220,6 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
     public long getDate(int sourceCol, int elementIndex) {
         // DATE is extracted as LONG (epoch millis).
         return getLong0(sourceCol, elementIndex);
-    }
-
-    private long getLong0(int sourceCol, int elementIndex) {
-        if (elementIndex >= currentElementCount) {
-            return Numbers.LONG_NULL;
-        }
-        long resultBase = bulkResultBase(sourceCol, elementIndex);
-        int error = Unsafe.getInt(resultBase + COLUMN_RESULT_ERROR_OFFSET);
-        if (error != SimdJsonError.SUCCESS) {
-            return Numbers.LONG_NULL;
-        }
-        return Unsafe.getLong(resultBase + COLUMN_RESULT_VALUE_OFFSET);
     }
 
     @Override
@@ -345,32 +338,6 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
         return getUtf8Sequence(sourceCol, elementIndex, varcharViewA);
     }
 
-    @Nullable
-    private Utf8Sequence getUtf8Sequence(int sourceCol, int elementIndex, DirectUtf8String varcharView) {
-        if (elementIndex >= currentElementCount) {
-            return null;
-        }
-        long resultBase = bulkResultBase(sourceCol, elementIndex);
-        int error = Unsafe.getInt(resultBase + COLUMN_RESULT_ERROR_OFFSET);
-        if (error != SimdJsonError.SUCCESS) {
-            return null;
-        }
-        int type = Unsafe.getInt(resultBase + COLUMN_RESULT_TYPE_OFFSET);
-        if (type == SimdJsonType.NULL) {
-            return null;
-        }
-        int truncated = Unsafe.getInt(resultBase + COLUMN_RESULT_TRUNCATED_OFFSET);
-        if (truncated != 0) {
-            throw overflowError(sourceCol, elementIndex);
-        }
-        long value = Unsafe.getLong(resultBase + COLUMN_RESULT_VALUE_OFFSET);
-        int offset = (int) (value >>> 32);
-        int length = (int) (value & 0xFFFFFFFFL);
-        long base = stringBuf.ptr();
-        varcharView.of(base + offset, base + offset + length, jsonSeq.isAscii());
-        return varcharView;
-    }
-
     @Override
     public Utf8Sequence getVarcharB(int sourceCol, int elementIndex) {
         return getUtf8Sequence(sourceCol, elementIndex, varcharViewB);
@@ -454,6 +421,44 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
         return bulkResultsPtr + ((long) elementIndex * columnCount + sourceCol) * COLUMN_RESULT_SIZE;
     }
 
+    private long getLong0(int sourceCol, int elementIndex) {
+        if (elementIndex >= currentElementCount) {
+            return Numbers.LONG_NULL;
+        }
+        long resultBase = bulkResultBase(sourceCol, elementIndex);
+        int error = Unsafe.getInt(resultBase + COLUMN_RESULT_ERROR_OFFSET);
+        if (error != SimdJsonError.SUCCESS) {
+            return Numbers.LONG_NULL;
+        }
+        return Unsafe.getLong(resultBase + COLUMN_RESULT_VALUE_OFFSET);
+    }
+
+    @Nullable
+    private Utf8Sequence getUtf8Sequence(int sourceCol, int elementIndex, DirectUtf8String varcharView) {
+        if (elementIndex >= currentElementCount) {
+            return null;
+        }
+        long resultBase = bulkResultBase(sourceCol, elementIndex);
+        int error = Unsafe.getInt(resultBase + COLUMN_RESULT_ERROR_OFFSET);
+        if (error != SimdJsonError.SUCCESS) {
+            return null;
+        }
+        int type = Unsafe.getInt(resultBase + COLUMN_RESULT_TYPE_OFFSET);
+        if (type == SimdJsonType.NULL) {
+            return null;
+        }
+        int truncated = Unsafe.getInt(resultBase + COLUMN_RESULT_TRUNCATED_OFFSET);
+        if (truncated != 0) {
+            throw overflowError(sourceCol, elementIndex);
+        }
+        long value = Unsafe.getLong(resultBase + COLUMN_RESULT_VALUE_OFFSET);
+        int offset = (int) (value >>> 32);
+        int length = (int) (value & 0xFFFFFFFFL);
+        long base = stringBuf.ptr();
+        varcharView.of(base + offset, base + offset + length, jsonSeq.isAscii());
+        return varcharView;
+    }
+
     private void initPaddedJson(Utf8Sequence json) {
         if (json instanceof DirectUtf8Sequence
                 && json.tailPadding()
@@ -481,7 +486,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
                 .put("JSON UNNEST: value exceeds maximum size of ")
                 .put(maxJsonValueSize)
                 .put(" bytes for column '")
-                .put(columnNames.getQuick(sourceCol))
+                .put(SqlUtil.toColumnName(columnNames.getQuick(sourceCol)))
                 .put("' at array index ")
                 .put(elementIndex);
     }

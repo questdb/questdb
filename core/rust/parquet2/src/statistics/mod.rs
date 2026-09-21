@@ -23,6 +23,13 @@ pub trait Statistics: Send + Sync + std::fmt::Debug {
     fn physical_type(&self) -> &PhysicalType;
 
     fn null_count(&self) -> Option<i64>;
+
+    /// Whether a `min_value` is present. Lets callers test for the bound without
+    /// the allocation `serialize_statistics` would incur.
+    fn has_min_value(&self) -> bool;
+
+    /// Whether a `max_value` is present.
+    fn has_max_value(&self) -> bool;
 }
 
 impl PartialEq for &dyn Statistics {

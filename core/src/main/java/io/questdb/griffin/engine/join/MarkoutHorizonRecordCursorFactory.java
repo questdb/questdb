@@ -93,9 +93,9 @@ import io.questdb.std.Unsafe;
  * executes one step of the algorithm, resulting in a single output row.
  */
 public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final MarkoutHorizonRecordCursor cursor;
     private final int masterColumnIndex;
     private final int slaveColumnIndex;
+    private MarkoutHorizonRecordCursor cursor;
 
     /**
      * Creates a new markout horizon cursor factory.
@@ -199,10 +199,11 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(cursor);
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
+        final MarkoutHorizonRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     /**
@@ -300,7 +301,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
                 return true;
             }
 
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
             advanceMasterIfPending();
             long nextIterAddr = iter_nextIterAddr(currentIterAddr);
@@ -631,7 +632,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
                             .put(Integer.MAX_VALUE).put(']');
                 }
                 offsetCount++;
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 long offset = slaveRecordArray.put(slaveRecord);
                 slaveRecordOffsets.add(offset);
             }

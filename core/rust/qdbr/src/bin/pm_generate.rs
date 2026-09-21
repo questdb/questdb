@@ -8,7 +8,7 @@
 
 use parquet2::read::read_metadata_with_size;
 use questdbr::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
-use questdbr::parquet_metadata::convert::convert_from_parquet;
+use questdbr::parquet_metadata::convert::{convert_from_parquet, SliceBloomFilterSource};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -76,12 +76,18 @@ fn generate(
         .checked_sub(8 + footer_length as u64)
         .ok_or("parquet footer length exceeds file size")?;
 
+    // Read the full parquet file once so the bloom source can resolve bitsets.
+    parquet_file.seek(SeekFrom::Start(0))?;
+    let mut parquet_bytes = Vec::with_capacity(parquet_file_size as usize);
+    parquet_file.read_to_end(&mut parquet_bytes)?;
+    let bloom_source = SliceBloomFilterSource::new(&parquet_bytes);
+
     let (pm_bytes, _footer_offset) = convert_from_parquet(
         &metadata,
         qdb_meta.as_ref(),
         parquet_footer_offset,
         footer_length,
-        None,
+        &bloom_source,
         None,
     )
     .map_err(|e| format!("failed to convert: {}", e))?;

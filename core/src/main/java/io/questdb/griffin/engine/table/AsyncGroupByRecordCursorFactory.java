@@ -29,6 +29,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
@@ -66,6 +67,7 @@ import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
@@ -74,11 +76,11 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     private static final UnorderedPageFrameReducer AGGREGATE = AsyncGroupByRecordCursorFactory::aggregate;
     private static final UnorderedPageFrameReducer FILTER_AND_AGGREGATE = AsyncGroupByRecordCursorFactory::filterAndAggregate;
 
-    private final RecordCursorFactory base;
-    private final AsyncGroupByRecordCursor cursor;
-    private final UnorderedPageFrameSequence<AsyncGroupByAtom> frameSequence;
-    private final ObjList<Function> recordFunctions; // includes groupByFunctions
-    private final @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
+    private RecordCursorFactory base;
+    private AsyncGroupByRecordCursor cursor;
+    private UnorderedPageFrameSequence<AsyncGroupByAtom> frameSequence;
+    private ObjList<Function> recordFunctions; // includes groupByFunctions
+    private @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
     private final int workerCount;
     private ObjList<AsyncGroupBySharedCursor> sharedCursors;
 
@@ -141,9 +143,15 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             this.cursor = new AsyncGroupByRecordCursor(engine, messageBus, recordFunctions);
             this.workerCount = workerCount;
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
+    }
+
+    @Override
+    @TestOnly
+    public AsyncGroupByAtom getAtom() {
+        return frameSequence.getAtom();
     }
 
     @Override
@@ -245,13 +253,16 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final AsyncFilterContext filterCtx = atom.getFilterContext();
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-        record.init(frameMemory);
 
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final GroupByMapFragment fragment = atom.getFragment(slotId);
         final RecordSink mapSink = atom.getMapSink(slotId);
+        // navigateTo() decodes the frame and can throw, so it must sit inside the try that
+        // releases the slot, see PerWorkerLocks.acquireSlot().
         try {
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            record.init(frameMemory);
+
             atom.resetLocalStats(slotId);
 
             if (atom.isSharded()) {
@@ -269,8 +280,11 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
             atom.maybeEnableSharding(fragment);
         } finally {
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
+            try {
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
         }
     }
 
@@ -491,13 +505,6 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
 
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        final PageFrameMemory frameMemory;
-        if (useLateMaterialization) {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex);
-        }
-        record.init(frameMemory);
 
         final DirectLongList rows = filterCtx.getFilteredRows(slotId);
         rows.clear();
@@ -507,10 +514,20 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
         final Function filter = filterCtx.getFilter(slotId);
         final RecordSink mapSink = atom.getMapSink(slotId);
+        // navigateTo() can throw; it must sit inside the try that releases the slot. See
+        // aggregate() for why a leaked slot is permanent.
         try {
+            final PageFrameMemory frameMemory;
+            if (useLateMaterialization) {
+                frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            }
+            record.init(frameMemory);
+
             atom.resetLocalStats(slotId);
 
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
             } else {
                 AsyncFilterUtils.applyCompiledFilter(
@@ -560,19 +577,39 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
             atom.maybeEnableSharding(fragment);
         } finally {
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
+            try {
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
         }
     }
 
     @Override
     protected void _close() {
-        Misc.free(base);
-        Misc.free(cursor);
-        Misc.free(frameSequence);
-        Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
-        GroupByRecordCursorFactory.freeSharedRecordFunctions(sharedRecordFunctions);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final AsyncGroupByRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final UnorderedPageFrameSequence<AsyncGroupByAtom> frameSequence = this.frameSequence;
+        this.frameSequence = null;
+        final ObjList<Function> recordFunctions = this.recordFunctions;
+        this.recordFunctions = null;
+        final ObjList<AsyncGroupBySharedCursor> sharedCursors = this.sharedCursors;
+        this.sharedCursors = null;
+        final ObjList<ObjList<Function>> sharedRecordFunctions = this.sharedRecordFunctions;
+        this.sharedRecordFunctions = null;
+
+        Throwable cleanupFailure = Misc.freeBestEffort(null, base);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, frameSequence);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, recordFunctions); // groupByFunctions are included in recordFunctions
+        cleanupFailure = GroupByRecordCursorFactory.freeSharedRecordFunctionsBestEffort(
+                cleanupFailure,
+                sharedRecordFunctions
+        );
         // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 }

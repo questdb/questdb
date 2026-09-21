@@ -25,8 +25,7 @@
 package io.questdb.test.tools;
 
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.mp.continuation.CancellationBinding;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -34,8 +33,9 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * A delegating {@link SqlExecutionCircuitBreaker} that counts how many times execution code
  * consults the breaker, without changing its behavior. A consultation is a call to any of
- * {@link #checkIfTripped()}, {@link #checkIfTripped(long, long)}, {@link #getState()},
- * {@link #getState(long, long)}, {@link #statefulThrowExceptionIfTripped()},
+ * {@link #checkIfTripped()}, {@link #checkIfTrippedNoThrottle()}, {@link #getState()},
+ * {@link #getState(long, long)},
+ * {@link #statefulThrowExceptionIfTripped()},
  * {@link #statefulThrowExceptionIfTrippedNoThrottle()} or
  * {@link #statefulThrowExceptionIfTrippedTimeThrottled()}; all other methods delegate without
  * counting. The counter is thread-safe: parallel execution shares a thread-safe execution-context
@@ -65,9 +65,24 @@ public class CountingSqlExecutionCircuitBreaker implements SqlExecutionCircuitBr
     }
 
     @Override
-    public boolean checkIfTripped(long millis, long fd) {
+    public boolean checkIfTrippedNoThrottle() {
         checkCount.incrementAndGet();
-        return delegate.checkIfTripped(millis, fd);
+        return delegate.checkIfTrippedNoThrottle();
+    }
+
+    @Override
+    public void clearCancelledFlag(AtomicBoolean expected) {
+        delegate.clearCancelledFlag(expected);
+    }
+
+    @Override
+    public void clearCancelledFlag(AtomicBoolean expected, long expectedGeneration) {
+        delegate.clearCancelledFlag(expected, expectedGeneration);
+    }
+
+    @Override
+    public void copyCancelledFlagTo(CancellationBinding target) {
+        delegate.copyCancelledFlagTo(target);
     }
 
     @Override
@@ -80,11 +95,6 @@ public class CountingSqlExecutionCircuitBreaker implements SqlExecutionCircuitBr
      */
     public long getCheckCount() {
         return checkCount.get();
-    }
-
-    @Override
-    public @Nullable SqlExecutionCircuitBreakerConfiguration getConfiguration() {
-        return delegate.getConfiguration();
     }
 
     public SqlExecutionCircuitBreaker getDelegate() {
@@ -134,8 +144,13 @@ public class CountingSqlExecutionCircuitBreaker implements SqlExecutionCircuitBr
     }
 
     @Override
-    public void setFd(long fd) {
-        delegate.setFd(fd);
+    public void setCancelledFlag(CancellationBinding source) {
+        delegate.setCancelledFlag(source);
+    }
+
+    @Override
+    public void setCancelledFlag(AtomicBoolean cancelledFlag, long generation) {
+        delegate.setCancelledFlag(cancelledFlag, generation);
     }
 
     @Override

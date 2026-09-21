@@ -36,7 +36,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -72,7 +71,7 @@ public class ReadParquetCancellationTest extends AbstractCairoTest {
                 return 2_000_000;
             }
         };
-        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, config, MemoryTag.NATIVE_CB5) {
+        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, config) {
             @Override
             protected boolean testConnection(long fd) {
                 return false;
@@ -98,7 +97,7 @@ public class ReadParquetCancellationTest extends AbstractCairoTest {
                 return 2_000_000;
             }
         };
-        final NetworkSqlExecutionCircuitBreaker cancelBreaker = new NetworkSqlExecutionCircuitBreaker(engine, config, MemoryTag.NATIVE_CB5) {
+        final NetworkSqlExecutionCircuitBreaker cancelBreaker = new NetworkSqlExecutionCircuitBreaker(engine, config) {
             @Override
             public void statefulThrowExceptionIfTripped() {
                 if (armed.get()) {

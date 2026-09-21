@@ -133,6 +133,11 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
+    public boolean hasActivePushdownFilter() {
+        return pushdownFilterConditions != null && pushdownFilterConditions.size() > 0;
+    }
+
+    @Override
     public boolean isExternal() {
         return true;
     }

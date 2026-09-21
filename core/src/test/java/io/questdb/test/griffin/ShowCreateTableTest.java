@@ -196,6 +196,36 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLiveViewRejected() throws Exception {
+        // SHOW CREATE TABLE over a live view reached ShowCreateTableRecordCursorFactory and printed
+        // a plausible-looking CREATE TABLE DDL for it: the parser gate only rejected regular and
+        // materialized views, and the factory's own backstop is an assert, which production disables.
+        // A user who copy-pasted that output would get a plain table instead of a live view.
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("create live view lv flush every 1s start from now as select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) as rn from base");
+            drainWalAndViewQueues();
+            assertExceptionNoLeakCheck(
+                    "show create table lv",
+                    18,
+                    "table name expected, got live view name"
+            );
+        });
+    }
+
+    @Test
+    public void testLiveViewStillAccessibleViaShowCreateLiveView() throws Exception {
+        // a live view rejected by SHOW CREATE TABLE must remain reachable via the dedicated statement
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("create live view lv flush every 1s start from now as select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) as rn from base");
+            drainWalAndViewQueues();
+            printSql("show create live view lv");
+            TestUtils.assertContains(sink.toString(), "CREATE LIVE VIEW 'lv'");
+        });
+    }
+
+    @Test
     public void testMatViewRejected() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (ts timestamp, v double) timestamp(ts) partition by day wal");

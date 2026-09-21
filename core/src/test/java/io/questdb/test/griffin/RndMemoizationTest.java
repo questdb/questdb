@@ -167,6 +167,31 @@ public class RndMemoizationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRndDecimal() throws Exception {
+        allowFunctionMemoization();
+        // Each alias is re-read once, so the projection wraps every storage width in a
+        // DecimalFunctionMemoizer. Pinning the drawn value per row catches both a memoizer that
+        // re-draws (the pair disagrees) and one that never invalidates (every row repeats row 1).
+        assertQuery("""
+                SELECT rnd_decimal(2, 1, 2) a, a a2,
+                       rnd_decimal(4, 2, 2) b, b b2,
+                       rnd_decimal(9, 4, 2) c, c c2,
+                       rnd_decimal(18, 4, 2) e, e e2,
+                       rnd_decimal(38, 18, 2) f, f f2,
+                       rnd_decimal(76, 38, 2) g, g g2
+                FROM long_sequence(5)""")
+                .noLeakCheck()
+                .returnsOnce("""
+                        a\ta2\tb\tb2\tc\tc2\te\te2\tf\tf2\tg\tg2
+                        3.9\t3.9\t\t\t7357.5701\t7357.5701\t61184357814108.3005\t61184357814108.3005\t\t\t42410546395300151836226305523655526752.83660960515174370725563638714558246094\t42410546395300151836226305523655526752.83660960515174370725563638714558246094
+                        2.2\t2.2\t70.80\t70.80\t\t\t40863994239165.1703\t40863994239165.1703\t\t\t14832310603661962183009007960465462563.27016421860803228938933079881231167112\t14832310603661962183009007960465462563.27016421860803228938933079881231167112
+                        0.4\t0.4\t82.74\t82.74\t52087.2172\t52087.2172\t10033904595397.3667\t10033904595397.3667\t17088581293595190926.688371824814671897\t17088581293595190926.688371824814671897\t26161279898442918804852603416216986418.87250503716905202176730509926109011283\t26161279898442918804852603416216986418.87250503716905202176730509926109011283
+                        7.0\t7.0\t\t\t25389.0364\t25389.0364\t16664082490389.7958\t16664082490389.7958\t16416323169670502455.153885733440205453\t16416323169670502455.153885733440205453\t25363665748183740765358025251209280730.08614983121005465418009508944407191097\t25363665748183740765358025251209280730.08614983121005465418009508944407191097
+                        3.5\t3.5\t20.57\t20.57\t\t\t20559518411576.0695\t20559518411576.0695\t6012475275117814766.927126811373876190\t6012475275117814766.927126811373876190\t\t
+                        """);
+    }
+
+    @Test
     public void testRndDouble() throws Exception {
         allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
@@ -289,6 +314,46 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         1185719342\t1185719352
                         -557519884\t-557519874
                         -1695062096\t-1695062086
+                        """);
+    }
+
+    @Test
+    public void testRndIntBinaryAliasReadAtBothWidths() throws Exception {
+        allowFunctionMemoization();
+        // The alias is read at INT width by its own column and at 64 bits by the sibling cast.
+        // Both come from one draw, and the INT expression carries one value, so k is i
+        // sign-extended: the memoizer is what keeps the two reads on the same draw, and the
+        // one-value rule is what keeps them equal.
+        // assertQuery does not reset rnd between SQL executions - using returnsOnce
+        assertQuery("select rnd_int() * 2 i, i::long k from long_sequence(5)")
+                .noLeakCheck()
+                .returnsOnce("""
+                        i\tk
+                        1998007456\t1998007456
+                        631030236\t631030236
+                        -1197365630\t-1197365630
+                        -1455449542\t-1455449542
+                        147151402\t147151402
+                        """);
+    }
+
+    @Test
+    public void testRndIntDivisionAliasReadAtBothWidths() throws Exception {
+        allowFunctionMemoization();
+        // Division was the operator whose two widths did not agree on their low 32 bits, so a
+        // memoizer serving two widths from one draw had to choose which one was authoritative.
+        // With one value per expression there is nothing to choose: the quotient is computed at
+        // INT width and k is that value sign-extended.
+        // assertQuery does not reset rnd between SQL executions - using returnsOnce
+        assertQuery("select (rnd_int() * 1000000) / 7 i, i::long k from long_sequence(5)")
+                .noLeakCheck()
+                .returnsOnce("""
+                        i\tk
+                        -195726043\t-195726043
+                        -252785536\t-252785536
+                        180903433\t180903433
+                        228961764\t228961764
+                        -197678253\t-197678253
                         """);
     }
 

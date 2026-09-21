@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.ListColumnFilter;
@@ -65,21 +66,25 @@ import org.jetbrains.annotations.NotNull;
 
 public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursorFactory {
 
-    protected final RecordCursorFactory base;
-    private final SampleByInterpolateRecordCursor cursor;
+    protected RecordCursorFactory base;
+    private SampleByInterpolateRecordCursor cursor;
     private final int groupByFunctionCount;
-    private final ObjList<GroupByFunction> groupByFunctions;
+    private ObjList<GroupByFunction> groupByFunctions;
     private final int groupByScalarFunctionCount;
-    private final ObjList<GroupByFunction> groupByScalarFunctions;
+    private ObjList<GroupByFunction> groupByScalarFunctions;
     private final int groupByTwoPointFunctionCount;
-    private final ObjList<GroupByFunction> groupByTwoPointFunctions;
-    private final ObjList<InterpolationUtil.InterpolatorFunction> interpolatorFunctions;
+    private ObjList<GroupByFunction> groupByTwoPointFunctions;
+    private ObjList<InterpolationUtil.InterpolatorFunction> interpolatorFunctions;
     private final RecordSink mapSink;
+    private Function offsetFunc;
+    private Function sampleFromFunc;
+    private Function sampleToFunc;
+    private Function timezoneNameFunc;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink2;
-    private final ObjList<Function> recordFunctions;
+    private ObjList<Function> recordFunctions;
     private final TimestampSampler sampler;
-    private final ObjList<InterpolationUtil.StoreYFunction> storeYFunctions;
+    private ObjList<InterpolationUtil.StoreYFunction> storeYFunctions;
     private final int timestampIndex;
     private final int yDataSize;
     private long yData;
@@ -114,6 +119,12 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             this.groupByFunctions = groupByFunctions;
             this.recordFunctions = recordFunctions;
             this.sampler = timestampSampler;
+            // adopt the temporal parameter functions first, so close() reaches them if the
+            // remainder of the construction throws
+            this.timezoneNameFunc = timezoneNameFunc;
+            this.offsetFunc = offsetFunc;
+            this.sampleFromFunc = sampleFromFunc;
+            this.sampleToFunc = sampleToFunc;
 
             // create timestamp column
             TimestampColumn timestampColumn = TimestampColumn.newInstance(valueTypes.getColumnCount() + keyTypes.getColumnCount(), timestampType);
@@ -179,7 +190,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
             this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleToFunc);
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -240,18 +251,63 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         return base.usesIndex();
     }
 
-    private void freeYData() {
+    private void freeYData(long yData) {
         if (yData != 0) {
-            yData = Unsafe.free(yData, yDataSize, MemoryTag.NATIVE_FUNC_RSS);
+            Unsafe.free(yData, yDataSize, MemoryTag.NATIVE_FUNC_RSS);
         }
     }
 
     @Override
     protected void _close() {
-        Misc.freeObjList(recordFunctions);
-        freeYData();
-        Misc.free(base);
-        Misc.free(cursor);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final SampleByInterpolateRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        this.groupByFunctions = null;
+        this.groupByScalarFunctions = null;
+        this.groupByTwoPointFunctions = null;
+        this.interpolatorFunctions = null;
+        final Function offsetFunc = this.offsetFunc;
+        this.offsetFunc = null;
+        final ObjList<Function> recordFunctions = this.recordFunctions;
+        this.recordFunctions = null;
+        final Function sampleFromFunc = this.sampleFromFunc;
+        this.sampleFromFunc = null;
+        final Function sampleToFunc = this.sampleToFunc;
+        this.sampleToFunc = null;
+        this.storeYFunctions = null;
+        final Function timezoneNameFunc = this.timezoneNameFunc;
+        this.timezoneNameFunc = null;
+        final long yData = this.yData;
+        this.yData = 0;
+
+        Throwable failure = Misc.freeObjListBestEffort(null, recordFunctions);
+        try {
+            freeYData(yData);
+        } catch (Throwable th) {
+            if (failure == null) {
+                failure = th;
+            } else if (th != failure) {
+                failure.addSuppressed(th);
+            }
+        }
+        failure = Misc.freeBestEffort(failure, base);
+        failure = Misc.freeBestEffort(failure, cursor);
+        // The factory is the lifetime owner of the temporal parameter functions (timezone,
+        // offset, FROM, TO); the cursor only borrows them across the executions of this cached
+        // factory. The generator accepts runtime-constant expressions here, which may own child
+        // functions, so they must be closed exactly once.
+        failure = Misc.freeBestEffort(failure, timezoneNameFunc);
+        if (offsetFunc != timezoneNameFunc) {
+            failure = Misc.freeBestEffort(failure, offsetFunc);
+        }
+        if (sampleFromFunc != timezoneNameFunc && sampleFromFunc != offsetFunc) {
+            failure = Misc.freeBestEffort(failure, sampleFromFunc);
+        }
+        if (sampleToFunc != timezoneNameFunc && sampleToFunc != offsetFunc && sampleToFunc != sampleFromFunc) {
+            failure = Misc.freeBestEffort(failure, sampleToFunc);
+        }
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class SampleByInterpolateRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
@@ -318,7 +374,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
                 this.sampleFromFuncType = ColumnType.getTimestampType(sampleFromFunc.getType());
             } catch (Throwable th) {
-                close();
+                Misc.free(this, th);
                 throw th;
             }
         }
@@ -334,14 +390,9 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 Misc.clearObjList(groupByFunctions);
                 super.close();
             }
-            Misc.clear(timezoneNameFunc);
-            Misc.free(timezoneNameFunc);
-            Misc.clear(offsetFunc);
-            Misc.free(offsetFunc);
-            Misc.clear(sampleFromFunc);
-            Misc.free(sampleFromFunc);
-            Misc.clear(sampleToFunc);
-            Misc.free(sampleToFunc);
+            // The temporal parameter functions (timezone, offset, FROM, TO) are borrowed from
+            // the owning factory, which closes them exactly once at teardown; per-execution
+            // cursor close must leave them usable for the next execution of the cached factory.
         }
 
         @Override
@@ -427,7 +478,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 final RecordCursor mapCursor = recordKeyMap.getCursor();
                 final Record mapRecord = mapCursor.getRecord();
                 while (mapCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                     MapValue value = findDataMapValue(mapRecord, loSample);
                     if (value.getByte(0) == 0) { //we have at least 1 data point
@@ -457,7 +508,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 final RecordCursor mapCursor = recordKeyMap.getCursor();
                 final Record mapRecord = mapCursor.getRecord();
                 while (mapCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                     // locate the first gap
                     MapValue value = findDataMapValue(mapRecord, sample);
@@ -567,7 +618,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             long timestamp = lo;
             while (timestamp < hi) {
                 while (keyCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                     MapKey key = dataMap.withKey();
                     mapSink2.copy(record, key);
@@ -591,7 +642,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             assert prevSample != -1;
 
             do {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 // this seems inefficient, but we only double-sample
                 // very first record and nothing else
@@ -660,7 +711,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             //
             // At the same time check if cursor has data.
             while (managedCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 final MapKey key = recordKeyMap.withKey();
                 mapSink.copy(managedRecord, key);

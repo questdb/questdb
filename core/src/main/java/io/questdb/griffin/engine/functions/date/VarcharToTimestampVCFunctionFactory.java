@@ -66,19 +66,19 @@ public final class VarcharToTimestampVCFunctionFactory extends ToTimestampVCFunc
         if (arg.isConstant()) {
             return evaluateConstant(arg, pattern, defaultDateLocale, ColumnType.TIMESTAMP_MICRO);
         } else {
-            if ("en".equals(defaultDateLocale.getName()) || (defaultDateLocale.getName() != null && defaultDateLocale.getName().startsWith("en-"))) {
+            if (VarcharDateFunctionUtils.isAsciiOnlyPattern(pattern)) {
                 return new ToAsciiTimestampFunc(arg, pattern, defaultDateLocale, ColumnType.TIMESTAMP_MICRO, NAME);
             }
-            return new Func(arg, pattern, defaultDateLocale, ColumnType.TIMESTAMP_MICRO, NAME);
+            return new ToUtf8TimestampFunc(arg, pattern, defaultDateLocale, ColumnType.TIMESTAMP_MICRO, NAME);
         }
     }
 
-    protected static final class ToAsciiTimestampFunc extends TimestampFunction implements UnaryFunction {
+    protected static class ToAsciiTimestampFunc extends TimestampFunction implements UnaryFunction {
 
-        private final Function arg;
-        private final DateLocale locale;
-        private final String name;
-        private final DateFormat timestampFormat;
+        protected final Function arg;
+        protected final DateLocale locale;
+        protected final String name;
+        protected final DateFormat timestampFormat;
 
         public ToAsciiTimestampFunc(Function arg, CharSequence pattern, DateLocale locale, int timestampType, String name) {
             super(timestampType);
@@ -97,7 +97,7 @@ public final class VarcharToTimestampVCFunctionFactory extends ToTimestampVCFunc
         public long getTimestamp(Record rec) {
             Utf8Sequence value = arg.getVarcharA(rec);
             try {
-                if (value != null && value.isAscii()) {
+                if (value != null) {
                     return timestampFormat.parse(value.asAsciiCharSequence(), locale);
                 }
             } catch (NumericException ignore) {
@@ -106,8 +106,24 @@ public final class VarcharToTimestampVCFunctionFactory extends ToTimestampVCFunc
         }
 
         @Override
+        public boolean isThreadSafe() {
+            return VarcharDateFunctionUtils.isVarcharGetterThreadSafe(arg);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(name).val("(").val(arg).val(')');
+        }
+    }
+
+    protected static final class ToUtf8TimestampFunc extends ToAsciiTimestampFunc {
+        public ToUtf8TimestampFunc(Function arg, CharSequence pattern, DateLocale locale, int timestampType, String name) {
+            super(arg, pattern, locale, timestampType, name);
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return VarcharDateFunctionUtils.parse(arg.getVarcharA(rec), timestampFormat, locale);
         }
     }
 }

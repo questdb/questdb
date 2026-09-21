@@ -59,8 +59,7 @@ public class CastIntToTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            final int value = arg.getInt(rec);
-            return value != Numbers.INT_NULL ? value : Numbers.LONG_NULL;
+            return Numbers.intToLong(arg.getInt(rec));
         }
     }
 }

@@ -59,6 +59,7 @@ public class RecordValueSinkFactory {
         int rGetDecimal16 = asm.poolInterfaceMethod(Record.class, "getDecimal16", "(I)S");
         int rGetDecimal32 = asm.poolInterfaceMethod(Record.class, "getDecimal32", "(I)I");
         int rGetDecimal64 = asm.poolInterfaceMethod(Record.class, "getDecimal64", "(I)J");
+        int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
         //
         int wPutInt = asm.poolInterfaceMethod(MapValue.class, "putInt", "(II)V");
         int wPutLong = asm.poolInterfaceMethod(MapValue.class, "putLong", "(IJ)V");
@@ -70,6 +71,8 @@ public class RecordValueSinkFactory {
         int wPutDouble = asm.poolInterfaceMethod(MapValue.class, "putDouble", "(ID)V");
         int wPutDate = asm.poolInterfaceMethod(MapValue.class, "putDate", "(IJ)V");
         int wPutTimestamp = asm.poolInterfaceMethod(MapValue.class, "putTimestamp", "(IJ)V");
+        int wPutLong128 = asm.poolInterfaceMethod(MapValue.class, "putLong128", "(ILio/questdb/cairo/sql/Record;I)V");
+        int wPutLong256 = asm.poolInterfaceMethod(MapValue.class, "putLong256", "(ILio/questdb/std/Long256;)V");
         int wPutDecimal128 = asm.poolInterfaceMethod(MapValue.class, "putDecimal128", "(ILio/questdb/cairo/sql/Record;I)V");
         int wPutDecimal256 = asm.poolInterfaceMethod(MapValue.class, "putDecimal256", "(ILio/questdb/cairo/sql/Record;I)V");
 
@@ -118,6 +121,19 @@ public class RecordValueSinkFactory {
                 case ColumnType.LONG:
                     asm.invokeInterface(rGetLong, 1);
                     asm.invokeInterface(wPutLong, 3);
+                    break;
+                case ColumnType.LONG128:
+                case ColumnType.UUID:
+                    // stack: [MapValue, index, Record, columnIndex]
+                    asm.invokeInterface(wPutLong128, 3);
+                    // stack: []
+                    break;
+                case ColumnType.LONG256:
+                    // stack: [MapValue, index, Record, columnIndex]
+                    asm.invokeInterface(rGetLong256, 1);
+                    // stack: [MapValue, index, Long256]
+                    asm.invokeInterface(wPutLong256, 2);
+                    // stack: []
                     break;
                 case ColumnType.GEOLONG:
                     asm.invokeInterface(rGetGeoLong, 1);
@@ -202,6 +218,14 @@ public class RecordValueSinkFactory {
                     // stack: []
                     break;
                 default:
+                    // Unreachable: both callers reject unsupported types up front - the
+                    // full-fat join guard via isSupportedColumnType, and RankFunctionFactory
+                    // by rejecting streaming ORDER BY columns that are neither fixed-size nor
+                    // static symbols. The assert is the tripwire for the "keep in sync" contract
+                    // isSupportedColumnType() documents: it fires the moment that method starts
+                    // claiming a type this switch cannot actually emit.
+                    assert !isSupportedColumnType(columnType)
+                            : "isSupportedColumnType()/getInstance() disagree on " + ColumnType.nameOf(columnType);
                     throw new UnsupportedOperationException();
             }
         }
@@ -224,5 +248,44 @@ public class RecordValueSinkFactory {
         asm.putShort(0);
 
         return asm.newInstance();
+    }
+
+    /**
+     * Reports whether {@link #getInstance} can materialize a column of this type into
+     * a {@link MapValue}. Mirrors the switch in getInstance() - keep in sync. The
+     * caller must reject unsupported types up front (see SqlCodeGenerator's full-fat
+     * join guard) rather than hit getInstance()'s throwing default.
+     */
+    public static boolean isSupportedColumnType(int columnType) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.INT:
+            case ColumnType.SYMBOL:
+            case ColumnType.IPv4:
+            case ColumnType.GEOINT:
+            case ColumnType.LONG:
+            case ColumnType.LONG128:
+            case ColumnType.UUID:
+            case ColumnType.LONG256:
+            case ColumnType.GEOLONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.BYTE:
+            case ColumnType.GEOBYTE:
+            case ColumnType.SHORT:
+            case ColumnType.GEOSHORT:
+            case ColumnType.CHAR:
+            case ColumnType.BOOLEAN:
+            case ColumnType.FLOAT:
+            case ColumnType.DOUBLE:
+            case ColumnType.DECIMAL8:
+            case ColumnType.DECIMAL16:
+            case ColumnType.DECIMAL32:
+            case ColumnType.DECIMAL64:
+            case ColumnType.DECIMAL128:
+            case ColumnType.DECIMAL256:
+                return true;
+            default:
+                return false;
+        }
     }
 }

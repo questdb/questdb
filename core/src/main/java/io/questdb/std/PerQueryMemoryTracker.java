@@ -34,27 +34,21 @@ package io.questdb.std;
  */
 public final class PerQueryMemoryTracker extends MemoryTracker {
 
-    private final long nativeAddress;
     private final PerQueryMemoryTrackerProvider provider;
     private long queryId;
     private MemoryTrackerWorkload workload;
 
     PerQueryMemoryTracker(PerQueryMemoryTrackerProvider provider) {
         this.provider = provider;
-        this.nativeAddress = Unsafe.malloc(Unsafe.MEMORY_TRACKER_BLOCK_SIZE, MemoryTag.NATIVE_MEMORY_TRACKER);
-        // The counters must start zeroed: used = 0, limit = 0.
-        Unsafe.getUnsafe().putLong(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET, 0L);
-        Unsafe.getUnsafe().putLong(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, 0L);
     }
 
     @Override
     public void close() {
+        // Drop any outstanding covered-index decode charge before the block returns
+        // to the pool, so it recycles with used == 0. The covered buffers themselves
+        // are freed later on global-only accounting by a subsequent query.
+        reconcileCovered();
         provider.release(this);
-    }
-
-    @Override
-    public long getLimit() {
-        return Unsafe.getLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET);
     }
 
     @Override
@@ -63,29 +57,16 @@ public final class PerQueryMemoryTracker extends MemoryTracker {
     }
 
     @Override
-    public long getUsed() {
-        return Unsafe.getLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET);
-    }
-
-    @Override
     public MemoryTrackerWorkload getWorkload() {
         return workload;
     }
 
-    @Override
-    public long nativeAddress() {
-        return nativeAddress;
-    }
-
     /**
-     * Releases all native memory owned by this tracker: the
-     * {@code {used, limit}} block and every per-tag Rust allocator block. Called
-     * by the provider when the pooled tracker is finally disposed (engine
-     * shutdown or pool clear).
+     * Called by the provider when the pooled tracker is finally disposed
+     * (engine shutdown or pool clear).
      */
     void destroy() {
-        freeNativeAllocators();
-        Unsafe.free(nativeAddress, Unsafe.MEMORY_TRACKER_BLOCK_SIZE, MemoryTag.NATIVE_MEMORY_TRACKER);
+        destroyNativeBlock();
     }
 
     /**
@@ -93,13 +74,16 @@ public final class PerQueryMemoryTracker extends MemoryTracker {
      * native counter to {@code 0} and stores the workload-appropriate limit.
      */
     void init(long queryId, MemoryTrackerWorkload workload, long limit) {
+        // Backstop the covered-decode reconcile in case a prior owner bypassed close()
+        // (e.g. an error path that abandoned the tracker). Idempotent after close().
+        reconcileCovered();
         // A pooled tracker must come back clean: a non-zero used means a prior query released it
         // with a native allocation still bound, so that charge would misattribute to the next
         // query that recycles this block. Guard the invariant at the recycle boundary.
         assert getUsed() == 0 : "tracker recycled with used=" + getUsed();
         this.queryId = queryId;
         this.workload = workload;
-        Unsafe.putLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET, 0L);
-        Unsafe.putLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, limit);
+        Unsafe.putLongVolatile(nativeAddress() + Unsafe.MEMORY_TRACKER_USED_OFFSET, 0L);
+        Unsafe.putLongVolatile(nativeAddress() + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, limit);
     }
 }

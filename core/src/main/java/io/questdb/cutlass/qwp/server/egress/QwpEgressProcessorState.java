@@ -24,6 +24,8 @@
 
 package io.questdb.cutlass.qwp.server.egress;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -40,6 +42,9 @@ import io.questdb.cutlass.qwp.codec.QwpEgressConnSymbolDict;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionOwner;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -77,6 +82,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     public static volatile int defaultMaxDictHeapBytesOverrideForTest = -1;
     private final QwpResultBatchBuffer batchBuffer = new QwpResultBatchBuffer();
     private final BindVariableServiceImpl bindVariableService;
+    private final CairoConfiguration cairoConfiguration;
     private final ObjList<QwpEgressColumnDef> columnDefsPool = new ObjList<>();
     // Connection-scoped SYMBOL dictionary shared across all queries on this connection.
     // Holds the concatenated UTF-8 bytes of every unique symbol value and a parallel
@@ -102,6 +108,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * streaming turns both sites into true data races. The atomic makes the
      * fix durable regardless of which dispatcher variant is active.
      */
+    private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
     private final AtomicLong streamingCreditRemaining = new AtomicLong();
     // Compression negotiated at handshake time. codec == COMPRESSION_NONE (default)
     // sends RESULT_BATCH bytes raw; COMPRESSION_ZSTD compresses the region after
@@ -122,8 +129,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private boolean handshakeFlushPending;
     // Effective per-batch row cap for this connection: the minimum of the
     // server's hard cap ({@code QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH})
-    // and any client-requested limit sent via {@code X-QWP-Max-Batch-Rows} at
-    // handshake time. Defaults to the server's cap when no header is sent.
+    // and any client-requested limit sent via {@code X-QWP-Max-Batch-Rows} or
+    // browser URL negotiation at handshake time. Defaults to the server's cap.
     // Set once per handshake from {@link #setMaxBatchRows}; read on every
     // iteration of the streamResults emit loop.
     private int maxBatchRows;
@@ -136,8 +143,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private byte negotiatedVersion = QwpConstants.VERSION;
     // Page-frame iteration scaffolding. Allocated lazily on first page-frame query and
     // reused across queries on the same connection; per-query binding happens in
-    // beginStreamingPageFrame. None of these are freed on endStreaming -- only the
-    // per-query streamingPageFrameCursor is.
+    // beginStreamingPageFrame. endStreaming abandons every per-query binding and releases
+    // decoded resources, but keeps these reusable wrapper objects alive.
     private PageFrameAddressCache pageFrameAddressCache;
     private PageFrameMemoryPool pageFrameMemoryPool;
     private PageFrameMemoryRecord pageFrameMemoryRecord;
@@ -250,6 +257,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private int streamingPageFrameIndex;
     private long streamingPageFrameRow;
     private long streamingPageFrameRowHi;
+    private boolean streamingFactoryCacheable;
     /**
      * {@code volatile}: the CANCEL handler compares the current request id
      * against the incoming target; see the note on {@link #streamingActive}.
@@ -283,7 +291,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private long zstdCompressScratchAddr;
     private int zstdCompressScratchCapacity;
 
-    public QwpEgressProcessorState(io.questdb.cairo.CairoConfiguration cairoConfiguration) {
+    public QwpEgressProcessorState(CairoConfiguration cairoConfiguration) {
+        this.cairoConfiguration = cairoConfiguration;
         this.bindVariableService = new BindVariableServiceImpl(cairoConfiguration);
         // Pick up any test-only default overrides active at construction time
         // so tests that need tiny soft caps don't have to reach into every
@@ -359,7 +368,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * the server's.
      * <p>
      * The dict bit also clears every per-column scratch's native-key to
-     * conn-id cache via {@link QwpResultBatchBuffer#resetForNewQuery()} --
+     * conn-id cache via {@link QwpResultBatchBuffer#clearConnKeyMaps()} --
      * without that, a cached key would resolve to an id the reset dict has
      * already dropped, and the next batch's row payload would reference an id
      * the client was never taught.
@@ -367,8 +376,16 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     public void applyCacheReset(byte resetMask) {
         if ((resetMask & QwpEgressMsgKind.RESET_MASK_DICT) != 0) {
             connSymbolDict.clear();
-            batchBuffer.resetForNewQuery();
+            batchBuffer.clearConnKeyMaps();
         }
+    }
+
+    public void beginSqlExecutionOwner(
+            CharSequence query,
+            SqlExecutionContext executionContext,
+            short compiledQueryType
+    ) {
+        sqlExecutionOwner.begin(query, executionContext, compiledQueryType);
     }
 
     public void beginStreaming(
@@ -377,7 +394,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             RecordCursor cursor,
             int columnCount,
             long initialCredit,
-            CharSequence sqlText
+            CharSequence sqlText,
+            short compiledQueryType,
+            boolean queryCacheable
     ) {
         // Defence in depth: if a caller forgets to check isStreamingActive(), free the
         // previous factory/cursor before overwriting. The primary gate lives in
@@ -397,6 +416,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingCreditRemaining.set(initialCredit);
         this.streamingCreditSuspended = false;
         this.streamingRowsEmitted = 0;
+        this.streamingFactoryCacheable = compiledQueryType == CompiledQuery.SELECT && queryCacheable;
         this.streamingSqlText = sqlText != null ? Chars.toString(sqlText) : null;
         this.streamingActive = true;
         // Native symbol keys are per-cursor: clear the per-column native-key -> conn-id
@@ -419,14 +439,16 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             PageFrameCursor pageFrameCursor,
             int columnCount,
             long initialCredit,
-            CharSequence sqlText
+            CharSequence sqlText,
+            short compiledQueryType,
+            boolean queryCacheable
     ) {
         if (streamingActive) {
             endStreaming();
         }
         if (pageFrameAddressCache == null) {
             pageFrameAddressCache = new PageFrameAddressCache();
-            pageFrameMemoryPool = new PageFrameMemoryPool(0L);
+            pageFrameMemoryPool = new PageFrameMemoryPool(cairoConfiguration, 0L);
             pageFrameMemoryRecord = new PageFrameMemoryRecord();
         }
         pageFrameAddressCache.of(
@@ -447,6 +469,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingCreditRemaining.set(initialCredit);
         this.streamingCreditSuspended = false;
         this.streamingRowsEmitted = 0;
+        this.streamingFactoryCacheable = compiledQueryType == CompiledQuery.SELECT && queryCacheable;
         this.streamingPageFrameIndex = 0;
         this.streamingPageFrameRow = 0;
         this.streamingPageFrameRowHi = 0;
@@ -533,12 +556,22 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * safe to emit the frame; this method has no side effects.
      */
     public byte computeCacheResetMask() {
+        return computeCacheResetMask(false);
+    }
+
+    /**
+     * As {@link #computeCacheResetMask()}, plus a forced SYMBOL dict reset when
+     * {@code forceDictReset} is set and the dict is non-empty (an empty dict
+     * needs no {@code CACHE_RESET} frame).
+     */
+    public byte computeCacheResetMask(boolean forceDictReset) {
         byte mask = 0;
         int dictEntriesCap = maxDictEntriesOverride >= 0
                 ? maxDictEntriesOverride : QwpConstants.DEFAULT_MAX_EGRESS_DICT_ENTRIES;
         int dictHeapCap = maxDictHeapBytesOverride >= 0
                 ? maxDictHeapBytesOverride : QwpConstants.DEFAULT_MAX_EGRESS_DICT_HEAP_BYTES;
-        if (connSymbolDict.size() >= dictEntriesCap || connSymbolDict.heapBytes() >= dictHeapCap) {
+        boolean capExceeded = connSymbolDict.size() >= dictEntriesCap || connSymbolDict.heapBytes() >= dictHeapCap;
+        if (capExceeded || (forceDictReset && connSymbolDict.size() > 0)) {
             mask |= QwpEgressMsgKind.RESET_MASK_DICT;
         }
         return mask;
@@ -596,13 +629,58 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     /**
      * Releases the in-flight cursor + factory and marks streaming inactive.
+     * A page-frame query may have transferred opaque decode resources (for
+     * example, an enterprise cold-storage chunk lease) into the memory pool's
+     * final cached frame. Abandon the record and current-frame aliases first,
+     * then release the pool-local decoders and clear the address cache while
+     * their cursor-owned metadata mappings are still valid. Only after that is
+     * it safe to close the page-frame cursor. The wrapper objects themselves
+     * remain connection-scoped and are rebound by the next query.
+     * <p>
      * Idempotent -- safe to call from completion, error, or disconnect paths.
      */
+    public void endSqlExecutionOwner() {
+        sqlExecutionOwner.end();
+    }
+
     public void endStreaming() {
         streamingActive = false;
-        streamingCursor = Misc.free(streamingCursor);
-        streamingPageFrameCursor = Misc.free(streamingPageFrameCursor);
-        streamingFactory = Misc.free(streamingFactory);
+        streamingCurrentPageFrame = null;
+        final RecordCursor streamingCursor = this.streamingCursor;
+        this.streamingCursor = null;
+        final PageFrameCursor streamingPageFrameCursor = this.streamingPageFrameCursor;
+        this.streamingPageFrameCursor = null;
+        final RecordCursorFactory streamingFactory = this.streamingFactory;
+        this.streamingFactory = null;
+
+        Throwable cleanupFailure = null;
+        if (pageFrameMemoryRecord != null) {
+            try {
+                // of(null) also drops the record's borrowed SymbolTableSource; clear()
+                // alone only abandons its page-address aliases.
+                pageFrameMemoryRecord.of(null);
+            } catch (Throwable th) {
+                cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+            }
+        }
+        if (pageFrameMemoryPool != null) {
+            try {
+                pageFrameMemoryPool.releaseQueryResources();
+            } catch (Throwable th) {
+                cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+            }
+        }
+        if (pageFrameAddressCache != null) {
+            try {
+                pageFrameAddressCache.clear();
+            } catch (Throwable th) {
+                cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+            }
+        }
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingCursor);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingPageFrameCursor);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingFactory);
+
         streamingColumnCount = 0;
         streamingBatchSeq = 0;
         streamingBatchSeqCommitted = false;
@@ -610,11 +688,17 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingCreditInitial = 0;
         streamingCreditRemaining.set(0);
         streamingCreditSuspended = false;
+        streamingFactoryCacheable = false;
         streamingPageFrameIndex = 0;
         streamingPageFrameRow = 0;
         streamingPageFrameRowHi = 0;
-        streamingCurrentPageFrame = null;
         streamingSqlText = null;
+        try {
+            endSqlExecutionOwner();
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     public QwpResultBatchBuffer getBatchBuffer() {
@@ -766,6 +850,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return streamingActive;
     }
 
+    public boolean isSqlExecutionOwnerStarted() {
+        return sqlExecutionOwner.isStarted();
+    }
+
     /**
      * True if a CANCEL frame has been observed for this query since it started
      * streaming.
@@ -789,6 +877,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     public boolean isStreamingCreditSuspended() {
         return streamingCreditSuspended;
+    }
+
+    public boolean isStreamingFactoryCacheable() {
+        return streamingFactoryCacheable;
     }
 
     /**
@@ -860,6 +952,37 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingBatchSeqCommitted = true;
     }
 
+    public void parkSqlExecutionOwner() {
+        try {
+            suspendStreamingTimer();
+        } finally {
+            sqlExecutionOwner.unmount();
+        }
+    }
+
+    public void publishSqlExecutionOwner(CharSequence query, boolean containsSecret) {
+        sqlExecutionOwner.publish(query, containsSecret);
+    }
+
+    public void resumeSqlExecutionOwner() {
+        resumeStreamingTimer();
+        sqlExecutionOwner.mount();
+    }
+
+    /**
+     * Forwards a consumer-resume notification to the retained streaming cursor.
+     * Deferred QWP sends flush before callers invoke this method, so query progress
+     * excludes only completed client/network wait intervals from active time.
+     */
+    public void resumeStreamingTimer() {
+        if (streamingCursor != null) {
+            streamingCursor.resumeTimer();
+        }
+        if (streamingPageFrameCursor != null) {
+            streamingPageFrameCursor.resumeTimer();
+        }
+    }
+
     /**
      * Test-only: override the egress CACHE_RESET soft caps so tests can trip
      * resets at low entry counts without stuffing the connection with millions
@@ -897,8 +1020,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     /**
      * Called from {@code onHeadersReady} with the client's parsed
-     * {@code X-QWP-Max-Batch-Rows} preference, already clamped to the server's
-     * hard cap. See {@link #getMaxBatchRows}.
+     * {@code X-QWP-Max-Batch-Rows} or browser URL preference, already clamped
+     * to the server's hard cap. See {@link #getMaxBatchRows}.
      */
     public void setMaxBatchRows(int rows) {
         this.maxBatchRows = rows;
@@ -918,6 +1041,19 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     public void setWsHandshakeSent(boolean wsHandshakeSent) {
         this.wsHandshakeSent = wsHandshakeSent;
+    }
+
+    /**
+     * Forwards a consumer-suspension notification to the retained streaming cursor.
+     * Both cursor kinds are retained by this state across credit and socket parks.
+     */
+    public void suspendStreamingTimer() {
+        if (streamingCursor != null) {
+            streamingCursor.suspendTimer();
+        }
+        if (streamingPageFrameCursor != null) {
+            streamingPageFrameCursor.suspendTimer();
+        }
     }
 
     /**
@@ -967,4 +1103,5 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         }
         return zstdCompressScratchAddr;
     }
+
 }

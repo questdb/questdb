@@ -24,16 +24,8 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CursorPrinter;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.Unsafe;
-import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractCairoTest;
-import org.junit.Assert;
+import io.questdb.test.AbstractOomSweepTest;
 import org.junit.Test;
 
 /**
@@ -48,7 +40,7 @@ import org.junit.Test;
  * real out-of-memory error. The query fuzzer's malloc fault injection surfaced
  * this, with the NPE replacing the {@code CairoException} the caller expects.
  */
-public class SampleByInterpolateOomTest extends AbstractCairoTest {
+public class SampleByInterpolateOomTest extends AbstractOomSweepTest {
 
     @Test
     public void testFillLinearCleansUpWhenConstructionRunsOutOfMemory() throws Exception {
@@ -69,48 +61,21 @@ public class SampleByInterpolateOomTest extends AbstractCairoTest {
             // in select() is the cursor's record-key map.
             drain(query);
 
-            boolean sawOom = false;
-            // Sweep the native-memory ceiling across the cursor-construction
-            // allocation points. Some ceiling trips one of the cursor's map
-            // allocations; if the constructor's error-path close() is not
-            // null-safe it throws NPE and masks the out-of-memory error.
-            for (int slack = 0; slack <= 32 * 1024; slack += 1024) {
-                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
-                try {
-                    // Construction alone allocates the maps; close immediately.
-                    //noinspection EmptyTryBlock
-                    try (RecordCursorFactory ignore = select(query)) {
-                        // factory built without tripping the limit; nothing to do
-                    }
-                } catch (CairoException e) {
-                    Assert.assertTrue("expected an out-of-memory error, got: " + e.getMessage(), e.isOutOfMemory());
-                    sawOom = true;
-                } finally {
-                    Unsafe.setRssMemLimit(0);
+            // Sweep the native-memory ceiling across the cursor-construction allocation
+            // points. Some ceiling trips one of the cursor's map allocations; if the
+            // constructor's error-path close() is not null-safe it throws NPE and masks
+            // the out-of-memory error. Unlike the cursor-open sweeps, the fault has to
+            // land in select(), so the arming brackets compilation rather than getCursor().
+            assertOomSweep(32 * 1024, 1024, null, () -> {
+                // Construction alone allocates the maps; close immediately.
+                //noinspection EmptyTryBlock
+                try (RecordCursorFactory ignore = select(query)) {
+                    // factory built without tripping the limit; nothing to do
                 }
-            }
-            Assert.assertTrue("sweep never tripped the RSS limit; widen the range", sawOom);
+            });
 
             // Recovery: with the ceiling removed the same query runs cleanly.
-            Unsafe.setRssMemLimit(0);
             drain(query);
         });
-    }
-
-    private static void drain(String query) throws Exception {
-        final StringSink sink = new StringSink();
-        try (RecordCursorFactory factory = select(query)) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                final RecordMetadata metadata = factory.getMetadata();
-                final int columnCount = metadata.getColumnCount();
-                final Record record = cursor.getRecord();
-                while (cursor.hasNext()) {
-                    for (int i = 0; i < columnCount; i++) {
-                        CursorPrinter.printColumn(record, metadata, i, sink, false);
-                    }
-                    sink.clear();
-                }
-            }
-        }
     }
 }

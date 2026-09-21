@@ -64,8 +64,9 @@ public class UnionRecordCursorFactory extends AbstractSetRecordCursorFactory {
 
     @Override
     public void _close() {
-        Misc.free(cursor);
-        super._close();
+        final AbstractSetRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        closeSetOwnersBestEffort(cursor);
     }
 
     @Override

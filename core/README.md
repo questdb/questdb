@@ -126,7 +126,7 @@ docker login
 
 ### Switch Docker Desktop to Linux
 
-Right-click on the Docker Desktop tray icon (bottom right) and chose 'switch'
+Right-click on the Docker Desktop tray icon (bottom right) and choose 'switch'
 from the pop-up menu.
 
 Create new builder

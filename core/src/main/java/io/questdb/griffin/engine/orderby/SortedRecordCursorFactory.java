@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.RecordCursor;
@@ -42,9 +43,9 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
-    private final SortedRecordCursor cursor;
     private final ListColumnFilter sortColumnFilter;
+    private RecordCursorFactory base;
+    private SortedRecordCursor cursor;
 
     public SortedRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -100,6 +101,17 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
         return base;
     }
 
+    // Sorting re-orders the base rows without introducing value sources.
+    @Override
+    public boolean isNonDeterministic() {
+        return base.isNonDeterministic();
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        return base.isStableWithinExecution();
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
@@ -149,7 +161,12 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        Misc.free(base);
-        Misc.free(cursor);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final SortedRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

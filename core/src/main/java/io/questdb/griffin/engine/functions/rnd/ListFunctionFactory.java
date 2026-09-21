@@ -25,9 +25,9 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -74,7 +74,8 @@ public class ListFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return next();
+            final int key = next();
+            return symbols.getQuick(key) == null ? SymbolTable.VALUE_IS_NULL : key;
         }
 
         @Override
@@ -98,6 +99,24 @@ public class ListFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean shouldMemoize() {
+            // Every accessor advances the cycle, so getInt() and getSymbol() on one row are two
+            // separate draws. Any consumer that reads both - an all-symbol UNION re-symbolises the
+            // column and then resolves a key against the row's own text - would otherwise see the
+            // key and the text describe different values. Memoizing pins one draw per row.
+            return true;
+        }
+
+        @Override
+        public boolean supportsKeyValueAccess() {
+            // The dictionary is a fixed list built once per cursor, so getInt() returns an index
+            // for a value, or VALUE_IS_NULL for a null slot, and valueOf() resolves it without
+            // touching text. A key consumer (QWP egress) should therefore take the key path and
+            // encode each distinct value once, not once per row.
+            return true;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("list(").val((Sinkable) symbols).val(')');
         }
@@ -109,7 +128,11 @@ public class ListFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence valueOf(int symbolKey) {
-            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+            // Non-null keys are raw indexes into symbols, so valueOf indexes them directly.
+            // Routing through TableUtils.toIndexKey assumed a leading null slot that this list
+            // does not have, which returned the following value for every key and ran off the end
+            // of the list on the last one.
+            return symbolKey > -1 ? symbols.getQuick(symbolKey) : null;
         }
 
         private int next() {

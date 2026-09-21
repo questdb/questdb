@@ -55,6 +55,7 @@ public class QwpEgressMetrics implements Mutable {
     private final Counter bytesSentCounter;
     private final Counter cacheResetDictCounter;
     private final AtomicLongGauge connectionCountGauge;
+    private final Counter creditSuspensionsCounter;
     private final Counter queriesCancelledCounter;
     private final Counter queriesErroredCounter;
     private final Counter queriesStartedCounter;
@@ -71,6 +72,7 @@ public class QwpEgressMetrics implements Mutable {
         this.bytesCompressedSavedCounter = metricsRegistry.newCounter("qwp_egress_bytes_zstd_saved");
         this.rowsStreamedCounter = metricsRegistry.newCounter("qwp_egress_rows_streamed");
         this.cacheResetDictCounter = metricsRegistry.newCounter("qwp_egress_cache_reset_dict");
+        this.creditSuspensionsCounter = metricsRegistry.newCounter("qwp_egress_credit_suspensions");
     }
 
     @TestOnly
@@ -108,10 +110,16 @@ public class QwpEgressMetrics implements Mutable {
         bytesCompressedSavedCounter.reset();
         rowsStreamedCounter.reset();
         cacheResetDictCounter.reset();
+        creditSuspensionsCounter.reset();
     }
 
     public AtomicLongGauge connectionCountGauge() {
         return connectionCountGauge;
+    }
+
+    @TestOnly
+    public long creditSuspensionsCount() {
+        return creditSuspensionsCounter.getValue();
     }
 
     public void markBatchOverflowSplit() {
@@ -144,6 +152,10 @@ public class QwpEgressMetrics implements Mutable {
 
     public void markQueryStarted() {
         queriesStartedCounter.inc();
+    }
+
+    public void markStreamingCreditSuspended() {
+        creditSuspensionsCounter.inc();
     }
 
     public Counter queriesErroredCounter() {

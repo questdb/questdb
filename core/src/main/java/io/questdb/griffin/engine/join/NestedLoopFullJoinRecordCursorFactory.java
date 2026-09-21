@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordIdSink;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.map.Map;
@@ -50,8 +51,8 @@ import org.jetbrains.annotations.NotNull;
  * and returns all row pairs matching filter plus all unmatched rows from master and slave factory.
  */
 public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final NestedLoopFullRecordCursor cursor;
-    private final Function filter;
+    private NestedLoopFullRecordCursor cursor;
+    private Function filter;
 
     public NestedLoopFullJoinRecordCursorFactory(
             CairoConfiguration configuration,
@@ -125,11 +126,14 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(filter);
-        Misc.free(cursor);
+        final NestedLoopFullRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private static class NestedLoopFullRecordCursor extends AbstractJoinCursor {
@@ -171,7 +175,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
         @Override
         public boolean hasNext() {
             while (true) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (isMasterHasNextPending) {
                     masterHasNext = masterCursor.hasNext();
                     isMasterHasNextPending = false;
@@ -179,7 +183,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
 
                 if (!masterHasNext) {
                     while (slaveCursor.hasNext()) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         MapKey keys = matchIdsMap.withKey();
                         keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
                         if (keys.findValue() == null) {
@@ -191,7 +195,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
                 }
 
                 while (slaveCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     if (filter.getBool(record)) {
                         MapKey keys = matchIdsMap.withKey();
                         keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);

@@ -1050,7 +1050,14 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                     long ptr = keySink.ptr();
                     ptrWithUnstableFlag = ptr | PTR_UNSTABLE_MASK;
                 }
-                flags = value.isAscii() ? FLAG_IS_ASCII : 0;
+                // An empty varchar is ASCII by definition (it has no non-ASCII bytes), but the
+                // Utf8Sequence contract only guarantees that isAscii() == true means ASCII, not
+                // the converse: a producer is free to report isAscii() == false for an empty
+                // value. The map packs hash, size and flags into a single long and relies on
+                // empty keys carrying the ASCII flag, otherwise an empty non-ASCII key packs to
+                // 0 (zero hash, zero size, no flags) -- indistinguishable from an empty slot,
+                // which silently corrupts the map. Force the flag for empty keys.
+                flags = (value.isAscii() || size == 0) ? FLAG_IS_ASCII : 0;
             }
 
             // Empty string must have the ascii flag set to true, otherwise we won't be able to differentiate

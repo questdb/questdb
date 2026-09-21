@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -212,7 +211,7 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
 
     private void buildValue() {
         // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         frameSequence.prepareForDispatch();
         frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
         frameSequence.dispatchAndAwait();
@@ -258,9 +257,14 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
                 slaveSources.setQuick(s, slaveFrameCursors.getQuick(s));
             }
             symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveSources);
+            // Bind the owner functions (this cursor's groupByFunctions) here, and only here: a
+            // parent projection or sort over a SYMBOL aggregate resolves the output column's static
+            // symbol table at getCursor() time, which is before the slave time-frame cache is built
+            // on the first read. The atom donates the owner state to the per-worker clones when it
+            // binds those in initGroupByFunctions().
+            atom.initOwnerFunctions(executionContext);
 
             recordA.of(atom.getOwnerMapValue());
-            Function.init(groupByFunctions, symbolTableSource, executionContext, null);
         } catch (Throwable th) {
             Misc.freeObjList(slaveFrameCursors);
             throw th;

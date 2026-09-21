@@ -12,11 +12,18 @@ pub trait NativeType: std::fmt::Debug + Send + Sync + 'static + Copy + Clone {
 
     fn ord(&self, other: &Self) -> std::cmp::Ordering;
 
+    /// Orders the two values by reinterpreting their bit pattern as unsigned.
+    /// Signed integer types override this to support unsigned logical types such
+    /// as IPv4 (UInt32); for every other type it is identical to `ord`.
+    fn ord_unsigned(&self, other: &Self) -> std::cmp::Ordering {
+        self.ord(other)
+    }
+
     const TYPE: PhysicalType;
 }
 
 macro_rules! native {
-    ($type:ty, $physical_type:expr) => {
+    ($type:ty, $physical_type:expr $(, unsigned = $unsigned:ty)?) => {
         impl NativeType for $type {
             type Bytes = [u8; std::mem::size_of::<Self>()];
             #[inline]
@@ -34,13 +41,20 @@ macro_rules! native {
                 self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
             }
 
+            $(
+                #[inline]
+                fn ord_unsigned(&self, other: &Self) -> std::cmp::Ordering {
+                    (*self as $unsigned).cmp(&(*other as $unsigned))
+                }
+            )?
+
             const TYPE: PhysicalType = $physical_type;
         }
     };
 }
 
-native!(i32, PhysicalType::Int32);
-native!(i64, PhysicalType::Int64);
+native!(i32, PhysicalType::Int32, unsigned = u32);
+native!(i64, PhysicalType::Int64, unsigned = u64);
 native!(f32, PhysicalType::Float);
 native!(f64, PhysicalType::Double);
 
@@ -138,4 +152,27 @@ pub fn decode<T: NativeType>(chunk: &[u8]) -> T {
         Err(_) => panic!(),
     };
     T::from_bytes(chunk)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cmp::Ordering;
+
+    #[test]
+    fn ord_unsigned_reinterprets_signed_integers() {
+        // -1 is the largest u32/u64, so ord_unsigned ranks it above 1, while the
+        // signed ord keeps it below.
+        assert_eq!((-1i32).ord_unsigned(&1), Ordering::Greater);
+        assert_eq!((-1i32).ord(&1), Ordering::Less);
+        assert_eq!((-1i64).ord_unsigned(&1), Ordering::Greater);
+        assert_eq!((-1i64).ord(&1), Ordering::Less);
+    }
+
+    #[test]
+    fn ord_unsigned_defaults_to_ord_for_floats() {
+        // Floats have no unsigned reinterpretation: the default delegates to ord.
+        assert_eq!((1.0f32).ord_unsigned(&2.0), (1.0f32).ord(&2.0));
+        assert_eq!((2.0f64).ord_unsigned(&1.0), (2.0f64).ord(&1.0));
+    }
 }

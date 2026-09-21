@@ -92,6 +92,21 @@ public interface IndexReader extends Closeable {
         return getCursor(key, minValue, maxValue);
     }
 
+    /**
+     * Acquire a NON-pooled covering cursor that a single worker thread owns
+     * outright, for use during parallel covered decode. Unlike {@link #getCursor},
+     * the returned cursor is never drawn from / returned to the reader's shared
+     * free-cursor pool, so N such cursors are safe to iterate concurrently over
+     * ONE reader provided the reader was made read-only first (warmed + frozen).
+     * Positioning matches {@link #getCursor(int, long, long, int[])}; only the
+     * construct/close lifecycle differs. Implemented by the forward posting
+     * reader (the reader carried on covered frames); other readers do not support
+     * it.
+     */
+    default RowCursor getDetachedCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
+        throw new UnsupportedOperationException();
+    }
+
     default IndexFrameCursor getFrameCursor(int key, long minValue, long maxValue) {
         throw new UnsupportedOperationException();
     }
@@ -112,6 +127,15 @@ public interface IndexReader extends Closeable {
 
     boolean isOpen();
 
+    /**
+     * Whether this reader is currently frozen (see {@link #setFrozen(boolean)}). Readers that do
+     * not support freezing always report {@code false}. Exposed so the parallel-decode freeze
+     * wiring ({@code PageFrameAddressCache.freezeCoveredReaders}) can be verified directly.
+     */
+    default boolean isFrozen() {
+        return false;
+    }
+
     void of(
             CairoConfiguration configuration,
             @Transient Path path,
@@ -125,6 +149,18 @@ public interface IndexReader extends Closeable {
     );
 
     void reloadConditionally();
+
+    /**
+     * While frozen, {@link #reloadConditionally()} must be a no-op so the
+     * value / sidecar mmaps stay stable for in-flight worker cursors that hold
+     * raw page addresses into them. The parallel covered-decode pipeline freezes
+     * each per-partition posting reader after it has been positioned at the query
+     * txn and warmed (so the mmaps are at their final extents) and unfreezes it
+     * once all worker cursors have finished. Readers that hold no in-flight
+     * worker state (bitmap, null) ignore the flag.
+     */
+    default void setFrozen(boolean frozen) {
+    }
 
     /**
      * Pin the reader at the given table {@code _txn} for snapshot isolation.

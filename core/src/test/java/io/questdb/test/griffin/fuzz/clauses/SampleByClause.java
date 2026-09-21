@@ -47,17 +47,26 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  */
 public final class SampleByClause {
 
+    // The SAMPLE BY key-kind option list. The null at index 4 is the
+    // identifier slot: pickGroupableKind fills it from
+    // ExpressionGenerator.pickIdentifierKind only when the index draw lands
+    // there, so the picker's column scans and its rnd draw cost nothing on the
+    // five draws in six that discard it.
+    private static final ColumnKind[] GROUPABLE_KINDS = {
+            ColumnKind.STRING_LIKE, ColumnKind.NUMERIC, ColumnKind.BOOLEAN,
+            ColumnKind.CHAR, null /* identifier */, ColumnKind.DECIMAL
+    };
+
     // 1-second buckets combined with FILL over a multi-day table explode
     // into ~260k rows that overflow the ORDER BY sort buffer; 30s is the
     // smallest interval that stays comfortably inside the cap.
     // The fuzzer tables span 30..75 hours of data (FuzzConfig stepMicros * rowsPerTable).
     // SAMPLE BY with FILL(PREV/NULL/LINEAR) emits one row per (key, bucket) -- multiplying
     // a tight bucket interval, a wide span, and a high-cardinality key produces an output
-    // row count that overruns the 128-page sort budget the test config uses (Overrides
-    // sets cairo.sql.sort.key.max.pages=128). That manifests as LimitOverflowException
-    // on otherwise legal SAMPLE BY queries. The smallest practical interval that fits
-    // 75h of data plus typical fuzzer key cardinality inside 128 * 128KB of sort memory
-    // is 5m -- below that, the LimitOverflow rate becomes noise dominating real bugs.
+    // row count that overruns the sort budget the test config uses (Overrides
+    // sets cairo.sql.sort.key.max.bytes=64m). That manifests as LimitOverflowException
+    // on otherwise legal SAMPLE BY queries. Below the 5m interval floor, the
+    // LimitOverflow rate becomes noise dominating real bugs.
     private static final String[] INTERVALS = {"5m", "15m", "1h", "1d"};
 
     private SampleByClause() {
@@ -77,7 +86,7 @@ public final class SampleByClause {
         sql.put(source.getPrefixSql());
         sql.put("SELECT ");
         if (rnd.nextBoolean()) {
-            FuzzExpr key = exprGen.generateOfKind(pickGroupableKind(rnd));
+            FuzzExpr key = exprGen.generateOfKind(pickGroupableKind(rnd, exprGen));
             key.appendSql(sql, ctx);
             if (useColAliases) {
                 sql.put(" AS k_a");
@@ -155,11 +164,25 @@ public final class SampleByClause {
         return new GeneratedQuery(sql.toString(), true);
     }
 
-    private static ColumnKind pickGroupableKind(Rnd rnd) {
-        ColumnKind[] options = {
-                ColumnKind.STRING_LIKE, ColumnKind.NUMERIC, ColumnKind.BOOLEAN,
-                ColumnKind.CHAR, ColumnKind.IDENTIFIER, ColumnKind.DECIMAL
-        };
-        return options[rnd.nextInt(options.length)];
+    /**
+     * Draws the kind of the SAMPLE BY key slot. The identifier slot asks
+     * {@code exprGen} which of UUID, IPv4 and LONG256 the table carries rather
+     * than drawing one of the three blind -- see
+     * {@link ExpressionGenerator#pickIdentifierKind} for what a blind draw
+     * costs and why the choice cannot move downstream into the leaf.
+     * {@link #GROUPABLE_KINDS} carries a {@code null} in that slot and this
+     * method resolves it only when the index draw wins it, which keeps the draw
+     * distribution unchanged and spares the five calls in six that discard the
+     * identifier both column scans and an {@code rnd} draw.
+     * <p>
+     * Public for the same reason as {@link GroupByClause#pickGroupableKind}:
+     * {@code FilterShapeCoverageTest#testIdentifierKeySlotDrawFollowsTheTable}
+     * drives this picker itself, so putting
+     * {@link ColumnKind#randomIdentifier} back into {@link #GROUPABLE_KINDS}
+     * fails that pin instead of quietly orphaning the table-aware draw.
+     */
+    public static ColumnKind pickGroupableKind(Rnd rnd, ExpressionGenerator exprGen) {
+        ColumnKind kind = GROUPABLE_KINDS[rnd.nextInt(GROUPABLE_KINDS.length)];
+        return kind != null ? kind : exprGen.pickIdentifierKind();
     }
 }

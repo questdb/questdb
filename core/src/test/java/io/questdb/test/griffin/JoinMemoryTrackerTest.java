@@ -79,8 +79,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // asof_dense + multi-key routes to AsOfJoinDenseRecordCursorFactory. Its scan maps memorize every
         // distinct join key (no eviction without TOLERANCE), so a high-cardinality join grows them past the limit.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k1, cast(x AS SYMBOL) k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k1, cast(x AS SYMBOL) k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             final String sql = "SELECT /*+ asof_dense(m s) */ m.k1 FROM m ASOF JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)";
             assertUsesFactory(sql, AsOfJoinDenseRecordCursorFactory.class);
@@ -94,8 +94,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // tracker-bound SingleRecordSinks; a tiny limit breaches that reopen. The reuse loop asserts the
         // open-error path frees each cursor once and leaves the factory reusable (assertMemoryLeak guards leaks).
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k1, cast(x AS SYMBOL) k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k1, cast(x AS SYMBOL) k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             // Set the tiny limit only after table creation so the populating SELECT does not breach it.
             setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 4L);
@@ -111,8 +111,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // The reuse loop cycles the dense cursor's sinks and scan maps; assertMemoryLeak is the load-bearing
         // check that their malloc/free stays symmetric on the per-query counter after the of() reorder.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k1, cast(x AS SYMBOL) k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k1, cast(x AS SYMBOL) k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             final String sql = "SELECT /*+ asof_dense(m s) */ m.k1 FROM m ASOF JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)";
             assertUsesFactory(sql, AsOfJoinDenseRecordCursorFactory.class);
@@ -136,8 +136,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // asof_dense + single SYMBOL routes to AsOfJoinDenseSingleSymbolRecordCursorFactory (no sinks; scan
         // maps bound via the base setMemoryTracker). A high-cardinality join grows the maps past the limit.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             final String sql = "SELECT /*+ asof_dense(m s) */ m.k FROM m ASOF JOIN s ON k";
             assertUsesFactory(sql, AsOfJoinDenseSingleSymbolRecordCursorFactory.class);
@@ -151,8 +151,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // limit. The reuse loop asserts the open-error path frees each cursor once (the map reopen runs
         // before super.of() adopts the cursors, so close() finds null cursors) and leaves the factory reusable.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             // Tiny limit set after table creation so the populating SELECT does not breach it.
             setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 4L);
@@ -168,8 +168,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // The reuse loop cycles the single-symbol dense cursor's scan maps; assertMemoryLeak is the
         // load-bearing check that their malloc/free stays symmetric on the per-query counter.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             final String sql = "SELECT /*+ asof_dense(m s) */ m.k FROM m ASOF JOIN s ON k";
             assertUsesFactory(sql, AsOfJoinDenseSingleSymbolRecordCursorFactory.class);
@@ -194,8 +194,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // reopens two tracker-bound SingleRecordSinks; a tiny limit breaches that reopen. The reuse loop
         // asserts the open-error path frees each cursor once and leaves the factory reusable.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             // Tiny limit set after table creation so the populating SELECT does not breach it.
             setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 4L);
@@ -211,8 +211,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // The reuse loop cycles the fast cursor's sinks; assertMemoryLeak is the load-bearing check that
         // their malloc/free stays symmetric on the per-query counter after the of() reorder.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             final String sql = "SELECT m.k FROM m ASOF JOIN s ON k";
             assertUsesFactory(sql, AsOfJoinFastRecordCursorFactory.class);
@@ -238,8 +238,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // The result is iterated (not count(*), which would short-circuit via
         // calculateSize without building the map) so the map actually grows.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             final String sql = "SELECT /*+ asof_linear(m s) */ m.k FROM m ASOF JOIN s ON k";
             assertUsesFactory(sql, AsOfJoinLightRecordCursorFactory.class);
@@ -269,8 +269,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // asof_memoized + single SYMBOL routes to AsOfJoinMemoizedRecordCursorFactory. Its rememberedSymbols
         // map caches one entry per distinct symbol (no eviction), so a high-cardinality join grows it past the limit.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             final String sql = "SELECT /*+ asof_memoized(m s) */ m.k FROM m ASOF JOIN s ON k";
             assertUsesFactory(sql, AsOfJoinMemoizedRecordCursorFactory.class);
@@ -284,8 +284,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // reuse loop asserts the open-error path frees each cursor once (the reopen runs before super.of()
         // adopts the cursors, so close() finds null cursors) and leaves the factory reusable.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             // Tiny limit set after table creation so the populating SELECT does not breach it.
             setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 4L);
@@ -301,8 +301,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // The reuse loop cycles the memoized cursor's rememberedSymbols map; assertMemoryLeak is the
         // load-bearing check that its malloc/free stays symmetric on the per-query counter.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             final String sql = "SELECT /*+ asof_memoized(m s) */ m.k FROM m ASOF JOIN s ON k";
             assertUsesFactory(sql, AsOfJoinMemoizedRecordCursorFactory.class);
@@ -329,8 +329,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // tracker. A small input keeps the join-key map well under the limit.
         setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k FROM long_sequence(20))");
-            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, x AS v FROM long_sequence(20))");
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k FROM long_sequence(20))");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k, x AS v FROM long_sequence(20))");
             drainWalQueue();
             assertOpenFailureReleasesAllocations(
                     "SELECT m.k, s.v FROM m JOIN s ON k",
@@ -432,8 +432,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // match-ids map unless the failed open frees the cursor under the still-bound tracker.
         setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, x AS v FROM long_sequence(20))");
-            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, x AS v FROM long_sequence(20))");
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k, x AS v FROM long_sequence(20))");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k, x AS v FROM long_sequence(20))");
             drainWalQueue();
             assertOpenFailureReleasesAllocations(
                     "SELECT * FROM m FULL OUTER JOIN s ON m.k = s.k AND m.v <> s.v",
@@ -481,8 +481,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testHashOuterJoinLightFailsOnLargeInput() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k FROM long_sequence(100_000))");
-            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, x AS v FROM long_sequence(100_000))");
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k FROM long_sequence(40_000))");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k, x AS v FROM long_sequence(40_000))");
             drainWalQueue();
             final String sql = "SELECT m.k, s.v FROM m LEFT JOIN s ON k";
             assertUsesFactory(sql, HashOuterJoinLightRecordCursorFactory.class);
@@ -497,8 +497,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // under the limit; reusing one factory across opens catches the isOpen desync.
         setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k FROM long_sequence(20))");
-            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, x AS v FROM long_sequence(20))");
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k FROM long_sequence(20))");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k, x AS v FROM long_sequence(20))");
             drainWalQueue();
             assertOpenFailureReleasesAllocations(
                     "SELECT m.k, s.v FROM m LEFT JOIN s ON k",
@@ -513,8 +513,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // chain; the assertMemoryLeak around it is the load-bearing check that
         // the new LongChain tracker binding keeps malloc/free symmetric.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k FROM long_sequence(50))");
-            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, x AS v FROM long_sequence(50))");
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k FROM long_sequence(50))");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k, x AS v FROM long_sequence(50))");
             drainWalQueue();
             final String sql = "SELECT m.k, s.v FROM m LEFT JOIN s ON k";
             assertUsesFactory(sql, HashOuterJoinLightRecordCursorFactory.class);
@@ -536,8 +536,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testHashOuterJoinLightSucceedsOnSmallInput() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k FROM long_sequence(20))");
-            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, x AS v FROM long_sequence(20))");
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k FROM long_sequence(20))");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k, x AS v FROM long_sequence(20))");
             drainWalQueue();
             assertQuery("SELECT count(*) FROM (SELECT m.k, s.v FROM m LEFT JOIN s ON k)")
                     .noLeakCheck()
@@ -736,8 +736,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoinFailsOnLargeInput() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE s AS (SELECT cast(x AS SYMBOL) k, (x * 1_000_000L)::timestamp ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             final String sql = "SELECT count(*) FROM m SPLICE JOIN s ON k";
             assertUsesFactory(sql, SpliceJoinLightRecordCursorFactory.class);

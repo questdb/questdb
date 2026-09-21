@@ -51,6 +51,8 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.idx.BitmapIndexUtils;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -110,11 +112,15 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.file.FileVisitResult;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -167,7 +173,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 return 100;
             }
         };
-        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, circuitBreakerConfiguration, MemoryTag.NATIVE_CB5) {
+        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, circuitBreakerConfiguration) {
             @Override
             protected boolean testConnection(long fd) {
                 return false;
@@ -452,6 +458,60 @@ public class CheckpointTest extends AbstractCairoTest {
             // Restore happens during startup, so listener should have been called exactly once
             Assert.assertEquals("Listener onCheckpointRestoreComplete should be called exactly once", 1, restoreCompleteCallCount[0]);
         }
+    }
+
+    @Test
+    public void testCheckpointLiveViewMetadataFiles() throws Exception {
+        // Live views are full WAL-backed tables. The checkpoint
+        // must carry both LV-specific files (_lv, _lv.s) and the standard
+        // table-skeleton files (_meta, _txn, _name, partition data, wal<n>/).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                    " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            drainWalQueue();
+
+            execute("CREATE LIVE VIEW live_rn FLUSH EVERY 1s START FROM NOW AS" +
+                    " SELECT symbol, price, ts, row_number() OVER w AS rn" +
+                    " FROM trades" +
+                    " WINDOW w AS (PARTITION BY symbol ORDER BY ts ANCHOR DAILY '00:00')");
+
+            execute("CHECKPOINT CREATE;");
+
+            TableToken lvToken = engine.getTableTokenIfExists("live_rn");
+            Assert.assertNotNull(lvToken);
+            Assert.assertTrue(lvToken.isLiveView());
+
+            path.trimTo(rootLen).concat(lvToken.getDirName()).slash$();
+            Assert.assertTrue("Live view directory should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+
+            // _lv definition file (LV-specific, immutable).
+            path.trimTo(rootLen).concat(lvToken.getDirName()).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$();
+            Assert.assertTrue("_lv file should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+
+            // _lv.s state file (LV-specific, mutable). Required for resumption
+            // after restore - without it the refresh worker has no
+            // lastProcessedSeqTxn watermark to restart from.
+            path.trimTo(rootLen).concat(lvToken.getDirName()).concat(io.questdb.cairo.lv.LiveViewState.LIVE_VIEW_STATE_FILE_NAME).$();
+            Assert.assertTrue("_lv.s file should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+
+            // Derived checkpoint timelines are primary-local and must not be
+            // copied by directory enumeration into the database checkpoint.
+            path.trimTo(rootLen).concat(lvToken.getDirName()).concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME).$();
+            Assert.assertFalse("_checkpoints directory must be excluded from checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+
+            // Standard WAL-backed-table files copied via the TableReader path.
+            path.trimTo(rootLen).concat(lvToken.getDirName()).concat(TableUtils.META_FILE_NAME).$();
+            Assert.assertTrue("_meta file should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+
+            path.trimTo(rootLen).concat(lvToken.getDirName()).concat(TableUtils.TABLE_NAME_FILE).$();
+            Assert.assertTrue("_name file should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+
+            // _txn now exists (live views are WAL-backed tables).
+            path.trimTo(rootLen).concat(lvToken.getDirName()).concat(TableUtils.TXN_FILE_NAME).$();
+            Assert.assertTrue("_txn file should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+
+            execute("CHECKPOINT RELEASE;");
+        });
     }
 
     @Test
@@ -828,8 +888,10 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.clear();
 
             // The bitmap index rebuild task for sym blocks in openRO until the
-            // test releases it, so the drain is parked in Future.get() when the
-            // interrupt is delivered.
+            // test releases it. The get hook below proves the drain has reached
+            // the incomplete Future before the interrupt is delivered.
+            final SOCountDownLatch getEntered = new SOCountDownLatch(1);
+            final SOCountDownLatch getInterrupted = new SOCountDownLatch(1);
             final SOCountDownLatch taskRunning = new SOCountDownLatch(1);
             final AtomicBoolean releaseTask = new AtomicBoolean();
             final FilesFacade blockingFf = new TestFilesFacadeImpl() {
@@ -858,6 +920,7 @@ public class CheckpointTest extends AbstractCairoTest {
                         TableSnapshotRestore restoreAgent = new TableSnapshotRestore(wrappedConfig);
                         Path tablePath = new Path().of(dbRoot).concat(token).slash()
                 ) {
+                    restoreAgent.setFutureGetHooks(getEntered::countDown, getInterrupted::countDown);
                     restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
                 } catch (Throwable th) {
                     thrown.set(th);
@@ -866,20 +929,72 @@ public class CheckpointTest extends AbstractCairoTest {
             }, "restore-drain-interrupt");
             restoreThread.start();
 
-            taskRunning.await();
-            restoreThread.interrupt();
-            // Let the interrupt land in the parked Future.get() before the held
-            // task is released, so the drain takes its interrupt arm; the
-            // awaitDone interrupt check makes this robust either way.
-            Os.sleep(100);
-            releaseTask.set(true);
-            restoreThread.join();
+            try {
+                Assert.assertTrue(
+                        "parallel restore task did not start",
+                        taskRunning.await(TimeUnit.SECONDS.toNanos(5))
+                );
+                Assert.assertTrue(
+                        "restore drain did not enter Future.get()",
+                        getEntered.await(TimeUnit.SECONDS.toNanos(5))
+                );
+                restoreThread.interrupt();
+                Assert.assertTrue(
+                        "Future.get() did not observe the interrupt",
+                        getInterrupted.await(TimeUnit.SECONDS.toNanos(5))
+                );
+            } finally {
+                releaseTask.set(true);
+                restoreThread.join(TimeUnit.SECONDS.toMillis(10));
+            }
 
+            Assert.assertFalse("restore thread did not stop", restoreThread.isAlive());
             final Throwable th = thrown.get();
             Assert.assertNotNull("rebuildTableFiles should have thrown", th);
             Assert.assertTrue("expected CairoException, got: " + th, th instanceof CairoException);
             TestUtils.assertContains(((CairoException) th).getFlyweightMessage(), "parallel task interrupted");
             Assert.assertTrue("the draining thread's interrupt status must be restored", interruptStatusRestored.get());
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreDrainPreInterruptedFutureCompletesAndRestoresStatus() throws Exception {
+        assertMemoryLeak(() -> {
+            final SOCountDownLatch getEntered = new SOCountDownLatch(1);
+            final FutureTask<Void> task = new FutureTask<>(() -> null) {
+                @Override
+                public Void get() throws InterruptedException, ExecutionException {
+                    getEntered.countDown();
+                    return super.get();
+                }
+            };
+            final Thread completer = new Thread(() -> {
+                getEntered.await();
+                task.run();
+            }, "restore-pre-interrupt-completer");
+            completer.start();
+
+            boolean isInterruptRestored = false;
+            try (TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)) {
+                final Field futuresField = TableSnapshotRestore.class.getDeclaredField("futures");
+                futuresField.setAccessible(true);
+                @SuppressWarnings("unchecked") final ObjList<Future<?>> futures = (ObjList<Future<?>>) futuresField.get(restoreAgent);
+                futures.add(task);
+
+                try {
+                    Thread.currentThread().interrupt();
+                    restoreAgent.finalizeParallelTasks();
+                    isInterruptRestored = Thread.currentThread().isInterrupted();
+                } finally {
+                    Thread.interrupted();
+                }
+            } finally {
+                task.run();
+                completer.join(TimeUnit.SECONDS.toMillis(5));
+            }
+
+            Assert.assertFalse("future completer did not stop", completer.isAlive());
+            Assert.assertTrue("finalizeParallelTasks did not restore interrupt status", isInterruptRestored);
         });
     }
 
@@ -3144,6 +3259,59 @@ public class CheckpointTest extends AbstractCairoTest {
                             2023-09-20T12:39:01.933062Z\tfoobar\t42
                             """);
             engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoresLiveView() throws Exception {
+        final String snapshotId = "id1";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                    " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            drainWalQueue();
+
+            execute("CREATE LIVE VIEW live_rn FLUSH EVERY 1s START FROM NOW AS" +
+                    " SELECT symbol, price, ts, row_number() OVER w AS rn" +
+                    " FROM trades" +
+                    " WINDOW w AS (PARTITION BY symbol ORDER BY ts ANCHOR DAILY '00:00')");
+
+            execute("CHECKPOINT CREATE;");
+
+            // Restore from the checkpoint.
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+
+            // The live view token should be restored and identified as LIVE_VIEW.
+            TableToken lvToken = engine.getTableTokenIfExists("live_rn");
+            Assert.assertNotNull("live view token should be restored", lvToken);
+            Assert.assertTrue("restored token should be a live view", lvToken.isLiveView());
+
+            // _lv definition file should exist in db root.
+            try (Path p = new Path()) {
+                p.of(configuration.getDbRoot()).concat(lvToken.getDirName()).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$();
+                Assert.assertTrue("_lv file should exist after restore", TestFilesFacadeImpl.INSTANCE.exists(p.$()));
+            }
+
+            // _lv.s state file should exist in db root.
+            try (Path p = new Path()) {
+                p.of(configuration.getDbRoot()).concat(lvToken.getDirName()).concat(io.questdb.cairo.lv.LiveViewState.LIVE_VIEW_STATE_FILE_NAME).$();
+                Assert.assertTrue("_lv.s file should exist after restore", TestFilesFacadeImpl.INSTANCE.exists(p.$()));
+            }
+
+            // _meta file should exist in db root.
+            try (Path p = new Path()) {
+                p.of(configuration.getDbRoot()).concat(lvToken.getDirName()).concat(TableUtils.META_FILE_NAME).$();
+                Assert.assertTrue("_meta file should exist after restore", TestFilesFacadeImpl.INSTANCE.exists(p.$()));
+            }
+
+            execute("CHECKPOINT RELEASE;");
         });
     }
 
@@ -5522,6 +5690,11 @@ public class CheckpointTest extends AbstractCairoTest {
         @Override
         public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
             return delegate.getLineUdpReceiverConfiguration();
+        }
+
+        @Override
+        public WorkerPoolConfiguration getLiveViewRefreshPoolConfiguration() {
+            return delegate.getLiveViewRefreshPoolConfiguration();
         }
 
         @Override

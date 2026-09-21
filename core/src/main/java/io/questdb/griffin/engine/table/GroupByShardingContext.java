@@ -29,13 +29,16 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.async.AsyncQueryProgressState;
+import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
+import io.questdb.cairo.sql.async.QueryParallelOwnerLoop;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
+import io.questdb.griffin.engine.groupby.PostAggregationCircuitBreaker;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MCSequence;
@@ -82,9 +85,11 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     private MemoryTracker memoryTracker;
     private final GroupByMapFragment ownerFragment;
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
+    private final QueryParallelOwnerLoop ownerLoop = new QueryParallelOwnerLoop();
     private final ObjList<GroupByMapFragment> perWorkerFragments;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final PerWorkerLocks perWorkerLocks;
+    private final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
     private final ColumnTypes valueTypes;
     volatile boolean sharded;
     boolean shardedHint;
@@ -146,6 +151,10 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         Misc.free(ownerFragment);
         Misc.freeObjList(perWorkerFragments);
         Misc.freeObjList(destShards);
+    }
+
+    public AsyncQueryProgressState getProgressState() {
+        return progressState;
     }
 
     public int maybeAcquire(int carrierId, boolean owner, ExecutionCircuitBreaker circuitBreaker) {
@@ -367,7 +376,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             MessageBus messageBus,
             WorkStealingStrategy workStealingStrategy,
             SqlExecutionCircuitBreaker circuitBreaker,
-            AtomicBooleanCircuitBreaker postAggregationCircuitBreaker,
+            PostAggregationCircuitBreaker postAggregationCircuitBreaker,
             SOUnboundedCountDownLatch postAggregationDoneLatch,
             AtomicInteger postAggregationStartedCounter
     ) {
@@ -383,6 +392,18 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         final MPSequence pubSeq = messageBus.getGroupByMergeShardPubSeq();
         final MCSequence subSeq = messageBus.getGroupByMergeShardSubSeq();
         final WorkStealingStrategy strategy = workStealingStrategy.of(postAggregationStartedCounter);
+        final QueryParallelFiberDispatcher dispatcher = messageBus.getQueryParallelFiberDispatcher();
+        ownerLoop.of(dispatcher, circuitBreaker, progressState);
+        ownerLoop.tryAcquirePublication();
+
+        if (!ownerLoop.hasPublication()) {
+            for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
+                ownerLoop.checkBeforeHelping();
+                mergeShard(-1, shardIndex);
+            }
+            finalizeShardStats();
+            return destShards;
+        }
 
         int queuedCount = 0;
         int ownCount = 0;
@@ -393,16 +414,19 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         try {
             for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
                 while (true) {
+                    ownerLoop.observeProgress();
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
-                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-
                         if (strategy.shouldSteal(mergedCount)) {
+                            ownerLoop.checkBeforeHelping();
                             mergeShard(-1, shardIndex);
                             ownCount++;
                             total++;
                             mergedCount = postAggregationDoneLatch.getCount();
                             break;
+                        }
+                        if (!ownerLoop.awaitProgress()) {
+                            Os.pause();
                         }
                         mergedCount = postAggregationDoneLatch.getCount();
                     } else {
@@ -424,28 +448,42 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             postAggregationCircuitBreaker.cancel();
             throw th;
         } finally {
-            while (!postAggregationDoneLatch.done(queuedCount)) {
-                if (circuitBreaker.checkIfTripped()) {
-                    postAggregationCircuitBreaker.cancel();
-                }
+            try {
+                ownerLoop.releasePublication();
+            } finally {
+                while (true) {
+                    ownerLoop.observeProgress();
+                    if (postAggregationDoneLatch.done(queuedCount)) {
+                        break;
+                    }
+                    final boolean isOwnerTripped = circuitBreaker.checkIfTrippedOrYield();
+                    if (isOwnerTripped) {
+                        postAggregationCircuitBreaker.cancel();
+                    }
 
-                if (strategy.shouldSteal(mergedCount)) {
-                    long cursor = subSeq.next();
-                    if (cursor > -1) {
-                        GroupByMergeShardTask task = queue.get(cursor);
-                        GroupByMergeShardJob.run(-1, task, subSeq, cursor, this);
-                        reclaimed++;
-                    } else {
+                    if (!ownerLoop.isOwnerParkable() && strategy.shouldSteal(mergedCount)) {
+                        long cursor = subSeq.next();
+                        if (cursor > -1) {
+                            GroupByMergeShardTask task = queue.get(cursor);
+                            // run() releases the slot
+                            if (dispatcher != null) {
+                                GroupByMergeShardJob.run(-1, task, subSeq, cursor, this, dispatcher);
+                            } else {
+                                GroupByMergeShardJob.run(-1, task, subSeq, cursor, this);
+                            }
+                            reclaimed++;
+                        } else {
+                            Os.pause();
+                        }
+                    } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
                         Os.pause();
                     }
-                } else {
-                    Os.pause();
+                    mergedCount = postAggregationDoneLatch.getCount();
                 }
-                mergedCount = postAggregationDoneLatch.getCount();
             }
         }
 
-        if (!postAggregationCircuitBreaker.checkIfTripped()) {
+        if (!postAggregationCircuitBreaker.checkIfTrippedOrYield()) {
             finalizeShardStats();
         }
 

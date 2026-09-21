@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
@@ -54,10 +55,10 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
     private final int joinType;
     private final RecordSink masterSink;
     private final RecordSink slaveKeySink;
-    private final SymbolTranslatingRecord symbolTranslatingRecord;
     private AbstractHashOuterJoinRecordCursor cursor;
     private Map joinKeyMap;
     private RecordChain slaveChain;
+    private SymbolTranslatingRecord symbolTranslatingRecord;
 
     public HashOuterJoinRecordCursorFactory(
             CairoConfiguration configuration,
@@ -180,13 +181,20 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(cursor);
-        Misc.free(joinKeyMap);
-        Misc.free(slaveChain);
-        Misc.free(symbolTranslatingRecord);
+        final AbstractHashOuterJoinRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Map joinKeyMap = this.joinKeyMap;
+        this.joinKeyMap = null;
+        final RecordChain slaveChain = this.slaveChain;
+        this.slaveChain = null;
+        final SymbolTranslatingRecord symbolTranslatingRecord = this.symbolTranslatingRecord;
+        this.symbolTranslatingRecord = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, joinKeyMap);
+        failure = Misc.freeBestEffort(failure, slaveChain);
+        failure = Misc.freeBestEffort(failure, symbolTranslatingRecord);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class HashFullOuterJoinFilteredRecordCursor extends AbstractHashOuterJoinRecordCursor {
@@ -226,12 +234,12 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
             }
 
             if (useSlaveCursor && slaveChain.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 return true;
             }
 
             if (masterCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterSink);
                 MapValue value = key.findValue();
@@ -252,7 +260,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
             record.hasMaster(false);
             record.hasSlave(true);
             while (mapCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapValue value = mapCursor.getRecord().getValue();
                 if (!value.getBool(3)) { // if not matched
                     slaveChain.of(value.getLong(0));
@@ -312,7 +320,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
                 isMapBuilt = true;
             }
 
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
             if (useSlaveCursor && slaveChain.hasNext()) {
                 return true;
@@ -390,12 +398,12 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
             }
 
             if (useSlaveCursor && slaveChain.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 return true;
             }
 
             while (masterCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterSink);
                 MapValue value = key.findValue();
@@ -410,7 +418,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
 
             record.hasMaster(false);
             while (mapCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapValue value = mapCursor.getRecord().getValue();
                 if (!value.getBool(3)) { // if not matched
                     slaveChain.of(value.getLong(0));

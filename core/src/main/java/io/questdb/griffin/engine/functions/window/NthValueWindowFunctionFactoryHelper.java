@@ -26,10 +26,15 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -39,7 +44,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -72,6 +79,12 @@ public class NthValueWindowFunctionFactoryHelper {
 
     public static final String NAME = "nth_value";
     private static final ArrayColumnTypes NTH_VALUE_COLUMN_TYPES;
+    private static final ArrayColumnTypes NTH_VALUE_COLUMN_TYPES_LV;
+    private static final ArrayColumnTypes NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES;
+    private static final ArrayColumnTypes NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV;
+    private static final ArrayColumnTypes NTH_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES;
+    private static final ArrayColumnTypes NTH_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV;
+    private static final ArrayColumnTypes NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES;
 
     static Function newInstance(
             int position,
@@ -160,10 +173,11 @@ public class NthValueWindowFunctionFactoryHelper {
                     }
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            NTH_VALUE_COLUMN_TYPES
+                            liveView ? NTH_VALUE_COLUMN_TYPES_LV : NTH_VALUE_COLUMN_TYPES
                     );
                     try {
                         return unboundedPartitionConstructor.newFunction(
@@ -172,7 +186,10 @@ public class NthValueWindowFunctionFactoryHelper {
                                 partitionBySink,
                                 args.get(0),
                                 n,
-                                true
+                                true,
+                                partitionByKeyTypes,
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable t) {
                         Misc.free(map);
@@ -185,18 +202,14 @@ public class NthValueWindowFunctionFactoryHelper {
                     }
 
                     int timestampIndex = windowContext.getTimestampIndex();
-
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);  // number of values in current frame
-                    columnTypes.add(ColumnType.LONG);  // native array start offset, requires updating on resize
-                    columnTypes.add(ColumnType.LONG);  // native buffer size
-                    columnTypes.add(ColumnType.LONG);  // native buffer capacity
-                    columnTypes.add(ColumnType.LONG);  // index of first buffered element
+                    final boolean liveView = windowContext.isLiveView();
 
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            columnTypes
+                            liveView
+                                    ? NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV
+                                    : NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES
                     );
 
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
@@ -223,7 +236,10 @@ public class NthValueWindowFunctionFactoryHelper {
                                 mem,
                                 initialBufferSize,
                                 timestampIndex,
-                                n
+                                n,
+                                partitionByKeyTypes,
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable t) {
                         Misc.free(map);
@@ -234,10 +250,11 @@ public class NthValueWindowFunctionFactoryHelper {
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            NTH_VALUE_COLUMN_TYPES
+                            liveView ? NTH_VALUE_COLUMN_TYPES_LV : NTH_VALUE_COLUMN_TYPES
                     );
                     try {
                         return unboundedPartitionConstructor.newFunction(
@@ -246,7 +263,10 @@ public class NthValueWindowFunctionFactoryHelper {
                                 partitionBySink,
                                 args.get(0),
                                 n,
-                                false
+                                false,
+                                partitionByKeyTypes,
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable t) {
                         Misc.free(map);
@@ -277,14 +297,12 @@ public class NthValueWindowFunctionFactoryHelper {
                 }
                 // unbounded preceding and K preceding (K > 0) -- no per-partition buffer needed.
                 else if (rowsLo == Long.MIN_VALUE) {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG); // count
-                    columnTypes.add(ColumnType.LONG); // lockedValue
-
+                    // An unbounded frame start carries no live-view layout: the parser
+                    // turns the shape away at CREATE, so this arm never checkpoints.
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            columnTypes
+                            NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES
                     );
                     try {
                         return partitionRowsUnboundedConstructor.newFunction(
@@ -302,15 +320,13 @@ public class NthValueWindowFunctionFactoryHelper {
                 }
                 // between X preceding and [Y preceding | current row]
                 else {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG); // position of current oldest element
-                    columnTypes.add(ColumnType.LONG); // start offset of native array
-                    columnTypes.add(ColumnType.LONG); // count of values in buffer
-
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            columnTypes
+                            liveView
+                                    ? NTH_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV
+                                    : NTH_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES
                     );
 
                     MemoryARW mem;
@@ -334,7 +350,9 @@ public class NthValueWindowFunctionFactoryHelper {
                                 rowsHi,
                                 args.get(0),
                                 mem,
-                                n
+                                n,
+                                partitionByKeyTypes,
+                                liveView
                         );
                     } catch (Throwable t) {
                         Misc.free(map);
@@ -433,7 +451,10 @@ public class NthValueWindowFunctionFactoryHelper {
                 MemoryARW memory,
                 int initialBufferSize,
                 int timestampIdx,
-                int n
+                int n,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
         );
     }
 
@@ -447,7 +468,9 @@ public class NthValueWindowFunctionFactoryHelper {
                 long rowsHi,
                 Function arg,
                 MemoryARW memory,
-                int n
+                int n,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         );
     }
 
@@ -480,7 +503,17 @@ public class NthValueWindowFunctionFactoryHelper {
 
     @FunctionalInterface
     interface UnboundedPartitionConstructor {
-        WindowFunction newFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int n, boolean isRange);
+        WindowFunction newFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int n,
+                boolean isRange,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        );
     }
 
     @FunctionalInterface
@@ -605,15 +638,24 @@ public class NthValueWindowFunctionFactoryHelper {
     abstract static class NthValueOverPartitionRangeFrameBase extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = 2 * Long.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        protected final CairoConfiguration configuration;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
         protected final LongList freeList = new LongList();
         protected final int initialBufferSize;
+        protected final ArrayColumnTypes keyColumnTypes;
+        protected final boolean liveView;
+        // Full value layout (including tombstone slot) for the snapshot codec.
+        // Null outside live-view mode.
+        protected final ArrayColumnTypes mapValueTypes;
         protected final long maxDiff;
         protected final MemoryARW memory;
         protected final AbstractWindowFunctionFactory.RingBufferDesc memoryDesc = new AbstractWindowFunctionFactory.RingBufferDesc();
         protected final long minDiff;
         protected final int n;
+        protected final RingRestoreSink ringRestore = new RingRestoreSink();
         protected final int timestampIndex;
         protected long nthValue;
 
@@ -627,7 +669,10 @@ public class NthValueWindowFunctionFactoryHelper {
                 MemoryARW memory,
                 int initialBufferSize,
                 int timestampIdx,
-                int n
+                int n,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -637,7 +682,26 @@ public class NthValueWindowFunctionFactoryHelper {
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
             this.n = n;
+            this.configuration = configuration;
             frameIncludesCurrentValue = rangeHi == 0;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, len = partitionByKeyTypes.getColumnCount(); i < len; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, len = NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.getColumnCount(); i < len; i++) {
+                    valueTypesCopy.add(NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 5;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -645,6 +709,45 @@ public class NthValueWindowFunctionFactoryHelper {
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 1 is the ring's start offset,
+         * slot 3 its capacity, with the frame size ahead of them at slot 0. Declared on this
+         * base rather than on the DATE and TIMESTAMP leaves because the layout is this class's
+         * - the leaves add only a getter - and {@code nth_value} has no IGNORE NULLS spelling,
+         * so no subclass shifts the pair.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 1, 3, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         @Override
@@ -664,6 +767,9 @@ public class NthValueWindowFunctionFactoryHelper {
             long d = readArgValue(record);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -701,7 +807,7 @@ public class NthValueWindowFunctionFactoryHelper {
                     for (long i = 0, nn = size; i < nn; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             if (frameSize > 0) {
                                 frameSize--;
                             }
@@ -733,7 +839,7 @@ public class NthValueWindowFunctionFactoryHelper {
                     for (long i = frameSize; i < size; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
+                        long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                         if (diff <= maxDiff && diff >= minDiff) {
                             frameSize++;
@@ -747,7 +853,7 @@ public class NthValueWindowFunctionFactoryHelper {
                     for (long i = frameSize; i < size; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             frameSize++;
                         } else {
                             break;
@@ -776,8 +882,32 @@ public class NthValueWindowFunctionFactoryHelper {
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
+            freeList.clear();
         }
 
         @Override
@@ -805,9 +935,141 @@ public class NthValueWindowFunctionFactoryHelper {
         }
 
         @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putLong(0, 0L);
+                value.putLong(2, 0L);
+                value.putLong(4, 0L);
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset);
+            source.forEachRow(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint nth_value RANGE ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            value.putLong(0, source.getFrameSize());
+            value.putLong(1, newStartOffset);
+            value.putLong(2, size);
+            value.putLong(3, capacity);
+            value.putLong(4, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            final long frameSize = source.getLong(offset);
+            offset += Long.BYTES;
+            final long size = source.getLong(offset);
+            offset += Long.BYTES;
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            for (long i = 0; i < size; i++) {
+                memory.putLong(newStartOffset + i * RECORD_SIZE, source.getLong(offset));
+                offset += Long.BYTES;
+                memory.putLong(newStartOffset + i * RECORD_SIZE + Long.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+            value.putLong(0, frameSize);
+            value.putLong(1, newStartOffset);
+            value.putLong(2, size);
+            value.putLong(3, capacity);
+            value.putLong(4, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
             super.setMemoryTracker(tracker);
             memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public int checkpointRingValueKind() {
+            return LiveViewCheckpointRangeRingStateReader.VALUE_KIND_LONG;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            // nth_value carries no running aggregate, so the scalar slot goes unused
+            // (restore recomputes the emitted value from the ring) and stores 0.
+            // frameSize is the in-frame count restore needs. The ring holds every
+            // buffered row including nulls, which the shared reader now admits.
+            final long frameSize = value.getLong(0);
+            final long startOffset = value.getLong(1);
+            final long size = value.getLong(2);
+            final long capacity = value.getLong(3);
+            final long firstIdx = value.getLong(4);
+            sink.putScalarState(0L, frameSize);
+            for (long i = 0; i < size; i++) {
+                final long idx = (firstIdx + i) % capacity;
+                sink.putRow(
+                        memory.getLong(startOffset + idx * RECORD_SIZE),
+                        memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES)
+                );
+            }
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            final long startOffset = value.getLong(1);
+            final long size = value.getLong(2);
+            final long capacity = value.getLong(3);
+            final long firstIdx = value.getLong(4);
+            sink.putLong(size);
+            for (long i = 0; i < size; i++) {
+                final long idx = (firstIdx + i) % capacity;
+                sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE));
+                sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES));
+            }
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own rows and nth_value emits the k-th element from
+            // the frame start, always inside it, so a warm-up over the frame's timestamp width refills
+            // the ring and the value converges from the output floor on.
+            // Only a bounded frame start declares a finite extent; an unbounded start never
+            // reaches a live view, so frameLoBounded gates it.
+            return frameLoBounded;
+        }
+
+        @Override
+        public boolean supportsCheckpointRingState() {
+            return supportsCheckpointState();
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -838,6 +1100,29 @@ public class NthValueWindowFunctionFactoryHelper {
             memory.truncate();
             freeList.clear();
         }
+
+        /**
+         * Writes restored ring rows straight into the partition's freshly sized
+         * slab. Reused across partitions so a restore that walks thousands of them
+         * allocates nothing per partition. The value column is a raw 64-bit word:
+         * an nth_value ring row can be a NULL argument (LONG_NULL).
+         */
+        protected class RingRestoreSink implements LiveViewCheckpointRingStateSource.RowConsumer {
+            protected long rows;
+            private long startOffset;
+
+            @Override
+            public void accept(long timestamp, long valueBits) {
+                memory.putLong(startOffset + rows * RECORD_SIZE, timestamp);
+                memory.putLong(startOffset + rows * RECORD_SIZE + Long.BYTES, valueBits);
+                rows++;
+            }
+
+            protected void of(long startOffset) {
+                this.startOffset = startOffset;
+                this.rows = 0;
+            }
+        }
     }
 
     // handles nth_value() over (partition by x [order by o] rows between K preceding and
@@ -851,6 +1136,11 @@ public class NthValueWindowFunctionFactoryHelper {
         protected final int excludeCount;
         protected final boolean frameIncludesCurrentValue;
         protected final int frameSize;
+        protected final ArrayColumnTypes keyColumnTypes;
+        protected final boolean liveView;
+        // Full value layout (including tombstone slot) for the snapshot codec.
+        // Null outside live-view mode.
+        protected final ArrayColumnTypes mapValueTypes;
         protected final MemoryARW memory;
         protected final int n;
         protected long nthValue;
@@ -863,7 +1153,9 @@ public class NthValueWindowFunctionFactoryHelper {
                 long rowsHi,
                 Function arg,
                 MemoryARW memory,
-                int n
+                int n,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             assert rowsLo > Long.MIN_VALUE; // use NthValueOverPartitionRowsFrameUnboundedBase for the unbounded-lo case
@@ -873,6 +1165,22 @@ public class NthValueWindowFunctionFactoryHelper {
             this.frameIncludesCurrentValue = rowsHi == 0;
             this.memory = memory;
             this.n = n;
+            this.liveView = liveView;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, len = partitionByKeyTypes.getColumnCount(); i < len; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, len = NTH_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.getColumnCount(); i < len; i++) {
+                    valueTypesCopy.add(NTH_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 3;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -895,6 +1203,9 @@ public class NthValueWindowFunctionFactoryHelper {
             long count;
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 count = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
@@ -952,8 +1263,31 @@ public class NthValueWindowFunctionFactoryHelper {
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : NTH_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
         }
 
         @Override
@@ -972,6 +1306,85 @@ public class NthValueWindowFunctionFactoryHelper {
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.findValue();
+            if (mapValue != null) {
+                final long startOffset = mapValue.getLong(1);
+                mapValue.putLong(0, 0L);
+                mapValue.putLong(2, 0L);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putLong(startOffset + (long) i * Long.BYTES, Numbers.LONG_NULL);
+                }
+                if (!mapValue.isNew() && tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 1) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            final long ringBytes = (long) bufferSize * Long.BYTES;
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long partitionCountVal = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor(ringBytes) - memory.getPageAddress(0);
+            for (int i = 0; i < bufferSize; i++) {
+                memory.putLong(newStartOffset + (long) i * Long.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+            value.putLong(0, loIdx);
+            value.putLong(1, newStartOffset);
+            value.putLong(2, partitionCountVal);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            sink.putLong(value.getLong(2));
+            final long startOffset = value.getLong(1);
+            for (int i = 0; i < bufferSize; i++) {
+                sink.putLong(memory.getLong(startOffset + (long) i * Long.BYTES));
+            }
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own rows and nth_value emits the k-th element from
+            // the frame start, always inside it, so a warm-up over the frame's row look-behind refills
+            // the ring and the value converges from the output floor on.
+            // This class is only built for a bounded frame start (the unbounded-lo case
+            // has its own class), so its extent is always finite.
+            return true;
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -1003,6 +1416,8 @@ public class NthValueWindowFunctionFactoryHelper {
     // and K preceding), K > 0. Once each partition has seen n rows, the n-th value is locked
     // and emitted whenever the frame first contains at least n rows (count >= n + bufferSize).
     // No per-partition buffer -- O(1) state per partition (count + lockedValue).
+    // The frame starts at UNBOUNDED PRECEDING, which the parser turns away at CREATE, so a
+    // live view never compiles this shape: it carries no checkpoint state and no anchor reset.
     abstract static class NthValueOverPartitionRowsFrameUnboundedBase extends BasePartitionedWindowFunction {
 
         protected final int bufferSize;
@@ -1151,7 +1566,7 @@ public class NthValueWindowFunctionFactoryHelper {
                 for (long i = 0, nn = size; i < nn; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         if (frameSize > 0) {
                             frameSize--;
                         }
@@ -1183,7 +1598,7 @@ public class NthValueWindowFunctionFactoryHelper {
                 for (long i = frameSize, nn = size; i < nn; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
+                    long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                     if (diff <= maxDiff && diff >= minDiff) {
                         frameSize++;
@@ -1197,7 +1612,7 @@ public class NthValueWindowFunctionFactoryHelper {
                 for (long i = frameSize, nn = size; i < nn; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         frameSize++;
                     } else {
                         break;
@@ -1313,7 +1728,6 @@ public class NthValueWindowFunctionFactoryHelper {
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
             this.n = n;
-            initBuffer();
         }
 
         @Override
@@ -1514,14 +1928,52 @@ public class NthValueWindowFunctionFactoryHelper {
     // project-wide follow-up that should cover all 20+ RANGE-supporting window factories together.
     abstract static class NthValueOverUnboundedPartitionFrameBase extends BasePartitionedWindowFunction {
 
+        protected final CairoConfiguration configuration;
         protected final boolean isRange;
+        protected final ArrayColumnTypes keyColumnTypes;
+        protected final boolean liveView;
+        // Full value layout (including tombstone slot) for the newCompactionScratch
+        // Map and the snapshot codec. Null outside live-view mode.
+        protected final ArrayColumnTypes mapValueTypes;
         protected final int n;
         protected long value;
 
-        public NthValueOverUnboundedPartitionFrameBase(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int n, boolean isRange) {
+        public NthValueOverUnboundedPartitionFrameBase(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int n,
+                boolean isRange,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.n = n;
             this.isRange = isRange;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, len = partitionByKeyTypes.getColumnCount(); i < len; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, len = NTH_VALUE_COLUMN_TYPES_LV.getColumnCount(); i < len; i++) {
+                    valueTypesCopy.add(NTH_VALUE_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -1531,7 +1983,16 @@ public class NthValueWindowFunctionFactoryHelper {
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.createValue();
 
-            if (mapValue.isNew()) {
+            if (mapValue.isNew() && tombstoneValueIndex >= 0) {
+                mapValue.putByte(tombstoneValueIndex, (byte) 0);
+            }
+
+            // count == 0 marks a partition slot that has either just been
+            // resetPartition'd or has never seen a row. The non-LV code path
+            // never writes count == 0 once a row arrives, so this sentinel is
+            // safe in both modes.
+            final long count = mapValue.isNew() ? 0L : mapValue.getLong(1);
+            if (count == 0L) {
                 if (n == 1) {
                     long d = readArgValue(record);
                     mapValue.putLong(0, d);
@@ -1541,21 +2002,18 @@ public class NthValueWindowFunctionFactoryHelper {
                     value = Numbers.LONG_NULL;
                 }
                 mapValue.putLong(1, 1);
+            } else if (count >= n) {
+                // nth value already locked in
+                value = mapValue.getLong(0);
             } else {
-                long count = mapValue.getLong(1);
-                if (count >= n) {
-                    // nth value already found
-                    value = mapValue.getLong(0);
+                final long next = count + 1;
+                mapValue.putLong(1, next);
+                if (next == n) {
+                    long d = readArgValue(record);
+                    mapValue.putLong(0, d);
+                    value = d;
                 } else {
-                    count++;
-                    mapValue.putLong(1, count);
-                    if (count == n) {
-                        long d = readArgValue(record);
-                        mapValue.putLong(0, d);
-                        value = d;
-                    } else {
-                        value = Numbers.LONG_NULL;
-                    }
+                    value = Numbers.LONG_NULL;
                 }
             }
         }
@@ -1566,14 +2024,79 @@ public class NthValueWindowFunctionFactoryHelper {
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : NTH_VALUE_COLUMN_TYPES.getColumnCount();
         }
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.createValue();
+            mapValue.putLong(0, Numbers.LONG_NULL);
+            mapValue.putLong(1, 0L);
+            if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
+            } else if (tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 1) {
+                mapValue.putByte(tombstoneValueIndex, (byte) 1);
+                tombstoneCount++;
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            value.putLong(0, source.getLong(offset));
+            offset += Long.BYTES;
+            value.putLong(1, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            sink.putLong(value.getLong(1));
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -1719,7 +2242,42 @@ public class NthValueWindowFunctionFactoryHelper {
 
     static {
         NTH_VALUE_COLUMN_TYPES = new ArrayColumnTypes();
-        NTH_VALUE_COLUMN_TYPES.add(ColumnType.TIMESTAMP);
+        NTH_VALUE_COLUMN_TYPES.add(ColumnType.TIMESTAMP); // captured value
         NTH_VALUE_COLUMN_TYPES.add(ColumnType.LONG); // row count within partition
+
+        NTH_VALUE_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        NTH_VALUE_COLUMN_TYPES_LV.add(ColumnType.TIMESTAMP); // captured value
+        NTH_VALUE_COLUMN_TYPES_LV.add(ColumnType.LONG); // row count within partition
+        NTH_VALUE_COLUMN_TYPES_LV.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
+
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES = new ArrayColumnTypes();
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // number of values in current frame
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // native array start offset, requires updating on resize
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // native buffer size
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // native buffer capacity
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // index of first buffered element
+
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // number of values in current frame
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // native array start offset, requires updating on resize
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // native buffer size
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // native buffer capacity
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // index of first buffered element
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
+
+        NTH_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES = new ArrayColumnTypes();
+        NTH_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // position of current oldest element
+        NTH_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // start offset of native array
+        NTH_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // count of values in buffer
+
+        NTH_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        NTH_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG); // position of current oldest element
+        NTH_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG); // start offset of native array
+        NTH_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG); // count of values in buffer
+        NTH_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
+
+        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES = new ArrayColumnTypes();
+        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // count
+        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // lockedValue
     }
 }

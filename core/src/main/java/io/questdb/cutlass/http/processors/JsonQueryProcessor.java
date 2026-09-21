@@ -139,6 +139,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             this.queryExecutors.extendAndSet(CompiledQuery.CANCEL_QUERY, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.EMPTY, (state, cq, keepAliveHeader) -> sendEmptyQueryNotice(state, keepAliveHeader));
             this.queryExecutors.extendAndSet(CompiledQuery.CREATE_MAT_VIEW, this::executeDdl);
+            this.queryExecutors.extendAndSet(CompiledQuery.CREATE_LIVE_VIEW, this::executeDdl);
             this.queryExecutors.extendAndSet(CompiledQuery.CREATE_VIEW, this::executeDdl);
             this.queryExecutors.extendAndSet(CompiledQuery.COMPILE_VIEW, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.ALTER_VIEW, sendConfirmation);
@@ -148,6 +149,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
 
             // Query types start with 1 instead of 0, so we have to add 1 to the expected size.
             assert this.queryExecutors.size() == (CompiledQuery.TYPES_COUNT + 1);
+            assert hasExecutorForEveryType(this.queryExecutors);
             this.nanosecondClock = configuration.getNanosecondClock();
             this.maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
             this.metrics = engine.getMetrics();
@@ -187,6 +189,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         }
 
         try {
+            state.mountSqlExecutionOwner();
             if (fut != null) {
                 retryQueryExecution(state, fut);
                 return;
@@ -195,7 +198,21 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             final RecordCursorFactory factory = context.getSelectCache().poll(state.getQuery());
             if (factory != null) {
                 // queries with sensitive info are not cached, doLog = true
+                if (!state.isSqlExecutionOwnerStarted()) {
+                    try {
+                        state.beginSqlExecutionOwner(state.getQuery(), sqlExecutionContext, CompiledQuery.SELECT);
+                    } catch (RuntimeException | Error e) {
+                        // The cache poll transferred ownership to this request, but an admission
+                        // failure happened before executeCachedSelect() could hand it to the state.
+                        final Throwable cleanupFailure = Misc.freeBestEffort(null, factory);
+                        if (cleanupFailure != null && cleanupFailure != e) {
+                            e.addSuppressed(cleanupFailure);
+                        }
+                        throw e;
+                    }
+                }
                 try {
+                    state.publishSqlExecutionOwner(false);
                     sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP);
                     executeCachedSelect(state, factory);
                 } catch (TableReferenceOutOfDateException e) {
@@ -217,6 +234,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             readyForNextRequest(context);
         } catch (EntryUnavailableException e) {
             LOG.info().$("[fd=").$(context.getFd()).$("] resource busy, will retry").$();
+            state.unmountSqlExecutionOwner();
             throw RetryOperationException.INSTANCE;
         } catch (CairoException e) {
             internalError(
@@ -309,6 +327,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             // preserve random when we park the context
             SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
             state.setRnd(sqlExecutionContext.getRandom());
+            state.parkSqlExecutionOwner();
         }
     }
 
@@ -336,6 +355,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 state.setPausedQuery(false);
             }
             try {
+                state.resumeSqlExecutionOwner();
                 doResumeSend(state, context);
             } catch (CairoError e) {
                 internalError(
@@ -374,6 +394,22 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             return HTTP_FORBIDDEN;
         }
         return HTTP_BAD_REQUEST;
+    }
+
+    // Every declared CompiledQuery type must resolve to a non-null executor. The list-size check alone
+    // is blind to a null hole below the highest-set index (extendAndSet(EMPTY) grows the list past it),
+    // which is how a missing CREATE_LIVE_VIEW executor once slipped through as a runtime NPE on /exec.
+    // Indices 15/16 are a permanent gap in the type numbering (VACUUM = UPDATE + 3).
+    private static boolean hasExecutorForEveryType(ObjList<QueryExecutor> executors) {
+        for (int type = 1; type <= CompiledQuery.TYPES_COUNT; type++) {
+            if (type == 15 || type == 16) {
+                continue;
+            }
+            if (executors.getQuick(type) == null) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static void logInternalError(
@@ -474,9 +510,18 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             for (int retries = 0; ; retries++) {
                 final long compilationStart = nanosecondClock.getTicks();
                 final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
+                state.setQueryType(cc.getType());
+                if (!state.isSqlExecutionOwnerStarted()) {
+                    try {
+                        state.beginSqlExecutionOwner(state.getQuery(), sqlExecutionContext, cc.getType());
+                    } catch (RuntimeException | Error e) {
+                        cc.freeAfterOwnerStartFailure(e);
+                        throw e;
+                    }
+                }
+                state.publishSqlExecutionOwner(sqlExecutionContext.containsSecret());
                 sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP);
                 state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);
-                state.setQueryType(cc.getType());
                 // Read-only boundary gate: engine.isReadOnlyMode() flips to true as the FIRST step of
                 // an in-place PRIMARY->REPLICA switch cascade, before the security context resolved for
                 // this request reflects the replica role. A write/DDL submitted over /exec on a
@@ -496,7 +541,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                     // covers CREATE/DROP operation subtypes.
                     cc.closeAllButSelect();
                     Misc.free(cc.getOperation());
-                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                    throw CairoException.readOnlyAccess();
                 }
                 // todo: reconsider whether we need to keep the SqlCompiler instance open while executing the query
                 // the problem is the each instance of the compiler has just a single instance of the CompilerQuery object.
@@ -647,7 +692,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
      * build 241196 caught).
      * <p>
      * The retry path (retryQueryExecution) needs no second fence: it only awaits the already-submitted
-     * future and never re-invokes op.execute(), so the fence span is this in-method execute+await only.
+     * future and never re-invokes op.execute(). The operation's async apply path acquires the same fence,
+     * so this method releases its read hold before waiting for the future.
      */
     private int executeDdlFenced(
             SqlExecutionContextImpl sqlExecutionContext,
@@ -658,9 +704,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     ) throws SqlException {
         if (engine.isReadOnlyMode()
                 && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, op, engine.getConfiguration())) {
-            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            throw CairoException.readOnlyAccess();
         }
         final Lock lock = engine.getRoleSwitchReadLock();
+        final OperationFuture future;
         lock.lock();
         try {
             // Authoritative in-lock re-check against the role flip, which holds the WRITE side of this
@@ -668,13 +715,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             // cannot interleave (its write acquire waits), while other commits share the read side.
             if (engine.isReadOnlyMode()
                     && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, op, engine.getConfiguration())) {
-                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                throw CairoException.readOnlyAccess();
             }
-            try (OperationFuture fut = op.execute(sqlExecutionContext, eventSubSequence)) {
-                return fut.await(awaitTimeout);
-            }
+            future = op.execute(sqlExecutionContext, eventSubSequence);
         } finally {
             lock.unlock();
+        }
+        try (future) {
+            return future.await(awaitTimeout);
         }
     }
 

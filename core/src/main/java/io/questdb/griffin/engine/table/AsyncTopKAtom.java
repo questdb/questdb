@@ -39,6 +39,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.orderby.EncodedTopKBuffer;
@@ -55,9 +56,10 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 
-public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
+public class AsyncTopKAtom implements StatefulAtom, PerWorkerLockOwner, Reopenable, Plannable {
     private final IntHashSet encodedSkipColumnIndexes;
     private final AsyncFilterContext filterCtx;
     private final boolean isEncoded;
@@ -283,6 +285,12 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
     // must not be used concurrently
     public ObjList<LimitedSizeLongTreeChain> getPerWorkerChains() {
         return perWorkerChains;
+    }
+
+    @Override
+    @TestOnly
+    public PerWorkerLocks getPerWorkerLocks() {
+        return perWorkerLocks;
     }
 
     public PageFrameMemoryRecord getRecordB(int slotId) {

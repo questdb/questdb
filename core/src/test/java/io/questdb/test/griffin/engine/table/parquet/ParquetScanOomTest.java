@@ -24,17 +24,8 @@
 
 package io.questdb.test.griffin.engine.table.parquet;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CursorPrinter;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
-import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractCairoTest;
-import org.junit.Assert;
+import io.questdb.test.AbstractOomSweepTest;
 import org.junit.Test;
 
 /**
@@ -49,7 +40,7 @@ import org.junit.Test;
  * query fuzzer's malloc fault injection surfaced this as a small
  * {@code NATIVE_DEFAULT} leak.
  */
-public class ParquetScanOomTest extends AbstractCairoTest {
+public class ParquetScanOomTest extends AbstractOomSweepTest {
 
     @Test
     public void testParquetScanCleansUpWhenBufferReopenRunsOutOfMemory() throws Exception {
@@ -70,43 +61,16 @@ public class ParquetScanOomTest extends AbstractCairoTest {
             // inside the scan, not in first-touch table open.
             drain(query);
 
-            boolean sawOom = false;
             // Fine sweep so the ceiling lands inside the buffer reopen, where the
-            // page-address lists allocate one by one.
-            for (int slack = 0; slack <= 24 * 1024; slack += 64) {
-                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
-                try {
-                    drain(query);
-                } catch (CairoException e) {
-                    Assert.assertTrue("expected an out-of-memory error, got: " + e.getMessage(), e.isOutOfMemory());
-                    sawOom = true;
-                } finally {
-                    Unsafe.setRssMemLimit(0);
-                }
-            }
-            Assert.assertTrue("sweep never tripped the RSS limit; widen the range", sawOom);
+            // page-address lists allocate one by one. The buffer reopen is on the
+            // iteration path, so the sweep has to drain - but it must not compile
+            // under the ceiling, or a compiler allocation would take the fault and
+            // the scan would never run.
+            assertCursorDrainOomSweep(24 * 1024, 64, null, query);
 
             // Recovery: with the ceiling removed the same query runs cleanly. The
             // enclosing assertMemoryLeak is the authoritative net leak check.
-            Unsafe.setRssMemLimit(0);
             drain(query);
         });
-    }
-
-    private static void drain(String query) throws Exception {
-        final StringSink sink = new StringSink();
-        try (RecordCursorFactory factory = select(query)) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                final RecordMetadata metadata = factory.getMetadata();
-                final int columnCount = metadata.getColumnCount();
-                final Record record = cursor.getRecord();
-                while (cursor.hasNext()) {
-                    for (int i = 0; i < columnCount; i++) {
-                        CursorPrinter.printColumn(record, metadata, i, sink, false);
-                    }
-                    sink.clear();
-                }
-            }
-        }
     }
 }

@@ -35,7 +35,6 @@ use std::sync::Arc;
 pub enum ParquetErrorReason {
     OutOfMemory(Option<AllocFailure>),
     Parquet2(parquet2::error::Error),
-    QdbMeta(Arc<serde_json::Error>),
     Layout,
     Unsupported,
     InvalidType,
@@ -69,7 +68,6 @@ impl ParquetErrorReason {
                 .as_ref()
                 .map(|err| err as &(dyn std::error::Error + 'static)),
             ParquetErrorReason::Parquet2(err) => Some(err),
-            ParquetErrorReason::QdbMeta(err) => Some(err.as_ref()),
             ParquetErrorReason::Utf8Decode(err) => Some(err),
             ParquetErrorReason::Utf16Decode(err) => Some(err),
             ParquetErrorReason::Io(err) => Some(err.as_ref()),

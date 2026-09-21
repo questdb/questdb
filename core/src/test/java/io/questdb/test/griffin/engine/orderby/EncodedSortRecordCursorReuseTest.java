@@ -55,7 +55,7 @@ public class EncodedSortRecordCursorReuseTest extends AbstractCairoTest {
         // single page. Per row (key LONG, payload LONG, ts TIMESTAMP): 8B header + 24B = 32B;
         // 100 rows = 3_200B fit one 4_096B page, but two runs' worth (6_400B) would not.
         setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4096);
-        setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_PAGES, 1);
+        setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES, 4096);
 
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (key LONG, payload LONG, ts TIMESTAMP) " +

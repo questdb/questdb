@@ -137,10 +137,9 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
         }
     }
 
-    // Single-open variant used for files whose committed mapping size is stored
-    // as a u64 at offset 0 (e.g. the _pm parquet sidecar). Opens the file once,
-    // reads the size from the fd it just opened, validates it against the
-    // actual file length to prevent SIGBUS on an over-large mapping, then maps.
+    // Single open: read the committed size from the 8-byte header at offset 0,
+    // then mmap that many bytes through the same fd. Saves the extra open that a
+    // read-size-then-map sequence costs on the per-partition scan path.
     public void ofWithSizeFromHeader(FilesFacade ff, LPSZ name, int memoryTag) {
         this.memoryTag = memoryTag;
         this.madviseOpts = -1;
@@ -150,6 +149,8 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
             if (newSize <= 0) {
                 throw CairoException.critical(0).put("invalid size header [path=").put(name).put(']');
             }
+            // A header size past EOF would SIGBUS the JVM on the first read of
+            // the trailing region; surface corruption as a catchable error.
             final long actualLength = ff.length(fd);
             if (newSize > actualLength) {
                 throw CairoException.critical(0)

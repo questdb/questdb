@@ -29,6 +29,11 @@ import org.junit.Test;
 
 public class CastVarcharToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
+    // one type per decimal storage width
+    private static final String[] ALL_WIDTHS = {
+            "DECIMAL(2,1)", "DECIMAL(4,2)", "DECIMAL(9,2)", "DECIMAL(18,2)", "DECIMAL(38,2)", "DECIMAL(40,2)"
+    };
+
     @Test
     public void testCastExplains() throws Exception {
         assertMemoryLeak(
@@ -203,6 +208,36 @@ public class CastVarcharToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
                     assertQuery("select cast(cast('-1' as varchar) as DECIMAL(2,2))")
                             .fails(12, "inconvertible value: `-1` [VARCHAR -> DECIMAL(2,2)]");
+                }
+        );
+    }
+
+    @Test
+    public void testCastInfinityAndNaN() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    for (String value : new String[]{"NaN", "Infinity", "-Infinity", "+Infinity"}) {
+                        for (String type : ALL_WIDTHS) {
+                            String constant = "cast(cast('" + value + "' as varchar) as " + type + ")";
+                            assertQuery("select " + constant + " v, " + constant + " is null n")
+                                    .noLeakCheck()
+                                    .expectSize()
+                                    .returns("v\tn\n\ttrue\n");
+
+                            assertQuery("WITH data AS (SELECT cast('" + value + "' as varchar) value) " +
+                                    "SELECT cast(value as " + type + ") v, cast(value as " + type + ") is null n FROM data")
+                                    .noLeakCheck()
+                                    .expectSize()
+                                    .returns("v\tn\n\ttrue\n");
+                        }
+                    }
+
+                    // only the canonical spellings are recognised
+                    assertQuery("select cast(cast('nan' as varchar) as DECIMAL(10,2))")
+                            .fails(12, "inconvertible value: `nan` [VARCHAR -> DECIMAL(10,2)]");
+
+                    assertQuery("select cast(cast('INFINITY' as varchar) as DECIMAL(10,2))")
+                            .fails(12, "inconvertible value: `INFINITY` [VARCHAR -> DECIMAL(10,2)]");
                 }
         );
     }

@@ -42,6 +42,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.griffin.engine.TestBinarySequence;
@@ -270,17 +271,6 @@ public class MemoryCARWImplTest {
             for (char i = n; i > 0; i--) {
                 assertEquals(i, mem.getChar(o));
                 o += 2;
-            }
-        }
-    }
-
-    @Test
-    public void testDeadCodeForUtf8() {
-        try (MemoryARW mem = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)) {
-            try {
-                mem.putStrUtf8(null);
-                Assert.fail();
-            } catch (UnsupportedOperationException ignored) {
             }
         }
     }
@@ -659,6 +649,41 @@ public class MemoryCARWImplTest {
     }
 
     @Test
+    public void testJumpToZeroKeepsAllocation() {
+        final int pageSize = 256;
+        final int sz = 256 * 3;
+        try (MemoryARW mem = new MemoryCARWImpl(pageSize, 3, MemoryTag.NATIVE_DEFAULT)) {
+            for (int i = 0; i < sz; i++) {
+                mem.putByte(i, (byte) i);
+            }
+            Assert.assertEquals(sz, mem.size());
+            final long address = mem.getPageAddress(0);
+
+            // Rewinding keeps every page the buffer grew to, so a caller that
+            // rewinds and refills each cycle reallocates nothing and writes into
+            // pages that are already mapped. Callers rely on this: see
+            // WindowFunction.onCheckpointRestoreBegin().
+            mem.jumpTo(0);
+            Assert.assertEquals(sz, mem.size());
+            Assert.assertEquals(0, mem.getAppendOffset());
+            Assert.assertEquals(address, mem.getPageAddress(0));
+
+            for (int i = 0; i < sz; i++) {
+                mem.putByte(i, (byte) (i + 1));
+            }
+            Assert.assertEquals(sz, mem.size());
+            Assert.assertEquals(address, mem.getPageAddress(0));
+            for (int i = 0; i < sz; i++) {
+                Assert.assertEquals((byte) (i + 1), mem.getByte(i));
+            }
+
+            // truncate(), by contrast, hands all but the first page back.
+            mem.truncate();
+            Assert.assertEquals(pageSize, mem.size());
+        }
+    }
+
+    @Test
     public void testLong256() {
         try (MemoryARW mem = new MemoryCARWImpl(256, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.putLong256("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8");
@@ -978,6 +1003,27 @@ public class MemoryCARWImplTest {
     }
 
     @Test
+    public void testMalformedStrUtf8IsRejected() {
+        final long ptr = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putByte(ptr, (byte) '1');
+            Unsafe.putByte(ptr + 1, (byte) 0xC3);
+
+            try (MemoryARW mem = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)) {
+                try {
+                    mem.putStrUtf8(new DirectUtf8String().of(ptr, ptr + 2));
+                    Assert.fail("expected the malformed value to be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid UTF8 in value for");
+                }
+                Assert.assertEquals(0, mem.getAppendOffset());
+            }
+        } finally {
+            Unsafe.free(ptr, 2, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testMaxPages() {
         int pageSize = 256;
         int maxPages = 3;
@@ -1009,6 +1055,14 @@ public class MemoryCARWImplTest {
     public void testNullBin() {
         try (MemoryARW mem = new MemoryCARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             testNullBin0(mem);
+        }
+    }
+
+    @Test
+    public void testNullStrUtf8() {
+        try (MemoryARW mem = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)) {
+            Assert.assertEquals(Integer.BYTES, mem.putStrUtf8(null));
+            Assert.assertNull(mem.getStrA(0));
         }
     }
 
@@ -1169,6 +1223,7 @@ public class MemoryCARWImplTest {
             Assert.assertEquals(0, mem.getPageAddress(0));
         }
     }
+
 
     private void testStrRnd(long offset, long pageSize) {
         Rnd rnd = new Rnd();

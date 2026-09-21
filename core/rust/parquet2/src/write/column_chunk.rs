@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use parquet_format_safe::thrift::protocol::TCompactOutputProtocol;
 use parquet_format_safe::{
     BloomFilterAlgorithm, BloomFilterCompression, BloomFilterHash, BloomFilterHeader, ColumnChunk,
-    ColumnMetaData, SplitBlockAlgorithm, Type, Uncompressed, XxHash,
+    ColumnMetaData, PageEncodingStats, SplitBlockAlgorithm, Type, Uncompressed, XxHash,
 };
 
 use crate::bloom_filter;
@@ -220,6 +220,7 @@ fn build_column_chunk(
 
     let mut num_values: i64 = 0;
     let mut encodings = Vec::new();
+    let mut encoding_stats = Vec::new();
     for spec in specs {
         let type_: PageType = spec.header.type_.try_into()?;
         match type_ {
@@ -228,19 +229,27 @@ fn build_column_chunk(
                 num_values += header.num_values as i64;
                 push_unique(&mut encodings, header.encoding);
                 push_unique(&mut encodings, Encoding::Rle.into());
+                increment_encoding_stats(&mut encoding_stats, spec.header.type_, header.encoding);
             }
             PageType::DataPageV2 => {
                 let header = spec.header.data_page_header_v2.as_ref().unwrap();
                 num_values += header.num_values as i64;
                 push_unique(&mut encodings, header.encoding);
                 push_unique(&mut encodings, Encoding::Rle.into());
+                increment_encoding_stats(&mut encoding_stats, spec.header.type_, header.encoding);
             }
             PageType::DictionaryPage => {
                 let header = spec.header.dictionary_page_header.as_ref().unwrap();
                 push_unique(&mut encodings, header.encoding);
+                increment_encoding_stats(&mut encoding_stats, spec.header.type_, header.encoding);
             }
         }
     }
+    let encoding_stats = if encoding_stats.is_empty() {
+        None
+    } else {
+        Some(encoding_stats)
+    };
 
     let (data_page_offset, dictionary_page_offset) = extract_page_offsets(specs)?;
 
@@ -266,7 +275,7 @@ fn build_column_chunk(
         index_page_offset: None,
         dictionary_page_offset,
         statistics,
-        encoding_stats: None,
+        encoding_stats,
         bloom_filter_offset,
         bloom_filter_length,
     };
@@ -292,6 +301,25 @@ fn push_unique(
 ) {
     if !encodings.contains(&encoding) {
         encodings.push(encoding);
+    }
+}
+
+fn increment_encoding_stats(
+    encoding_stats: &mut Vec<PageEncodingStats>,
+    page_type: parquet_format_safe::PageType,
+    encoding: parquet_format_safe::Encoding,
+) {
+    if let Some(stat) = encoding_stats
+        .iter_mut()
+        .find(|stat| stat.page_type == page_type && stat.encoding == encoding)
+    {
+        stat.count += 1;
+    } else {
+        encoding_stats.push(PageEncodingStats {
+            page_type,
+            encoding,
+            count: 1,
+        });
     }
 }
 
@@ -540,6 +568,88 @@ mod tests {
             vec!["c".to_string()],
             ParquetType::PrimitiveType(primitive_type),
         )
+    }
+
+    #[test]
+    fn test_build_column_chunk_encoding_stats_counts_page_body_encodings() {
+        let specs = vec![
+            dict_page_spec(0, Compression::Snappy),
+            data_page_spec(90, Compression::Snappy),
+            data_page_spec(250, Compression::Snappy),
+            data_page_spec(410, Compression::Snappy),
+        ];
+
+        let chunk = build_column_chunk(&specs, &make_descriptor(), None, None, 570).unwrap();
+        let stats = chunk
+            .meta_data
+            .as_ref()
+            .unwrap()
+            .encoding_stats
+            .as_ref()
+            .expect("encoding_stats");
+
+        assert_eq!(
+            stats,
+            &vec![
+                PageEncodingStats {
+                    page_type: parquet_format_safe::PageType::DICTIONARY_PAGE,
+                    encoding: parquet_format_safe::Encoding::PLAIN,
+                    count: 1,
+                },
+                PageEncodingStats {
+                    page_type: parquet_format_safe::PageType::DATA_PAGE,
+                    encoding: parquet_format_safe::Encoding::RLE_DICTIONARY,
+                    count: 3,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_build_column_chunk_encoding_stats_counts_data_page_v2_separately() {
+        let specs = vec![
+            data_page_spec(0, Compression::Snappy),
+            data_page_v2_spec(160, Compression::Snappy),
+            data_page_v2_spec(320, Compression::Snappy),
+        ];
+
+        let chunk = build_column_chunk(&specs, &make_descriptor(), None, None, 480).unwrap();
+        let stats = chunk
+            .meta_data
+            .as_ref()
+            .unwrap()
+            .encoding_stats
+            .as_ref()
+            .expect("encoding_stats");
+
+        assert_eq!(
+            stats,
+            &vec![
+                PageEncodingStats {
+                    page_type: parquet_format_safe::PageType::DATA_PAGE,
+                    encoding: parquet_format_safe::Encoding::RLE_DICTIONARY,
+                    count: 1,
+                },
+                PageEncodingStats {
+                    page_type: parquet_format_safe::PageType::DATA_PAGE_V2,
+                    encoding: parquet_format_safe::Encoding::RLE_DICTIONARY,
+                    count: 2,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_build_column_chunk_encoding_stats_empty_specs_is_none() {
+        let specs = vec![];
+
+        let chunk = build_column_chunk(&specs, &make_descriptor(), None, None, 0).unwrap();
+
+        assert_eq!(
+            chunk.meta_data.as_ref().unwrap().encoding_stats,
+            None,
+            "empty chunks must not emit empty encoding_stats"
+        );
     }
 
     #[test]

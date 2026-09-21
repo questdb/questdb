@@ -148,7 +148,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
      * Validates that metadata columns can be projected from parquet and optionally populates column mappings.
      *
      * @param columns       if not null, will be populated with (parquetIndex, parquetType) pairs
-     * @param columnMapping if not null, will be populated with (parquetIndex, writerIndex) pairs
+     * @param columnMapping if not null, will be populated with (parquetIndex, writerIndex, originalWriterIndex) triples
      * @return true if projection is possible, false otherwise
      */
     public static boolean canProjectMetadata(
@@ -199,7 +199,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             }
             if (columnMapping != null) {
                 final int columnId = parquetMetadata.getColumnId(parquetIndex);
-                columnMapping.addColumn(parquetIndex, columnId < 0 ? parquetIndex : columnId);
+                final int effectiveId = columnId < 0 ? parquetIndex : columnId;
+                columnMapping.addColumn(parquetIndex, effectiveId, effectiveId);
             }
         }
 
@@ -403,7 +404,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private boolean switchToNextRowGroup() {
         // Consult the breaker once per row group (and once on the first call, even for an empty file),
         // so a long sequential parquet scan stays cancellable.
-        circuitBreaker.statefulThrowExceptionIfTripped();
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         dataPtrs.clear();
         auxPtrs.clear();
         while (++rowGroupIndex < decoder.metadata().getRowGroupCount()) {

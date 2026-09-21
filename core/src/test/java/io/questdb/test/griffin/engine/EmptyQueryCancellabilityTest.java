@@ -33,7 +33,6 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.std.MemoryTag;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -61,7 +60,7 @@ public class EmptyQueryCancellabilityTest extends AbstractCairoTest {
                 return 2_000_000;
             }
         };
-        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, config, MemoryTag.NATIVE_CB5) {
+        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, config) {
             @Override
             protected boolean testConnection(long fd) {
                 return false;

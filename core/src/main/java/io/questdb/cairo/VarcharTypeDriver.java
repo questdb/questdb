@@ -89,7 +89,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         if (eraseAsciiFlag) {
             Unsafe.putInt(dataMemAddr, hi);
         } else {
-            final boolean ascii = value.isAscii();
+            // An empty varchar is ASCII by definition; force the flag so that an empty value
+            // writes a non-zero header (size 0 | high bit) instead of 0. getPlainValue treats a
+            // 0 header as absent/uninitialized memory (assert header != 0), so a 0 header for an
+            // empty non-ASCII value would trip that assertion on read.
+            final boolean ascii = value.isAscii() || hi == 0;
             // ASCII flag is signaled with the highest bit
             Unsafe.putInt(dataMemAddr, ascii ? hi | Integer.MIN_VALUE : hi);
         }
@@ -108,7 +112,12 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             return;
         }
         final int size = value.size();
-        dataMem.putInt(value.isAscii() ? size | Integer.MIN_VALUE : size);
+        // An empty varchar is ASCII by definition; force the flag so that an empty value writes
+        // a non-zero header (size 0 | high bit) instead of 0. getPlainValue treats a 0 header as
+        // absent/uninitialized memory (assert header != 0), so a 0 header for an empty non-ASCII
+        // value would trip that assertion on read.
+        final boolean ascii = value.isAscii() || size == 0;
+        dataMem.putInt(ascii ? size | Integer.MIN_VALUE : size);
         dataMem.putVarchar(value, 0, size);
     }
 
@@ -259,6 +268,10 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         return size(header);
     }
 
+    public static int getSingleMemValueByteCount(@Nullable Utf8Sequence value) {
+        return value != null ? Integer.BYTES + value.size() : Integer.BYTES;
+    }
+
     /**
      * Address of a non-null {@code VARCHAR_SLICE} (Parquet) value's UTF-8 bytes: a
      * direct pointer into the decompressed page/dict buffer. {@code auxEntry} is
@@ -305,10 +318,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             return TableUtils.NULL_LEN;
         }
         return header >>> 4;
-    }
-
-    public static int getSingleMemValueByteCount(@Nullable Utf8Sequence value) {
-        return value != null ? Integer.BYTES + value.size() : Integer.BYTES;
     }
 
     /**
@@ -535,6 +544,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         return 0;
     }
 
+    @Override
     public long getDataVectorOffset(long auxMemAddr, long row) {
         long auxEntry = auxMemAddr + VARCHAR_AUX_WIDTH_BYTES * row;
         assert Unsafe.getInt(auxEntry) != 0;

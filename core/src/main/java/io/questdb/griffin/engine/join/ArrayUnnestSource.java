@@ -28,6 +28,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DerivedArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.std.Numbers;
 
 /**
@@ -57,7 +58,11 @@ public class ArrayUnnestSource implements UnnestSource {
             int columnType
     ) {
         if (elementIndex >= cachedLen) {
-            return null;
+            // UNNEST runs to the longest source, so a shorter one is asked past its end and pads.
+            // Hand out a NULL ArrayView rather than a Java null: getArray() has callers that
+            // dereference it on the spot - PGUtils and the record sinks - and they have no null
+            // to check, and Record's getArrayDimLen()/getArrayDouble1d2d() defaults do the same.
+            return ArrayConstant.NULL;
         }
         if (!isDerivedViewReady) {
             // First call: full setup — of() copies shape/strides,

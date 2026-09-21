@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
@@ -267,8 +268,13 @@ class LeadLagSymbolFunctionFactoryHelper {
                 Function arg,
                 boolean ignoreNulls,
                 Function defaultValue,
-                long offset
+                long offset,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
+            // partitionByKeyTypes and liveView feed the live view checkpoint state, which the
+            // SYMBOL functions do not support: supportsCheckpointState() stays false, so
+            // CairoEngine.validateLiveViewWindowFunction() rejects them at CREATE LIVE VIEW.
             super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
         }
 
@@ -422,8 +428,13 @@ class LeadLagSymbolFunctionFactoryHelper {
                 Function arg,
                 boolean ignoreNulls,
                 Function defaultValue,
-                long offset
+                long offset,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
+            // partitionByKeyTypes and liveView feed the live view checkpoint state, which the
+            // SYMBOL functions do not support: supportsCheckpointState() stays false, so
+            // CairoEngine.validateLiveViewWindowFunction() rejects them at CREATE LIVE VIEW.
             super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
         }
 

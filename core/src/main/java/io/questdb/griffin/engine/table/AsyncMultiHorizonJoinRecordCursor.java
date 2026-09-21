@@ -30,7 +30,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.ShardedMapCursor;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -44,6 +43,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.groupby.PostAggregationCircuitBreaker;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -58,7 +58,9 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  */
 class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
     private final MessageBus messageBus;
-    private final AtomicBooleanCircuitBreaker postAggregationCircuitBreaker;
+    // Borrowed non-group-by views into recordFunctions; the factory owns and closes the functions.
+    private final ObjList<Function> nonGroupByFunctions;
+    private final PostAggregationCircuitBreaker postAggregationCircuitBreaker;
     private final SOUnboundedCountDownLatch postAggregationDoneLatch = new SOUnboundedCountDownLatch();
     private final AtomicInteger postAggregationStartedCounter = new AtomicInteger();
     private final VirtualRecord recordA;
@@ -89,8 +91,9 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
             // cursor and free what was already allocated.
             this.isOpen = true;
             this.messageBus = messageBus;
-            this.postAggregationCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+            this.postAggregationCircuitBreaker = new PostAggregationCircuitBreaker(engine);
             this.recordFunctions = recordFunctions;
+            this.nonGroupByFunctions = GroupByUtils.extractNonGroupByFunctions(recordFunctions);
             this.slaveFactories = slaveFactories;
             this.slaveCount = slaveFactories.size();
             this.slaveFrameCursors = new ObjList<>(slaveCount);
@@ -198,7 +201,7 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
 
     private void buildMap() {
         // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         frameSequence.prepareForDispatch();
         frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
         frameSequence.dispatchAndAwait();
@@ -218,8 +221,8 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
                     postAggregationDoneLatch,
                     postAggregationStartedCounter
             );
-            if (postAggregationCircuitBreaker.checkIfTripped()) {
-                throwTimeoutException();
+            if (postAggregationCircuitBreaker.checkIfTrippedOrYield()) {
+                throwPostAggregationException();
             }
             shardedCursor.of(shards);
             mapCursor = shardedCursor;
@@ -277,12 +280,12 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
         }
     }
 
-    private void throwTimeoutException() {
-        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-            throw CairoException.queryCancelled();
-        } else {
-            throw CairoException.queryTimedOut();
+    private void throwPostAggregationException() {
+        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        if (postAggregationCircuitBreaker.hasError()) {
+            throw postAggregationCircuitBreaker.buildError();
         }
+        throw frameSequence.buildInterruptionException();
     }
 
     void of(UnorderedPageFrameSequence<AsyncMultiHorizonJoinAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
@@ -308,7 +311,15 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
                 slaveSources.setQuick(s, slaveFrameCursors.getQuick(s));
             }
             symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveSources);
-            Function.init(recordFunctions, symbolTableSource, executionContext, null);
+            // The constructor pre-filters the non-group-by functions once, so cached re-executions
+            // skip the per-function classification scan.
+            Function.init(nonGroupByFunctions, symbolTableSource, executionContext, null);
+            // The owner group by and key functions bind here too, and only here: a parent
+            // projection or sort over a SYMBOL aggregate resolves the output column's static symbol
+            // table at getCursor() time, which is before the slave time-frame cache is built on the
+            // first read. The atom donates the owner state to the per-worker clones when it binds
+            // those in initGroupByFunctions().
+            atom.initOwnerFunctions(executionContext);
         } catch (Throwable th) {
             Misc.freeObjList(slaveFrameCursors);
             throw th;

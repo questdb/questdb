@@ -43,6 +43,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -431,13 +432,34 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewCopySymbolCapacityProtectedAlias() throws Exception {
+        // Coverage for the mat-view operator-token-alias path, previously untested: a base SYMBOL column
+        // aliased to an operator token ("in") creates cleanly and copies the base capacity (2048),
+        // exercising CreateMatViewOperationImpl's toColumnName column-model keying. The alias surfaces
+        // here as the clean "in" (a dotted alias would fail earlier as an invalid physical column, and
+        // PIVOT is not allowed in a mat view), so that keying is identity/defensive rather than
+        // load-bearing - reverting it leaves this test green. It pins the reachability boundary the
+        // change guards, not a fail-without-fix regression.
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String sql = "select ts, k as \"in\", min(v) as v from " + TABLE1 + " sample by 1h";
+            execute("create materialized view test with base " + TABLE1 + " as (" + sql + ") partition by day");
+            assertQuery("select \"column\", symbolCapacity from (show columns from test) where type = 'SYMBOL'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("column\tsymbolCapacity\nin\t2048\n");
+        });
+    }
+
+    @Test
     public void testCreateMatViewDisabled() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "false");
             createTable(TABLE1);
+            // the error points at the "materialized" keyword, not at char 0
             assertQuery("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day")
                     .noLeakCheck()
-                    .fails(0, "materialized views are disabled");
+                    .fails(7, "materialized views are disabled");
             assertNull(getMatViewDefinition("test"));
         });
     }
@@ -544,6 +566,21 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertQuery("create materialized view test as (select avg(v) from " + TABLE1 + ") partition by day")
                     .noLeakCheck()
                     .fails(34, "TIMESTAMP column is not present in select list");
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewGroupByPlainTimestampNoSamplingInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            // ts is the designated timestamp and is present in the select list, but there is
+            // neither a SAMPLE BY nor a GROUP BY timestamp_floor(...), so no sampling interval
+            // can be inferred. The error must not claim the timestamp column is missing.
+            assertQuery("create materialized view test as (select ts, avg(v) from " + TABLE1 +
+                    ") timestamp(ts) partition by day")
+                    .noLeakCheck()
+                    .fails(34, "materialized view query requires a sampling interval, use SAMPLE BY or GROUP BY timestamp_floor() [name=ts]");
             assertNull(getMatViewDefinition("test"));
         });
     }
@@ -880,6 +917,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 {"rnd_date(1,4,5)", "rnd_date"},
                 {"rnd_double()", "rnd_double"},
                 {"rnd_double(5)", "rnd_double"},
+                {"rnd_double_array(2)", "rnd_double_array"},
                 {"rnd_float()", "rnd_float"},
                 {"rnd_float(5)", "rnd_float"},
                 {"rnd_int()", "rnd_int"},
@@ -1190,6 +1228,42 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertFalse(metadata.isDedupKey(2));
                 assertEquals(3 * 7 * 24, metadata.getTtlHoursOrMonths());
             }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewSubsample() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            // The query carries the sampling interval a materialized view requires, so the SUBSAMPLE
+            // clause is the only thing the validator can refuse. Value-inspecting methods name the
+            // completed projection's alias: the base column is not visible above the aggregation.
+            final ObjList<String> methods = new ObjList<>(
+                    "uniform(2)",
+                    "cadence(2)",
+                    "cadence(2, 7)",
+                    "lttb(av, 2)",
+                    "lttb(av, 2, '2h')",
+                    "m4(av, 2)",
+                    "minmax(av, 2)",
+                    "sdt(av, 0.5)"
+            );
+            for (int methodIndex = 0; methodIndex < methods.size(); methodIndex++) {
+                final String method = methods.getQuick(methodIndex);
+                assertQuery("create materialized view test as (select ts, avg(v) av from " + TABLE1 + " sample by 1h subsample " + method + ") partition by day")
+                        .noLeakCheck()
+                        .fails(80, "SUBSAMPLE on base table is not supported for materialized views: " + TABLE1);
+            }
+            // SUBSAMPLE one level above the base-table aggregation: sub-query, CTE, and inside the sub-query
+            assertQuery("create materialized view test as (select ts, av from (select ts, avg(v) av from " + TABLE1 + " sample by 1h) subsample uniform(2)) partition by day")
+                    .noLeakCheck()
+                    .fails(101, "SUBSAMPLE on base table is not supported for materialized views: " + TABLE1);
+            assertQuery("create materialized view test as (with d as (select ts, avg(v) av from " + TABLE1 + " sample by 1h) select ts, av from d subsample uniform(2)) partition by day")
+                    .noLeakCheck()
+                    .fails(113, "SUBSAMPLE on base table is not supported for materialized views: " + TABLE1);
+            assertQuery("create materialized view test as (select ts, av from (select ts, avg(v) av from " + TABLE1 + " sample by 1h subsample uniform(2))) partition by day")
+                    .noLeakCheck()
+                    .fails(100, "SUBSAMPLE on base table is not supported for materialized views: " + TABLE1);
         });
     }
 
@@ -1660,7 +1734,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + query + ") partition by day");
 
                 final TableToken matViewToken = engine.getTableTokenIfExists("test");
-                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                final MatViewDefinition matViewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
                 assertNotNull(matViewDefinition);
 
                 try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
@@ -1740,7 +1814,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + query + ") partition by day");
 
                 final TableToken matViewToken = engine.getTableTokenIfExists("test");
-                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                final MatViewDefinition matViewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
                 assertNotNull(matViewDefinition);
 
                 try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
@@ -1791,7 +1865,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + query + ") partition by day");
 
                 final TableToken matViewToken = engine.getTableTokenIfExists("test");
-                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                final MatViewDefinition matViewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
                 assertNotNull(matViewDefinition);
                 final MatViewState matViewState = engine.getMatViewStateStore().getViewState(matViewToken);
                 assertNotNull(matViewState);
@@ -1935,7 +2009,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 drainQueues();
 
                 final TableToken matViewToken = engine.getTableTokenIfExists("test");
-                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                final MatViewDefinition matViewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
                 assertNotNull(matViewDefinition);
                 final MatViewState matViewState = engine.getMatViewStateStore().getViewState(matViewToken);
                 assertNotNull(matViewState);
@@ -2027,7 +2101,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + query + ") partition by day");
 
                 final TableToken matViewToken = engine.getTableTokenIfExists("test");
-                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                final MatViewDefinition matViewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
                 assertNotNull(matViewDefinition);
 
                 try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
@@ -2344,7 +2418,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + query + ") partition by day");
 
                 final TableToken matViewToken = engine.getTableTokenIfExists("test");
-                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                final MatViewDefinition matViewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
                 assertNotNull(matViewDefinition);
 
                 try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
@@ -2387,7 +2461,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + query + ") partition by day");
 
                 final TableToken matViewToken = engine.getTableTokenIfExists("test");
-                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                final MatViewDefinition matViewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
                 assertNotNull(matViewDefinition);
                 final MatViewState matViewState = engine.getMatViewStateStore().getViewState(matViewToken);
                 assertNotNull(matViewState);
@@ -2522,7 +2596,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
         if (matViewToken == null) {
             return null;
         }
-        return engine.getMatViewGraph().getViewDefinition(matViewToken);
+        return engine.getDependentViewGraph().getViewDefinition(matViewToken);
     }
 
     private void assertQuery0(String expected, String query, String expectedTimestamp) throws Exception {

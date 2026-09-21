@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
@@ -36,6 +37,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -56,16 +58,38 @@ public interface Record {
         if (vch == null) {
             return null;
         }
-        if (vch.isAscii()) {
-            return vch.asAsciiCharSequence();
-        }
-        sink.clear();
-        sink.put(vch);
-        return sink;
+        return Utf8s.utf8ToUtf16OrView(vch, sink);
     };
 
     default ArrayView getArray(int col, int columnType) {
         throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Reads the length of one dimension of an array column, without materializing the array.
+     * Returns {@link Numbers#INT_NULL} when the array is null.
+     * <p>
+     * The default implementation is just for convenience, it does not implement the main
+     * optimization. That lives in {@link PageFrameMemoryRecord#getArrayDimLen}, which reads the
+     * shape header directly and bypasses the {@link ArrayView} setup.
+     *
+     * @param col        column index
+     * @param columnType encoded array column type
+     * @param dim        1-based dimension; the caller must have validated it against the column's
+     *                   dimensionality
+     */
+    default int getArrayDimLen(int col, int columnType, int dim) {
+        assert dim >= 1 && dim <= ColumnType.decodeArrayDimensionality(columnType);
+        ArrayView array = getArray(col, columnType);
+        // A record with no array to hand out returns a NULL ArrayView, never a Java null. Keeping
+        // that contract is the producer's job, not this method's: getArray() has callers that
+        // dereference the result on the spot - PGUtils and the generated record sinks - so a
+        // tolerance here would cover two callers and leave the rest to NPE.
+        assert array != null : "getArray() returned a Java null, expected a NULL ArrayView";
+        if (array.isNull()) {
+            return Numbers.INT_NULL;
+        }
+        return array.getDimLen(dim - 1);
     }
 
     /**
@@ -88,6 +112,8 @@ public interface Record {
      */
     default double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
         ArrayView array = getArray(col, columnType);
+        // See getArrayDimLen() for why the producer, not this method, owns the no-Java-null contract.
+        assert array != null : "getArray() returned a Java null, expected a NULL ArrayView";
         if (array.isNull() || idx0 >= array.getDimLen(0)) {
             return Double.NaN;
         }

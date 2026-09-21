@@ -26,38 +26,21 @@
 //! `io.questdb.cairo.ParquetMetaFileReader`).
 //!
 //! These bindings let the Java reader cache a parsed [`ParquetMetaReader`]
-//! across multiple `canSkipRowGroup` calls instead of re-parsing the `_pm`
-//! header/footer on every row group. The Java side allocates the native
-//! handle lazily on the first skip call and frees it via `clear()` /
-//! `close()`.
+//! across repeated JNI calls — row-group filter pruning, row-group decode,
+//! and footer field reads (`readSeqTxn0`, `readPartitionMeta0`) — instead
+//! of re-parsing the `_pm` header/footer on every call. The Java side
+//! allocates the native handle lazily on first use, bound to the resolved
+//! MVCC snapshot, and frees it via `clear()` / `close()`.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_metadata::reader::ParquetMetaReader;
+use crate::parquet_metadata::types::SeqTxn;
 use crate::parquet_read::ColumnFilterPacked;
 use jni::objects::JClass;
+use jni::sys::jboolean;
 use jni::JNIEnv;
 use std::slice;
-
-/// Parses `[parquet_meta_addr, parquet_meta_addr + parquet_meta_size)` and verifies the CRC32 checksum
-/// stored in the footer. Split from the JNI wrapper so unit tests can
-/// exercise the error paths without constructing a `JNIEnv`.
-fn verify_checksum_impl(parquet_meta_addr: *const u8, parquet_meta_size: u64) -> ParquetResult<()> {
-    if parquet_meta_addr.is_null() {
-        return Err(fmt_err!(InvalidLayout, "_pm file pointer is null"));
-    }
-    let parquet_meta_size_usize = usize::try_from(parquet_meta_size).map_err(|_| {
-        fmt_err!(
-            InvalidLayout,
-            "_pm file size {} exceeds addressable range",
-            parquet_meta_size
-        )
-    })?;
-    let data: &[u8] = unsafe { slice::from_raw_parts(parquet_meta_addr, parquet_meta_size_usize) };
-    let reader = ParquetMetaReader::from_file_size(data, parquet_meta_size)?;
-    reader.verify_checksum()?;
-    Ok(())
-}
 
 /// Holds a parsed [`ParquetMetaReader`] whose backing slice is owned by the
 /// Java mmap. The `'static` lifetime is a documented lie — the actual data
@@ -102,19 +85,30 @@ impl JniParquetMetaReader {
     }
 }
 
+/// Parses `[addr, addr + file_size)` and returns the cached reader handle.
+/// With `verify_checksum` set, also verifies the CRC32 stored in the footer
+/// before returning — the Java side requests this on the once-per-open
+/// parse so the verification's parse work is kept as the handle rather
+/// than discarded.
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_createNativeReader(
     mut env: JNIEnv,
     _class: JClass,
     addr: *const u8,
     file_size: u64,
+    verify_checksum: jboolean,
 ) -> *mut JniParquetMetaReader {
     let env = &mut env;
     if addr.is_null() {
         let err = fmt_err!(InvalidLayout, "_pm file pointer is null");
         return err.into_cairo_exception().throw(env);
     }
-    let res = unsafe { JniParquetMetaReader::new(addr, file_size) };
+    let res = unsafe { JniParquetMetaReader::new(addr, file_size) }.and_then(|reader| {
+        if verify_checksum != 0 {
+            reader.reader().verify_checksum()?;
+        }
+        Ok(reader)
+    });
     match res {
         Ok(reader) => Box::into_raw(Box::new(reader)),
         Err(mut err) => {
@@ -135,36 +129,37 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_destroyNative
     }
 }
 
-/// Writes `(total_row_count: i64, squash_tracker: i64)` to `[dest_addr, dest_addr + 16)`.
-///
-/// `total_row_count` is the sum of `num_rows` across every row group in the
-/// `_pm` file. `squash_tracker` is `-1` when the `SQUASH_TRACKER` feature bit
-/// is absent. Used by the enterprise build to retrieve both values in a
-/// single JNI call; OSS consumers read the same values through Java-side
-/// accessors on [`super::ParquetMetaFileReader`].
+/// Writes `(total_row_count, squash_tracker)` as two i64s to
+/// `[dest_addr, dest_addr + 16)`, read off the cached reader at `ptr`.
+/// `total_row_count` sums `num_rows` across every row group of the footer
+/// the reader is bound to. `squash_tracker` is `-1` when the
+/// `SQUASH_TRACKER` header bit is absent. Lets the enterprise build
+/// retrieve both values in a single JNI call.
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_readPartitionMeta0(
     mut env: JNIEnv,
     _class: JClass,
-    parquet_meta_addr: *const u8,
-    parquet_meta_size: u64,
+    ptr: *const JniParquetMetaReader,
     dest_addr: i64,
 ) {
     let env = &mut env;
-    let res = read_partition_meta_impl(parquet_meta_addr, parquet_meta_size);
-    match res {
-        Ok((row_count, squash_tracker)) => {
-            if dest_addr == 0 {
-                let err = fmt_err!(InvalidLayout, "dest_addr is null");
-                let _: () = err.into_cairo_exception().throw(env);
-                return;
-            }
-            unsafe {
-                let dest = dest_addr as *mut i64;
-                dest.write_unaligned(row_count);
-                dest.add(1).write_unaligned(squash_tracker);
-            }
-        }
+    if ptr.is_null() {
+        let err = fmt_err!(InvalidLayout, "JniParquetMetaReader pointer is null");
+        let _: () = err.into_cairo_exception().throw(env);
+        return;
+    }
+    if dest_addr == 0 {
+        let err = fmt_err!(InvalidLayout, "dest_addr is null");
+        let _: () = err.into_cairo_exception().throw(env);
+        return;
+    }
+    let jni_reader = unsafe { &*ptr };
+    match read_partition_meta_impl(jni_reader.reader()) {
+        Ok((row_count, squash_tracker)) => unsafe {
+            let dest = dest_addr as *mut i64;
+            dest.write_unaligned(row_count);
+            dest.add(1).write_unaligned(squash_tracker);
+        },
         Err(mut err) => {
             err.add_context("error in ParquetMetaFileReader.readPartitionMeta");
             let _: () = err.into_cairo_exception().throw(env);
@@ -172,25 +167,10 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_readPartition
     }
 }
 
-/// Parses the `_pm` buffer and returns `(total_row_count, squash_tracker)`.
-/// Split from the JNI wrapper so unit tests can exercise the error paths
-/// without constructing a `JNIEnv`.
-fn read_partition_meta_impl(
-    parquet_meta_addr: *const u8,
-    parquet_meta_size: u64,
-) -> ParquetResult<(i64, i64)> {
-    if parquet_meta_addr.is_null() {
-        return Err(fmt_err!(InvalidLayout, "_pm file pointer is null"));
-    }
-    let parquet_meta_size_usize = usize::try_from(parquet_meta_size).map_err(|_| {
-        fmt_err!(
-            InvalidLayout,
-            "_pm file size {} exceeds addressable range",
-            parquet_meta_size
-        )
-    })?;
-    let data: &[u8] = unsafe { slice::from_raw_parts(parquet_meta_addr, parquet_meta_size_usize) };
-    let reader = ParquetMetaReader::from_file_size(data, parquet_meta_size)?;
+/// Returns `(total_row_count, squash_tracker)` from a parsed reader.
+/// Split from the JNI wrapper so unit tests can exercise the row-count
+/// accumulator without constructing a `JNIEnv`.
+fn read_partition_meta_impl(reader: &ParquetMetaReader) -> ParquetResult<(i64, i64)> {
     let mut row_count: i64 = 0;
     for i in 0..reader.row_group_count() as usize {
         let rg = reader.row_group(i)?;
@@ -214,22 +194,29 @@ fn read_partition_meta_impl(
     Ok((row_count, squash_tracker))
 }
 
-/// Verifies the CRC32 checksum of the `_pm` file at `[addr, addr + file_size)`.
-/// Throws a Java exception on null pointer, malformed file, or checksum
-/// mismatch. The Java caller invokes this once per `_pm` open and caches
-/// the success so repeated row-group filter calls do not re-verify.
+/// Returns the `seq_txn` of the footer the cached reader at `ptr` is bound
+/// to (the snapshot the Java side resolved), `-1` when that footer's
+/// `SEQ_TXN` bit is absent. A pure field read off the parsed footer; no
+/// reparse.
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_verifyChecksum0(
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_readSeqTxn0(
     mut env: JNIEnv,
     _class: JClass,
-    addr: *const u8,
-    file_size: u64,
-) {
+    ptr: *const JniParquetMetaReader,
+) -> i64 {
     let env = &mut env;
-    if let Err(mut err) = verify_checksum_impl(addr, file_size) {
-        err.add_context("error in ParquetMetaFileReader.verifyChecksum");
-        let _: () = err.into_cairo_exception().throw(env);
+    if ptr.is_null() {
+        let err = fmt_err!(InvalidLayout, "JniParquetMetaReader pointer is null");
+        return err.into_cairo_exception().throw(env);
     }
+    let jni_reader = unsafe { &*ptr };
+    read_seq_txn_impl(jni_reader.reader())
+}
+
+/// Returns the parsed footer's `seq_txn`, `-1` when the `SEQ_TXN` bit is
+/// absent. Split from the JNI wrapper for unit tests.
+fn read_seq_txn_impl(reader: &ParquetMetaReader) -> i64 {
+    reader.seq_txn().unwrap_or(SeqTxn::UNSET).get()
 }
 
 #[no_mangle]
@@ -485,10 +472,12 @@ mod tests {
         assert!(res.is_err(), "row group index 5 out of range");
     }
 
-    /// Builds a `_pm` with the given row-group sizes and optional squash_tracker.
+    /// Builds a `_pm` with the given row-group sizes and optional
+    /// squash_tracker / seq_txn values.
     fn build_parquet_meta_with_row_groups(
         row_group_sizes: &[u64],
         squash_tracker: Option<i64>,
+        seq_txn: Option<i64>,
     ) -> Vec<u8> {
         let mut writer = ParquetMetaWriter::new();
         writer
@@ -507,6 +496,9 @@ mod tests {
         if let Some(tracker) = squash_tracker {
             writer.squash_tracker(tracker);
         }
+        if let Some(value) = seq_txn {
+            writer.seq_txn(SeqTxn::new(value));
+        }
         for &num_rows in row_group_sizes {
             let mut rg = RowGroupBlockBuilder::new(1);
             rg.set_num_rows(num_rows);
@@ -522,18 +514,18 @@ mod tests {
 
     #[test]
     fn read_partition_meta_sums_row_groups_and_returns_tracker() {
-        let bytes = build_parquet_meta_with_row_groups(&[100, 250], Some(42));
-        let (row_count, squash_tracker) =
-            read_partition_meta_impl(bytes.as_ptr(), bytes.len() as u64).unwrap();
+        let bytes = build_parquet_meta_with_row_groups(&[100, 250], Some(42), None);
+        let reader = ParquetMetaReader::from_file_size(&bytes, bytes.len() as u64).unwrap();
+        let (row_count, squash_tracker) = read_partition_meta_impl(&reader).unwrap();
         assert_eq!(row_count, 350);
         assert_eq!(squash_tracker, 42);
     }
 
     #[test]
     fn read_partition_meta_returns_neg_one_when_tracker_absent() {
-        let bytes = build_parquet_meta_with_row_groups(&[10, 20, 30], None);
-        let (row_count, squash_tracker) =
-            read_partition_meta_impl(bytes.as_ptr(), bytes.len() as u64).unwrap();
+        let bytes = build_parquet_meta_with_row_groups(&[10, 20, 30], None, None);
+        let reader = ParquetMetaReader::from_file_size(&bytes, bytes.len() as u64).unwrap();
+        let (row_count, squash_tracker) = read_partition_meta_impl(&reader).unwrap();
         assert_eq!(row_count, 60);
         assert_eq!(squash_tracker, -1);
     }
@@ -541,33 +533,54 @@ mod tests {
     #[test]
     fn read_partition_meta_handles_zero_row_groups() {
         // _pm with no row groups is unusual but must not underflow the accumulator.
-        let bytes = build_parquet_meta_with_row_groups(&[], Some(7));
-        let (row_count, squash_tracker) =
-            read_partition_meta_impl(bytes.as_ptr(), bytes.len() as u64).unwrap();
+        let bytes = build_parquet_meta_with_row_groups(&[], Some(7), None);
+        let reader = ParquetMetaReader::from_file_size(&bytes, bytes.len() as u64).unwrap();
+        let (row_count, squash_tracker) = read_partition_meta_impl(&reader).unwrap();
         assert_eq!(row_count, 0);
         assert_eq!(squash_tracker, 7);
     }
 
     #[test]
-    fn read_partition_meta_rejects_null_pointer() {
-        let res = read_partition_meta_impl(std::ptr::null(), 128);
-        assert!(res.is_err(), "null _pm pointer must error");
+    fn read_seq_txn_returns_value_when_present() {
+        let bytes = build_parquet_meta_with_row_groups(&[100], None, Some(11));
+        let reader = ParquetMetaReader::from_file_size(&bytes, bytes.len() as u64).unwrap();
+        assert_eq!(read_seq_txn_impl(&reader), 11);
     }
 
     #[test]
-    fn read_partition_meta_rejects_truncated_buffer() {
-        let buf = [0u8; 3];
-        let res = read_partition_meta_impl(buf.as_ptr(), buf.len() as u64);
-        assert!(res.is_err(), "3-byte buffer cannot be a valid _pm file");
+    fn read_seq_txn_returns_neg_one_when_absent() {
+        let bytes = build_parquet_meta_with_row_groups(&[100], Some(42), None);
+        let reader = ParquetMetaReader::from_file_size(&bytes, bytes.len() as u64).unwrap();
+        assert_eq!(read_seq_txn_impl(&reader), -1);
     }
 
     #[test]
-    fn read_partition_meta_rejects_corrupted_footer_length() {
-        // Trailer claims a footer length larger than the file — from_file_size must reject.
-        let mut buf = [0u8; 20];
-        buf[16..20].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
-        let res = read_partition_meta_impl(buf.as_ptr(), buf.len() as u64);
-        assert!(res.is_err(), "invalid footer length must error");
+    fn read_seq_txn_selects_footer_by_committed_size() {
+        // Two-footer MVCC chain: a reader bound at a committed size sees the
+        // footer that size's trailer locates, so a reader at the old size
+        // must yield the old seq_txn and one at the new size the new value.
+        // This is the contract ParquetMetaFileReader relies on when it binds
+        // the cached native reader to the resolved (possibly older)
+        // snapshot size.
+        use crate::parquet_metadata::types::HEADER_PARQUET_META_FILE_SIZE_OFF;
+        use crate::parquet_metadata::writer::ParquetMetaUpdateWriter;
+
+        let old_bytes = build_parquet_meta_with_row_groups(&[100], None, Some(11));
+        let old_size = old_bytes.len() as u64;
+
+        let mut updater = ParquetMetaUpdateWriter::new(&old_bytes, old_size).unwrap();
+        updater.seq_txn(SeqTxn::new(12));
+        let (append_bytes, new_size) = updater.finish().unwrap();
+
+        let mut full = old_bytes;
+        full.extend_from_slice(&append_bytes);
+        full[HEADER_PARQUET_META_FILE_SIZE_OFF..HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&new_size.to_le_bytes());
+
+        let old_reader = ParquetMetaReader::from_file_size(&full, old_size).unwrap();
+        assert_eq!(read_seq_txn_impl(&old_reader), 11);
+        let new_reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert_eq!(read_seq_txn_impl(&new_reader), 12);
     }
 
     #[test]

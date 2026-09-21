@@ -125,8 +125,8 @@ public class ConcurrentViewCycleTest extends AbstractViewTest {
                     String expected = """
                             QUERY PLAN
                             PageFrame
-                            &nbsp;&nbsp;&nbsp;&nbsp;Row forward scan
-                            &nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: table1
+                                Row forward scan
+                                Frame forward scan on: table1
                             """;
                     StringSink sink = new StringSink();
                     while (!done.get() && error.get() == null) {

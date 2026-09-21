@@ -1063,6 +1063,62 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnsDottedFieldNameExtractsValue() throws Exception {
+        // Regression: a dotted JSON field key (a.b) must extract its value, not silently return
+        // NULL. The parser keeps the protective quotes on the dotted COLUMNS name so its dots stay
+        // content for the display name; JsonUnnestSource must strip them from the native extraction
+        // key, or the C++ matcher looks up a field literally spelled "a.b" and never matches the
+        // JSON key a.b.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"a.b\":1.5},{\"a.b\":2.5}]')");
+            assertQuery("SELECT u.\"a.b\" FROM t, UNNEST(t.payload COLUMNS(\"a.b\" DOUBLE)) u")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a.b
+                            1.5
+                            2.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testColumnsDottedFieldNameNonStandardQuotesExtractsValue() throws Exception {
+        // A single-quoted dotted COLUMNS field name behaves like the double-quoted "a.b": the parser
+        // normalizes it to the protective double-quote form, JsonUnnestSource strips those quotes for
+        // the native extraction key, and the JSON field a.b is matched. Regression: keeping the raw
+        // single quote left the dot to mis-split into a compile-time internal error.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"a.b\":1.5},{\"a.b\":2.5}]')");
+            assertQuery("SELECT u.\"a.b\" FROM t, UNNEST(t.payload COLUMNS('a.b' DOUBLE)) u")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a.b
+                            1.5
+                            2.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testColumnsDottedFieldNameWithEmbeddedQuoteRejected() throws Exception {
+        // A dotted COLUMNS field name is re-wrapped in protective double quotes; an embedded double
+        // quote would break that quote parity and silently match no JSON key (returning NULL), so the
+        // parser must reject it cleanly instead of leaking a malformed extraction key.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            assertException(
+                    "SELECT * FROM t, UNNEST(t.payload COLUMNS(\"a\"\"b.c\" DOUBLE)) u",
+                    42,
+                    "dotted UNNEST column name cannot contain a double quote"
+            );
+        });
+    }
+
+    @Test
     public void testColumnsKeywordAsColumnNameRejected() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");

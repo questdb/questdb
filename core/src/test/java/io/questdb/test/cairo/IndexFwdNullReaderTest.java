@@ -60,9 +60,38 @@ public class IndexFwdNullReaderTest {
     }
 
     @Test
+    public void testCursorNotRepooledWhenClosedOffOperatingThread() throws Exception {
+        // Fresh reader so the free-cursor pool is not shared with the other tests.
+        final IndexFwdNullReader localReader = new IndexFwdNullReader(-1, -1);
+
+        // Positive control: an on-thread close re-pools the cursor, so the next
+        // getCursor() on the same (operating) thread hands back the same instance.
+        final RowCursor c1 = localReader.getCursor(0, 0, 16);
+        c1.close();
+        final RowCursor c2 = localReader.getCursor(0, 0, 16);
+        Assert.assertSame("on-thread close should re-pool the cursor", c1, c2);
+
+        // c2 is checked out again. Close it on a different thread: the operating-
+        // thread gate must skip re-pooling (getCursor() stamped c2's reader to
+        // this thread), so the pool stays empty and the next getCursor() allocates
+        // a fresh instance. Without the gate the off-thread close would re-pool c2
+        // and getCursor() would hand back the very cursor still being torn down.
+        closeOffThread(c2);
+        final RowCursor c3 = localReader.getCursor(0, 0, 16);
+        Assert.assertNotSame("off-thread close must not re-pool the cursor", c2, c3);
+        c3.close();
+    }
+
+    @Test
     public void testKeyCount() {
         // has to be always 1
         Assert.assertEquals(1, reader.getKeyCount());
+    }
+
+    private static void closeOffThread(RowCursor cursor) throws InterruptedException {
+        final Thread t = new Thread(cursor::close);
+        t.start();
+        t.join();
     }
 
     @Test

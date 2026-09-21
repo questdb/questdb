@@ -44,6 +44,16 @@ public class UnionRecord extends AbstractUnionRecord {
     }
 
     @Override
+    public int getArrayDimLen(int col, int columnType, int dim) {
+        return useA ? recordA.getArrayDimLen(col, columnType, dim) : recordB.getArrayDimLen(col, columnType, dim);
+    }
+
+    @Override
+    public double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
+        return useA ? recordA.getArrayDouble1d2d(col, columnType, idx0, idx1) : recordB.getArrayDouble1d2d(col, columnType, idx0, idx1);
+    }
+
+    @Override
     public BinarySequence getBin(int col) {
         if (useA) {
             return recordA.getBin(col);

@@ -39,12 +39,13 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
      * Partition frame low and high row will be within intervals inclusive of edges.
      * Intervals themselves are pairs of microsecond time.
      *
+     * @param configuration  engine configuration used to resolve the partition parquet decoder
      * @param intervalModel  pairs of microsecond interval values, as in "low" and "high" inclusive of
      *                       edges.
      * @param timestampIndex index of timestamp column in the readr that is used by this cursor
      */
-    public IntervalBwdPartitionFrameCursor(RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex) {
-        super(intervalModel, timestampIndex);
+    public IntervalBwdPartitionFrameCursor(CairoConfiguration configuration, RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex) {
+        super(configuration, intervalModel, timestampIndex);
     }
 
     @Override
@@ -233,7 +234,6 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                     if (format == PartitionFormat.PARQUET) {
                         frame.format = PartitionFormat.PARQUET;
                         frame.parquetMetaDecoder = reader.getAndInitParquetPartitionDecoder(currentPartition);
-                        assert frame.parquetMetaDecoder.getFileAddr() != 0 : "parquet decoder is not initialized";
                     } else {
                         assert format == PartitionFormat.NATIVE;
                         frame.format = PartitionFormat.NATIVE;

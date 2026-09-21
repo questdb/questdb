@@ -30,9 +30,11 @@ import io.questdb.client.cutlass.http.client.Fragment;
 import io.questdb.client.cutlass.http.client.HttpClient;
 import io.questdb.client.cutlass.http.client.HttpClientFactory;
 import io.questdb.client.cutlass.http.client.Response;
+import io.questdb.griffin.QueryRegistry;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.continuation.TimerCont;
+import io.questdb.std.Chars;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -42,6 +44,11 @@ import org.junit.Before;
 import org.junit.Test;
 import org.postgresql.util.PSQLException;
 
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -62,9 +69,9 @@ import static io.questdb.test.tools.TestUtils.unchecked;
 
 /**
  * Exercises the {@code sleep(D)} SQL function over PGWire and HTTP. The function
- * parks its worker continuation through {@link TimerCont} for the
- * requested duration, freeing the carrier to serve concurrent traffic, and resumes
- * to return the current server timestamp. These tests verify:
+ * parks its fiber on a timer-backed wait for the requested duration, freeing
+ * the carrier to serve concurrent traffic, and resumes to return the current server
+ * timestamp. These tests verify:
  *
  * <ul>
  *     <li>basic timing correctness (slept for at least the requested duration);</li>
@@ -90,11 +97,251 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                 PropertyKey.SHARED_WORKER_COUNT + "=1",
                 PropertyKey.PG_WORKER_COUNT + "=1",
                 // Tighter than the 1s production default: tests rely on a wake
-                // cycle to observe timeout/cancel/connection-drop and should not
+                // cycle to observe timeout/connection-drop and should not
                 // wait a full second per cycle.
                 PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL + "=100"
         ));
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testServerCloseAbandonsParkedSleep() throws Exception {
+        assertMemoryLeak(() -> {
+            // Composition guard: sleep() parks a fiber on a timer wait, then the server
+            // shuts down underneath it. Close must abandon the parked fiber and disconnect
+            // the client instead of waiting out the sleep. query.timeout sits far above
+            // the close bound so a timeout cannot fake a prompt close.
+            final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "120s");
+                put(PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL.getEnvVarName(), "100");
+            }});
+            boolean isServerClosed = false;
+            try {
+                serverMain.start();
+
+                final QueryRegistry registry = serverMain.getEngine().getQueryRegistry();
+                final String sleepSql = "sleep(3600)";
+                final long timerShardsBefore = serverMain.getEngine().getTimerShards().size();
+                final AtomicLong sleepQueryId = new AtomicLong(Long.MIN_VALUE);
+                registry.setListener((query, queryId, executionContext) -> {
+                    if (Chars.contains(query, sleepSql)) {
+                        sleepQueryId.compareAndSet(Long.MIN_VALUE, queryId);
+                    }
+                });
+
+                final CountDownLatch clientDone = new CountDownLatch(1);
+                final AtomicReference<Throwable> clientOutcome = new AtomicReference<>();
+                final Thread sleeper = new Thread(() -> {
+                    try (
+                            Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                            Statement stmt = conn.createStatement()
+                    ) {
+                        stmt.executeQuery(sleepSql);
+                    } catch (Throwable th) {
+                        clientOutcome.set(th);
+                    } finally {
+                        clientDone.countDown();
+                    }
+                }, "sleep-at-shutdown");
+                sleeper.setDaemon(true);
+                sleeper.start();
+
+                TestUtils.assertEventually(
+                        () -> Assert.assertTrue("sleep did not register", sleepQueryId.get() != Long.MIN_VALUE),
+                        10
+                );
+                TestUtils.assertEventually(
+                        () -> Assert.assertTrue("sleep continuation never parked",
+                                serverMain.getEngine().getTimerShards().size() > timerShardsBefore),
+                        10
+                );
+
+                final long closeStartMs = System.currentTimeMillis();
+                serverMain.close();
+                isServerClosed = true;
+                final long closeMs = System.currentTimeMillis() - closeStartMs;
+                Assert.assertTrue(
+                        "server close blocked on a parked sleep(3600): took " + closeMs + " ms",
+                        closeMs < 30_000
+                );
+                Assert.assertTrue("sleeping client did not observe shutdown", clientDone.await(10, TimeUnit.SECONDS));
+                sleeper.join(5_000);
+                Assert.assertFalse("sleeper thread did not terminate", sleeper.isAlive());
+                Assert.assertNotNull("client completed sleep(3600) against a closed server", clientOutcome.get());
+            } finally {
+                if (!isServerClosed) {
+                    serverMain.close();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSleepAbortedWhenClientClosesConnection() throws Exception {
+        assertMemoryLeak(() -> {
+            // Regression guard for a runtime resource-pin bug: a parked sleep() did
+            // not observe a clean client disconnect. JDBC conn.close() sends a PG
+            // Terminate ('X') byte then FIN; the old recv(MSG_PEEK) probe saw the
+            // buffered 'X', reported the socket alive, and the parked sleep kept
+            // running and pinned the connection until query.timeout fired.
+            //
+            // query.timeout is set well above the 100ms wake interval so the two
+            // outcomes are far apart: prompt disconnect detection ends the query
+            // within a few wake intervals; the masked-disconnect bug ends it only
+            // when the timeout trips.
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "8s");
+                put(PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL.getEnvVarName(), "100");
+            }})) {
+                serverMain.start();
+
+                final QueryRegistry registry = serverMain.getEngine().getQueryRegistry();
+                final String sleepSql = "sleep(3600)";
+                final long timerShardsBefore = serverMain.getEngine().getTimerShards().size();
+                // Capture the sleep's query id at registration; the text is stable at
+                // that instant, so we avoid reading the pooled query sink concurrently
+                // during the poll loop.
+                final AtomicLong sleepQueryId = new AtomicLong(Long.MIN_VALUE);
+                registry.setListener((query, queryId, executionContext) -> {
+                    if (Chars.contains(query, sleepSql)) {
+                        sleepQueryId.compareAndSet(Long.MIN_VALUE, queryId);
+                    }
+                });
+                try {
+                    CountDownLatch sleepStarted = new CountDownLatch(1);
+                    AtomicReference<Connection> connRef = new AtomicReference<>();
+                    Thread sleeper = new Thread(() -> {
+                        try {
+                            Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                            connRef.set(conn);
+                            try (Statement stmt = conn.createStatement()) {
+                                sleepStarted.countDown();
+                                stmt.executeQuery(sleepSql);
+                            }
+                        } catch (Throwable ignored) {
+                            // executeQuery throws when the socket is torn down -- expected.
+                        }
+                    }, "sleep-conn-close");
+                    sleeper.setDaemon(true);
+                    sleeper.start();
+
+                    Assert.assertTrue("sleep thread did not start", sleepStarted.await(5, TimeUnit.SECONDS));
+                    // Wait until the server has registered (and parked) the sleep.
+                    TestUtils.assertEventually(
+                            () -> Assert.assertTrue("sleep did not register", sleepQueryId.get() != Long.MIN_VALUE),
+                            10
+                    );
+                    final long queryId = sleepQueryId.get();
+                    TestUtils.assertEventually(
+                            () -> Assert.assertTrue("sleep continuation never parked",
+                                    serverMain.getEngine().getTimerShards().size() > timerShardsBefore),
+                            10
+                    );
+                    // Pin against a vacuous pass: a breaker false-positive that killed the
+                    // healthy query before the disconnect would make awaitQueryEnded return
+                    // ~0ms below and satisfy the prompt-abort assertion.
+                    Assert.assertNotNull("sleep ended before the client disconnected", registry.getEntry(queryId));
+
+                    connRef.get().close();
+
+                    // Measure how long the server keeps the parked sleep alive after the
+                    // client left. The entry drops from the registry when the query ends.
+                    // The deadline sits above query.timeout so the wait always terminates,
+                    // whether the query ends via disconnect detection (fast) or via
+                    // query.timeout (slow).
+                    long closeMs = System.currentTimeMillis();
+                    long endedAfterMs = awaitQueryEnded(registry, queryId, closeMs);
+                    sleeper.join(5_000);
+                    Assert.assertFalse("sleeper thread did not terminate", sleeper.isAlive());
+
+                    Assert.assertTrue(
+                            "sleep(3600) never ended within 20s of the client closing the connection",
+                            endedAfterMs >= 0
+                    );
+                    Assert.assertTrue(
+                            "parked sleep did not abort promptly after the client closed its connection: ended "
+                                    + endedAfterMs + " ms later. The server only stopped it when query.timeout fired, "
+                                    + "proving it did not detect the client disconnect (masked by the buffered PG Terminate byte).",
+                            endedAfterMs < 3_000
+                    );
+                } finally {
+                    registry.setListener(null);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSleepAbortedWhenHttpClientClosesConnection() throws Exception {
+        // HTTP counterpart to testSleepAbortedWhenClientClosesConnection. Unlike PG,
+        // an HTTP client closes with a bare FIN (no protocol "goodbye" byte), so the
+        // breaker's connection probe on the next wake sees the hangup and aborts the
+        // parked sleep within a wake interval -- detected by the old peek probe too, so
+        // HTTP is NOT masked; this test locks in that prompt detection.
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "30s");
+                put(PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL.getEnvVarName(), "100");
+            }})) {
+                serverMain.start();
+
+                final QueryRegistry registry = serverMain.getEngine().getQueryRegistry();
+                final String sleepSql = "sleep(3600)";
+                final long timerShardsBefore = serverMain.getEngine().getTimerShards().size();
+                final AtomicLong sleepQueryId = new AtomicLong(Long.MIN_VALUE);
+                registry.setListener((query, queryId, executionContext) -> {
+                    if (Chars.contains(query, sleepSql)) {
+                        sleepQueryId.compareAndSet(Long.MIN_VALUE, queryId);
+                    }
+                });
+                try {
+                    try (Socket sock = new Socket()) {
+                        sock.connect(new InetSocketAddress("127.0.0.1", HTTP_PORT), 5_000);
+                        // Raw GET so the close below is a plain FIN with nothing buffered
+                        // on the server side -- the clean-close shape a well-behaved HTTP
+                        // client produces (no PG-style Terminate byte to mask the EOF).
+                        final String request = "GET /exec?query=" + URLEncoder.encode(sleepSql, StandardCharsets.UTF_8)
+                                + " HTTP/1.1\r\nHost: localhost\r\n\r\n";
+                        OutputStream os = sock.getOutputStream();
+                        os.write(request.getBytes(StandardCharsets.US_ASCII));
+                        os.flush();
+
+                        // Wait until the server has registered (and parked) the sleep.
+                        TestUtils.assertEventually(
+                                () -> Assert.assertTrue("sleep did not register", sleepQueryId.get() != Long.MIN_VALUE),
+                                10
+                        );
+                        final long queryId = sleepQueryId.get();
+                        TestUtils.assertEventually(
+                                () -> Assert.assertTrue("sleep continuation never parked",
+                                        serverMain.getEngine().getTimerShards().size() > timerShardsBefore),
+                                10
+                        );
+                        Assert.assertNotNull("sleep ended before the client disconnected", registry.getEntry(queryId));
+
+                        // Bare FIN: the server has not written a response yet, so the
+                        // client's receive buffer is empty and close() sends a graceful
+                        // FIN, not RST.
+                        sock.close();
+
+                        long closeMs = System.currentTimeMillis();
+                        long endedAfterMs = awaitQueryEnded(registry, queryId, closeMs);
+
+                        Assert.assertTrue(
+                                "sleep(3600) never ended within 20s of the HTTP client closing the connection",
+                                endedAfterMs >= 0
+                        );
+                        Assert.assertTrue(
+                                "parked sleep did not abort promptly after the HTTP client closed its connection: ended "
+                                        + endedAfterMs + " ms later.",
+                                endedAfterMs < 3_000
+                        );
+                    }
+                } finally {
+                    registry.setListener(null);
+                }
+            }
+        });
     }
 
     @Test
@@ -103,8 +350,8 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             // Two-phase test on a single-worker pool with sleep(60) parked:
             //   1. While sleep is parked but the connection is still alive, a
             //      concurrent SELECT 1 on a fresh connection must complete
-            //      promptly -- proves the carrier is freed (TimerCont, not
-            //      Os.sleep).
+            //      promptly -- proves suspension frees the carrier instead of
+            //      calling Os.sleep.
             //   2. After force-closing the sleeping connection from outside the
             //      executing thread, the sleep thread must exit within a
             //      wake-interval window -- proves the server-side breaker detects
@@ -208,10 +455,8 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
     @Test
     public void testSleepCancelledByStatementCancel() throws Exception {
         assertMemoryLeak(() -> {
-            // Statement.cancel() sends a PG CancelRequest. The server trips the
-            // circuit breaker, the parked cont resumes on the next wake interval,
-            // observes the trip on the breaker probe, and throws.
             try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL.getEnvVarName(), "30s");
                 put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "120s");
             }})) {
                 serverMain.start();
@@ -220,11 +465,15 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                         Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
                         Statement stmt = conn.createStatement()
                 ) {
-                    CountDownLatch sleepStarted = new CountDownLatch(1);
+                    CountDownLatch queryStarted = new CountDownLatch(1);
+                    serverMain.getEngine().getQueryRegistry().setListener((query, queryId, executionContext) -> {
+                        if (Chars.contains(query, "sleep(60")) {
+                            queryStarted.countDown();
+                        }
+                    });
                     AtomicReference<Throwable> outcome = new AtomicReference<>();
                     Thread sleeper = new Thread(() -> {
                         try {
-                            sleepStarted.countDown();
                             stmt.executeQuery("sleep(60)");
                             outcome.set(new AssertionError("expected cancellation"));
                         } catch (PSQLException expected) {
@@ -236,22 +485,25 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                     sleeper.setDaemon(true);
                     sleeper.start();
 
-                    Assert.assertTrue("sleep did not start", sleepStarted.await(5, TimeUnit.SECONDS));
-                    Thread.sleep(300);
+                    try {
+                        Assert.assertTrue("sleep query did not start", queryStarted.await(5, TimeUnit.SECONDS));
 
-                    long t0 = System.currentTimeMillis();
-                    stmt.cancel();
-                    sleeper.join(5_000);
-                    long elapsed = System.currentTimeMillis() - t0;
+                        long t0 = System.currentTimeMillis();
+                        stmt.cancel();
+                        sleeper.join(5_000);
+                        long elapsed = System.currentTimeMillis() - t0;
 
-                    Assert.assertFalse("sleep thread did not exit after cancel", sleeper.isAlive());
-                    if (outcome.get() != null) {
-                        throw new AssertionError("sleep cancellation failed", outcome.get());
+                        Assert.assertFalse("sleep thread did not exit after cancel", sleeper.isAlive());
+                        if (outcome.get() != null) {
+                            throw new AssertionError("sleep cancellation failed", outcome.get());
+                        }
+                        Assert.assertTrue(
+                                "cancel took too long to take effect: " + elapsed + " ms",
+                                elapsed < 2_000
+                        );
+                    } finally {
+                        serverMain.getEngine().getQueryRegistry().setListener(null);
                     }
-                    Assert.assertTrue(
-                            "cancel took too long to take effect: " + elapsed + " ms",
-                            elapsed < 2_000
-                    );
                 }
             }
         });
@@ -263,7 +515,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             // Single-worker pool. Issuing sleep(2) on one connection must not pin the
             // worker; a concurrent SELECT on a different connection must return well
             // inside the sleep window. This is the load-bearing behaviour test for
-            // TimerCont vs. Os.sleep.
+            // timer-backed suspension vs. Os.sleep.
             try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "30s");
             }})) {
@@ -313,6 +565,16 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testHttpSleepsOnFiberWhilePgFiberDisabled() throws Exception {
+        assertProtocolSleepsOnFiberWhilePeerOptedOut(true);
+    }
+
+    @Test
+    public void testPgSleepsOnFiberWhileHttpFiberDisabled() throws Exception {
+        assertProtocolSleepsOnFiberWhilePeerOptedOut(false);
     }
 
     @Test
@@ -414,7 +676,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             //   - zero-second sleep (no shard registration; instant return)
             //   - fractional sub-wake-interval sleep (single timer chunk)
             //   - multi-wake-interval sleep (chunked re-arm path)
-            //   - statement.cancel() mid-sleep (breaker trip via PG cancel request)
+            //   - statement.cancel() mid-sleep (direct cancellation wait signal)
             //   - connection close mid-sleep (breaker trip via broken FD)
             //   - HTTP /exec sleep
             //   - tight loop of many short sleeps on a single connection
@@ -432,15 +694,15 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             final int timerShardCount = 2;
             // Many more client threads than workers (>>workerCount) so the
             // parallelism check has a wide margin: with carriers pinned by
-            // Os.sleep, ratio is bounded by workerCount; with TimerCont, ratio
-            // can approach clientThreads. Keep the random coverage in the
+            // Os.sleep, ratio is bounded by workerCount; with fiber suspension,
+            // ratio can approach clientThreads. Keep the random coverage in the
             // iteration count, not the thread count: the rarer interleavings
             // come from concurrency, not from raw client threads, and 16 is
             // already 8x the worker count -- a wide enough margin for the
             // parallelism gap. Cranking the thread count higher only
             // oversubscribes small and heavily loaded CI agents (Windows in
             // particular), starving the PG accept/dispatch path badly enough
-            // that a cancelled sleep's breaker trip can miss the 20s
+            // that a cancel request can miss the 20s
             // registration / 30s join windows runStatementCancelFuzz asserts.
             final int totalIterations = 512;
             final int clientThreads = 16;
@@ -469,8 +731,8 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                 // Sum of sleep durations actually completed on the server (only happy
                 // scenarios; cancelled/dropped contribute nothing reliable). Compared
                 // against the busy-section wall-clock to prove sleeps did NOT execute
-                // serially: with proper TimerCont semantics workers are freed during
-                // the sleep, so the sum of slept time grows faster than wall time.
+                // serially: suspension frees workers during the sleep, so the sum of
+                // slept time grows faster than wall time.
                 final AtomicLong totalSleptMillis = new AtomicLong();
                 final ConcurrentLinkedQueue<Throwable> failures = new ConcurrentLinkedQueue<>();
                 final AtomicLong busyStartMillis = new AtomicLong();
@@ -627,6 +889,81 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
         });
     }
 
+    private void assertProtocolSleepsOnFiberWhilePeerOptedOut(boolean isSleepOverHttp) throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(PropertyKey.HTTP_WORKER_FIBER_ENABLED.getEnvVarName(), Boolean.toString(isSleepOverHttp));
+                put(PropertyKey.HTTP_WORKER_COUNT.getEnvVarName(), "0");
+                put(PropertyKey.PG_WORKER_FIBER_ENABLED.getEnvVarName(), Boolean.toString(!isSleepOverHttp));
+                put(PropertyKey.PG_WORKER_COUNT.getEnvVarName(), "0");
+                put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "30s");
+                put(PropertyKey.SHARED_NETWORK_WORKER_COUNT.getEnvVarName(), "1");
+            }})) {
+                serverMain.start();
+
+                final CountDownLatch queryStarted = new CountDownLatch(1);
+                serverMain.getEngine().getQueryRegistry().setListener((query, queryId, executionContext) -> {
+                    if (Chars.contains(query, "sleep(2")) {
+                        queryStarted.countDown();
+                    }
+                });
+
+                final AtomicReference<Throwable> sleepOutcome = new AtomicReference<>();
+                final AtomicInteger completedCount = new AtomicInteger();
+                final AtomicLong totalSleptMillis = new AtomicLong();
+                final Thread sleeper = new Thread(() -> {
+                    try {
+                        if (isSleepOverHttp) {
+                            runHttpHappySleep(2, completedCount, totalSleptMillis);
+                        } else {
+                            runHappyPgSleep(2, completedCount, totalSleptMillis);
+                        }
+                    } catch (Throwable th) {
+                        sleepOutcome.set(th);
+                    }
+                }, "shared-network-sleep");
+                sleeper.setDaemon(true);
+                sleeper.start();
+
+                try {
+                    Assert.assertTrue("sleep query did not start", queryStarted.await(5, TimeUnit.SECONDS));
+                    final long probeStart = System.currentTimeMillis();
+                    try (
+                            Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                            Statement stmt = conn.createStatement();
+                            ResultSet rs = stmt.executeQuery("SELECT 1")
+                    ) {
+                        Assert.assertTrue(rs.next());
+                        Assert.assertEquals(1, rs.getInt(1));
+                    }
+                    final long probeElapsed = System.currentTimeMillis() - probeStart;
+                    Assert.assertTrue("shared network worker was pinned for " + probeElapsed + " ms", probeElapsed < 1_000);
+
+                    sleeper.join(10_000);
+                    Assert.assertFalse("sleep thread did not finish", sleeper.isAlive());
+                    if (sleepOutcome.get() != null) {
+                        throw new AssertionError("sleep thread failed", sleepOutcome.get());
+                    }
+                    Assert.assertEquals(1, completedCount.get());
+                    Assert.assertEquals(2_000, totalSleptMillis.get());
+                } finally {
+                    serverMain.getEngine().getQueryRegistry().setListener(null);
+                }
+            }
+        });
+    }
+
+    private static long awaitQueryEnded(QueryRegistry registry, long queryId, long closeMs) {
+        long deadlineMs = closeMs + 20_000;
+        while (System.currentTimeMillis() < deadlineMs) {
+            if (registry.getEntry(queryId) == null) {
+                return System.currentTimeMillis() - closeMs;
+            }
+            Os.sleep(50);
+        }
+        return -1;
+    }
+
     private static void drainResponse(Response response, StringSink sink) {
         Fragment fragment;
         while ((fragment = response.recv()) != null) {
@@ -727,8 +1064,8 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
     }
 
     private static void runRepeatedShortSleeps(Rnd tr, AtomicInteger counter, AtomicLong totalSleptMillis) throws SQLException {
-        // Tight loop on one connection; each iteration goes through TimerCont +
-        // suspend + resume. Verifies the per-call entry lifecycle is clean.
+        // Tight loop on one connection; each iteration goes through timer
+        // registration, suspend, and resume. Verifies the per-call lifecycle.
         try (
                 Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
                 Statement stmt = conn.createStatement()

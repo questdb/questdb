@@ -118,6 +118,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void addLateralCountTemplate(QueryColumn template) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void addLatestBy(ExpressionNode latestBy) {
         throw new UnsupportedOperationException();
     }
@@ -413,8 +418,8 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public ObjList<CharSequence> getLateralCountColumns() {
-        return delegate.getLateralCountColumns();
+    public ObjList<QueryColumn> getLateralCountTemplates() {
+        return delegate.getLateralCountTemplates();
     }
 
     @Override
@@ -642,8 +647,23 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public int getShowCreateDatabaseInclude() {
+        return delegate.getShowCreateDatabaseInclude();
+    }
+
+    @Override
     public int getShowKind() {
         return delegate.getShowKind();
+    }
+
+    @Override
+    public ExpressionNode getSubsample() {
+        return delegate.getSubsample();
+    }
+
+    @Override
+    public int getSubsamplePosition() {
+        return delegate.getSubsamplePosition();
     }
 
     @Override
@@ -838,6 +858,16 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public ExpressionNode getLateralCountCoalesceGuard() {
+        return delegate.getLateralCountCoalesceGuard();
+    }
+
+    @Override
+    public boolean isLateralCountCoalesceRequired() {
+        return delegate.isLateralCountCoalesceRequired();
+    }
+
+    @Override
     public boolean isNestedModelIsSubQuery() {
         return delegate.isNestedModelIsSubQuery();
     }
@@ -850,6 +880,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public boolean isOrderDescendingByDesignatedTimestampOnly() {
         return delegate.isOrderDescendingByDesignatedTimestampOnly();
+    }
+
+    @Override
+    public boolean isOuterRefWildcardExcluded() {
+        return delegate.isOuterRefWildcardExcluded();
     }
 
     @Override
@@ -929,6 +964,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void moveLimitFrom(IQueryModel baseModel) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void moveSubsampleFrom(IQueryModel baseModel) {
         throw new UnsupportedOperationException();
     }
 
@@ -1108,6 +1148,16 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void setLateralCountCoalesceGuard(ExpressionNode guard) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setLateralCountCoalesceRequired(boolean isLateralCountCoalesceRequired) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void setLatestByType(int latestByType) {
         throw new UnsupportedOperationException();
     }
@@ -1183,6 +1233,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void setOuterRefWildcardExcluded(boolean isOuterRefWildcardExcluded) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void setPivotGroupByColumnHasNoAlias(boolean pivotGroupByColumnHasNoAlias) {
         throw new UnsupportedOperationException();
     }
@@ -1238,7 +1293,17 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void setShowCreateDatabaseInclude(int includeMask) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void setShowKind(int showKind) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setSubsample(ExpressionNode subsample, int position) {
         throw new UnsupportedOperationException();
     }
 

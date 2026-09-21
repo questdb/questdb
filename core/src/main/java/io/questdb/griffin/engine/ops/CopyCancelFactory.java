@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
@@ -53,10 +54,10 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
     private final String cancelCopyIDStr;
     private final CopyExportContext copyExportContext;
     private final CopyImportContext copyImportContext;
-    private final RecordCursorFactory exportBaseFactory;
-    private final RecordCursorFactory importBaseFactory;
     private final CopyCancelRecord record = new CopyCancelRecord();
     private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
+    private RecordCursorFactory exportBaseFactory;
+    private RecordCursorFactory importBaseFactory;
     private CharSequence status;
 
     public CopyCancelFactory(
@@ -138,9 +139,24 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        Misc.free(importBaseFactory);
-        Misc.free(exportBaseFactory);
-        super._close();
+        final RecordCursorFactory exportBaseFactory = this.exportBaseFactory;
+        this.exportBaseFactory = null;
+        final RecordCursorFactory importBaseFactory = this.importBaseFactory;
+        this.importBaseFactory = null;
+        Throwable failure = Misc.freeBestEffort(null, importBaseFactory);
+        if (exportBaseFactory != importBaseFactory) {
+            failure = Misc.freeBestEffort(failure, exportBaseFactory);
+        }
+        try {
+            super._close();
+        } catch (Throwable th) {
+            if (failure == null) {
+                failure = th;
+            } else if (failure != th) {
+                failure.addSuppressed(th);
+            }
+        }
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class CopyCancelRecord implements Record {

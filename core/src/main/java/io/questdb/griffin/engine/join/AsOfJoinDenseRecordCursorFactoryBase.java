@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
@@ -145,10 +146,11 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(cursor);
+        final AsOfJoinDenseRecordCursorBase cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     protected abstract void putFactoryType(PlanSink sink);
@@ -189,7 +191,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
         @Override
         public boolean hasNext() {
             // Consult the breaker at the top, so an empty master still observes cancellation.
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (!masterCursor.hasNext()) {
                 return false;
             }
@@ -283,7 +285,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                     frameRowLo = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());
                     backwardRowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi() - 1);
                 }
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             }
             record.hasSlave(false);
             return true;
@@ -354,7 +356,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                     frameRowHi = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi());
                     forwardRowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());
                 }
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             }
         }
 

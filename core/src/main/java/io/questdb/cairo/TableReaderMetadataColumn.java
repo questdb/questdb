@@ -43,7 +43,8 @@ public class TableReaderMetadataColumn extends TableColumnMetadata {
             int denseSymbolIndex,
             int stableIndex,
             boolean symbolIsCached,
-            int symbolCapacity
+            int symbolCapacity,
+            int originalWriterIndex
     ) {
         super(
                 name,
@@ -56,7 +57,8 @@ public class TableReaderMetadataColumn extends TableColumnMetadata {
                 dedupKeyFlag,
                 0,
                 symbolIsCached,
-                symbolCapacity
+                symbolCapacity,
+                originalWriterIndex
         );
         this.denseSymbolIndex = denseSymbolIndex;
         this.stableIndex = stableIndex;

@@ -137,7 +137,7 @@ final class AsyncLogRecord implements LogRecord {
             } catch (Throwable t) {
                 // Complex toString() method could throw e.g. NullPointerException.
                 // If that happens, release the cursor to prevent blocking log queue.
-                $();
+                releaseOnFailure(t);
                 throw t;
             }
         }
@@ -154,7 +154,7 @@ final class AsyncLogRecord implements LogRecord {
             } catch (Throwable t) {
                 // Complex toSink() method could throw e.g. NullPointerException.
                 // If that happens, release the cursor to prevent blocking log queue.
-                $();
+                releaseOnFailure(t);
                 throw t;
             }
         }
@@ -185,27 +185,32 @@ final class AsyncLogRecord implements LogRecord {
             return this;
         }
 
-        final LogRecordUtf8Sink s = sink;
-        dejaVu.add(e);
-        // Do not log EOL before exception type and message for log alerting to have more context.
-        put0(s, e);
-        s.putEOL();
+        try {
+            final LogRecordUtf8Sink s = sink;
+            dejaVu.add(e);
+            // Do not log EOL before exception type and message for log alerting to have more context.
+            put0(s, e);
+            s.putEOL();
 
-        StackTraceElement[] trace = e.getStackTrace();
-        for (int i = 0, n = trace.length; i < n; i++) {
-            put(s, trace[i]);
-        }
+            StackTraceElement[] trace = e.getStackTrace();
+            for (int i = 0, n = trace.length; i < n; i++) {
+                put(s, trace[i]);
+            }
 
-        // Print suppressed exceptions, if any
-        Throwable[] suppressed = e.getSuppressed();
-        for (int i = 0, n = suppressed.length; i < n; i++) {
-            put(s, suppressed[i], trace, "Suppressed: ", "\t", dejaVu);
-        }
+            // Print suppressed exceptions, if any
+            Throwable[] suppressed = e.getSuppressed();
+            for (int i = 0, n = suppressed.length; i < n; i++) {
+                put(s, suppressed[i], trace, "Suppressed: ", "\t", dejaVu);
+            }
 
-        // Print cause, if any
-        Throwable ourCause = e.getCause();
-        if (ourCause != null) {
-            put(s, ourCause, trace, "Caused by: ", "", dejaVu);
+            // Print cause, if any
+            Throwable ourCause = e.getCause();
+            if (ourCause != null) {
+                put(s, ourCause, trace, "Caused by: ", "", dejaVu);
+            }
+        } catch (Throwable t) {
+            releaseOnFailure(t);
+            throw t;
         }
 
         return this;
@@ -213,12 +218,18 @@ final class AsyncLogRecord implements LogRecord {
 
     @Override
     public void $() {
-        sink.putEOL();
+        if (!isLogRecordInProgress) {
+            return;
+        }
         try {
+            sink.putEOL();
             if (LOG_PARANOIA_MODE != LOG_PARANOIA_MODE_NONE) {
                 validateUtf8(sink);
             }
         } finally {
+            if (dejaVu.size() > 0) {
+                dejaVu.clear();
+            }
             isLogRecordInProgress = false;
             seq.done(cursor);
         }
@@ -330,6 +341,13 @@ final class AsyncLogRecord implements LogRecord {
     public LogRecord $uuid(long lo, long hi) {
         Numbers.appendUuid(lo, hi, this);
         return this;
+    }
+
+    @Override
+    public void I$() {
+        if (isLogRecordInProgress) {
+            $(']').$();
+        }
     }
 
     @Override
@@ -488,6 +506,16 @@ final class AsyncLogRecord implements LogRecord {
         }
     }
 
+    private void releaseOnFailure(Throwable failure) {
+        try {
+            $();
+        } catch (Throwable releaseFailure) {
+            if (releaseFailure != failure) {
+                failure.addSuppressed(releaseFailure);
+            }
+        }
+    }
+
     /**
      * Returns the previously-installed abandoned log record if the prior chain
      * never reached {@code $()}, or {@code null} if the record is in a clean
@@ -500,19 +528,13 @@ final class AsyncLogRecord implements LogRecord {
             abandonedLogRecordError.fillInStackTrace();
             return null;
         }
-        $(" #$#$ ABANDONED LOG RECORD #$#$").$();
+        try {
+            $(" #$#$ ABANDONED LOG RECORD #$#$");
+        } catch (Throwable t) {
+            releaseOnFailure(t);
+            throw t;
+        }
+        $();
         return abandonedLogRecordError;
-    }
-
-    /**
-     * Returns this record's {@code dejaVu} set. Used by {@code $(Throwable)} to
-     * accumulate already-printed exception identities across nested cause/suppressed
-     * traversal. The set is cleared by the writer thread when it consumes the entry,
-     * NOT here - callers reuse it across chains and rely on identity inequality
-     * across messages.
-     */
-    @SuppressWarnings("unused")
-    ObjHashSet<Throwable> getDejaVu() {
-        return dejaVu;
     }
 }

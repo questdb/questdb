@@ -25,10 +25,14 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IntervalFwdPartitionFrameCursor;
 import io.questdb.cairo.IntervalPartitionFrameCursorFactory;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -41,7 +45,6 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.griffin.model.RuntimeIntervalModel;
@@ -49,6 +52,8 @@ import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -229,6 +234,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             TableReader reader = newOffPoolReader(configuration, "x");
             IntervalFwdPartitionFrameCursor cursor = new IntervalFwdPartitionFrameCursor(
+                    configuration,
                     new RuntimeIntervalModel(
                             ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()),
                             reader.getPartitionedBy(),
@@ -241,6 +247,87 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
             Assert.assertFalse(reader.isOpen());
             cursor.close();
             Assert.assertFalse(reader.isOpen());
+        });
+    }
+
+    @Test
+    public void testCloseParquetBorrowerBeforeReader() throws Exception {
+        Assume.assumeTrue(convertToParquet);
+        assertMemoryLeak(() -> {
+            createParquetIntervalTable();
+
+            DecoderCloseOrder closeOrder = new DecoderCloseOrder();
+            CairoConfiguration trackingConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public ParquetPartitionDecoder newParquetPartitionDecoder() {
+                    return new CloseOrderTrackingParquetPartitionDecoder(closeOrder);
+                }
+            };
+
+            TableReader reader = newOffPoolReader(trackingConfiguration, "x");
+            IntervalFwdPartitionFrameCursor cursor = new IntervalFwdPartitionFrameCursor(
+                    trackingConfiguration,
+                    new RuntimeIntervalModel(
+                            ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()),
+                            reader.getPartitionedBy(),
+                            intervals
+                    ),
+                    reader.getMetadata().getTimestampIndex()
+            );
+            try {
+                cursor.of(reader, null);
+                Assert.assertNotNull(cursor.next());
+            } finally {
+                cursor.close();
+            }
+
+            Assert.assertTrue("the interval finder must create a shallow parquet decoder", closeOrder.borrowerCreated);
+            Assert.assertFalse(
+                    "the reader must not destroy the owner while the shallow decoder is alive",
+                    closeOrder.ownerClosedWithBorrowerOpen
+            );
+            Assert.assertFalse(reader.isOpen());
+        });
+    }
+
+    @Test
+    public void testParquetIntervalFinderHonorsQueryMemoryLimit() throws Exception {
+        Assume.assumeTrue(convertToParquet);
+        assertMemoryLeak(() -> {
+            createParquetIntervalTable();
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1L);
+
+            MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(
+                    sqlExecutionContext.getSecurityContext(),
+                    42L,
+                    MemoryTrackerWorkload.QUERY
+            );
+            sqlExecutionContext.setMemoryTracker(tracker);
+            TableReader reader = newOffPoolReader(configuration, "x");
+            IntervalFwdPartitionFrameCursor cursor = new IntervalFwdPartitionFrameCursor(
+                    configuration,
+                    new RuntimeIntervalModel(
+                            ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()),
+                            reader.getPartitionedBy(),
+                            intervals
+                    ),
+                    reader.getMetadata().getTimestampIndex()
+            );
+            try {
+                cursor.of(reader, sqlExecutionContext);
+                try {
+                    cursor.next();
+                    Assert.fail("expected the parquet interval decode to exceed the query memory limit");
+                } catch (CairoException e) {
+                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                }
+            } finally {
+                cursor.close();
+                sqlExecutionContext.setMemoryTracker(null);
+                tracker.close();
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
+            }
         });
     }
 
@@ -736,6 +823,26 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
         }
     }
 
+    private void createParquetIntervalTable() throws Exception {
+        TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
+                .col("a", ColumnType.INT)
+                .timestamp(timestampType.getTimestampType());
+        AbstractCairoTest.create(model);
+
+        long firstDay = timestampType.getDriver().parseFloorLiteral("1980-01-01T00:00:00.000Z");
+        try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+            writer.newRow(firstDay).append();
+            writer.newRow(timestampType.getDriver().add(firstDay, 'h', 1)).append();
+            writer.newRow(timestampType.getDriver().addDays(firstDay, 1)).append();
+            writer.commit();
+        }
+        execute("alter table x convert partition to parquet where timestamp >= 0;");
+
+        intervals.clear();
+        intervals.add(timestampType.getDriver().add(firstDay, 'm', 30));
+        intervals.add(timestampType.getDriver().add(firstDay, 'h', 1));
+    }
+
     private void testIntervals(int partitionBy, long increment, int rowCount, CharSequence expected, long expectedCount) throws Exception {
         assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", partitionBy)
@@ -775,6 +882,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
             try (
                     TableReader reader = newOffPoolReader(configuration, "x");
                     IntervalFwdPartitionFrameCursor cursor = new IntervalFwdPartitionFrameCursor(
+                            configuration,
                             new RuntimeIntervalModel(
                                     ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()),
                                     reader.getPartitionedBy(),
@@ -895,5 +1003,38 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private static class CloseOrderTrackingParquetPartitionDecoder extends ParquetPartitionDecoder {
+        private final DecoderCloseOrder closeOrder;
+        private boolean borrower;
+
+        private CloseOrderTrackingParquetPartitionDecoder(DecoderCloseOrder closeOrder) {
+            this.closeOrder = closeOrder;
+        }
+
+        @Override
+        public void close() {
+            if (borrower) {
+                closeOrder.borrowerOpen = false;
+            } else if (closeOrder.borrowerOpen) {
+                closeOrder.ownerClosedWithBorrowerOpen = true;
+            }
+            super.close();
+        }
+
+        @Override
+        public void of(ParquetPartitionDecoder other) {
+            super.of(other);
+            borrower = true;
+            closeOrder.borrowerCreated = true;
+            closeOrder.borrowerOpen = true;
+        }
+    }
+
+    private static class DecoderCloseOrder {
+        private boolean borrowerCreated;
+        private boolean borrowerOpen;
+        private boolean ownerClosedWithBorrowerOpen;
     }
 }

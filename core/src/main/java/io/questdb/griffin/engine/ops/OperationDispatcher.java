@@ -151,7 +151,7 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             // authorized force/WAL-bypass break-glass path is exempt for the same reason as in
             // applyFenced (see isWriteRefused).
             if (isWriteRefused(forceWalBypass)) {
-                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                throw CairoException.readOnlyAccess();
             }
             // Both-trees pre-externalization fire-point for the async-enqueue fallback, mirroring the
             // inline-apply path above: fire the shared role-switch mint observer before acquiring the
@@ -162,7 +162,7 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             lock.lock();
             try {
                 if (isWriteRefused(forceWalBypass)) {
-                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                    throw CairoException.readOnlyAccess();
                 }
                 OperationFutureImpl future = futurePool.pop();
                 future.of(
@@ -241,7 +241,7 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         // (cairo.read.only) still refuses it. Structural changes are denied earlier, so only
         // non-structural force-alters reach here.
         if (isWriteRefused(forceWalBypass)) {
-            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            throw CairoException.readOnlyAccess();
         }
         final Lock lock = engine.getRoleSwitchReadLock();
         lock.lock();
@@ -250,7 +250,7 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             // lock around the REPLICA flag publish. apply() runs inside the read hold so the flip cannot
             // interleave (its write acquire waits), while other commits share the read side.
             if (isWriteRefused(forceWalBypass)) {
-                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                throw CairoException.readOnlyAccess();
             }
             firePreApplyObserver();
             return apply(operation, writer);

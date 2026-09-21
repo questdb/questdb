@@ -75,11 +75,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     private static final CarrierLocal<O3ParquetMergeContext> PARQUET_MERGE_CONTEXT =
             new CarrierLocal<>(O3ParquetMergeContext::new);
     public static final Closeable THREAD_LOCAL_CLEANER = PARQUET_MERGE_CONTEXT::removeAndFree;
-    // High bit set on the column type signals the Rust parquet encoder that the
-    // symbol column contains no nulls, so it can emit an all-ones RLE run for
-    // definition levels instead of checking each row.  This is a write-time hint
-    // only — it does NOT change the parquet schema Repetition (always Optional).
-    private static final int PARQUET_SYMBOL_NOT_NULL_HINT = Integer.MIN_VALUE;
     // Tells the Rust encoder that the designated-timestamp column's
     // primary_data is laid out as 16-byte (ts, rowId) merge-index entries
     // (timestamp at offset 0). Lets the encoder read timestamps in place
@@ -108,6 +103,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             TableWriter tableWriter,
             long srcNameTxn,
             long txn,
+            long seqTxn,
             long partitionUpdateSinkAddr,
             long dedupColSinkAddr,
             long o3TimestampMin,
@@ -130,7 +126,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         FilesFacade ff = tableWriter.getFilesFacade();
         final O3ParquetMergeContext ctx = PARQUET_MERGE_CONTEXT.get();
         ctx.clear();
-        final ParquetPartitionDecoder partitionDecoder = ctx.getPartitionDecoder();
+        final ParquetPartitionDecoder partitionDecoder = ctx.getPartitionDecoder(cairoConfiguration);
         final RowGroupBuffers rowGroupBuffers = ctx.getRowGroupBuffers();
         final DirectIntList parquetColumns = ctx.getParquetColumns();
         final ParquetMetaFileReader parquetMetaReader = ctx.getParquetMetaReader();
@@ -175,13 +171,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
                 final IntList tableToParquetIdx = ctx.getTableToParquetIdx(columnCount);
                 boolean hasMissingColumns = false;
+                boolean hasTypeConvertedColumns = false;
                 int mappedParquetColumns = 0;
                 for (int i = 0; i < columnCount; i++) {
                     if (tableWriterMetadata.getColumnType(i) < 0) {
                         continue;
                     }
-                    final int writerIndex = tableWriterMetadata.getColumnMetadata(i).getWriterIndex();
-                    final int parquetIdx = parquetColIdToIdx.get(writerIndex);
+                    final int origWriterIndex = tableWriterMetadata.getColumnMetadata(i).getOriginalWriterIndex();
+                    int parquetIdx = parquetColIdToIdx.get(origWriterIndex);
+                    if (parquetIdx >= 0 && origWriterIndex != tableWriterMetadata.getColumnMetadata(i).getWriterIndex()) {
+                        hasTypeConvertedColumns = true;
+                    }
                     tableToParquetIdx.setQuick(i, parquetIdx);
                     if (parquetIdx < 0) {
                         hasMissingColumns = true;
@@ -189,11 +189,21 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         mappedParquetColumns++;
                     }
                 }
-                // Detect schema changes: missing columns (ADD COLUMN) or extra
-                // columns in the parquet file (DROP COLUMN). Both require a
-                // rewrite with the updated target schema.
+                // Detect schema changes: missing columns (ADD COLUMN), extra
+                // columns in the parquet file (DROP COLUMN), or type-converted
+                // columns (ALTER COLUMN TYPE). All require a rewrite with the
+                // updated target schema.
                 final boolean hasExtraColumns = mappedParquetColumns < parquetColumnCount;
-                final boolean hasSchemaChange = hasMissingColumns || hasExtraColumns;
+                final boolean hasSchemaChange = hasMissingColumns || hasExtraColumns || hasTypeConvertedColumns;
+                // Legacy files (written before BOOLEAN/BYTE/SHORT/CHAR/SYMBOL became Optional) store these
+                // no-null-sentinel columns as Required (parquet max def level 0, pages carry no
+                // definition-level stream). A rewrite migrates the footer to Optional but raw-copies
+                // non-overlapping row groups verbatim, leaving Required pages under an Optional footer,
+                // which the reader then mis-decodes (value bytes consumed as def levels). When the source
+                // carries any such column, force a full rewrite that re-encodes every row group through
+                // the conversion path under the migrated Optional schema, so no Required page survives.
+                // New (already Optional) files report a positive max def level and keep the raw-copy path.
+                final boolean forceFullReencode = hasLegacyRequiredNoSentinelColumn(partitionDecoder.metadata(), parquetColumnCount);
 
                 assert rowGroupCount > 0;
 
@@ -247,6 +257,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // the footer schema uses the new target schema, producing a malformed
                 // Parquet file.
                 isRewrite = hasSchemaChange
+                        || forceFullReencode
                         || rowGroupCount == 1
                         || hasCoalescableTie
                         || (parquetSize > 0 && (double) unusedBytes / parquetSize > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedRatio())
@@ -348,44 +359,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         parquetMetaFdOs,
                         updaterParquetMetaFileSize, // parse anchor (committed head from _txn)
                         parquetMetaReader.getFileSize(), // append base (_pm header at offset 0)
-                        parquetFileSize // existing parquet data-file size (gates first-time vs incremental)
+                        parquetFileSize, // existing parquet data-file size (gates first-time vs incremental)
+                        seqTxn
                 );
 
-                if (hasSchemaChange) {
-                    // Table schema differs from parquet file schema (ADD COLUMN,
-                    // DROP COLUMN, or both). Pass the full target schema to Rust
-                    // so the output file footer, column remapping, and null column
-                    // chunks use the new schema.
-                    // For SYMBOL columns, set the high bit on the column type
-                    // when the symbol map has no null flag — this is a write-time
-                    // hint for the Rust encoder to emit a fast all-ones RLE run
-                    // for definition levels (symbols are always Optional in the schema).
-                    final PartitionDescriptor schemaDesc = ctx.getChunkDescriptor();
-                    schemaDesc.of(tableWriter.getTableToken().getTableName(), 0, timestampIndex);
-                    for (int i = 0; i < columnCount; i++) {
-                        int colType = tableWriterMetadata.getColumnType(i);
-                        if (colType < 0) {
-                            continue;
-                        }
-                        // The high bit is a write-time hint telling the Rust encoder
-                        // that this symbol column has no nulls, so it can emit a fast
-                        // all-ones RLE run for definition levels. It does NOT change
-                        // the parquet schema Repetition — symbols are always Optional.
-                        if (ColumnType.isSymbol(colType) && !tableWriter.getSymbolMapWriter(i).getNullFlag()) {
-                            colType |= PARQUET_SYMBOL_NOT_NULL_HINT;
-                        }
-                        final int colId = tableWriterMetadata.getColumnMetadata(i).getWriterIndex();
-                        final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(i).getParquetEncodingConfig();
-                        schemaDesc.addColumn(
-                                tableWriterMetadata.getColumnName(i),
-                                colType,
-                                colId,
-                                0,
-                                parquetEncodingConfig
-                        );
-                    }
-                    partitionUpdater.setTargetSchema(schemaDesc);
-                    schemaDesc.clear();
+                if (hasSchemaChange || forceFullReencode) {
+                    ParquetRowGroupMaterializer.setTargetSchema(
+                            ctx,
+                            partitionUpdater,
+                            tableWriterMetadata,
+                            tableWriter.getSymbolTableProvider()
+                    );
                 }
 
                 // Build row group bounds for merge strategy computation.
@@ -501,7 +485,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         nullBufs,
                                         srcPtrs,
                                         ctx.getActiveToDecodeIdx(columnCount),
-                                        ctx.getActiveColIndices(columnCount)
+                                        ctx.getActiveColIndices(columnCount),
+                                        ctx
                                 );
                                 final int numOutputRGs = (int) (mergeResult >>> 32);
                                 final long mergeDuplicates = mergeResult & 0xFFFFFFFFL;
@@ -529,7 +514,18 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                             .$(", rgMin=").$ts(O3ParquetMergeStrategy.getRowGroupMin(rowGroupBounds, action.rowGroupIndex))
                                             .$(", rgMax=").$ts(O3ParquetMergeStrategy.getRowGroupMax(rowGroupBounds, action.rowGroupIndex))
                                             .I$();
-                                    if (hasSchemaChange) {
+                                    if (hasTypeConvertedColumns || forceFullReencode) {
+                                        ParquetRowGroupMaterializer.materialize(
+                                                ctx,
+                                                partitionDecoder,
+                                                partitionUpdater,
+                                                action.rowGroupIndex,
+                                                metadataPosition,
+                                                tableWriterMetadata,
+                                                tableToParquetIdx,
+                                                tableWriter.getSymbolTableProvider()
+                                        );
+                                    } else if (hasSchemaChange) {
                                         copyRowGroupWithNullColumns(
                                                 partitionUpdater,
                                                 action.rowGroupIndex,
@@ -576,6 +572,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         for (int slot = 0; slot < 4; slot += 2) {
                             if (mergeDstBufs.getQuick(bi4 + slot) != 0) {
                                 Unsafe.free(mergeDstBufs.getQuick(bi4 + slot), mergeDstBufs.getQuick(bi4 + slot + 1), MemoryTag.NATIVE_O3);
+                                mergeDstBufs.setQuick(bi4 + slot, 0);
+                                mergeDstBufs.setQuick(bi4 + slot + 1, 0);
                             }
                         }
                     }
@@ -617,15 +615,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         isRewrite
                 );
 
-                // Publish the new _pm last: patch its header (the MVCC commit
-                // signal) and fsync. Done after the index build so any failure
-                // before the header patch leaves the committed header intact,
-                // with the new footer an invisible dead tail past it that the
-                // next update overwrites. commitParquetMeta patches the header
-                // before its fsync, so a throw from the fsync alone still
-                // publishes the header; that is safe because _txn is unchanged
-                // and a pinned reader walks back to the committed footer (see
-                // commit_parquet_meta).
+                // Publish the new _pm last. In sync modes an incremental update
+                // first fsyncs the appended footer while the old header is still
+                // authoritative, patches the header (the MVCC commit signal),
+                // then fsyncs again before _txn can commit. A first-barrier
+                // failure leaves the old header intact. After the patch, the
+                // appended footer is already durable, so a second-barrier failure
+                // is safe whether the old or new header reaches disk: _txn is
+                // unchanged and a pinned reader can walk back to the committed
+                // footer (see commit_parquet_meta).
                 partitionUpdater.commitParquetMeta(cairoConfiguration.getCommitMode() != CommitMode.NOSYNC);
             } catch (Throwable e) {
                 if (isRewrite) {
@@ -673,11 +671,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 if (parquetMetaReader.getAddr() != 0) {
                     // Leave _pm un-truncated, header unrestored. A failure before
                     // commitParquetMeta leaves the header at the committed footer;
-                    // a failure inside it (header patched, then fsync threw)
-                    // leaves the header at the new footer. Either way the
-                    // committed _txn size is unchanged, so a reader walks the MVCC
-                    // chain back to the committed footer and the failed update's
-                    // bytes sit past it as a dead tail the next update overwrites.
+                    // a failure inside it either leaves the old header (tail
+                    // barrier failed) or may leave the header at the new, already
+                    // durable footer (header barrier failed). Either way the
+                    // committed _txn size is unchanged, so a reader walks the
+                    // MVCC chain back to the committed footer and the failed
+                    // update's bytes sit past it as a dead tail the next update
+                    // overwrites.
                     // Truncating would pull pages from under a concurrent reader's
                     // mmap and SIGBUS the JVM -- the hazard this change removes.
                     path.of(pathToTable);
@@ -747,6 +747,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcNameTxn,
             boolean last,
             long txn,
+            long seqTxn,
             long sortedTimestampsAddr,
             TableWriter tableWriter,
             AtomicInteger columnCounter,
@@ -783,6 +784,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         sortedTimestampsAddr,
                         tableWriter,
                         txn,
+                        seqTxn,
                         partitionUpdateSinkAddr,
                         o3Basket,
                         newPartitionSize
@@ -801,6 +803,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     tableWriter,
                     srcNameTxn,
                     txn,
+                    seqTxn,
                     partitionUpdateSinkAddr,
                     dedupColSinkAddr,
                     o3TimestampMin,
@@ -1620,6 +1623,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long srcNameTxn = task.getSrcNameTxn();
         final boolean last = task.isLast();
         final long txn = task.getTxn();
+        final long seqTxn = task.getSeqTxn();
         final long sortedTimestampsAddr = task.getSortedTimestampsAddr();
         final TableWriter tableWriter = task.getTableWriter();
         final AtomicInteger columnCounter = task.getColumnCounter();
@@ -1649,6 +1653,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 srcNameTxn,
                 last,
                 txn,
+                seqTxn,
                 sortedTimestampsAddr,
                 tableWriter,
                 columnCounter,
@@ -1751,7 +1756,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             IntList tableToParquetIdx
     ) {
         // Count missing columns (present in table but absent from parquet).
-        // This may be zero in a DROP-only scenario — the function still
+        // This may be zero in a DROP-only scenario - the function still
         // handles column remapping via field_id, dropping extra parquet
         // columns that no longer exist in the table schema.
         int nullColCount = 0;
@@ -2108,6 +2113,28 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         return false;
     }
 
+    // Detects a legacy parquet file that stores BOOLEAN/BYTE/SHORT/CHAR/SYMBOL as Required (max def
+    // level 0, no definition-level stream). Such a file predates the convention that these
+    // no-null-sentinel columns are Optional. Rewriting it migrates the footer to Optional while
+    // raw-copying untouched row groups, leaving Required pages under an Optional footer (corrupt
+    // reads). The caller forces a full re-encode when this returns true. Modern files report a
+    // positive max def level for these columns and are left on the fast raw-copy path.
+    private static boolean hasLegacyRequiredNoSentinelColumn(ParquetMetaFileReader meta, int parquetColumnCount) {
+        for (int i = 0; i < parquetColumnCount; i++) {
+            if (meta.getColumnMaxDefLevel(i) == 0) {
+                final int srcTag = ColumnType.tagOf(meta.getColumnType(i));
+                if (srcTag == ColumnType.BOOLEAN
+                        || srcTag == ColumnType.BYTE
+                        || srcTag == ColumnType.SHORT
+                        || srcTag == ColumnType.CHAR
+                        || srcTag == ColumnType.SYMBOL) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     // returns packed long: (numOutputRowGroups << 32) | (duplicateCount & 0xFFFFFFFFL)
     private static long mergeRowGroup(
             PartitionDescriptor chunkDescriptor,
@@ -2134,7 +2161,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             LongList nullBufs,
             LongList srcPtrs,
             IntList activeToDecodeIdx,
-            IntList activeColIndices
+            IntList activeColIndices,
+            O3ParquetMergeContext ctx
     ) {
         // Build the decode list: only columns present in the parquet file.
         // Also build activeToDecodeIdx mapping: for each active column position,
@@ -2155,7 +2183,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     timestampColumnChunkIndex = decodeColCount;
                 }
                 parquetColumns.add(parquetIdx);
-                parquetColumns.add(columnType);
+                // When the source parquet type differs from the target, request a decode
+                // type that Rust can actually produce. Java batch-converts afterward.
+                parquetColumns.add(ParquetColumnTypeConverter.chooseDecodeType(decoder, parquetIdx, columnType));
                 activeToDecodeIdx.setQuick(activeColCount, decodeColCount);
                 decodeColCount++;
             } else {
@@ -2183,22 +2213,62 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         long duplicateCount = 0;
 
         long timestampMergeIndexSize = mergeRowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
-        long timestampMergeIndexAddr;
-        if (!tableWriter.isCommitDedupMode()) {
-            timestampMergeIndexAddr = createMergeIndex(
-                    timestampDataPtr,
-                    sortedTimestampsAddr,
-                    0,
-                    rowGroupSize - 1,
-                    mergeRangeLo,
-                    mergeRangeHi,
-                    timestampMergeIndexSize
-            );
-        } else {
-            final DedupColumnCommitAddresses dedupCommitAddresses = tableWriter.getDedupCommitAddresses();
-            final long dedupRows;
-            timestampMergeIndexAddr = Unsafe.malloc(timestampMergeIndexSize, MemoryTag.NATIVE_O3);
-            try {
+        long timestampMergeIndexAddr = 0;
+        int numChunks;
+
+        // Re-zero per-row-group buffers. The getters already zero them for the
+        // first call, but mergeRowGroup is called in a loop (once per MERGE action),
+        // so subsequent calls need stale values from the previous row group cleared.
+        nullBufs.fill(0, activeColCount * 4, 0);
+        srcPtrs.fill(0, activeColCount * 2, 0);
+
+        try {
+            // Phase 1a: prepare the per-column SOURCE pointers in srcPtrs (data at slot bi2, aux at
+            // bi2+1). prepareSourceColumn batch-converts a fixed<->var/symbol crossing into
+            // the target representation (buffers tracked in nullBufs for freeing), fills a null
+            // source buffer for a column-top / missing column, or passes a target-typed decode
+            // through. This MUST run before the dedup compare below: the native dedup comparer
+            // reads these source pointers directly, and if it saw the raw cross-typed decode buffer
+            // it would misread it -- a fixed->var key has a dangling/empty aux vector (SIGSEGV), and
+            // a var/symbol->fixed key would read VARCHAR_SLICE bytes as fixed values (silent wrong
+            // dedup). The destination sizing (Phase 1b) and merge copy (Phase 2) reuse the same
+            // prepared pointers, so each crossing conversion runs exactly once.
+            final LongList convertedPtrs = ctx.getConvertedPtrs(columnCount);
+            for (int ai = 0; ai < activeColCount; ai++) {
+                int columnIndex = activeColIndices.getQuick(ai);
+                int columnType = tableWriterMetadata.getColumnType(columnIndex);
+                int decodeIdx = activeToDecodeIdx.getQuick(ai);
+                ParquetColumnTypeConverter.prepareSourceColumn(
+                        decoder,
+                        rowGroupBuffers,
+                        tableToParquetIdx,
+                        columnIndex,
+                        columnType,
+                        decodeIdx,
+                        rowGroupSize,
+                        ctx,
+                        nullBufs,
+                        convertedPtrs,
+                        ai * 4
+                );
+                srcPtrs.setQuick(ai * 2, convertedPtrs.getQuick(ai * 4));        // dataPtr
+                srcPtrs.setQuick(ai * 2 + 1, convertedPtrs.getQuick(ai * 4 + 2)); // auxPtr
+            }
+
+            if (!tableWriter.isCommitDedupMode()) {
+                timestampMergeIndexAddr = createMergeIndex(
+                        timestampDataPtr,
+                        sortedTimestampsAddr,
+                        0,
+                        rowGroupSize - 1,
+                        mergeRangeLo,
+                        mergeRangeHi,
+                        timestampMergeIndexSize
+                );
+            } else {
+                final DedupColumnCommitAddresses dedupCommitAddresses = tableWriter.getDedupCommitAddresses();
+                final long dedupRows;
+                timestampMergeIndexAddr = Unsafe.malloc(timestampMergeIndexSize, MemoryTag.NATIVE_O3);
                 if (dedupCommitAddresses == null || dedupCommitAddresses.getColumnCount() == 0) {
                     dedupRows = Vect.mergeDedupTimestampWithLongIndexAsc(
                             timestampDataPtr,
@@ -2216,6 +2286,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         int columnIndex = activeColIndices.getQuick(ai);
                         int columnType = tableWriterMetadata.getColumnType(columnIndex);
                         int decodeIdx = activeToDecodeIdx.getQuick(ai);
+                        int bi2 = ai * 2;
                         assert columnIndex >= 0;
                         assert columnType >= 0;
                         if (tableWriterMetadata.isDedupKey(columnIndex) && columnIndex != timestampIndex) {
@@ -2230,7 +2301,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             );
                             if (columnSize > 0) {
                                 if (decodeIdx >= 0) {
-                                    DedupColumnCommitAddresses.setColAddressValues(addr, rowGroupBuffers.getChunkDataPtr(decodeIdx));
+                                    // Use the Phase-1a prepared source pointer: for a
+                                    // var/symbol->fixed crossing this is the converted fixed
+                                    // buffer, not the raw VARCHAR_SLICE decode the comparer
+                                    // would otherwise misread as fixed values.
+                                    DedupColumnCommitAddresses.setColAddressValues(addr, srcPtrs.getQuick(bi2));
                                 } else {
                                     // Column missing from parquet (ADD COLUMN after partition
                                     // was created).  columnTop == rowGroupSize, so the native
@@ -2243,11 +2318,20 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 DedupColumnCommitAddresses.setO3DataAddressValues(addr, oooColAddress);
                             } else {
                                 if (decodeIdx >= 0) {
+                                    // Use the Phase-1a prepared source pointers: for a
+                                    // fixed->var crossing these are the converted aux/data
+                                    // buffers (the raw decode has a dangling/empty aux). The
+                                    // var data length is the exact extent from the aux
+                                    // vector's last entry (same computation as Phase 1b).
+                                    final long srcAuxPtr = srcPtrs.getQuick(bi2 + 1);
+                                    final long srcDataPtr = srcPtrs.getQuick(bi2);
+                                    final long srcVarDataLen = ColumnType.getDriver(columnType)
+                                            .getDataVectorSizeAt(srcAuxPtr, rowGroupSize - 1);
                                     DedupColumnCommitAddresses.setColAddressValues(
                                             addr,
-                                            rowGroupBuffers.getChunkAuxPtr(decodeIdx),
-                                            rowGroupBuffers.getChunkDataPtr(decodeIdx),
-                                            rowGroupBuffers.getChunkDataSize(decodeIdx)
+                                            srcAuxPtr,
+                                            srcDataPtr,
+                                            srcVarDataLen
                                     );
                                 } else {
                                     assert columnTop == rowGroupSize : "missing column must have columnTop == rowGroupSize";
@@ -2281,78 +2365,43 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES,
                         MemoryTag.NATIVE_O3
                 );
-            } catch (Throwable e) {
-                Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
-                throw e;
+
+                timestampMergeIndexSize = dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES;
+                duplicateCount = mergeRowCount - dedupRows;
+                if (duplicateCount > 0) {
+                    tableWriter.addDedupRowsRemoved(duplicateCount);
+                }
+                mergeRowCount = dedupRows;
             }
 
-            timestampMergeIndexSize = dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES;
-            duplicateCount = mergeRowCount - dedupRows;
-            if (duplicateCount > 0) {
-                tableWriter.addDedupRowsRemoved(duplicateCount);
+            assert timestampMergeIndexAddr != 0;
+
+            // Even-split: when totalRows > 1.5x maxRowGroupSize, split into
+            // ceil(totalRows / maxChunkTarget) chunks so that no chunk exceeds
+            // maxChunkTarget = maxRowGroupSize + maxRowGroupSize / 2.
+            // Integer division of maxRowGroupSize / 2 is intentional: the target
+            // must be representable exactly in integer arithmetic to avoid off-by-one
+            // overflows when distributing remainder rows across chunks.
+            final long maxChunkTarget = (long) maxRowGroupSize + maxRowGroupSize / 2;
+            if (mergeRowCount > maxChunkTarget) {
+                numChunks = (int) ((mergeRowCount + maxChunkTarget - 1) / maxChunkTarget);
+            } else {
+                numChunks = 1;
             }
-            mergeRowCount = dedupRows;
-        }
+            final long maxChunkSize = (mergeRowCount + numChunks - 1) / numChunks;
 
-        assert timestampMergeIndexAddr != 0;
-
-        // Even-split: when totalRows > 1.5x maxRowGroupSize, split into
-        // ceil(totalRows / maxChunkTarget) chunks so that no chunk exceeds
-        // maxChunkTarget = maxRowGroupSize + maxRowGroupSize / 2.
-        // Integer division of maxRowGroupSize / 2 is intentional: the target
-        // must be representable exactly in integer arithmetic to avoid off-by-one
-        // overflows when distributing remainder rows across chunks.
-        final long maxChunkTarget = (long) maxRowGroupSize + maxRowGroupSize / 2;
-        int numChunks;
-        if (mergeRowCount > maxChunkTarget) {
-            numChunks = (int) ((mergeRowCount + maxChunkTarget - 1) / maxChunkTarget);
-        } else {
-            numChunks = 1;
-        }
-        final long maxChunkSize = (mergeRowCount + numChunks - 1) / numChunks;
-
-        // Re-zero per-row-group buffers. The getters already zero them for the
-        // first call, but mergeRowGroup is called in a loop (once per MERGE action),
-        // so subsequent calls need stale values from the previous row group cleared.
-        nullBufs.fill(0, activeColCount * 4, 0);
-        srcPtrs.fill(0, activeColCount * 2, 0);
-
-        try {
-            // Phase 1: Ensure destination buffers in mergeDstBufs are large enough
-            // for this merge. Grow if needed; reuse if already sufficient.
-            // Also set up null source buffers for column-top and missing columns.
+            // Phase 1b: ensure destination buffers in mergeDstBufs are large enough
+            // for this merge. Grow if needed; reuse if already sufficient. Reads the
+            // Phase-1a prepared source aux pointer from srcPtrs to size var data.
             for (int ai = 0; ai < activeColCount; ai++) {
                 int columnIndex = activeColIndices.getQuick(ai);
                 int columnType = tableWriterMetadata.getColumnType(columnIndex);
                 int bi4 = ai * 4;
                 int bi2 = ai * 2;
-                int decodeIdx = activeToDecodeIdx.getQuick(ai);
 
                 if (ColumnType.isVarSize(columnType)) {
                     final ColumnTypeDriver ctd = ColumnType.getDriver(columnType);
-                    long columnDataPtr = decodeIdx >= 0 ? rowGroupBuffers.getChunkDataPtr(decodeIdx) : 0;
-                    long columnAuxPtr = decodeIdx >= 0 ? rowGroupBuffers.getChunkAuxPtr(decodeIdx) : 0;
-
-                    if (columnAuxPtr == 0) {
-                        // Column top or missing from parquet: create null source buffers.
-                        long nullAuxSize = ctd.getAuxVectorSize(rowGroupSize);
-                        long nullAuxBuf = Unsafe.malloc(nullAuxSize, MemoryTag.NATIVE_O3);
-                        ctd.setFullAuxVectorNull(nullAuxBuf, rowGroupSize);
-                        columnAuxPtr = nullAuxBuf;
-                        nullBufs.setQuick(bi4, nullAuxBuf);
-                        nullBufs.setQuick(bi4 + 1, nullAuxSize);
-
-                        long nullDataSize = ctd.getDataVectorSizeAt(nullAuxBuf, rowGroupSize - 1);
-                        if (nullDataSize > 0) {
-                            long nullDataBuf = Unsafe.malloc(nullDataSize, MemoryTag.NATIVE_O3);
-                            ctd.setDataVectorEntriesToNull(nullDataBuf, rowGroupSize);
-                            columnDataPtr = nullDataBuf;
-                            nullBufs.setQuick(bi4 + 2, nullDataBuf);
-                            nullBufs.setQuick(bi4 + 3, nullDataSize);
-                        }
-                    }
-                    srcPtrs.setQuick(bi2, columnDataPtr);
-                    srcPtrs.setQuick(bi2 + 1, columnAuxPtr);
+                    final long columnAuxPtr = srcPtrs.getQuick(bi2 + 1);
 
                     final int columnOffset = getPrimaryColumnIndex(columnIndex);
                     final long srcOooFixAddr = oooColumns.getQuick(columnOffset + 1).addressOf(0);
@@ -2382,18 +2431,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         mergeDstBufs.setQuick(bi4 + 1, neededDataSize);
                     }
                 } else {
-                    long columnDataPtr = decodeIdx >= 0 ? rowGroupBuffers.getChunkDataPtr(decodeIdx) : 0;
-                    if (columnDataPtr == 0) {
-                        // Column top or missing from parquet: create null source buffer.
-                        long nullFixSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
-                        long nullFixBuf = Unsafe.malloc(nullFixSize, MemoryTag.NATIVE_O3);
-                        TableUtils.setNull(columnType, nullFixBuf, rowGroupSize);
-                        columnDataPtr = nullFixBuf;
-                        nullBufs.setQuick(bi4, nullFixBuf);
-                        nullBufs.setQuick(bi4 + 1, nullFixSize);
-                    }
-                    srcPtrs.setQuick(bi2, columnDataPtr);
-
                     // Fixed-size buffer: bounded by maxChunkSize across all merges.
                     long neededFixSize = maxChunkSize * ColumnType.sizeOf(columnType);
                     if (neededFixSize > mergeDstBufs.getQuick(bi4 + 1)) {
@@ -2426,7 +2463,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     assert columnIndex >= 0;
                     assert columnType >= 0;
                     final String columnName = tableWriterMetadata.getColumnName(columnIndex);
-                    final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getWriterIndex();
+                    final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getOriginalWriterIndex();
                     final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
 
                     final boolean notTheTimestamp = columnIndex != timestampIndex;
@@ -2508,7 +2545,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // High bit = no-null hint for def level encoding, not schema Repetition.
                             int encodeColumnType = columnType;
                             if (!symbolMapWriter.getNullFlag()) {
-                                encodeColumnType |= PARQUET_SYMBOL_NOT_NULL_HINT;
+                                encodeColumnType |= ParquetColumnTypeConverter.PARQUET_SYMBOL_NOT_NULL_HINT;
                             }
                             chunkDescriptor.addColumn(
                                     columnName,
@@ -2557,10 +2594,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 for (int slot = 0; slot < 4; slot += 2) {
                     if (nullBufs.getQuick(bi4 + slot) != 0) {
                         Unsafe.free(nullBufs.getQuick(bi4 + slot), nullBufs.getQuick(bi4 + slot + 1), MemoryTag.NATIVE_O3);
+                        nullBufs.setQuick(bi4 + slot, 0);
+                        nullBufs.setQuick(bi4 + slot + 1, 0);
                     }
                 }
             }
-            Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
+            // timestampMergeIndexAddr is 0 if Phase 1a or the merge-index build threw
+            // before it was allocated.
+            if (timestampMergeIndexAddr != 0) {
+                Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
+            }
         }
 
         return ((long) numChunks << 32) | (duplicateCount & 0xFFFFFFFFL);
@@ -2633,7 +2676,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 continue;
             }
             final String columnName = metadata.getColumnName(columnIndex);
-            final int columnId = metadata.getColumnMetadata(columnIndex).getWriterIndex();
+            // Field_id written to parquet must be the original writer index so the
+            // column-ID mapping (parquetColIdToIdx in processParquetPartition) keeps
+            // matching columns across ALTER COLUMN TYPE conversion chains.
+            final int columnId = metadata.getColumnMetadata(columnIndex).getOriginalWriterIndex();
             final int parquetEncodingConfig = metadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
 
             if (ColumnType.isVarSize(columnType)) {
@@ -2736,7 +2782,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 int encodeColumnType = columnType;
                 if (!symbolMapWriter.getNullFlag()) {
-                    encodeColumnType |= PARQUET_SYMBOL_NOT_NULL_HINT;
+                    encodeColumnType |= ParquetColumnTypeConverter.PARQUET_SYMBOL_NOT_NULL_HINT;
                 }
                 descriptor.addColumn(
                         columnName,
@@ -3727,6 +3773,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long sortedTimestampsAddr,
             TableWriter tableWriter,
             long txn,
+            long seqTxn,
             long partitionUpdateSinkAddr,
             O3Basket o3Basket,
             long newPartitionSize
@@ -3767,7 +3814,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final PartitionDescriptor descriptor = ctx.getFreshPartitionDescriptor();
         descriptor.clear();
 
-        long parquetFileSize = 0;
+        long parquetFileSize;
         long parquetMetaFd = -1;
         boolean partitionDirCreated = false;
         try {
@@ -3833,7 +3880,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     configuration.getPartitionEncoderParquetBloomFilterFpp(),
                     minCompressionRatio,
                     Files.toOsFd(parquetMetaFd),
-                    -1L
+                    -1L,
+                    seqTxn
             );
 
             parquetFileSize = ff.length(parquetPath.$());
@@ -3869,7 +3917,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     pathToTable,
                     parquetPath,
                     ff,
-                    ctx.getPartitionDecoder(),
+                    ctx.getPartitionDecoder(configuration),
                     metadata,
                     ctx.getParquetColumns(),
                     ctx.getRowGroupBuffers(),

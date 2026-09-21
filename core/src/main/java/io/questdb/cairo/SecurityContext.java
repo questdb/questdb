@@ -109,6 +109,10 @@ public interface SecurityContext extends Mutable {
 
     void authorizeLineTcp();
 
+    void authorizeLiveViewCreate();
+
+    void authorizeLiveViewDrop(TableToken tableToken);
+
     void authorizeMatViewCreate();
 
     void authorizeMatViewDrop(TableToken tableToken);
@@ -202,6 +206,23 @@ public interface SecurityContext extends Mutable {
         final CharSequence principal = getPrincipal();
         final CharSequence sessionPrincipal = getSessionPrincipal();
         return sessionPrincipal == null || sessionPrincipal.equals(principal) ? null : principal;
+    }
+
+    /**
+     * The principal to record as owner when this context auto-creates a database object during
+     * ingestion (e.g. ILP auto-creates a table or column), or {@code null} when this context carries no
+     * ACL identity that should receive an owner grant. Defaults to {@link #getPrincipal()}.
+     * <p>
+     * The identity-less allow-all / read-only contexts the ILP line-ACL bypass hands out still report a
+     * default principal from {@link #getPrincipal()} (so {@code current_user()} stays coherent), but they
+     * are not an ACL identity. Returning {@code null} here keeps anonymous ingestion from granting object
+     * ownership to a real ACL user who merely shares that default name (e.g. after the built-in admin is
+     * renamed). The full ACL contexts keep the default, so an authenticated ingesting user still owns what
+     * it auto-creates. It exists as a separate accessor because it is carried across the ILP I/O-to-writer
+     * thread hand-off, where only a serialized string survives and the originating context is gone.
+     */
+    default CharSequence getAutoCreateOwner() {
+        return getPrincipal();
     }
 
     /**

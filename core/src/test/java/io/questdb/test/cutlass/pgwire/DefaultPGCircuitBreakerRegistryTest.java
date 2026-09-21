@@ -31,7 +31,6 @@ import io.questdb.cutlass.pgwire.DefaultPGCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
-import io.questdb.std.MemoryTag;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -303,6 +302,6 @@ public class DefaultPGCircuitBreakerRegistryTest extends AbstractCairoTest {
     }
 
     private NetworkSqlExecutionCircuitBreaker newCircuitBreaker() {
-        return new NetworkSqlExecutionCircuitBreaker(engine, new DefaultSqlExecutionCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB5);
+        return new NetworkSqlExecutionCircuitBreaker(engine, new DefaultSqlExecutionCircuitBreakerConfiguration());
     }
 }

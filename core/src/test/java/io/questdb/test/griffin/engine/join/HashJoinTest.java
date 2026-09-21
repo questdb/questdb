@@ -25,10 +25,12 @@
 package io.questdb.test.griffin.engine.join;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -119,6 +121,61 @@ public class HashJoinTest extends AbstractCairoTest {
                 Assert.assertTrue(freeCount < Unsafe.getFreeCount());
                 Assert.assertTrue(getMemUsedByFactories() < tagBeforeFactory + 1024 * 1024);
             }
+        });
+    }
+
+    @Test
+    public void testHashJoinEmptyNonAsciiVarcharKey() throws Exception {
+        // Reproduces a crash reported against QuestDB 3.3.x: an inner (hash) join on a VARCHAR
+        // key failed with an AssertionError in UnorderedVarcharMap.putVarchar when a join key
+        // held an empty, non-ASCII VARCHAR. An empty varchar is ASCII by definition, but the
+        // Utf8Sequence contract lets a value report isAscii() == false for it, and such values
+        // exist at rest. Its packed (hash, size, flags) representation was 0, colliding with the
+        // map's empty-slot sentinel. The same data worked through an ASOF join, which does not
+        // use the varchar hash map.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (k VARCHAR, v INT)");
+            execute("CREATE TABLE s (k VARCHAR, w INT)");
+
+            // "" written with the ASCII flag deliberately cleared, matching at-rest data that no
+            // longer round-trips through a value producer that would re-flag it as ASCII.
+            Utf8String emptyNonAscii = new Utf8String(new byte[0], false);
+            Assert.assertEquals(0, emptyNonAscii.size());
+            Assert.assertFalse(emptyNonAscii.isAscii());
+
+            try (TableWriter writer = getWriter("m")) {
+                TableWriter.Row row = writer.newRow();
+                row.putVarchar(0, new Utf8String("a"));
+                row.putInt(1, 1);
+                row.append();
+
+                row = writer.newRow();
+                row.putVarchar(0, emptyNonAscii);
+                row.putInt(1, 2);
+                row.append();
+                writer.commit();
+            }
+
+            try (TableWriter writer = getWriter("s")) {
+                TableWriter.Row row = writer.newRow();
+                row.putVarchar(0, new Utf8String("a"));
+                row.putInt(1, 10);
+                row.append();
+
+                row = writer.newRow();
+                row.putVarchar(0, emptyNonAscii);
+                row.putInt(1, 20);
+                row.append();
+                writer.commit();
+            }
+
+            assertQuery("SELECT m.v, s.w FROM m JOIN s ON m.k = s.k ORDER BY m.v")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tw
+                            1\t10
+                            2\t20
+                            """);
         });
     }
 

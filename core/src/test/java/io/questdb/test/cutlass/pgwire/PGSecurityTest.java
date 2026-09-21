@@ -45,6 +45,7 @@ import org.postgresql.util.PSQLException;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Properties;
@@ -101,6 +102,28 @@ public class PGSecurityTest extends BasePGTest {
         assertMemoryLeak(() -> {
             execute("create table src (ts TIMESTAMP)");
             executeWithPg("select * from src");
+        });
+    }
+
+    @Test
+    public void testCurrentUserReflectsConfiguredPrincipal() throws Exception {
+        // current_user() must report the authenticated pgwire user, not the hardcoded "admin" default
+        assertMemoryLeak(() -> {
+            try (
+                    final PGServer server = createPGServer(READ_ONLY_USER_CONF);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (
+                        final Connection defaultUserConnection = getConnection(server.getPort(), false, true);
+                        final Connection roUserConnection = getConnectionWithReadOnlyUser(server.getPort())
+                ) {
+                    // the read-only user "user" gets a read-only context that still reports its own name
+                    assertCurrentUser(roUserConnection, "user");
+                    // the default admin user maps to the shared singleton and reports the default name
+                    assertCurrentUser(defaultUserConnection, "admin");
+                }
+            }
         });
     }
 
@@ -316,6 +339,19 @@ public class PGSecurityTest extends BasePGTest {
                 }
             }
         });
+    }
+
+    private static void assertCurrentUser(Connection connection, String expectedUser) throws SQLException {
+        try (
+                final Statement statement = connection.createStatement();
+                // current_user() and session_user() must both reflect the authenticated user
+                final ResultSet rs = statement.executeQuery("SELECT current_user(), session_user()")
+        ) {
+            Assert.assertTrue(rs.next());
+            Assert.assertEquals(expectedUser, rs.getString(1));
+            Assert.assertEquals(expectedUser, rs.getString(2));
+            Assert.assertFalse(rs.next());
+        }
     }
 
     private void assertQueryDisallowed(String query) throws Exception {

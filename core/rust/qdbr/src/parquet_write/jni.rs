@@ -1,4 +1,5 @@
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
+use crate::parquet_metadata::types::SeqTxn;
 use crate::parquet_write::file::{
     ChunkedWriter, ParquetWriter, DEFAULT_BLOOM_FILTER_FPP, DEFAULT_ROW_GROUP_SIZE,
 };
@@ -98,6 +99,57 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_rewriteRowGroupColumns(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *mut ParquetUpdater,
+    table_name_len: u32,
+    table_name_ptr: *const u8,
+    row_group_id: jint,
+    col_count: jint,
+    col_names_ptr: *const u8,
+    col_names_len: jint,
+    col_data_ptr: *const i64,
+    col_data_len: jlong,
+    timestamp_index: jint,
+    row_count: jlong,
+) {
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.rewriteRowGroupColumns");
+        return err.into_cairo_exception().throw(env);
+    }
+    let parquet_updater = unsafe { &mut *updater };
+
+    let mut rewrite = || -> ParquetResult<()> {
+        let partition = create_partition_descriptor(
+            table_name_ptr,
+            table_name_len as i32,
+            col_count,
+            col_names_ptr,
+            col_names_len,
+            col_data_ptr,
+            col_data_len,
+            row_count,
+            timestamp_index,
+        )?;
+        parquet_updater.rewrite_row_group_columns(row_group_id, &partition)
+    };
+
+    match rewrite() {
+        Ok(_) => (),
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not rewrite columns in row group {row_group_id}"
+            ));
+            err.add_context("error in PartitionUpdater.rewriteRowGroupColumns");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_copyRowGroupWithNullColumns(
     mut env: JNIEnv,
     _class: JClass,
@@ -173,6 +225,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     parquet_meta_file_size: jlong,
     append_base: jlong,
     existing_parquet_file_size: jlong,
+    seq_txn: jlong,
 ) -> *mut ParquetUpdater {
     let env = &mut env;
     let create = || -> ParquetResult<ParquetUpdater> {
@@ -223,6 +276,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             parquet_meta_file_size as u64,
             append_base as u64,
             existing_parquet_file_size,
+            SeqTxn::new(seq_txn),
         )
     };
 
@@ -481,6 +535,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     min_compression_ratio: jdouble,
     parquet_meta_fd: jint,
     squash_tracker: jlong,
+    seq_txn: jlong,
 ) -> jlong {
     let env = &mut env;
     let encode = || -> ParquetResult<i64> {
@@ -541,6 +596,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         });
         let sorting_columns =
             local_timestamp_index.map(|i| vec![SortingColumn::new(i, false, false)]);
+        let seq_txn = SeqTxn::new(seq_txn);
 
         // Break apart ParquetWriter::finish() to access row groups after writing.
         let writer = ParquetWriter::new(&mut file)
@@ -554,12 +610,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .with_bloom_filter_columns(bloom_filter_cols)
             .with_bloom_filter_fpp(bloom_filter_fpp)
             .with_min_compression_ratio(min_compression_ratio)
-            .with_squash_tracker(squash_tracker);
+            .with_squash_tracker(squash_tracker)
+            .with_seq_txn(seq_txn);
 
         let (schema, additional_meta) = crate::parquet_write::schema::to_parquet_schema(
             &partition,
             raw_array_encoding,
             squash_tracker,
+            seq_txn,
         )?;
         let encodings = crate::parquet_write::schema::to_encodings(&partition);
         let compressions = crate::parquet_write::schema::to_compressions(&partition);
@@ -616,6 +674,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 chunked.bloom_bitsets(),
                 0, // unused_bytes: new file, no dead space
                 squash_tracker,
+                seq_txn,
             )
             .context("generate_parquet_metadata failed")?;
 
@@ -775,17 +834,30 @@ fn create_partition_descriptor(
     row_count: jlong,
     timestamp_index: jint,
 ) -> ParquetResult<Partition> {
-    let col_count = col_count as usize;
-    let col_names_len = col_names_len as usize;
-    let col_data_len = col_data_len as usize;
-
     const COL_DATA_ENTRY_SIZE: usize = 10;
+    // These arrive straight from JNI; a corrupt _txn can make any of them negative
+    // (e.g. a negative symbol count from a damaged symbol-count section), so validate
+    // before the raw pointers and lengths reach `from_raw_parts`/`split_at`.
+    let col_count = checked_non_negative_usize(i64::from(col_count), "column count")?;
+    let col_names_len = checked_slice_len::<u8>(i64::from(col_names_len), "column names length")?;
+    let table_name_size = checked_slice_len::<u8>(i64::from(table_name_size), "table name size")?;
+    let row_count = checked_non_negative_usize(row_count, "row count")?;
+    let col_data_len = checked_slice_len::<i64>(col_data_len, "column data length")?;
+
     if !col_data_len.is_multiple_of(COL_DATA_ENTRY_SIZE) {
         return Err(fmt_err!(
             Layout,
             "col_data_len {} is not a multiple of {}",
             col_data_len,
             COL_DATA_ENTRY_SIZE
+        ));
+    }
+    if col_count > col_data_len / COL_DATA_ENTRY_SIZE {
+        return Err(fmt_err!(
+            Layout,
+            "column count {} exceeds column data entries {}",
+            col_count,
+            col_data_len / COL_DATA_ENTRY_SIZE
         ));
     }
 
@@ -799,13 +871,20 @@ fn create_partition_descriptor(
     // The memory is backed by Java and remains valid for the JNI call duration.
     let col_data = unsafe { slice::from_raw_parts(col_data_ptr, col_data_len) };
 
-    let row_count = row_count as usize;
     let mut columns = vec![];
     for col_idx in 0..col_count {
         let raw_idx = col_idx * COL_DATA_ENTRY_SIZE;
 
-        let col_name_size = col_data[raw_idx];
-        let (col_name, tail) = col_names.split_at(col_name_size as usize);
+        let col_name_size = checked_slice_len::<u8>(col_data[raw_idx], "column name size")?;
+        let (col_name, tail) = col_names.split_at_checked(col_name_size).ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "column name size {} is invalid for remaining name buffer {}, column index: {}",
+                col_name_size,
+                col_names.len(),
+                col_idx
+            )
+        })?;
         col_names = tail;
 
         let packed = col_data[raw_idx + 1];
@@ -813,15 +892,27 @@ fn create_partition_descriptor(
         let col_type = (packed & 0xFFFFFFFF) as i32;
 
         let col_top = col_data[raw_idx + 2];
+        if checked_non_negative_usize(col_top, "column top")? > row_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "column top {} exceeds row count {}, column index: {}",
+                col_top,
+                row_count,
+                col_idx
+            ));
+        }
 
         let primary_col_addr = col_data[raw_idx + 3];
-        let primary_col_size = col_data[raw_idx + 4];
+        let primary_col_size =
+            checked_slice_len::<u8>(col_data[raw_idx + 4], "primary column size")?;
 
         let secondary_col_addr = col_data[raw_idx + 5];
-        let secondary_col_size = col_data[raw_idx + 6];
+        let secondary_col_size =
+            checked_slice_len::<u8>(col_data[raw_idx + 6], "secondary column size")?;
 
         let symbol_offsets_addr = col_data[raw_idx + 7];
-        let symbol_offsets_count = col_data[raw_idx + 8];
+        let symbol_offsets_count =
+            checked_slice_len::<u64>(col_data[raw_idx + 8], "symbol offsets count")?;
 
         let parquet_encoding_config = col_data[raw_idx + 9] as i32;
 
@@ -834,11 +925,11 @@ fn create_partition_descriptor(
             col_top,
             row_count,
             primary_col_addr as *const u8,
-            primary_col_size as usize,
+            primary_col_size,
             secondary_col_addr as *const u8,
-            secondary_col_size as usize,
+            secondary_col_size,
             symbol_offsets_addr as *const u64,
-            symbol_offsets_count as usize,
+            symbol_offsets_count,
             designated_timestamp,
             true,
             parquet_encoding_config,
@@ -851,10 +942,7 @@ fn create_partition_descriptor(
     // The memory is backed by Java and remains valid for the JNI call duration.
     // Java guarantees valid UTF-8 for table names (validated on creation).
     let table = unsafe {
-        std::str::from_utf8_unchecked(slice::from_raw_parts(
-            table_name_ptr,
-            table_name_size as usize,
-        ))
+        std::str::from_utf8_unchecked(slice::from_raw_parts(table_name_ptr, table_name_size))
     }
     .to_string();
 
@@ -1051,6 +1139,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             &partition_template,
             raw_array_encoding != 0,
             -1,
+            SeqTxn::UNSET,
         )?;
         // SAFETY: Pointer was passed from Java and points to a valid allocator for the JNI call duration.
         let allocator = unsafe { &*allocator_ptr };
@@ -1137,7 +1226,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     // Single-threaded JNI access guarantees no aliasing.
     let encoder = unsafe { &mut *encoder };
     let mut write_chunk = || -> ParquetResult<*const u8> {
-        let row_count = row_count as usize;
+        let row_count = checked_non_negative_usize(row_count, "row count")?;
         if row_count > 0 {
             let mut new_partition = Partition {
                 table: String::new(),
@@ -1470,35 +1559,162 @@ fn update_partition_data(
         let secondary_col_size = col_data[raw_idx + 4];
         let symbol_offsets_addr = col_data[raw_idx + 5];
         let symbol_offsets_count = col_data[raw_idx + 6];
+        let col_top = checked_non_negative_usize(col_top, "column top")?;
+        if col_top > row_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "column top {} exceeds row count {}, column index: {}",
+                col_top,
+                row_count,
+                col_idx
+            ));
+        }
         let primary_ptr = primary_col_addr as *const u8;
         let secondary_ptr = secondary_col_addr as *const u8;
         let symbol_offsets_ptr = symbol_offsets_addr as *const u64;
 
-        column.column_top = col_top as usize;
+        column.column_top = col_top;
         column.row_count = row_count;
+        // A null pointer carries a producer sentinel size (e.g. PageFrame.getAuxPageSize()
+        // reports -1 for a frame without an aux vector), so each size is validated only
+        // when its pointer is live.
         column.primary_data = if primary_ptr.is_null() {
             &[]
         } else {
+            let primary_col_size =
+                checked_slice_len::<u8>(primary_col_size, "primary column size")?;
             // SAFETY: JNI caller guarantees a valid pointer to `primary_col_size` bytes of column data.
             // The memory is backed by Java memory-mapped files and remains valid for the JNI call duration.
-            unsafe { slice::from_raw_parts(primary_ptr, primary_col_size as usize) }
+            unsafe { slice::from_raw_parts(primary_ptr, primary_col_size) }
         };
         column.secondary_data = if secondary_ptr.is_null() {
             &[]
         } else {
+            let secondary_col_size =
+                checked_slice_len::<u8>(secondary_col_size, "secondary column size")?;
             // SAFETY: JNI caller guarantees a valid pointer to `secondary_col_size` bytes of column data.
             // The memory is backed by Java memory-mapped files and remains valid for the JNI call duration.
-            unsafe { slice::from_raw_parts(secondary_ptr, secondary_col_size as usize) }
+            unsafe { slice::from_raw_parts(secondary_ptr, secondary_col_size) }
         };
         column.symbol_offsets = if symbol_offsets_ptr.is_null() {
             &[]
         } else {
-            // SAFETY: JNI caller guarantees a valid pointer to `symbol_offsets_size` elements of symbol offset data.
+            let symbol_offsets_count =
+                checked_slice_len::<u64>(symbol_offsets_count, "symbol offsets count")?;
+            // SAFETY: JNI caller guarantees a valid pointer to `symbol_offsets_count` elements of symbol offset data.
             // The memory is backed by Java memory-mapped files and remains valid for the JNI call duration.
-            unsafe { slice::from_raw_parts(symbol_offsets_ptr, symbol_offsets_count as usize) }
+            unsafe { slice::from_raw_parts(symbol_offsets_ptr, symbol_offsets_count) }
         };
     }
 
+    Ok(())
+}
+
+fn checked_non_negative_usize(value: i64, field: &str) -> ParquetResult<usize> {
+    if value < 0 {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "{} must not be negative: {}",
+            field,
+            value
+        ));
+    }
+    #[cfg(target_pointer_width = "32")]
+    if value > isize::MAX as i64 {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "{} exceeds maximum supported length: {}",
+            field,
+            value
+        ));
+    }
+    Ok(usize::try_from(value).expect("non-negative value bounded by isize::MAX fits usize"))
+}
+
+fn checked_slice_len<T>(value: i64, field: &str) -> ParquetResult<usize> {
+    let len = checked_non_negative_usize(value, field)?;
+    let max_len = (isize::MAX as usize) / std::mem::size_of::<T>();
+    if len > max_len {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "{} exceeds maximum slice length: {}",
+            field,
+            value
+        ));
+    }
+    Ok(len)
+}
+
+fn checked_non_negative_u32(value: jint, field: &str) -> ParquetResult<u32> {
+    if value < 0 {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "{} must not be negative: {}",
+            field,
+            value
+        ));
+    }
+    Ok(value as u32)
+}
+
+fn checked_streaming_buffer_row_count(row_count: jint) -> ParquetResult<usize> {
+    checked_non_negative_usize(i64::from(row_count), "row count")
+}
+
+fn checked_row_group_buffers_ptr(
+    row_group_buffers_ptr: jlong,
+) -> ParquetResult<*const crate::parquet_read::RowGroupBuffers> {
+    if row_group_buffers_ptr == 0 {
+        return Err(fmt_err!(InvalidType, "row group buffers pointer is null"));
+    }
+    Ok(row_group_buffers_ptr as *const crate::parquet_read::RowGroupBuffers)
+}
+
+fn checked_row_group_args(
+    row_group_index: jint,
+    row_group_lo: jint,
+    row_group_hi: jint,
+) -> ParquetResult<(u32, u32, u32, usize)> {
+    let row_group_index = checked_non_negative_u32(row_group_index, "row group index")?;
+    let row_group_lo = checked_non_negative_u32(row_group_lo, "row group lower bound")?;
+    let row_group_hi = checked_non_negative_u32(row_group_hi, "row group upper bound")?;
+    let row_count = row_group_hi.checked_sub(row_group_lo).ok_or_else(|| {
+        fmt_err!(
+            InvalidLayout,
+            "row group upper bound {} is less than lower bound {}",
+            row_group_hi,
+            row_group_lo
+        )
+    })? as usize;
+    Ok((row_group_index, row_group_lo, row_group_hi, row_count))
+}
+
+fn validate_row_group_bounds(
+    row_group_sizes: &[u32],
+    row_group_index: u32,
+    row_group_lo: u32,
+    row_group_hi: u32,
+) -> ParquetResult<()> {
+    let row_group_size = row_group_sizes
+        .get(row_group_index as usize)
+        .ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "row group index {} out of range [0,{})",
+                row_group_index,
+                row_group_sizes.len()
+            )
+        })?;
+    if row_group_hi > *row_group_size {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "row group bounds [{}, {}) exceed row group {} size {}",
+            row_group_lo,
+            row_group_hi,
+            row_group_index,
+            row_group_size
+        ));
+    }
     Ok(())
 }
 
@@ -1527,26 +1743,43 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     // Single-threaded JNI access guarantees no aliasing.
     let encoder = unsafe { &mut *encoder };
     let mut write_chunk = || -> ParquetResult<*const u8> {
-        let row_count = (row_group_hi - row_group_lo) as usize;
+        let (row_group_index, row_group_lo, row_group_hi, row_count) =
+            checked_row_group_args(row_group_index, row_group_lo, row_group_hi)?;
         if row_count > 0 {
+            let source_parquet_size =
+                checked_slice_len::<u8>(source_parquet_size, "source parquet size")?;
+            if source_parquet_addr == 0 {
+                // Permanent guard: a partition whose parquet file is not mapped locally
+                // reports getFileAddr() == 0 while getFileSize() is non-zero. Refuse here
+                // rather than build a slice from a null address, which is undefined behaviour
+                // that aborts the whole JVM. Such partitions must route the row group through
+                // the decode-from-buffers path instead.
+                return Err(fmt_err!(
+                    InvalidType,
+                    "source parquet address is null (partition is not mapped locally)"
+                ));
+            }
             use crate::parquet_read::{DecodeContext, ParquetDecoder, RowGroupBuffers};
             use std::io::Cursor;
             // SAFETY: JNI caller guarantees a valid pointer to `source_parquet_size` bytes
             // of source parquet data. The memory remains valid for the JNI call duration.
             let source_data = unsafe {
-                slice::from_raw_parts(
-                    source_parquet_addr as *const u8,
-                    source_parquet_size as usize,
-                )
+                slice::from_raw_parts(source_parquet_addr as *const u8, source_parquet_size)
             };
             let mut reader = Cursor::new(source_data);
             // SAFETY: Pointer was passed from Java and points to a valid allocator for the JNI call duration.
             let allocator = unsafe { &*allocator_ptr }.clone();
+            let source_parquet_size = source_parquet_size as u64;
             let decoder =
-                ParquetDecoder::read(allocator.clone(), &mut reader, source_parquet_size as u64)?;
+                ParquetDecoder::read(allocator.clone(), &mut reader, source_parquet_size)?;
+            validate_row_group_bounds(
+                &decoder.row_group_sizes,
+                row_group_index,
+                row_group_lo,
+                row_group_hi,
+            )?;
             let mut row_group_bufs = RowGroupBuffers::new(allocator);
-            let mut ctx =
-                DecodeContext::new(source_parquet_addr as *const u8, source_parquet_size as u64);
+            let mut ctx = DecodeContext::new(source_parquet_addr as *const u8, source_parquet_size);
             let columns: Vec<(i32, qdb_core::col_type::ColumnType)> = encoder
                 .partition
                 .columns
@@ -1559,14 +1792,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 &mut ctx,
                 &mut row_group_bufs,
                 &columns,
-                row_group_index as u32,
-                row_group_lo as u32,
-                row_group_hi as u32,
+                row_group_index,
+                row_group_lo,
+                row_group_hi,
             )?;
 
             let partition = convert_row_group_buffers_to_partition(
                 &encoder.partition,
-                &row_group_bufs,
+                row_group_bufs.column_buffers(),
                 row_count,
                 symbol_data_ptr,
             )?;
@@ -1588,9 +1821,72 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     }
 }
 
+/// Streaming-export counterpart of `writeStreamingParquetChunkFromRowGroup` for a row group
+/// whose parquet bytes are not mapped locally. The caller decodes the row group into
+/// `row_group_buffers_ptr` through the decoder (which acquires and pins a decode resource),
+/// then hands those buffers here. We copy them into encoder-owned storage so the pending
+/// partition no longer references the caller's pinned buffers, letting the caller release the
+/// decode resource as soon as this returns. Symbol values come from `symbol_data_ptr`,
+/// identical to the mmap path.
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_writeStreamingParquetChunkFromRowGroupBuffers(
+    mut env: JNIEnv,
+    _class: JClass,
+    encoder: *mut StreamingParquetWriter,
+    allocator_ptr: *const QdbAllocator,
+    symbol_data_ptr: jlong,
+    row_group_buffers_ptr: jlong,
+    row_count: jint,
+) -> *const u8 {
+    let env = &mut env;
+    if encoder.is_null() {
+        let mut err = fmt_err!(InvalidType, "StreamingParquetWriter pointer is null");
+        err.add_context("error in writeStreamingParquetChunkFromRowGroupBuffers");
+        err.into_cairo_exception().throw::<*const u8>(env);
+        return std::ptr::null();
+    }
+
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
+    let encoder = unsafe { &mut *encoder };
+    let mut write_chunk = || -> ParquetResult<*const u8> {
+        let row_count = checked_streaming_buffer_row_count(row_count)?;
+        if row_count > 0 {
+            let row_group_buffers_ptr = checked_row_group_buffers_ptr(row_group_buffers_ptr)?;
+            // SAFETY: Java passes the live pointer of a RowGroupBuffers it just decoded into;
+            // it stays valid for this call and we only read from it.
+            let source_bufs = unsafe { &*row_group_buffers_ptr };
+            // SAFETY: Pointer was passed from Java and points to a valid allocator for the JNI call duration.
+            let allocator = unsafe { &*allocator_ptr }.clone();
+            let owned_bufs =
+                source_bufs.copy_first_n_columns(encoder.partition.columns.len(), allocator)?;
+            let partition = convert_row_group_buffers_to_partition(
+                &encoder.partition,
+                owned_bufs.column_buffers(),
+                row_count,
+                symbol_data_ptr,
+            )?;
+            encoder.pending_partitions.push(partition);
+            encoder.pending_row_group_buffers.push(Some(owned_bufs));
+            encoder.accumulated_rows += row_count;
+        }
+
+        flush_pending_partitions(encoder)
+    };
+
+    match write_chunk() {
+        Ok(ptr) => ptr,
+        Err(mut err) => {
+            err.add_context("error in writeStreamingParquetChunkFromRowGroupBuffers");
+            err.into_cairo_exception().throw::<*const u8>(env);
+            std::ptr::null()
+        }
+    }
+}
+
 fn convert_row_group_buffers_to_partition(
     partition_template: &Partition,
-    row_group_bufs: &crate::parquet_read::RowGroupBuffers,
+    column_bufs: &[crate::parquet_read::ColumnChunkBuffers],
     row_count: usize,
     symbol_data_ptr: jlong,
 ) -> ParquetResult<Partition> {
@@ -1600,8 +1896,6 @@ fn convert_row_group_buffers_to_partition(
         table: String::new(),
         columns: Vec::with_capacity(partition_template.columns.len()),
     };
-    let column_bufs = row_group_bufs.column_buffers();
-
     // For each Symbol column: [values_ptr (i64), values_size (i64), offsets_ptr (i64), symbol_count (i64)]
     let symbol_data = if symbol_data_ptr != 0 {
         let symbol_count = partition_template
@@ -1624,20 +1918,64 @@ fn convert_row_group_buffers_to_partition(
     let mut symbol_data_idx = 0;
 
     for (i, column_template) in partition_template.columns.iter().enumerate() {
-        let col_buf = &column_bufs[i];
+        let col_buf = column_bufs.get(i).ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "decoded column index {} out of range [0,{})",
+                i,
+                column_bufs.len()
+            )
+        })?;
+        if col_buf.column_top > row_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "decoded column top {} exceeds row count {}, column index: {}",
+                col_buf.column_top,
+                row_count,
+                i
+            ));
+        }
         let mut column = *column_template;
         column.row_count = row_count;
-        column.column_top = 0;
-        // SAFETY: `col_buf.data_ptr` points to decoded row group data owned by `row_group_bufs`,
-        // which remains alive as long as the partition references it.
-        column.primary_data =
-            unsafe { slice::from_raw_parts(col_buf.data_ptr as *const u8, col_buf.data_size) };
+        // A _pm-backed decoder may elide a known all-null chunk entirely. Materialized
+        // buffers already contain their column-top null rows, so only the empty layout
+        // becomes a writer column top; forwarding the decode annotation unconditionally
+        // would apply those rows twice.
+        column.column_top = if col_buf.data_size != 0 || col_buf.aux_size != 0 {
+            0
+        } else {
+            row_count
+        };
+        column.primary_data = if col_buf.data_size == 0 {
+            &[]
+        } else {
+            if col_buf.data_ptr.is_null() {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "decoded primary data pointer is null with non-zero size {}, column index: {}",
+                    col_buf.data_size,
+                    i
+                ));
+            }
+            // SAFETY: `col_buf.data_ptr` points to decoded row group data owned by
+            // `row_group_bufs`, which remains alive as long as the partition references it.
+            unsafe { slice::from_raw_parts(col_buf.data_ptr as *const u8, col_buf.data_size) }
+        };
 
         if column.data_type.tag() == ColumnTypeTag::Symbol {
+            if symbol_data_idx + 4 > symbol_data.len() {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "symbol metadata is missing, column index: {}",
+                    i
+                ));
+            }
             let values_ptr = symbol_data[symbol_data_idx] as *const u8;
-            let values_size = symbol_data[symbol_data_idx + 1] as usize;
+            let values_size =
+                checked_slice_len::<u8>(symbol_data[symbol_data_idx + 1], "symbol values size")?;
             let offsets_ptr = symbol_data[symbol_data_idx + 2] as *const u64;
-            let symbol_count = symbol_data[symbol_data_idx + 3] as usize;
+            let symbol_count =
+                checked_slice_len::<u64>(symbol_data[symbol_data_idx + 3], "symbol count")?;
             symbol_data_idx += 4;
             if !values_ptr.is_null() && values_size > 0 {
                 // SAFETY: JNI caller guarantees a valid pointer to `values_size` bytes of symbol value data.
@@ -1655,16 +1993,378 @@ fn convert_row_group_buffers_to_partition(
                 column.symbol_offsets = &[];
             }
         } else {
-            // SAFETY: `col_buf.aux_ptr` points to decoded row group auxiliary data owned by
-            // `row_group_bufs`, which remains alive as long as the partition references it.
-            column.secondary_data =
-                unsafe { slice::from_raw_parts(col_buf.aux_ptr as *const u8, col_buf.aux_size) };
+            column.secondary_data = if col_buf.aux_size == 0 {
+                &[]
+            } else {
+                if col_buf.aux_ptr.is_null() {
+                    return Err(fmt_err!(
+                        InvalidLayout,
+                        "decoded auxiliary data pointer is null with non-zero size {}, column index: {}",
+                        col_buf.aux_size,
+                        i
+                    ));
+                }
+                // SAFETY: `col_buf.aux_ptr` points to decoded row group auxiliary data owned by
+                // `row_group_bufs`, which remains alive as long as the partition references it.
+                unsafe { slice::from_raw_parts(col_buf.aux_ptr as *const u8, col_buf.aux_size) }
+            };
             column.symbol_offsets = &[];
         }
 
         new_partition.columns.push(column);
     }
     Ok(new_partition)
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+    use crate::allocator::TestAllocatorState;
+    use crate::parquet::tests::ColumnTypeTagExt;
+    use crate::parquet_read::ColumnChunkBuffers;
+    use crate::parquet_write::schema::ParquetEncodingConfig;
+    use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+
+    fn assert_error_contains<T>(result: ParquetResult<T>, expected: &str) {
+        let err = result.err().expect("expected validation error");
+        assert!(err.to_string().contains(expected), "got: {err}");
+    }
+
+    fn one_column_partition(data_type: ColumnType) -> Partition {
+        Partition {
+            table: String::new(),
+            columns: vec![Column {
+                id: 0,
+                name: "column",
+                data_type,
+                row_count: 1,
+                column_top: 0,
+                primary_data: &[],
+                secondary_data: &[],
+                symbol_offsets: &[],
+                designated_timestamp: false,
+                not_null_hint: false,
+                strided_timestamp_16: false,
+                designated_timestamp_ascending: false,
+                parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            }],
+        }
+    }
+
+    #[test]
+    fn decoded_symbol_metadata_rejects_negative_lengths() {
+        let allocator_state = TestAllocatorState::new();
+        let column_bufs = vec![ColumnChunkBuffers::new(allocator_state.allocator())];
+        let partition = one_column_partition(ColumnTypeTag::Symbol.into_type());
+
+        for (field, metadata) in [
+            ("symbol values size must not be negative", [0i64, -1, 0, 0]),
+            ("symbol count must not be negative", [0i64, 0, 0, -1]),
+        ] {
+            let result = convert_row_group_buffers_to_partition(
+                &partition,
+                &column_bufs,
+                1,
+                metadata.as_ptr() as jlong,
+            );
+            assert_error_contains(result, field);
+        }
+    }
+
+    #[test]
+    fn decoded_partition_rejects_column_index_out_of_range() {
+        let column_bufs = vec![];
+        let partition = one_column_partition(ColumnTypeTag::Int.into_type());
+
+        assert_error_contains(
+            convert_row_group_buffers_to_partition(&partition, &column_bufs, 1, 0),
+            "decoded column index 0 out of range [0,0)",
+        );
+    }
+
+    #[test]
+    fn decoded_partition_rejects_column_top_past_row_count() {
+        let allocator_state = TestAllocatorState::new();
+        let mut column_bufs = vec![ColumnChunkBuffers::new(allocator_state.allocator())];
+        column_bufs[0].column_top = 2;
+        let partition = one_column_partition(ColumnTypeTag::Int.into_type());
+
+        assert_error_contains(
+            convert_row_group_buffers_to_partition(&partition, &column_bufs, 1, 0),
+            "decoded column top 2 exceeds row count 1, column index: 0",
+        );
+    }
+
+    #[test]
+    fn decoded_partition_rejects_missing_symbol_metadata() {
+        let allocator_state = TestAllocatorState::new();
+        let column_bufs = vec![ColumnChunkBuffers::new(allocator_state.allocator())];
+        let partition = one_column_partition(ColumnTypeTag::Symbol.into_type());
+
+        assert_error_contains(
+            convert_row_group_buffers_to_partition(&partition, &column_bufs, 1, 0),
+            "symbol metadata is missing, column index: 0",
+        );
+    }
+
+    #[test]
+    fn decoded_partition_rejects_null_aux_pointer_with_non_zero_size() {
+        let allocator_state = TestAllocatorState::new();
+        let mut column_bufs = vec![ColumnChunkBuffers::new(allocator_state.allocator())];
+        column_bufs[0].aux_size = 1;
+        let partition = one_column_partition(ColumnTypeTag::String.into_type());
+
+        assert_error_contains(
+            convert_row_group_buffers_to_partition(&partition, &column_bufs, 1, 0),
+            "decoded auxiliary data pointer is null with non-zero size 1, column index: 0",
+        );
+    }
+
+    #[test]
+    fn decoded_partition_rejects_null_data_pointer_with_non_zero_size() {
+        let allocator_state = TestAllocatorState::new();
+        let mut column_bufs = vec![ColumnChunkBuffers::new(allocator_state.allocator())];
+        column_bufs[0].data_size = 1;
+        let partition = one_column_partition(ColumnTypeTag::Int.into_type());
+
+        assert_error_contains(
+            convert_row_group_buffers_to_partition(&partition, &column_bufs, 1, 0),
+            "decoded primary data pointer is null with non-zero size 1, column index: 0",
+        );
+    }
+
+    #[test]
+    fn streaming_buffer_row_count_rejects_negative_values() {
+        assert_eq!(checked_streaming_buffer_row_count(0).unwrap(), 0);
+        assert_error_contains(
+            checked_streaming_buffer_row_count(-1),
+            "row count must not be negative: -1",
+        );
+        assert_error_contains(
+            checked_streaming_buffer_row_count(jint::MIN),
+            "row count must not be negative: -2147483648",
+        );
+        assert_error_contains(
+            checked_non_negative_usize(jlong::MIN, "row count"),
+            "row count must not be negative: -9223372036854775808",
+        );
+    }
+
+    #[test]
+    fn streaming_buffers_pointer_rejects_null() {
+        assert_error_contains(
+            checked_row_group_buffers_ptr(0),
+            "row group buffers pointer is null",
+        );
+    }
+
+    #[test]
+    fn streaming_column_metadata_ignores_sentinel_sizes_on_null_pointers() {
+        // Producers pair a null pointer with a sentinel size (e.g. PageFrame.getAuxPageSize()
+        // reports -1 for a frame without an aux vector); the size must be ignored, not rejected.
+        let mut partition = one_column_partition(ColumnTypeTag::Int.into_type());
+        let mut metadata = [0i64; 7];
+        metadata[2] = -1;
+        metadata[4] = -1;
+        metadata[6] = -1;
+        update_partition_data(&mut partition, metadata.as_ptr(), 1)
+            .expect("negative sizes alongside null pointers are producer sentinels");
+        assert!(partition.columns[0].primary_data.is_empty());
+        assert!(partition.columns[0].secondary_data.is_empty());
+        assert!(partition.columns[0].symbol_offsets.is_empty());
+    }
+
+    #[test]
+    fn streaming_column_metadata_rejects_negative_lengths() {
+        let mut valid_partition = one_column_partition(ColumnTypeTag::Int.into_type());
+        let valid_metadata = [0i64; 7];
+        update_partition_data(&mut valid_partition, valid_metadata.as_ptr(), 1)
+            .expect("zero-length metadata is valid");
+
+        // A negative size on a live pointer is corrupt metadata, not a sentinel.
+        let payload = [0u8; 8];
+        let offsets = [0u64; 1];
+        for (expected, addr_index, size_index, addr) in [
+            (
+                "primary column size must not be negative",
+                1,
+                2,
+                payload.as_ptr() as i64,
+            ),
+            (
+                "secondary column size must not be negative",
+                3,
+                4,
+                payload.as_ptr() as i64,
+            ),
+            (
+                "symbol offsets count must not be negative",
+                5,
+                6,
+                offsets.as_ptr() as i64,
+            ),
+        ] {
+            let mut partition = one_column_partition(ColumnTypeTag::Int.into_type());
+            let mut metadata = [0i64; 7];
+            metadata[addr_index] = addr;
+            metadata[size_index] = -1;
+            assert_error_contains(
+                update_partition_data(&mut partition, metadata.as_ptr(), 1),
+                expected,
+            );
+        }
+
+        let mut negative_top = one_column_partition(ColumnTypeTag::Int.into_type());
+        let mut metadata = [0i64; 7];
+        metadata[0] = -1;
+        assert_error_contains(
+            update_partition_data(&mut negative_top, metadata.as_ptr(), 1),
+            "column top must not be negative",
+        );
+
+        let mut partition = one_column_partition(ColumnTypeTag::Int.into_type());
+        let mut metadata = [0i64; 7];
+        metadata[0] = 2;
+        assert_error_contains(
+            update_partition_data(&mut partition, metadata.as_ptr(), 1),
+            "column top 2 exceeds row count 1",
+        );
+    }
+
+    #[test]
+    fn slice_lengths_reject_element_count_overflow() {
+        let too_many_u64s = (isize::MAX as usize / std::mem::size_of::<u64>()) + 1;
+        assert!(checked_slice_len::<u64>(too_many_u64s as i64, "u64 count").is_err());
+        assert_eq!(checked_slice_len::<u8>(7, "byte count").unwrap(), 7);
+    }
+
+    #[test]
+    fn streaming_row_group_rejects_invalid_bounds() {
+        assert_eq!(checked_row_group_args(0, 7, 7).unwrap(), (0, 7, 7, 0));
+        assert_eq!(checked_row_group_args(2, 7, 9).unwrap(), (2, 7, 9, 2));
+        assert!(checked_row_group_args(0, 9, 7).is_err());
+        assert!(checked_row_group_args(-1, 0, 0).is_err());
+        assert!(checked_row_group_args(0, -1, 0).is_err());
+        assert!(checked_row_group_args(0, 0, -1).is_err());
+        assert!(checked_row_group_args(0, jint::MIN, jint::MAX).is_err());
+    }
+
+    #[test]
+    fn streaming_row_group_rejects_bounds_past_decoded_size() {
+        let row_group_sizes = [10, 20];
+        validate_row_group_bounds(&row_group_sizes, 0, 0, 10).unwrap();
+        validate_row_group_bounds(&row_group_sizes, 1, 10, 20).unwrap();
+        assert!(validate_row_group_bounds(&row_group_sizes, 0, 0, 11).is_err());
+        assert!(validate_row_group_bounds(&row_group_sizes, 1, 21, 21).is_err());
+        assert!(validate_row_group_bounds(&row_group_sizes, 2, 0, 0).is_err());
+    }
+
+    fn int_column_entry() -> [i64; 10] {
+        // stride: [name_size, packed(id<<32|type), col_top, prim_addr, prim_size,
+        //          sec_addr, sec_size, sym_addr, sym_count, encoding]
+        let mut entry = [0i64; 10];
+        entry[0] = 1; // one-byte column name "c"
+        entry[1] = i64::from(ColumnType::new(ColumnTypeTag::Int, 0).code());
+        entry
+    }
+
+    fn encode_one_column(col_data: &[i64; 10], row_count: i64) -> ParquetResult<Partition> {
+        create_partition_descriptor(
+            b"t".as_ptr(),
+            1,
+            1,
+            b"c".as_ptr(),
+            1,
+            col_data.as_ptr(),
+            10,
+            row_count,
+            -1,
+        )
+    }
+
+    #[test]
+    fn encode_partition_accepts_absent_columns_with_zero_sizes() {
+        // populateEmptyPartition and absent secondary/symbol columns pass null pointers
+        // with zero sizes; the unconditional non-negative checks must not reject them.
+        let partition =
+            encode_one_column(&int_column_entry(), 1).expect("null pointers with zero sizes");
+        assert_eq!(partition.columns.len(), 1);
+        assert!(partition.columns[0].primary_data.is_empty());
+    }
+
+    #[test]
+    fn encode_partition_rejects_negative_column_sizes() {
+        let live = [0u64; 1];
+        let live_addr = live.as_ptr() as i64;
+        for (expected, addr_slot, size_slot) in [
+            ("primary column size must not be negative", 3, 4),
+            ("secondary column size must not be negative", 5, 6),
+            ("symbol offsets count must not be negative", 7, 8),
+        ] {
+            let mut entry = int_column_entry();
+            entry[addr_slot] = live_addr;
+            entry[size_slot] = -1;
+            assert_error_contains(encode_one_column(&entry, 1), expected);
+        }
+    }
+
+    #[test]
+    fn encode_partition_rejects_negative_column_top_and_top_past_row_count() {
+        let mut entry = int_column_entry();
+        entry[2] = -1;
+        assert_error_contains(
+            encode_one_column(&entry, 1),
+            "column top must not be negative",
+        );
+
+        entry[2] = 5;
+        assert_error_contains(
+            encode_one_column(&entry, 1),
+            "column top 5 exceeds row count 1",
+        );
+    }
+
+    #[test]
+    fn encode_partition_rejects_oversized_column_name() {
+        // A corrupt name size that overruns the name buffer must error, not panic-abort
+        // the JVM through str::split_at.
+        let mut entry = int_column_entry();
+        entry[0] = 5; // name buffer is only one byte
+        assert!(encode_one_column(&entry, 1).is_err());
+    }
+
+    #[test]
+    fn encode_partition_rejects_negative_function_level_sizes() {
+        let empty: [i64; 0] = [];
+        assert_error_contains(
+            create_partition_descriptor(
+                b"t".as_ptr(),
+                1,
+                0,
+                b"".as_ptr(),
+                0,
+                empty.as_ptr(),
+                0,
+                -1,
+                -1,
+            ),
+            "row count must not be negative",
+        );
+        assert_error_contains(
+            create_partition_descriptor(
+                b"t".as_ptr(),
+                1,
+                -1,
+                b"".as_ptr(),
+                0,
+                empty.as_ptr(),
+                0,
+                0,
+                -1,
+            ),
+            "column count must not be negative",
+        );
+    }
 }
 
 #[cfg(all(test, unix))]

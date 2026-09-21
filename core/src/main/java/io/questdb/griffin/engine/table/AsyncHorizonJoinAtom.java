@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
@@ -34,15 +35,12 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.jit.CompiledFilter;
+import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.IntHashSet;
-import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -81,17 +79,10 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             int @Nullable [] slaveSymbolKeyColumnIndices,
             @Transient @NotNull ListColumnFilter groupByColumnFilter,
             @NotNull ObjList<Function> keyFunctions,
-            @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
-            @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
-            @Nullable CompiledFilter compiledFilter,
-            @Nullable MemoryCARW bindVarMemory,
-            @Nullable ObjList<Function> bindVarFunctions,
-            @Nullable Function ownerFilter,
-            @Nullable IntHashSet filterUsedColumnIndexes,
-            @Nullable ObjList<Function> perWorkerFilters,
+            AsyncHorizonJoinResources resources,
             long masterTsScale,
             long slaveTsScale,
             int workerCount
@@ -111,13 +102,7 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
                 columnSources,
                 columnIndexes,
                 ownerGroupByFunctions,
-                perWorkerGroupByFunctions,
-                compiledFilter,
-                bindVarMemory,
-                bindVarFunctions,
-                ownerFilter,
-                filterUsedColumnIndexes,
-                perWorkerFilters,
+                resources,
                 masterTsScale,
                 slaveTsScale,
                 workerCount
@@ -126,7 +111,7 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
         try {
             // Store key functions for init() and close()
             this.ownerKeyFunctions = keyFunctions;
-            this.perWorkerKeyFunctions = perWorkerKeyFunctions;
+            this.perWorkerKeyFunctions = resources.takePerWorkerKeyFunctions();
 
             // Create per-worker map sinks to support expression keys
             // Each worker needs its own sink with its own key functions
@@ -185,7 +170,7 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
                     workerCount
             );
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -230,7 +215,12 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             executionContext.setCloneSymbolTables(true);
             try {
                 for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
-                    Function.init(perWorkerKeyFunctions.getQuick(i), horizonJoinSymbolTableSource, executionContext, null);
+                    PerWorkerFunctionList.init(
+                            perWorkerKeyFunctions.getQuick(i),
+                            ownerKeyFunctions,
+                            horizonJoinSymbolTableSource,
+                            executionContext
+                    );
                 }
             } finally {
                 executionContext.setCloneSymbolTables(current);
@@ -294,12 +284,24 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
     protected void closeAggregationState() {
         // Null-safe: the base ctor calls close() on its error path before this subclass
         // ctor has assigned shardingCtx, so it can still be null here.
-        Misc.free(shardingCtx);
-        Misc.freeObjList(ownerKeyFunctions);
+        Throwable cleanupFailure = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, shardingCtx);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, ownerKeyFunctions);
         if (perWorkerKeyFunctions != null) {
             for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
-                Misc.freeObjList(perWorkerKeyFunctions.getQuick(i));
+                final ObjList<Function> functions = perWorkerKeyFunctions.getQuick(i);
+                perWorkerKeyFunctions.setQuick(i, null);
+                try {
+                    PerWorkerFunctionList.close(functions);
+                } catch (Throwable th) {
+                    if (cleanupFailure == null) {
+                        cleanupFailure = th;
+                    } else if (cleanupFailure != th) {
+                        cleanupFailure.addSuppressed(th);
+                    }
+                }
             }
         }
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 }

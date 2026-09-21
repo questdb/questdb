@@ -227,6 +227,16 @@ public class CairoTextWriter implements Closeable, Mutable {
             checkUncommittedRowCount();
         } catch (Exception e) {
             logError(line, timestampIndex, dus);
+            if (atomicity == Atomicity.SKIP_ALL) {
+                // No row to cancel here: newRow() rejects the designated timestamp before the
+                // row exists, and onField() cancels the row and rolls back before it throws, so
+                // this rollback is a no-op for it. The rollback also covers an append() failure.
+                writer.rollback();
+                if (e instanceof CairoException ce) {
+                    throw ce;
+                }
+                throw CairoException.nonCritical().put("bad syntax [line=").put(line).put(", col=").put(timestampIndex).put(']');
+            }
         }
     }
 
@@ -403,17 +413,9 @@ public class CairoTextWriter implements Closeable, Mutable {
                 break;
             case TableUtils.TABLE_EXISTS:
                 tableToken = engine.getTableTokenIfExists(tableName);
-                if (tableToken != null && tableToken.isView()) {
-                    throw CairoException.nonCritical()
-                            .put("cannot modify view [view=")
-                            .put(tableToken.getTableName())
-                            .put(']');
-                }
-                if (tableToken != null && tableToken.isMatView()) {
-                    throw CairoException.nonCritical()
-                            .put("cannot modify materialized view [view=")
-                            .put(tableToken.getTableName())
-                            .put(']');
+                if (tableToken != null && tableToken.getType() != TableToken.Type.TABLE) {
+                    throw CairoException.nonCritical().put("cannot modify ").put(tableToken.getType().keyword())
+                            .put(" [view=").put(tableToken.getTableName()).put(']');
                 }
                 if (overwrite) {
                     securityContext.authorizeTableDrop(tableToken);

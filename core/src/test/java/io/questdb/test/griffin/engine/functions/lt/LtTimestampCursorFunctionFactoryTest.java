@@ -41,6 +41,98 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiRowCursorFails() throws Exception {
+        // a scalar sub-query yielding more than one row is an error, reported at the sub-query position
+        assertMemoryLeak(() -> {
+            execute("create table x as (select timestamp_sequence(0, 2500000) ts from long_sequence(2))");
+            // timestamp cursor column
+            assertQuery("select * from x where ts < (select ts from x)")
+                    .fails(28, "scalar sub-query returned more than one row");
+            // string cursor column
+            assertQuery("select * from x where ts < (select '1970-01-01' from x)")
+                    .fails(28, "scalar sub-query returned more than one row");
+            // varchar cursor column (separately implemented reader)
+            assertQuery("select * from x where ts < (select '1970-01-01'::varchar from x)")
+                    .fails(28, "scalar sub-query returned more than one row");
+        });
+    }
+
+    @Test
+    public void testMultiRowCursorFailsOnDesignatedTimestamp() throws Exception {
+        // On a designated-timestamp column, ts < (select ...) is extracted as an interval intrinsic and
+        // evaluated by RuntimeIntervalModel instead of the cursor-comparison factory. A scalar sub-query
+        // must still reject more than one row here rather than silently taking an arbitrary first row,
+        // and the error must point at the offending sub-query, same as the factory path does.
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select timestamp_sequence(0, 2500000) ts from long_sequence(5)" +
+                    ") timestamp(ts) partition by day");
+            assertQuery("select * from x where ts < (select ts from x limit 2)")
+                    .fails(28, "scalar sub-query returned more than one row");
+            assertQuery("select * from x where ts <= (select ts from x limit 2)")
+                    .fails(29, "scalar sub-query returned more than one row");
+        });
+    }
+
+    @Test
+    public void testInclusiveBoundAtTypeMaximumSelectsFullDomain() throws Exception {
+        // ts <= (select scalar at Long.MAX_VALUE) encodes an inclusive runtime bound with no
+        // adjustment, so it must not wrap around and must select the full non-null domain, for
+        // both the microsecond and the nanosecond designated timestamp drivers. The strict
+        // (ts > scalar) wrap-around guard is covered separately; the negated arm of that guard
+        // is unreachable because no subtract operation encodes a positive adjustment.
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select timestamp_sequence(0, 2500000) ts from long_sequence(5)" +
+                    ") timestamp(ts) partition by day");
+            assertQuery("select count() c from x where ts <= (select 9223372036854775807::timestamp)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n5\n");
+            execute("create table y as (" +
+                    "select timestamp_sequence(0, 2500000)::timestamp_ns ts from long_sequence(5)" +
+                    ") timestamp(ts) partition by day");
+            assertQuery("select count() c from y where ts <= (select 9223372036854775807::timestamp_ns)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n5\n");
+        });
+    }
+
+    @Test
+    public void testStrictBoundAtTypeMinimumMatchesNothing() throws Exception {
+        // The MIN-side mirror of the `ts > Long.MAX_VALUE` wrap: `ts < Long.MIN_VALUE` would
+        // wrap the interval high bound to Long.MAX_VALUE and select every row - if it were
+        // expressible. It is not: Long.MIN_VALUE doubles as the timestamp NULL sentinel, so the
+        // exact MIN epoch literal is rejected at parse time and every functional route hits the
+        // NULL check before the adjustment. These are reachability sentinels: if literal
+        // parsing ever starts accepting the MIN epoch value, analyzeTimestampLess needs the
+        // same wrap guard as analyzeTimestampGreater, and this test will flag it.
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
+                    ") timestamp(ts) partition by day");
+            execute("create table y as (" +
+                    "select timestamp_sequence(0, 2500000)::timestamp_ns ts from long_sequence(2)" +
+                    ") timestamp(ts) partition by day");
+
+            // a strict bound one past the domain minimum: the high bound adjusts down to
+            // Long.MIN_VALUE without wrapping and matches nothing
+            assertQuery("select count() c from x where ts < -9223372036854775807")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n0\n");
+            assertQuery("select count() c from y where ts < -9223372036854775807")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n0\n");
+
+            // the exact MIN epoch literal does not parse as a timestamp - the wrap is unreachable
+            assertException("select count() c from x where ts < -9223372036854775808", 35, "Invalid date");
+        });
+    }
+
+    @Test
     public void testCompareTimestampWithString() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +
@@ -292,7 +384,7 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by day"
             );
 
-            assertQuery("select * from x where ts < (select ts::varchar from x order by ts desc limit 2) limit 3")
+            assertQuery("select * from x where ts < (select ts::varchar from x order by ts desc limit 1) limit 3")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -301,7 +393,7 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             8#3TsZ\t1970-01-01T00:00:02.500000Z
                             zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z
                             """);
-            assertQuery("select * from x where ts < (select ts::varchar from y order by ts desc limit 2) limit 3")
+            assertQuery("select * from x where ts < (select ts::varchar from y order by ts desc limit 1) limit 3")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -310,7 +402,7 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             8#3TsZ\t1970-01-01T00:00:02.500000Z
                             zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z
                             """);
-            assertQuery("select * from y where ts < (select ts::varchar from x order by ts desc limit 2) limit 3")
+            assertQuery("select * from y where ts < (select ts::varchar from x order by ts desc limit 1) limit 3")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -319,7 +411,7 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             5䄛~\uDA5A\uDCB4끻\uDBD9\uDC84\uD8F3\uDE52\uDB96\uDC4Dx\t1970-01-01T00:00:02.500000000Z
                             uﮭ3\uD8C8\uDD30\uDBDA\uDEC6\uE937簡믗\t1970-01-01T00:00:05.000000000Z
                             """);
-            assertQuery("select * from y where ts < (select ts::varchar from y order by ts desc limit 2) limit 3")
+            assertQuery("select * from y where ts < (select ts::varchar from y order by ts desc limit 1) limit 3")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -396,9 +488,14 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     public void testPreventIntImplicitCastingToTimestampInSubQuery() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (i int)");
+            execute("insert into tab values (1), (2), (3)");
 
-            assertQuery("select * from tab where i < (select max(i) from tab)")
-                    .fails(24, "left operand must be a TIMESTAMP, found: INT");
+            // int left operand routes to the dedicated int/cursor overload (<(IC)); it is a valid
+            // numeric comparison (never an implicit cast to TIMESTAMP). Rows are present so the
+            // assertion exercises the IC comparison itself, not merely that it compiles.
+            assertQuery("select * from tab where i < (select max(i) from tab)") // < 3
+                    .noLeakCheck()
+                    .returns("i\n1\n2\n");
         });
     }
 
@@ -410,7 +507,19 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertQuery("select * from x where a < (select '1970-01-01T00:00:00.000000Z'::varchar)")
-                    .fails(22, "left operand must be a TIMESTAMP, found: VARCHAR");
+                    .fails(22, "left operand must be a DOUBLE or FLOAT, found: VARCHAR");
+        });
+    }
+
+    @Test
+    public void testPreventStringImplicitCastingToTimestampInSubQuery() throws Exception {
+        // A STRING left operand re-routes to <(DC) exactly like VARCHAR: the DC guard rejects a
+        // non-DOUBLE/FLOAT left operand, so the error flips from "must be a TIMESTAMP" to
+        // "must be a DOUBLE or FLOAT". Lock the routing so it cannot silently regress.
+        assertMemoryLeak(() -> {
+            execute("create table x (a string, ts timestamp) timestamp(ts) partition by day");
+            assertQuery("select * from x where a < (select '1970-01-01T00:00:00.000000Z'::string)")
+                    .fails(22, "left operand must be a DOUBLE or FLOAT, found: STRING");
         });
     }
 

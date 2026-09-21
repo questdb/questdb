@@ -106,9 +106,11 @@ public final class QwpEgressConnSymbolDict implements QuietCloseable {
     }
 
     /**
-     * Clears the dict completely. Called on connection drop / reset, never on
-     * per-query boundaries (conn-ids allocated in earlier queries stay live so
-     * the client's view is consistent).
+     * Clears the dict completely. Called on connection drop and at a query
+     * boundary when a CACHE_RESET is staged -- a soft cap is exceeded or the
+     * query requested a dict reset via QUERY_FLAG_RESET_DICT. The matching
+     * CACHE_RESET frame keeps the client's view in lockstep, so conn-ids from
+     * earlier queries are dropped on both ends together.
      */
     public void clear() {
         heapPos = 0;
