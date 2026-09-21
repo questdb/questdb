@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.qwp.server.egress;
 
-import io.questdb.std.CarrierLocal;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
@@ -40,8 +40,7 @@ import io.questdb.std.str.StringSink;
 public final class QwpRowExceedsBufferException extends RuntimeException
         implements Sinkable, FlyweightMessageContainer {
 
-    private static final CarrierLocal<QwpRowExceedsBufferException> tlException =
-            CarrierLocal.withInitial(QwpRowExceedsBufferException::new);
+    private static final FiberLocal<QwpRowExceedsBufferException> tlException = new FiberLocal<>(QwpRowExceedsBufferException::new);
     private final StringSink message = new StringSink();
 
     private QwpRowExceedsBufferException() {

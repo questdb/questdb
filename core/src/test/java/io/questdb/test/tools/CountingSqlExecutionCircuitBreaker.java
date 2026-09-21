@@ -25,9 +25,7 @@
 package io.questdb.test.tools;
 
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.mp.continuation.CancellationBinding;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -35,8 +33,8 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * A delegating {@link SqlExecutionCircuitBreaker} that counts how many times execution code
  * consults the breaker, without changing its behavior. A consultation is a call to any of
- * {@link #checkIfTripped()}, {@link #checkIfTripped(long, long)},
- * {@link #checkIfTrippedNoThrottle()}, {@link #getState()}, {@link #getState(long, long)},
+ * {@link #checkIfTripped()}, {@link #checkIfTrippedNoThrottle()}, {@link #getState()},
+ * {@link #getState(long, long)},
  * {@link #statefulThrowExceptionIfTripped()},
  * {@link #statefulThrowExceptionIfTrippedNoThrottle()} or
  * {@link #statefulThrowExceptionIfTrippedTimeThrottled()}; all other methods delegate without
@@ -64,12 +62,6 @@ public class CountingSqlExecutionCircuitBreaker implements SqlExecutionCircuitBr
     public boolean checkIfTripped() {
         checkCount.incrementAndGet();
         return delegate.checkIfTripped();
-    }
-
-    @Override
-    public boolean checkIfTripped(long millis, long fd) {
-        checkCount.incrementAndGet();
-        return delegate.checkIfTripped(millis, fd);
     }
 
     @Override
@@ -103,11 +95,6 @@ public class CountingSqlExecutionCircuitBreaker implements SqlExecutionCircuitBr
      */
     public long getCheckCount() {
         return checkCount.get();
-    }
-
-    @Override
-    public @Nullable SqlExecutionCircuitBreakerConfiguration getConfiguration() {
-        return delegate.getConfiguration();
     }
 
     public SqlExecutionCircuitBreaker getDelegate() {
@@ -164,11 +151,6 @@ public class CountingSqlExecutionCircuitBreaker implements SqlExecutionCircuitBr
     @Override
     public void setCancelledFlag(AtomicBoolean cancelledFlag, long generation) {
         delegate.setCancelledFlag(cancelledFlag, generation);
-    }
-
-    @Override
-    public void setFd(long fd) {
-        delegate.setFd(fd);
     }
 
     @Override

@@ -31,6 +31,7 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
 public interface CompiledQuery {
@@ -100,6 +101,24 @@ public interface CompiledQuery {
     OperationFuture execute(SqlExecutionContext context, SCSequence eventSubSeq, boolean closeOnDone) throws SqlException;
 
     boolean executedAtParseTime();
+
+    /**
+     * Frees whatever this query still owns after its execution owner could not be started,
+     * folding cleanup failures into the owner failure.
+     */
+    default void freeAfterOwnerStartFailure(Throwable ownerStartFailure) {
+        Throwable cleanupFailure = null;
+        try {
+            closeAllButSelect();
+        } catch (Throwable th) {
+            cleanupFailure = th;
+        }
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, getOperation());
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, getRecordCursorFactory());
+        if (cleanupFailure != null && cleanupFailure != ownerStartFailure) {
+            ownerStartFailure.addSuppressed(cleanupFailure);
+        }
+    }
 
     /**
      * Returns number of rows changed by this command. Used e.g. in pg wire protocol.

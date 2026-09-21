@@ -129,6 +129,10 @@ public class WriterPool extends AbstractPool {
         return entries;
     }
 
+    public void entries(ConcurrentHashMap.EntryCursor<Entry> cursor) {
+        cursor.of(entries);
+    }
+
     /**
      * Force-reclaim every entry still checked out or locked by the CALLING thread, closing its writer,
      * releasing any held {@code .lock} fd, resetting ownership and evicting the entry. Returns the count
