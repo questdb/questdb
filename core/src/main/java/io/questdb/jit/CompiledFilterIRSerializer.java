@@ -1451,6 +1451,23 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * selects the form; the literal still reaches the stream through the ordinary stub-and-backfill
      * route of {@link #serializeConstant}, which is also where a malformed address declines.
      */
+    private static int ipv4OrderingLiteral(ExpressionNode operand) {
+        if (operand.type != ExpressionNode.CONSTANT) {
+            return Numbers.IPv4_NULL;
+        }
+        final CharSequence token = operand.token;
+        final int len = token.length();
+        if (len < 3 || !Chars.isQuoted(token)) {
+            return Numbers.IPv4_NULL;
+        }
+        try {
+            return Numbers.parseIPv4_0(token, 1, len - 1);
+        } catch (NumericException e) {
+            return Numbers.IPv4_NULL;
+        }
+    }
+
+    /** True when the subtree names a NOT NULL IPv4 column; see serializeIPv4Ordering for why that shape declines the JIT. */
     private boolean hasNotNullIPv4ColumnOperand(ExpressionNode node) {
         if (node == null) {
             return false;
@@ -1470,22 +1487,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
         }
         return false;
-    }
-
-    private static int ipv4OrderingLiteral(ExpressionNode operand) {
-        if (operand.type != ExpressionNode.CONSTANT) {
-            return Numbers.IPv4_NULL;
-        }
-        final CharSequence token = operand.token;
-        final int len = token.length();
-        if (len < 3 || !Chars.isQuoted(token)) {
-            return Numbers.IPv4_NULL;
-        }
-        try {
-            return Numbers.parseIPv4_0(token, 1, len - 1);
-        } catch (NumericException e) {
-            return Numbers.IPv4_NULL;
-        }
     }
 
     private static boolean isArithmeticOperation(ExpressionNode node) {
