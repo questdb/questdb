@@ -71,10 +71,10 @@ public class TestSleepFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             long sleepStart = clock.getTicks();
             while ((clock.getTicks() - sleepStart) < sleepMillis) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 Os.sleep(1);
             }
             return true;

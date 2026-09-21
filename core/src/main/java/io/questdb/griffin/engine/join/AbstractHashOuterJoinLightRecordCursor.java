@@ -96,7 +96,7 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
     ) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
             MapKey key = keyMap.withKey();
             key.put(keyRecord, recordSink);
@@ -119,7 +119,7 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
     ) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
             MapKey key = keyMap.withKey();
             key.put(keyRecord, recordSink);

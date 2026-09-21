@@ -85,24 +85,20 @@ public class ParquetTimestampPointDecodeBenchmark {
     // ~1.8M rows fall in partition 0 (the rest spill to a 2nd partition). CONVERT
     // leaves the active partition native, so we target partition 0.
     private static final int ROW_COUNT = 2_000_000;
+    private static final int TARGET_PARTITION = 0;
     private static final long TS_BASE = 1_704_067_200_000_000L;
     private static final long TS_STEP_MICROS = 2_000;
-    private static final int TARGET_PARTITION = 0;
-
-    @Param({"PLAIN", "DELTA"})
-    public String tsEncoding;
-
     @Param({"GROUP_START", "GROUP_MID", "GROUP_END", "PARTITION_END"})
     public String target;
-
+    @Param({"PLAIN", "DELTA"})
+    public String tsEncoding;
     // REGULAR: constant cadence -> zero-bit residuals, delta decode near-free (unrealistic).
     // JITTER: uniform per-step offset -> real bit-packed residuals (the realistic case).
     @Param({"REGULAR", "JITTER"})
     public String tsPattern;
-
-    private ParquetPartitionDecoder parquetDecoder;
-    private ParquetTimestampFinder finder;
     private CairoEngine engine;
+    private ParquetTimestampFinder finder;
+    private ParquetPartitionDecoder parquetDecoder;
     private TableReader reader;
     private Path root;
     private long targetRow;

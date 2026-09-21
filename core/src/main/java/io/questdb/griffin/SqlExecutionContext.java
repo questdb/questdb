@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
@@ -63,6 +64,16 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     boolean allowNonDeterministicFunctions();
 
     void changePageFrameSizes(int minRows, int maxRows);
+
+    default void clearCancelledFlag(AtomicBoolean expected) {
+        getCircuitBreaker().clearCancelledFlag(expected);
+        getSimpleCircuitBreaker().clearCancelledFlag(expected);
+    }
+
+    default void clearCancelledFlag(AtomicBoolean expected, long expectedGeneration) {
+        getCircuitBreaker().clearCancelledFlag(expected, expectedGeneration);
+        getSimpleCircuitBreaker().clearCancelledFlag(expected, expectedGeneration);
+    }
 
     void clearWindowContext();
 
@@ -100,6 +111,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     default boolean containsSecret() {
         return false;
+    }
+
+    default void copyCancelledFlagsTo(CancellationBinding circuitBreakerTarget, CancellationBinding simpleCircuitBreakerTarget) {
+        getCircuitBreaker().copyCancelledFlagTo(circuitBreakerTarget);
+        getSimpleCircuitBreaker().copyCancelledFlagTo(simpleCircuitBreakerTarget);
     }
 
     default Rnd getAsyncRandom() {
@@ -181,6 +197,13 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     QueryFutureUpdateListener getQueryFutureUpdateListener();
 
+    /**
+     * Returns the protocol execution owner currently mounted on this context, or {@code -1}.
+     */
+    default long getQueryRegistryOwnerId() {
+        return -1;
+    }
+
     Rnd getRandom();
 
     default TableReader getReader(TableToken tableToken, long version) {
@@ -208,6 +231,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     int getSharedQueryWorkerCount();
 
+    @NotNull
     SqlExecutionCircuitBreaker getSimpleCircuitBreaker();
 
     default int getTableStatus(Path path, CharSequence tableName) {
@@ -232,18 +256,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     default TableToken getTableTokenIfExists(CharSequence tableName, int lo, int hi) {
         return getCairoEngine().getTableTokenIfExists(tableName, lo, hi);
-    }
-
-    /**
-     * Tells the context which name the statement being compiled uses for the table it targets - the
-     * table named by {@code UPDATE <name>} or {@code ALTER TABLE <name>}. Called before that name,
-     * or any other table in the statement, is resolved.
-     * <p>
-     * Only contexts that resolve a target differently from the name in the SQL need this; for
-     * everything else it is a no-op. See {@code WalApplySqlExecutionContext}, where the stored SQL
-     * may name a table that has since been renamed, or whose name now belongs to a different table.
-     */
-    default void setStatementTargetTableName(CharSequence tableName) {
     }
 
     WindowContext getWindowContext();
@@ -291,6 +303,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isParquetRowGroupPruningEnabled();
 
+    /**
+     * Returns whether cached table scans may retain their compiled optimization state across
+     * partition-format changes. A tolerant context accepts that Parquet row-group pruning may no
+     * longer match the current table format; the ordinary row filter still preserves SQL semantics.
+     */
+    default boolean isPartitionFormatChangeTolerated() {
+        return false;
+    }
+
     boolean isTimestampRequired();
 
     default boolean isUninterruptible() {
@@ -330,6 +351,21 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void reset();
 
+    default void restoreCancelledFlag(
+            AtomicBoolean expected,
+            CancellationBinding circuitBreakerPrevious,
+            CancellationBinding simpleCircuitBreakerPrevious
+    ) {
+        final SqlExecutionCircuitBreaker circuitBreaker = getCircuitBreaker();
+        final SqlExecutionCircuitBreaker simpleCircuitBreaker = getSimpleCircuitBreaker();
+        if (circuitBreaker.getCancelledFlag() == expected) {
+            circuitBreaker.setCancelledFlag(circuitBreakerPrevious);
+        }
+        if (simpleCircuitBreaker != circuitBreaker && simpleCircuitBreaker.getCancelledFlag() == expected) {
+            simpleCircuitBreaker.setCancelledFlag(simpleCircuitBreakerPrevious);
+        }
+    }
+
     void restoreToDefaultPageFrameSizes();
 
     void setAllowNonDeterministicFunction(boolean value);
@@ -337,6 +373,16 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setCacheHit(boolean value);
 
     void setCancelledFlag(AtomicBoolean cancelled);
+
+    default void setCancelledFlag(CancellationBinding source) {
+        getCircuitBreaker().setCancelledFlag(source);
+        getSimpleCircuitBreaker().setCancelledFlag(source);
+    }
+
+    default void setCancelledFlag(AtomicBoolean cancelled, long generation) {
+        getCircuitBreaker().setCancelledFlag(cancelled, generation);
+        getSimpleCircuitBreaker().setCancelledFlag(cancelled, generation);
+    }
 
     void setCloneSymbolTables(boolean cloneSymbolTables);
 
@@ -375,6 +421,12 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void setParquetRowGroupPruningEnabled(boolean parquetRowGroupPruningEnabled);
 
+    /**
+     * Binds the protocol execution owner for nested QueryRegistry registrations on this context.
+     */
+    default void setQueryRegistryOwnerId(long queryRegistryOwnerId) {
+    }
+
     void setRandom(Rnd rnd);
 
     /**
@@ -385,6 +437,18 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      * not track reader leaks.
      */
     default void setReaderPoolSupervisor(@Nullable ResourcePoolSupervisor<TableReader> supervisor) {
+    }
+
+    /**
+     * Tells the context which name the statement being compiled uses for the table it targets - the
+     * table named by {@code UPDATE <name>} or {@code ALTER TABLE <name>}. Called before that name,
+     * or any other table in the statement, is resolved.
+     * <p>
+     * Only contexts that resolve a target differently from the name in the SQL need this; for
+     * everything else it is a no-op. See {@code WalApplySqlExecutionContext}, where the stored SQL
+     * may name a table that has since been renamed, or whose name now belongs to a different table.
+     */
+    default void setStatementTargetTableName(CharSequence tableName) {
     }
 
     void setUseSimpleCircuitBreaker(boolean value);

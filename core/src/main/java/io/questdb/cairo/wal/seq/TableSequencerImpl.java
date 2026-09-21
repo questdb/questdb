@@ -253,6 +253,18 @@ public class TableSequencerImpl implements TableSequencer {
         return tableTransactionLog.getTableMetadataChangeLog(structureVersionLo, alterCommandWalFormatter);
     }
 
+    public TableMetadataChangeLog getMetadataChangeLogSlow(
+            long structureVersionLo,
+            @NotNull TableSequencerCursorHolder cursorHolder
+    ) {
+        checkDropped();
+        return tableTransactionLog.getTableMetadataChangeLog(
+                structureVersionLo,
+                alterCommandWalFormatter,
+                cursorHolder
+        );
+    }
+
     @Override
     public int getNextWalId() {
         return (int) walIdGenerator.getNextId();
@@ -326,6 +338,14 @@ public class TableSequencerImpl implements TableSequencer {
     public TransactionLogCursor getTransactionLogCursor(long seqTxn) {
         checkDropped();
         return tableTransactionLog.getCursor(seqTxn);
+    }
+
+    public TransactionLogCursor getTransactionLogCursor(
+            long seqTxn,
+            @NotNull TableSequencerCursorHolder cursorHolder
+    ) {
+        checkDropped();
+        return tableTransactionLog.getCursor(seqTxn, cursorHolder);
     }
 
     public boolean isClosed() {

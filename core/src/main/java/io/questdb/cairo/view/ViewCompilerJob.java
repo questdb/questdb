@@ -62,8 +62,6 @@ public class ViewCompilerJob implements Job, QuietCloseable {
     private final ViewGraph viewGraph;
 
     public ViewCompilerJob(int workerId, CairoEngine engine, int sharedQueryWorkerCount) {
-        // workerId is accepted for source-compatibility; the rotation framework
-        // makes the per-worker invariant a per-cont-snapshot invariant instead.
         this(engine, sharedQueryWorkerCount);
     }
 
@@ -128,16 +126,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
 
     @Override
     public void closeInstance() {
-        // cloneInstance() mints a fresh job per generation, so the pool frees
-        // each instance's native resources through this hook at halt. Misc.free
-        // nulls the field, keeping the call idempotent.
         close();
-    }
-
-    @Override
-    public void recycleInstance() {
-        compileViewsSink.clear();
-        invalidateViewsSink.clear();
     }
 
     @Override

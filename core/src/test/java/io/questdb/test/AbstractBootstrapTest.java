@@ -106,7 +106,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             serverMain.start();
             return serverMain;
         } catch (Throwable th) {
-            serverMain.close();
+            Misc.free(serverMain, th);
             throw th;
         }
     }

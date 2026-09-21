@@ -506,8 +506,12 @@ struct Function
 
         for (int i = 0; i < unroll_factor; ++i)
         {
+            // Each unrolled body reads at its own input_index, so a value cached by the previous
+            // one names the wrong rows. The scalar loops clear ColumnValueCache per row for the
+            // same reason.
+            value_cache_ymm.clear();
             questdb::avx2::emit_code(c, arena, istream, size, values, wide_lane, step, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
-                                     addr_cache, const_cache_ymm);
+                                     addr_cache, const_cache_ymm, value_cache_ymm);
 
             if (values.is_empty())
             {
@@ -619,6 +623,7 @@ struct Function
     ConstantCache const_cache;
     ConstantCacheYmm const_cache_ymm;
     ColumnValueCache value_cache;
+    ValueCacheYmm value_cache_ymm;
 };
 
 struct CountOnlyFunction
@@ -777,8 +782,12 @@ struct CountOnlyFunction
 
         for (int i = 0; i < unroll_factor; ++i)
         {
+            // Each unrolled body reads at its own input_index, so a value cached by the previous
+            // one names the wrong rows. The scalar loops clear ColumnValueCache per row for the
+            // same reason.
+            value_cache_ymm.clear();
             questdb::avx2::emit_code(c, arena, istream, size, values, wide_lane, step, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
-                                     addr_cache, const_cache_ymm);
+                                     addr_cache, const_cache_ymm, value_cache_ymm);
 
             if (values.is_empty())
             {
@@ -903,6 +912,7 @@ struct CountOnlyFunction
     ConstantCache const_cache;
     ConstantCacheYmm const_cache_ymm;
     ColumnValueCache value_cache;
+    ValueCacheYmm value_cache_ymm;
 };
 
 #endif // __aarch64__
