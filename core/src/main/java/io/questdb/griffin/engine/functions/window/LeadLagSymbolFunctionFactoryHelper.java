@@ -625,7 +625,11 @@ class LeadLagSymbolFunctionFactoryHelper {
         @Override
         public void toTop() {
             super.toTop();
-            Misc.clear(map);
+            // isOpen() rather than a null test: the map starts closed and reset() closes it
+            // again, and clearing a closed map would walk backing it no longer holds.
+            if (map != null && map.isOpen()) {
+                map.clear();
+            }
             memory.truncate();
         }
     }
