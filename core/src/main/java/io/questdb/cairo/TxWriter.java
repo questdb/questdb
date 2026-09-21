@@ -486,6 +486,13 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
+        // Symmetric with setPartitionGeometryRef's !parquet assert. isPartitionCompositeByRawIndex reads false
+        // as soon as this bit is set, while the geometry pointer stays in offset 3 untouched: the partition would
+        // resolve as a flat [0, liveRows) range over a multi-piece layout - wrong rows, no error - and the next
+        // setPartitionSeqTxnByRawIndex would no longer take its composite early-out and would overwrite the
+        // pointer. Fold the partition to the ordinary shape before generating a parquet copy for it.
+        assert !parquetGenerated || !isPartitionCompositeByRawIndex(indexRaw)
+                : "parquet_generated would mask a composite partition's geometry pointer";
         int offset = indexRaw + PARTITION_MASKED_SIZE_OFFSET;
         long maskedSize = attachedPartitions.getQuick(offset);
         attachedPartitions.setQuick(offset, updatePartitionHasParquetGenerated(maskedSize, parquetGenerated));
@@ -516,6 +523,12 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
+        // A composite partition spends the offset-3 value field on its geometry pointer, so it carries no version
+        // for REMOTE to sit on top of (setPartitionSeqTxnByRawIndex skips it), and nothing can clear the bit again
+        // while the partition stays composite - setPartitionGeometryRef preserves the flag bits. UPLOADED would
+        // then outlive the bytes it claims are in the bucket. Clearing is always allowed.
+        assert !isRemote || !isPartitionCompositeByRawIndex(indexRaw)
+                : "UPLOADED cannot be set on a composite partition, which records no version";
         final long word = getPartitionOffset3(indexRaw);
         final long updated = isRemote
                 ? word | PARTITION_REMOTE_BIT
@@ -527,8 +540,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         setPartitionRemoteByRawIndex(findAttachedPartitionRawIndex(timestamp), isRemote);
     }
 
-    public void setPartitionSeqTxn(int partitionIndex, long seqTxn) {
-        setPartitionSeqTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, seqTxn);
+    public boolean setPartitionSeqTxn(int partitionIndex, long seqTxn) {
+        return setPartitionSeqTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, seqTxn);
     }
 
     /**
@@ -538,18 +551,22 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
      * carries {@link TxReader#PARTITION_SEQ_TXN_VALID_BIT}, marking the word a trusted seqTxn
      * (untrusted legacy words read as -1). The non-WAL path stamps 0, the cleared word, which
      * reads back as the -1 "no version" sentinel.
+     *
+     * @return false when the partition is composite and the stamp was skipped, so a caller whose next step assumes
+     * a recorded version (setting UPLOADED, say) can tell instead of committing over a word with none
      */
-    public void setPartitionSeqTxnByRawIndex(int indexRaw, long seqTxn) {
+    public boolean setPartitionSeqTxnByRawIndex(int indexRaw, long seqTxn) {
         if (isPartitionCompositeByRawIndex(indexRaw)) {
             // A composite partition spends the offset-3 value field on its geometry pointer, so there is nowhere here
             // to put a stamp; its seqTxn goes into the _geometry record instead.
-            return;
+            return false;
         }
         setPartitionParquetGeneratedByRawIndex(indexRaw, false);
         long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK
                 & ~(PARTITION_REMOTE_BIT | PARTITION_SEQ_TXN_VALID_BIT);
         final long valid = seqTxn > 0 ? PARTITION_SEQ_TXN_VALID_BIT : 0L;
         attachedPartitions.setQuick(indexRaw + PARTITION_VERSION_OFFSET, (seqTxn & PARTITION_VERSION_VALUE_MASK) | flags | valid);
+        return true;
     }
 
     public void setSeqTxn(long seqTxn) {

@@ -3270,6 +3270,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Already fully switched to parquet format - nothing to do.
             return true;
         }
+        if (txWriter.isPartitionComposite(partitionIndex)) {
+            // The generated bit masks the composite bit (isPartitionCompositeByRawIndex reads false once it is
+            // set) while the geometry pointer stays in offset 3, so marking a composite partition ready would
+            // hand every reader a flat [0, liveRows) range over a multi-piece layout. The staged data.parquet
+            // was produced before the merge-append anyway. Fold the partition first, then re-generate.
+            LOG.info().$("cannot mark a composite partition parquet ready [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp).I$();
+            return false;
+        }
 
         try {
             final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
@@ -9128,7 +9137,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void housekeep(long wallClockMicros) {
         try {
             squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3LastPartitionMaxSplits());
-            // Before the drain: REWRITE puts the directory it emptied on the remove-candidate list.
             runCompaction(wallClockMicros);
             processPartitionRemoveCandidates();
             metrics.tableWriterMetrics().incrementCommits();

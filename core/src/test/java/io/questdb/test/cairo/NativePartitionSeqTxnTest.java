@@ -891,6 +891,53 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetGeneratedMustNotMaskACompositePartition() throws Exception {
+        // isPartitionCompositeByRawIndex reads false as soon as parquet_generated is set, but that bit lives in
+        // the masked-size word while the geometry pointer lives in offset 3: setting it on a partition that
+        // carries a pointer does not move the pointer, it just stops everything from seeing it. The partition
+        // then resolves as a flat [0, liveRows) range over a multi-piece layout -- wrong rows, no error -- and
+        // the next setPartitionSeqTxn no longer takes its composite early-out, so it overwrites the pointer
+        // for good. setPartitionGeometryRef asserts !isPartitionParquetByRawIndex; the generated bit needs the
+        // symmetric guard. No caller sets the bit on a composite partition today (the enterprise storage-policy
+        // path checks composite before markPartitionParquetReady), so this pins the invariant, not a live path.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T00', 60*1_000_000L), x FROM long_sequence(600)");
+            drainWalQueue();
+            // A later day, so 2024-01-01 stops being the active partition.
+            execute("INSERT INTO t VALUES ('2024-01-03T00:00:00', 1)");
+            drainWalQueue();
+            // Backdated: merge-append leaves 2024-01-01 composite, its pointer in the offset-3 word.
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T02', 1_000_000L), x FROM long_sequence(200)");
+            drainWalQueue();
+
+            try (TableWriter writer = getWriter("t")) {
+                final TxWriter tx = writer.getTxWriter();
+                Assert.assertTrue("fixture left 2024-01-01 plain", tx.isPartitionComposite(0));
+                final long geometryRef = tx.getGeometryRef(0);
+                Assert.assertTrue("fixture published no geometry ref", geometryRef != -1L);
+
+                boolean rejected = false;
+                try {
+                    tx.setPartitionParquetGenerated(0, true);
+                } catch (AssertionError | CairoException expected) {
+                    rejected = true;
+                }
+                if (!rejected) {
+                    Assert.assertTrue("parquet_generated masked the composite bit: the partition now resolves" +
+                            " as flat [0, liveRows) over a multi-piece layout", tx.isPartitionComposite(0));
+                    // Unreached while the mask holds; kept so the compounding damage is named where it happens.
+                    tx.setPartitionSeqTxn(0, 42);
+                    tx.setPartitionParquetGenerated(0, false);
+                    Assert.assertEquals("the stamp overwrote the geometry pointer", geometryRef, tx.getGeometryRef(0));
+                }
+                writer.rollback();
+            }
+        });
+    }
+
+    @Test
     public void testShowPartitionsDoesNotLeakSeqTxnAsFileSize() throws Exception {
         // Reader regression: every native partition now carries a non-(-1) seqTxn in offset 3, but
         // table_partitions gates the parquet-file-size read on the format bit, so it must still show
