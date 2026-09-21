@@ -327,11 +327,22 @@ public class NotNullJitModeMatrixTest extends AbstractCairoTest {
             // 0.0.0.0 is data on a NOT NULL column: it orders below every other address
             assertAcrossJitModes("SELECT count() FROM t WHERE v <= '0.0.0.1'", "count\n2\n");
             assertAcrossJitModes("SELECT count() FROM t WHERE v < '0.0.0.1'", "count\n1\n");
+            // Both directions of serializeIPv4Ordering's NOT NULL decline. The expansion drops the
+            // zero address as NULL and reads INT_MIN through a checked comparison, neither of which
+            // holds for a NOT NULL column, so the serializer declines and the Java filter answers.
+            assertDoesNotUseCompiledFilter("SELECT count() FROM t WHERE v <= '0.0.0.1'");
+            assertDoesNotUseCompiledFilter("SELECT count() FROM t WHERE v > '0.0.0.1'");
 
             execute("CREATE TABLE n (v IPV4)");
             execute("INSERT INTO n VALUES (NULL), ('0.0.0.1'), ('1.2.3.4')");
             assertAcrossJitModes("SELECT count() FROM n WHERE v IS NULL", "count\n1\n");
             assertAcrossJitModes("SELECT count() FROM n WHERE v <= '0.0.0.1'", "count\n1\n");
+            // The decline stays narrow: a NULLABLE IPv4 column still compiles through the
+            // unsigned-order expansion and answers what the interpreted filter answers. Without
+            // this assertion the decline above could widen to all IPv4 unnoticed.
+            assertUsesCompiledFilter("SELECT count() FROM n WHERE v <= '0.0.0.1'");
+            assertUsesCompiledFilter("SELECT count() FROM n WHERE v > '0.0.0.1'");
+            assertAcrossJitModes("SELECT count() FROM n WHERE v > '0.0.0.1'", "count\n1\n");
         });
     }
 
@@ -359,9 +370,12 @@ public class NotNullJitModeMatrixTest extends AbstractCairoTest {
 
     @Test
     public void testMatrixNonJitTypesStayModeConsistent() throws Exception {
-        // UUID / LONG256 / GEOHASH never reach the compiled filter, so the matrix
-        // requirement collapses to: IS [NOT] NULL answers the same in every mode and
-        // honours NOT NULL sentinel-as-data reclassification.
+        // LONG256 never reaches the compiled filter: columnTypeCode() maps it to no IR type at all,
+        // so serializeColumn() declines every predicate holding one. UUID and GEOHASH do NOT share
+        // that verdict - columnTypeCode() maps UUID onto I16 and the GEO widths onto I1 / I2 / I4 /
+        // I8 - so this asserts the reachability each type actually has, cell by cell, rather than a
+        // blanket "never JIT". The matrix requirement is the same either way: every mode answers
+        // the same, and NOT NULL reclassification is honoured.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (u UUID, h LONG256, g GEOHASH(30b))");
             execute("INSERT INTO t VALUES (NULL, NULL, NULL)");
@@ -376,6 +390,87 @@ public class NotNullJitModeMatrixTest extends AbstractCairoTest {
             assertAcrossJitModes("SELECT count() FROM t WHERE h IS NOT NULL", "count\n2\n");
             assertAcrossJitModes("SELECT count() FROM t WHERE g IS NULL", "count\n0\n");
             assertAcrossJitModes("SELECT count() FROM t WHERE g IS NOT NULL", "count\n2\n");
+
+            // UUID equality DOES compile, on a NOT NULL column as well as a nullable one, and the
+            // all-zero UUID is the NULL sentinel - so this is the sentinel-as-data cell for the
+            // 128-bit lane. The row the reclassification turned into data answers '=' against the
+            // sentinel literal in every mode alike.
+            assertUsesCompiledFilter("SELECT count() FROM t WHERE u = '00000000-0000-0000-0000-000000000000'");
+            assertAcrossJitModes("SELECT count() FROM t WHERE u = '00000000-0000-0000-0000-000000000000'", "count\n0\n");
+            assertAcrossJitModes("SELECT count() FROM t WHERE u <> '00000000-0000-0000-0000-000000000000'", "count\n2\n");
+            assertAcrossJitModes("SELECT count() FROM t WHERE u = '11111111-1111-1111-1111-111111111111'", "count\n1\n");
+            // UUID ORDERING declines: the Java filter orders the string spellings, which no i128
+            // lane comparison reproduces.
+            assertDoesNotUseCompiledFilter("SELECT count() FROM t WHERE u < '11111111-1111-1111-1111-111111111111'");
+            // LONG256 stays off the compiled filter entirely, equality included.
+            assertDoesNotUseCompiledFilter("SELECT count() FROM t WHERE h = CAST('0x01' AS LONG256)");
+
+            execute("CREATE TABLE n (u UUID, h LONG256, g GEOHASH(30b))");
+            execute("INSERT INTO n VALUES (NULL, NULL, NULL)");
+            execute("INSERT INTO n VALUES ('11111111-1111-1111-1111-111111111111', CAST('0x01' AS LONG256), #sp052w92)");
+            assertAcrossJitModes("SELECT count() FROM n WHERE u IS NULL", "count\n1\n");
+            assertAcrossJitModes("SELECT count() FROM n WHERE h IS NULL", "count\n1\n");
+            assertAcrossJitModes("SELECT count() FROM n WHERE g IS NULL", "count\n1\n");
+            // On a NULLABLE column IS NULL is a live predicate rather than a constant fold, and for
+            // UUID and GEOHASH it compiles. The NOT NULL twins above fold to false at bind time and
+            // leave nothing for the JIT, which is why they answer identically without compiling.
+            assertUsesCompiledFilter("SELECT count() FROM n WHERE u IS NULL");
+            assertUsesCompiledFilter("SELECT count() FROM n WHERE g IS NULL");
+            assertDoesNotUseCompiledFilter("SELECT count() FROM n WHERE h IS NULL");
+        });
+    }
+
+    @Test
+    public void testMatrixChar() throws Exception {
+        // CHAR NULL is (char) 0 and CHAR ordering compiles through the unsigned expansion, so the
+        // type needs its own cells. Unlike the IPv4 lt family, the interpreted CHAR comparisons were
+        // NOT specialised for NOT NULL: they read (char) 0 as NULL whatever the column says, and the
+        // expansion reads it the same way. The two engines agree, so no decline is needed here - the
+        // cells pin that agreement so a later change to either side has to notice.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v CHAR)");
+            execute("INSERT INTO t VALUES (NULL), ('a'), ('z')");
+            execute("ALTER TABLE t ALTER COLUMN v SET NOT NULL");
+
+            assertAcrossJitModes("SELECT count() FROM t WHERE v IS NULL", "count\n0\n");
+            assertAcrossJitModes("SELECT count() FROM t WHERE v IS NOT NULL", "count\n3\n");
+            assertAcrossJitModes("SELECT count() FROM t WHERE v = 'a'", "count\n1\n");
+            assertAcrossJitModes("SELECT count() FROM t WHERE v <> 'a'", "count\n2\n");
+            assertAcrossJitModes("SELECT count() FROM t WHERE v < 'a'", "count\n0\n");
+            assertAcrossJitModes("SELECT count() FROM t WHERE v <= 'a'", "count\n1\n");
+            assertAcrossJitModes("SELECT count() FROM t WHERE v > 'a'", "count\n1\n");
+            assertUsesCompiledFilter("SELECT count() FROM t WHERE v < 'a'");
+
+            execute("CREATE TABLE n (v CHAR)");
+            execute("INSERT INTO n VALUES (NULL), ('a'), ('z')");
+            assertAcrossJitModes("SELECT count() FROM n WHERE v IS NULL", "count\n1\n");
+            assertAcrossJitModes("SELECT count() FROM n WHERE v < 'a'", "count\n0\n");
+            assertAcrossJitModes("SELECT count() FROM n WHERE v > 'a'", "count\n1\n");
+            assertUsesCompiledFilter("SELECT count() FROM n WHERE v < 'a'");
+        });
+    }
+
+    @Test
+    public void testMatrixSymbol() throws Exception {
+        // SYMBOL keeps its pre-existing verdict: equality compiles on the int key, ordering declines
+        // because the Java filter orders the symbol STRINGS. The cells pin both halves, and the
+        // NOT NULL twin of IS NULL folds to false rather than compiling.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v SYMBOL)");
+            execute("INSERT INTO t VALUES (NULL), ('aa'), ('zz')");
+            execute("ALTER TABLE t ALTER COLUMN v SET NOT NULL");
+
+            assertAcrossJitModes("SELECT count() FROM t WHERE v IS NULL", "count\n0\n");
+            assertAcrossJitModes("SELECT count() FROM t WHERE v = 'aa'", "count\n1\n");
+            assertAcrossJitModes("SELECT count() FROM t WHERE v <> 'aa'", "count\n2\n");
+            assertUsesCompiledFilter("SELECT count() FROM t WHERE v = 'aa'");
+            assertDoesNotUseCompiledFilter("SELECT count() FROM t WHERE v < 'aa'");
+
+            execute("CREATE TABLE n (v SYMBOL)");
+            execute("INSERT INTO n VALUES (NULL), ('aa'), ('zz')");
+            assertAcrossJitModes("SELECT count() FROM n WHERE v IS NULL", "count\n1\n");
+            assertAcrossJitModes("SELECT count() FROM n WHERE v = 'aa'", "count\n1\n");
+            assertUsesCompiledFilter("SELECT count() FROM n WHERE v IS NULL");
         });
     }
 
@@ -462,6 +557,13 @@ public class NotNullJitModeMatrixTest extends AbstractCairoTest {
             } catch (AssertionError e) {
                 throw new AssertionError("jit mode " + SqlJitMode.toString(mode) + " for [" + sql + "]: " + e.getMessage(), e);
             }
+        }
+    }
+
+    private void assertDoesNotUseCompiledFilter(String sql) throws Exception {
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        try (RecordCursorFactory factory = select(sql)) {
+            Assert.assertFalse("expected the JIT to decline: " + sql, factory.usesCompiledFilter());
         }
     }
 

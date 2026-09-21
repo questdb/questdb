@@ -1451,6 +1451,27 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * selects the form; the literal still reaches the stream through the ordinary stub-and-backfill
      * route of {@link #serializeConstant}, which is also where a malformed address declines.
      */
+    private boolean hasNotNullIPv4ColumnOperand(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            final int index = metadata.getColumnIndexQuiet(node.token);
+            return index != -1
+                    && ColumnType.tagOf(metadata.getColumnType(index)) == ColumnType.IPv4
+                    && metadata.isNotNull(index);
+        }
+        if (hasNotNullIPv4ColumnOperand(node.lhs) || hasNotNullIPv4ColumnOperand(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasNotNullIPv4ColumnOperand(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static int ipv4OrderingLiteral(ExpressionNode operand) {
         if (operand.type != ExpressionNode.CONSTANT) {
             return Numbers.IPv4_NULL;
@@ -4452,7 +4473,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 final int memoizedTypeCode = bindVariableTypeCode(
                         ColumnType.tagOf(bindVarFunctions.getQuick(memoizedIndex).getType())
                 );
-                putOperand(VAR, memoizedTypeCode, memoizedIndex);
+                // NULLABLE_TYPE_FLAG rides on every VAR, repeat occurrence included: the slot holds
+                // the same bind variable, which can still be NULL at run time. Dropping it here
+                // would make the second and later occurrences of an ordering expansion's operand
+                // emit unchecked code for a value the first occurrence null-checked.
+                putOperand(VAR, memoizedTypeCode | NULLABLE_TYPE_FLAG, memoizedIndex);
                 // Stays per-occurrence. The widening marker is keyed by node too, so it answers the
                 // same for every occurrence, but the SX_I64 belongs to the OPERAND that was just
                 // pushed rather than to the slot, and the backend's value stack expects one per push.
@@ -5148,6 +5173,32 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private void serializeIPv4Ordering(ExpressionNode node, int opcode) throws SqlException {
+        // The unsigned-order expansion below reads IPv4 NULL - the zero address - out of every
+        // shape it emits: serializeIPv4ZeroTest pins the operand to "> 0" / "!= 0" / "< 0" so a
+        // zero lane drops out without a term of its own, and the INT_MIN terms exist because the
+        // backend's CHECKED i32 order comparisons answer false for a lane holding the INT null
+        // sentinel. Both assumptions hold only while the operand is nullable.
+        //
+        // On a NOT NULL IPv4 column neither holds: 0.0.0.0 is DATA that orders below every other
+        // address, and serializeColumn leaves NULLABLE_TYPE_FLAG off the MEM load, so the backend
+        // emits an UNCHECKED comparison in which INT_MIN is an ordinary negative lane. The
+        // expansion would drop the zero-address rows that the interpreted LtIPv4FunctionFactory /
+        // LtIPv4StrFunctionFactory keep, which is wrong rows rather than a decline.
+        //
+        // Decline instead, the way every other unsupported shape does, and let SqlCodeGenerator
+        // fall back to the Java filter, which carries the NOT NULL semantics. This costs only a
+        // JIT acceleration that an IPv4 ordering predicate never had before the expansion existed
+        // - the serializer had no IPv4 literal support at all and declined the shape outright.
+        // A nullable IPv4 column still takes the expansion below, unchanged.
+        //
+        // Do not "tidy" this away: teaching the expansion NOT NULL semantics is a different
+        // unsigned-order algebra (0 is data, INT_MIN is data), not a simplification of this one.
+        if (hasNotNullIPv4ColumnOperand(node.lhs) || hasNotNullIPv4ColumnOperand(node.rhs)) {
+            throw SqlException.position(node.position)
+                    .put("ordering comparison over a NOT NULL IPv4 column: ")
+                    .put(node.token);
+        }
+
         ExpressionNode left = node.lhs;
         ExpressionNode right = node.rhs;
         if (opcode == GT || opcode == GE) {
