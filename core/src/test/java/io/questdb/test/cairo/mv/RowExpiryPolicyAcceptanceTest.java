@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Before;
@@ -171,6 +172,49 @@ public class RowExpiryPolicyAcceptanceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDocumentedSyntaxOnCreateAndAlter() throws Exception {
+        assertMemoryLeak(() -> {
+            createBase();
+            final ObjList<Policy> policies = new ObjList<>();
+            policies.add(new Policy("WHEN v < 2.0", 3));
+            policies.add(new Policy("WHEN v < 2.0 CLEANUP EVERY 30m", 3));
+            policies.add(new Policy("WHEN v < max(v) OVER (PARTITION BY k) CLEANUP EVERY 30m", 3));
+            policies.add(new Policy("KEEP LATEST PARTITION BY k", 3));
+            policies.add(new Policy("KEEP LATEST ON ts PARTITION BY k", 3));
+            policies.add(new Policy("KEEP LATEST PARTITION BY k, sym CLEANUP EVERY 30m", 3));
+            policies.add(new Policy("KEEP LATEST ON ts PARTITION BY k, sym CLEANUP EVERY 30m", 3));
+            policies.add(new Policy("KEEP HIGHEST v", 2));
+            policies.add(new Policy("KEEP LOWEST v CLEANUP EVERY 30m", 2));
+            policies.add(new Policy("KEEP HIGHEST v PARTITION BY k", 3));
+            policies.add(new Policy("KEEP LOWEST v PARTITION BY k, sym CLEANUP EVERY 30m", 3));
+            policies.add(new Policy("KEEP 2 HIGHEST v", 2));
+            policies.add(new Policy("KEEP 2 LOWEST v CLEANUP EVERY 30m", 2));
+            policies.add(new Policy("KEEP 2 HIGHEST v PARTITION BY k", 4));
+            policies.add(new Policy("KEEP 2 LOWEST v PARTITION BY k, sym CLEANUP EVERY 30m", 4));
+
+            for (int i = 0, n = policies.size(); i < n; i++) {
+                final Policy policy = policies.getQuick(i);
+                execute("CREATE MATERIALIZED VIEW mv_create AS (SELECT * FROM base) EXPIRE ROWS " + policy.clause());
+                drainWalAndMatViewQueues();
+                assertPolicy("mv_create", policy);
+                execute("DROP MATERIALIZED VIEW mv_create");
+                drainWalAndMatViewQueues();
+            }
+
+            for (int i = 0, n = policies.size(); i < n; i++) {
+                final Policy policy = policies.getQuick(i);
+                execute("CREATE MATERIALIZED VIEW mv_alter AS (SELECT * FROM base)");
+                drainWalAndMatViewQueues();
+                execute("ALTER MATERIALIZED VIEW mv_alter SET EXPIRE ROWS " + policy.clause());
+                drainWalAndMatViewQueues();
+                assertPolicy("mv_alter", policy);
+                execute("DROP MATERIALIZED VIEW mv_alter");
+                drainWalAndMatViewQueues();
+            }
+        });
+    }
+
+    @Test
     public void testEveryAcceptedPolicyLeavesAReadableView() throws Exception {
         assertMemoryLeak(() -> {
             createBase();
@@ -213,6 +257,18 @@ public class RowExpiryPolicyAcceptanceTest extends AbstractCairoTest {
                 Assert.assertNotNull("ALTER accepted text that is not a policy: " + clause, alterRejection);
             }
         });
+    }
+
+    private void assertPolicy(String view, Policy policy) throws Exception {
+        assertQuery("SELECT count() FROM " + view)
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n" + policy.expectedRows() + "\n");
+        sink.clear();
+        printSql("SHOW CREATE MATERIALIZED VIEW " + view, sink);
+        final String ddl = sink.toString();
+        Assert.assertTrue("documented policy did not round-trip [policy=" + policy.clause() + ", ddl=" + ddl + ']',
+                ddl.contains("EXPIRE ROWS " + policy.clause()));
     }
 
     private static void createBase() throws Exception {
@@ -270,5 +326,8 @@ public class RowExpiryPolicyAcceptanceTest extends AbstractCairoTest {
             return message(e);
         }
         return null;
+    }
+
+    private record Policy(String clause, int expectedRows) {
     }
 }
