@@ -59,6 +59,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.nanotime.NanosFormatUtils;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.tools.TestUtils;
