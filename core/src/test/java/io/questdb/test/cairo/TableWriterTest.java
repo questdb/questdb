@@ -90,6 +90,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -3027,6 +3028,50 @@ public class TableWriterTest extends AbstractCairoTest {
 
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
                 Assert.assertEquals(0, writer.size());
+            }
+        });
+    }
+
+    @Test
+    public void testSkipDeltaDir() throws Exception {
+        assertMemoryLeak(() -> {
+            create(FF, PartitionBy.DAY, 10);
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                writer.newRow(timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z")).append();
+                writer.commit();
+            }
+
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("_delta").slash$();
+                Assert.assertEquals(0, FF.mkdirs(path, configuration.getMkDirMode()));
+                Assert.assertTrue(FF.touch(path.concat("_catalog").$()));
+
+                // A similar name must still be diagnosed; an unattached partition must still be purged.
+                path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("_delta.tmp").slash$();
+                Assert.assertEquals(0, FF.mkdirs(path, configuration.getMkDirMode()));
+                path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("1991-01-01.123").slash$();
+                Assert.assertEquals(0, FF.mkdirs(path, configuration.getMkDirMode()));
+
+                final LogCapture capture = new LogCapture();
+                capture.start();
+                try {
+                    try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                        Assert.assertEquals(1, writer.size());
+                    }
+
+                    path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("_delta").concat("_catalog").$();
+                    Assert.assertTrue(FF.exists(path.$()));
+                    path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("1991-01-01.123").$();
+                    Assert.assertFalse(FF.exists(path.$()));
+
+                    LOG.advisory().$("delta directory purge complete").$();
+                    capture.waitFor("delta directory purge complete");
+                    path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("_delta.tmp").$();
+                    capture.assertLogged("invalid partition directory inside table folder: " + path);
+                    capture.assertOnlyOnce("invalid partition directory inside table folder:");
+                } finally {
+                    capture.stop();
+                }
             }
         });
     }

@@ -184,6 +184,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int SWITCH_SKIPPED = -2;
     public static final long TIMESTAMP_EPOCH = 0L;
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
+    private static final String DELTA_DIR_NAME = "_delta";
     private static final long IGNORE = -1L;
     // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
     @SuppressWarnings("FieldMayBeFinal")
@@ -3735,6 +3736,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getRowCount() + getO3RowCount();
     }
 
+    public void skipWalTransactions(long seqTxn) {
+        for (int i = 0, n = getPartitionCount(); i < n; i++) {
+            if (isPartitionDeltaActive(i)) {
+                final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
+                if (deltaWriter != null) {
+                    deltaWriter.rollback(this, getPartitionTimestamp(i), getSeqTxn());
+                }
+            }
+        }
+        commitWalLag();
+        commitSeqTxn(seqTxn);
+    }
+
     @TestOnly
     public void squashAllPartitionsIntoOne() {
         squashSplitPartitions(0, txWriter.getPartitionCount(), 1, false);
@@ -5762,6 +5776,42 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long currentTableTxn = txWriter.getTxn();
         publishPendingPostingSealPurges(currentTableTxn);
         publishDeferredPostingSealPurges(currentTableTxn, false);
+    }
+
+    private void commitWalLag() {
+        if (txWriter.getLagTxnCount() == 0) {
+            return;
+        }
+        final long appliedSeqTxn = getAppliedSeqTxn();
+        final int lagRows = txWriter.getLagRowCount();
+        walApplySeqTxn = appliedSeqTxn;
+        try {
+            // Keep accepted lag rows when an administrative skip advances past them.
+            if (lagRows > 0) {
+                txWriter.beginPartitionSizeUpdate();
+                o3OpenColumns();
+                o3TimestampMem.jumpTo(0);
+                o3RowCount = 0;
+                dispatchColumnTasks(txWriter.getTransientRowCount(), IGNORE, lagRows, IGNORE, IGNORE, cthO3MoveUncommittedRef);
+                o3Columns = o3MemColumns1;
+                o3MasterRef = masterRef - lagRows * 2L + 1;
+            }
+            txWriter.setLagTxnCount(0);
+            txWriter.setLagRowCount(0);
+            txWriter.setLagOrdered(true);
+            txWriter.setLagMinTimestamp(Long.MAX_VALUE);
+            txWriter.setLagMaxTimestamp(Long.MIN_VALUE);
+            txWriter.setSeqTxn(appliedSeqTxn);
+            if (lagRows > 0) {
+                o3Commit(0);
+            }
+            commit00();
+        } catch (Throwable e) {
+            distressed = true;
+            throw e;
+        } finally {
+            walApplySeqTxn = -1;
+        }
     }
 
     private void configureAppendPosition() {
@@ -13429,7 +13479,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
         // Do not remove detached partitions, they are probably about to be attached
-        // Do not remove wal and sequencer directories either
+        // Preserve WAL, sequencer, and Delta metadata directories too.
         int checkedType = ff.typeDirOrSoftLinkDirNoDots(path, pathSize, pUtf8NameZ, type, utf8Sink);
         if (checkedType != Files.DT_UNKNOWN &&
                 !CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
@@ -13437,6 +13487,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 !CairoKeywords.isTxnSeq(pUtf8NameZ) &&
                 !CairoKeywords.isSeq(pUtf8NameZ) &&
                 !CairoKeywords.isLiveViewCheckpoints(pUtf8NameZ) &&
+                !Utf8s.equalsAscii(DELTA_DIR_NAME, utf8Sink) &&
                 !Utf8s.endsWithAscii(utf8Sink, configuration.getAttachPartitionSuffix())
         ) {
             try {

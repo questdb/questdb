@@ -46,6 +46,8 @@ public interface PartitionDeltaWriter extends QuietCloseable {
     ) {
     }
 
+    void rollback(TableWriter writer, long partitionTimestamp, long seqTxn);
+
     void writeCommit(
             TableWriter writer,
             boolean firstDeltaWrite,
