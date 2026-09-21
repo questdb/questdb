@@ -5640,7 +5640,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                   keys: [symbol,timestamp]
                                   keyFunctions: [timestamp_floor_utc('1m',timestamp)]
                                   values: [last(price)]
-                                  filter: symbol ~ BTC-USD [state-shared]
+                                  filter: symbol ~ BTC-USD [case-sensitive] [state-shared]
                                     PageFrame
                                         Row forward scan
                                         Interval forward scan on: trades
