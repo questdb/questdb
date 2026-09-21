@@ -5054,12 +5054,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select s, i, ts from (select * from a where ts >= 0::timestamp) latest on ts partition by s")
                 .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
                 .assertsPlan("""
-                        SelectedRecord
-                            LatestBy light order_by_timestamp: true
-                                PageFrame
-                                    Row forward scan
-                                    Interval forward scan on: a
-                                      intervals: [("1970-01-01T00:00:00.000000Z","MAX")]
+                        LatestBy light order_by_timestamp: true
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: a
+                                  intervals: [("1970-01-01T00:00:00.000000Z","MAX")]
                         """);
     }
 
@@ -5068,11 +5067,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select * from (select * from a) latest on ts partition by s")
                 .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
                 .assertsPlan("""
-                        SelectedRecord
-                            LatestBy light order_by_timestamp: true
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                        LatestBy light order_by_timestamp: true
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
                         """);
     }
 
@@ -5082,12 +5080,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select s, i, ts from (select * from a where ts >= 0::timestamp) latest on ts partition by s")
                 .ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);")
                 .assertsPlan("""
-                        SelectedRecord
-                            LatestBy light order_by_timestamp: true
-                                PageFrame
-                                    Row forward scan
-                                    Interval forward scan on: a
-                                      intervals: [("1970-01-01T00:00:00.000000Z","MAX")]
+                        LatestBy light order_by_timestamp: true
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: a
+                                  intervals: [("1970-01-01T00:00:00.000000Z","MAX")]
                         """);
     }
 
@@ -5097,12 +5094,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select k, i, ts from (select i, s as k, ts from a) latest on ts partition by k")
                 .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
                 .assertsPlan("""
-                        SelectedRecord
-                            LatestBy light order_by_timestamp: true
-                                SelectedRecord
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
+                        LatestBy light order_by_timestamp: true
+                            SelectedRecord
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
                         """);
     }
 
@@ -5113,11 +5109,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select s, i, ts, ts2 from (select * from a) latest on ts2 partition by s")
                 .ddl("create table a ( i int, s symbol index, ts timestamp, ts2 timestamp) timestamp(ts);")
                 .assertsPlan("""
-                        SelectedRecord
-                            LatestBy light order_by_timestamp: false
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                        LatestBy light order_by_timestamp: false
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
                         """);
     }
 
@@ -5130,11 +5125,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select a, s, ts, ts2 from (select * from a2 timestamp(ts2)) latest on ts partition by s")
                 .ddl("create table a2 ( a int, s symbol index, ts timestamp, ts2 timestamp) timestamp(ts);")
                 .assertsPlan("""
-                        SelectedRecord
-                            LatestBy light order_by_timestamp: false
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a2
+                        LatestBy light order_by_timestamp: false
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a2
                         """);
     }
 
@@ -5145,11 +5139,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select a, s, ts, ts2 from (select * from a2 timestamp(ts2)) latest on ts2 partition by s")
                 .ddl("create table a2 ( a int, s symbol index, ts timestamp, ts2 timestamp) timestamp(ts);")
                 .assertsPlan("""
-                        SelectedRecord
-                            LatestBy light order_by_timestamp: true
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a2
+                        LatestBy light order_by_timestamp: true
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a2
                         """);
     }
 
