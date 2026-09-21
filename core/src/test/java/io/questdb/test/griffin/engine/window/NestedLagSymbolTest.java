@@ -36,6 +36,88 @@ import org.junit.Test;
 public class NestedLagSymbolTest extends AbstractCairoTest {
 
     @Test
+    public void testLagLeadOverBooleanCastKeepsMissingNeighborNull() throws Exception {
+        // BOOLEAN has no NULL, so active::SYMBOL only ever mints keys 0 and 1. lag()/lead() mint
+        // VALUE_IS_NULL for a missing neighbor and resolve it through the cast's symbol table,
+        // which must answer NULL rather than 'false'.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE flags (seq LONG, device SYMBOL, active BOOLEAN)");
+            execute("""
+                    INSERT INTO flags VALUES
+                    (1, 'pumpA', true),
+                    (2, 'pumpB', false),
+                    (3, 'pumpA', false),
+                    (4, 'pumpB', true),
+                    (5, 'pumpC', true),
+                    (6, 'pumpA', true)
+                    """);
+
+            // streaming window
+            assertQuery("SELECT seq, LAG(active::SYMBOL) OVER (PARTITION BY device) previous FROM flags")
+                    .expectSize()
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            seq\tprevious
+                            1\t
+                            2\t
+                            3\ttrue
+                            4\tfalse
+                            5\t
+                            6\tfalse
+                            """);
+            assertQuery("""
+                    SELECT seq FROM (
+                        SELECT seq, LAG(active::SYMBOL) OVER (PARTITION BY device) previous FROM flags
+                    ) WHERE previous IS NULL
+                    """)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            seq
+                            1
+                            2
+                            5
+                            """);
+            // a downstream group-by keys on the window column and resolves the int key through
+            // the table the cast hands out from newSymbolTable(), not through valueOf()
+            assertQuery("""
+                    SELECT previous, count() FROM (
+                        SELECT LAG(active::SYMBOL) OVER (PARTITION BY device) previous FROM flags
+                    ) ORDER BY previous
+                    """)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            previous\tcount
+                            \t3
+                            false\t2
+                            true\t1
+                            """);
+            // cached window
+            assertQuery("""
+                    SELECT seq, device, coalesce(previous, 'none') previous, coalesce(next, 'none') next FROM (
+                        SELECT
+                            seq,
+                            device,
+                            LAG(active::SYMBOL) OVER (PARTITION BY device ORDER BY seq) previous,
+                            LEAD(active::SYMBOL) OVER (PARTITION BY device ORDER BY seq) next
+                        FROM flags
+                    ) WHERE previous IS NULL OR next IS NULL
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            seq\tdevice\tprevious\tnext
+                            1\tpumpA\tnone\tfalse
+                            2\tpumpB\tnone\ttrue
+                            4\tpumpB\tfalse\tnone
+                            5\tpumpC\tnone\tnone
+                            6\tpumpA\tfalse\tnone
+                            """);
+        });
+    }
+
+    @Test
     public void testLagLeadOverSymbolIgnoreNulls() throws Exception {
         assertMemoryLeak(() -> {
             execute(
