@@ -93,6 +93,39 @@ public class NativeFrameBoundariesAbsentColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColdReaderAsOfJoinProjectsColumnAddedToLargeCompositePartition() throws Exception {
+        assertMemoryLeak(() -> {
+            // 5_000 live rows over a 9_800 row mapped extent: the piece sits at file row 4_800, so a
+            // prediction that invents the LIVE count as the absent column's top cuts at partition row
+            // 5_000 - 4_800 = 200, a boundary the opened partition does not have. The extra predicted
+            // frame surfaces on the cold path as "frame count mismatch for partition 0".
+            createLargeCompositeQuotesWithAddedColumn();
+            createLargeMasters();
+
+            // No partition is open, so the join reads the slave through the metadata-only prediction.
+            engine.releaseAllReaders();
+            assertQuery("SELECT /*+ asof_index(m q) */ count() c, count(q.v) cv, count(q.extra) ce, sum(q.v) sv" +
+                    " FROM m ASOF JOIN q ON (s)")
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("AsOf Join Indexed")
+                    .returns("c\tcv\tce\tsv\n1200\t1200\t0\t1080220100\n");
+
+            engine.releaseAllReaders();
+            assertQuery("SELECT /*+ asof_index(m q) */ m.ts, q.v, q.extra FROM m ASOF JOIN q ON (s) LIMIT 3")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tv\textra
+                            2024-01-01T01:00:15.000000Z\t900001\tnull
+                            2024-01-01T01:00:25.000000Z\t900002\tnull
+                            2024-01-01T01:00:35.000000Z\t900003\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testNonIndexedAsOfJoinProjectsColumnAddedAfterPartitionWentComposite() throws Exception {
         assertMemoryLeak(() -> {
             createCompositeQuotesWithAddedColumn("q", "");
@@ -133,6 +166,16 @@ public class NativeFrameBoundariesAbsentColumnTest extends AbstractCairoTest {
                 " RANGE BETWEEN 5 minutes PRECEDING AND 1 microseconds PRECEDING EXCLUDE PREVAILING";
     }
 
+    private static void createLargeMasters() throws Exception {
+        // 1_200 masters at ten-second stride, each five seconds above a stride row.
+        execute("""
+                CREATE TABLE m AS (
+                  SELECT 'kz'::SYMBOL s, timestamp_sequence('2024-01-01T01:00:15', 10_000_000L) ts
+                  FROM long_sequence(1_200)
+                ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
+        drainWalQueue();
+    }
+
     private static void createMasters() throws Exception {
         // Fifty masters at :45 seconds: the first ten see the stride row a quarter minute below them, the
         // rest see the last stride row.
@@ -142,6 +185,36 @@ public class NativeFrameBoundariesAbsentColumnTest extends AbstractCairoTest {
                   FROM long_sequence(50)
                 ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
         drainWalQueue();
+    }
+
+    /**
+     * The same shape as {@link #createCompositeQuotesWithAddedColumn} at a size where the live row count,
+     * read as a file row, lands deep inside the relocated piece: 4_800 rows ten seconds apart, a 200-row
+     * backdated stride that merge-append rewrites at the shared files' tail, then a nullable column added
+     * once 2024-01-01 is composite and no longer the last partition.
+     */
+    private void createLargeCompositeQuotesWithAddedColumn() throws Exception {
+        execute("CREATE TABLE q AS (" +
+                " SELECT x::INT v, ('k' || ((x % 2) + 1))::SYMBOL s," +
+                " timestamp_sequence('2024-01-01', 10_000_000L) ts" +
+                " FROM long_sequence(4_800)), INDEX(s CAPACITY 8) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO q VALUES (90_000, 'k1', '2024-01-03T00:00:00.000000Z')");
+        drainWalQueue();
+        execute("INSERT INTO q SELECT x::INT + 900_000, 'kz'," +
+                " timestamp_sequence('2024-01-01T01:00:10', 10_000_000L) FROM long_sequence(200)");
+        drainWalQueue();
+        execute("ALTER TABLE q ADD COLUMN extra INT");
+        drainWalQueue();
+
+        try (TableReader reader = engine.getReader(engine.verifyTableName("q"))) {
+            Assert.assertTrue("2024-01-01 must be composite", reader.getTxFile().isPartitionComposite(0));
+            final PartitionGeometry geometry = reader.getGeometry();
+            Assert.assertEquals("fixture must hold one relocated piece", 1, geometry.getPieceCount(0));
+            Assert.assertEquals("live rows", 5_000, reader.getTxFile().getPartitionSize(0));
+            Assert.assertEquals("piece shift", 4_800, geometry.getPieceShift(0, 0));
+            Assert.assertEquals("mapped extent", 9_800, geometry.getLiveFileExtent(0));
+        }
+        engine.releaseAllReaders();
     }
 
     /**
