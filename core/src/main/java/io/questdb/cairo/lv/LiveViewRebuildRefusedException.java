@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.lv;
 
-import io.questdb.std.CarrierLocal;
+import io.questdb.std.FiberLocal;
 
 /**
  * Thrown out of the live-view refresh worker's whole-view rebuild when
@@ -42,8 +42,8 @@ import io.questdb.std.CarrierLocal;
  */
 public class LiveViewRebuildRefusedException extends RuntimeException {
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
-    private static final CarrierLocal<LiveViewRebuildRefusedException> tlException =
-            new CarrierLocal<>(LiveViewRebuildRefusedException::new);
+    private static final FiberLocal<LiveViewRebuildRefusedException> tlException =
+            new FiberLocal<>(LiveViewRebuildRefusedException::new);
 
     public static LiveViewRebuildRefusedException instance() {
         LiveViewRebuildRefusedException ex = tlException.get();

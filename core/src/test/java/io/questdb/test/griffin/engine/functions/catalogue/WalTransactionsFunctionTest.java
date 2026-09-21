@@ -33,19 +33,20 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
-import io.questdb.cairo.wal.seq.TableSequencerCursorPool;
+import io.questdb.cairo.wal.seq.TableSequencerCursorHolder;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 public class WalTransactionsFunctionTest extends AbstractCairoTest {
     private static final String INJECTED_ERROR = "injected toMinTxn failure";
-    private static CloseCountingCursor injectedCursor;
     private static boolean injectCursor;
+    private static CloseCountingCursor injectedCursor;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -53,14 +54,14 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
             private final InjectedSequencerAPI injectedSequencerAPI = new InjectedSequencerAPI(this, conf);
 
             @Override
-            public TableSequencerAPI getTableSequencerAPI() {
-                return injectCursor ? injectedSequencerAPI : super.getTableSequencerAPI();
-            }
-
-            @Override
             public void close() {
                 injectedSequencerAPI.close();
                 super.close();
+            }
+
+            @Override
+            public TableSequencerAPI getTableSequencerAPI() {
+                return injectCursor ? injectedSequencerAPI : super.getTableSequencerAPI();
             }
         };
         AbstractCairoTest.setUpStatic();
@@ -300,7 +301,7 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
     private static class CloseCountingCursor implements TransactionLogCursor {
         private int acquisitionCount;
         private int closeCount;
-        private TableSequencerCursorPool pool;
+        private TableSequencerCursorHolder pool;
         private int toMinTxnCount;
 
         @Override
@@ -401,8 +402,8 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
         }
 
         @Override
-        public TransactionLogCursor getCursor(TableToken tableToken, long seqTxn, TableSequencerCursorPool cursorPool) {
-            injectedCursor.pool = cursorPool;
+        public @NotNull TransactionLogCursor getCursor(TableToken tableToken, long seqTxn, @NotNull TableSequencerCursorHolder cursorHolder) {
+            injectedCursor.pool = cursorHolder;
             injectedCursor.acquisitionCount++;
             return injectedCursor;
         }

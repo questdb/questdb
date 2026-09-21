@@ -1095,6 +1095,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.sort.value.max.pages\tQDB_CAIRO_SQL_SORT_VALUE_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.sort.value.page.size\tQDB_CAIRO_SQL_SORT_VALUE_PAGE_SIZE\t16777216\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.string.function.buffer.max.size\tQDB_CAIRO_SQL_STRING_FUNCTION_BUFFER_MAX_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.subsample.max.rows\tQDB_CAIRO_SQL_SUBSAMPLE_MAX_ROWS\t100000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.window.cached.light.enabled\tQDB_CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.window.map.fusion.enabled\tQDB_CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED\ttrue\tdefault\tfalse\ttrue\n" +
                                     "cairo.sql.window.column.pool.capacity\tQDB_CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
@@ -1457,10 +1458,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "shared.query.worker.fiber.mount.budget\tQDB_SHARED_QUERY_WORKER_FIBER_MOUNT_BUDGET\t64\tdefault\tfalse\ttrue\n" +
                                     "shared.write.worker.affinity\tQDB_SHARED_WRITE_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "shared.write.worker.count\tQDB_SHARED_WRITE_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
-                                    "shared.write.worker.fiber.enabled\tQDB_SHARED_WRITE_WORKER_FIBER_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
-                                    "shared.write.worker.fiber.max.live\tQDB_SHARED_WRITE_WORKER_FIBER_MAX_LIVE\t0\tdefault\tfalse\ttrue\n" +
-                                    "shared.write.worker.fiber.max.retained\tQDB_SHARED_WRITE_WORKER_FIBER_MAX_RETAINED\t0\tdefault\tfalse\ttrue\n" +
-                                    "shared.write.worker.fiber.mount.budget\tQDB_SHARED_WRITE_WORKER_FIBER_MOUNT_BUDGET\t64\tdefault\tfalse\ttrue\n" +
                                     "table.type.conversion.enabled\tQDB_TABLE_TYPE_CONVERSION_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "telemetry.disable.completely\tQDB_TELEMETRY_DISABLE_COMPLETELY\tfalse\tconf\tfalse\tfalse\n" +
                                     "telemetry.enabled\tQDB_TELEMETRY_ENABLED\ttrue\tconf\tfalse\tfalse\n" +

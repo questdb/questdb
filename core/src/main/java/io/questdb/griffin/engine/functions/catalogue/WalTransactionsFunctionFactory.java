@@ -40,7 +40,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableMetadata;
-import io.questdb.cairo.wal.seq.TableSequencerCursorPool;
+import io.questdb.cairo.wal.seq.TableSequencerCursorHolder;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -120,8 +120,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
 
     private static class WalTransactionsCursorFactory extends AbstractRecordCursorFactory {
         private final TableListRecordCursor cursor;
-        // The factory owns the sequencer cursor because the result cursor can outlive its carrier.
-        private final TableSequencerCursorPool cursorPool = new TableSequencerCursorPool();
+        private final TableSequencerCursorHolder cursorHolder = new TableSequencerCursorHolder();
         private final int tableNamePosition;
         private final TableToken tableToken;
 
@@ -146,7 +145,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
             while (true) {
                 TransactionLogCursor logCursor = null;
                 try {
-                    logCursor = engine.getTableSequencerAPI().getCursor(currentTableToken, txnLo, cursorPool);
+                    logCursor = engine.getTableSequencerAPI().getCursor(currentTableToken, txnLo, cursorHolder);
                     logCursor.toMinTxn();
                     cursor.logCursor = logCursor;
                     break;
@@ -183,7 +182,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
         @Override
         protected void _close() {
             Misc.free(cursor);
-            Misc.free(cursorPool);
+            Misc.free(cursorHolder);
         }
 
         private static class TableListRecordCursor implements NoRandomAccessRecordCursor {
@@ -208,7 +207,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 return logCursor.hasNext();
             }
 

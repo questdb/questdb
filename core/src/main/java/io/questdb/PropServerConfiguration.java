@@ -610,6 +610,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlStrFunctionBufferMaxSize;
     private final boolean sqlSymbolPatternIndexEnabled;
     private final int sqlSymbolPatternIndexThreshold;
+    private final long subsampleMaxRows;
     private final int sqlTimerShardCount;
     private final int sqlTxnScoreboardEntryCount;
     private final int sqlUnorderedMapMaxEntrySize;
@@ -1930,6 +1931,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.rndFunctionMemoryPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_RND_MEMORY_PAGE_SIZE, 8192));
             this.rndFunctionMemoryMaxPages = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_RND_MEMORY_MAX_PAGES, 128));
             this.sqlStrFunctionBufferMaxSize = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, Numbers.SIZE_1MB));
+            this.subsampleMaxRows = getLong(properties, env, PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS, 100_000_000L);
+            if (this.subsampleMaxRows < 1 || this.subsampleMaxRows > Integer.MAX_VALUE) {
+                throw new ServerConfigurationException(
+                        PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath()
+                                + " must be between 1 and " + Integer.MAX_VALUE
+                );
+            }
             this.sqlWindowCachedLightEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
             this.sqlWindowMapFusionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, true);
             this.sqlWindowMaxRecursion = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_MAX_RECURSION, 128);
@@ -2381,12 +2389,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.SHARED_QUERY_WORKER_FIBER_ENABLED,
                     true
             );
-            sharedWorkerPoolWriteConfiguration.workerPoolMode = readWorkerPoolMode(
-                    properties,
-                    env,
-                    PropertyKey.SHARED_WRITE_WORKER_FIBER_ENABLED,
-                    false
-            );
             configureFiberPools(properties, env);
             this.queryCacheEventQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY, 4));
             this.queryContinuationWakeIntervalMillis = Math.max(1, getMillis(properties, env, PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL, 1_000));
@@ -2800,14 +2802,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 PropertyKey.SHARED_QUERY_WORKER_FIBER_MAX_LIVE,
                 PropertyKey.SHARED_QUERY_WORKER_FIBER_MAX_RETAINED,
                 PropertyKey.SHARED_QUERY_WORKER_FIBER_MOUNT_BUDGET
-        );
-        configureFiberPool(
-                properties,
-                env,
-                sharedWorkerPoolWriteConfiguration,
-                PropertyKey.SHARED_WRITE_WORKER_FIBER_MAX_LIVE,
-                PropertyKey.SHARED_WRITE_WORKER_FIBER_MAX_RETAINED,
-                PropertyKey.SHARED_WRITE_WORKER_FIBER_MOUNT_BUDGET
         );
     }
 
@@ -5448,6 +5442,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getStrFunctionMaxBufferLength() {
             return sqlStrFunctionBufferMaxSize;
+        }
+
+        @Override
+        public long getSubsampleMaxRows() {
+            return subsampleMaxRows;
         }
 
         @Override

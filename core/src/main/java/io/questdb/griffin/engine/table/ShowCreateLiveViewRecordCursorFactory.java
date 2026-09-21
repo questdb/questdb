@@ -72,7 +72,7 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         final TableToken currentViewToken = executionContext.getCairoEngine().getTableTokenIfExists(
                 viewToken.getTableName()
         );
