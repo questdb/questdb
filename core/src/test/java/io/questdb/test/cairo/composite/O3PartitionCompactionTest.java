@@ -1157,6 +1157,134 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
 
 
     /**
+     * Waste-ratio candidates outrank every other tier, and the largest percentage wins within the tier.
+     * The older partition below has waste too, so selecting by partition index would compact the wrong one.
+     */
+    @Test
+    public void testWastePriorityCompactsTheHighestRatioFirst() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            enableCompaction();
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
+
+            createDayTable("x", "2024-01-01", 4_000);
+            append("x", "2024-01-02", 4_000);
+            backdate("x", "2024-01-01T00:30:00", 400);
+            backdate("x", "2024-01-02T00:30:00", 400);
+            backdate("x", "2024-01-02T00:30:00", 400);
+
+            final long olderDeadBefore = deadRowsOfDay("x", "2024-01-01");
+            final long newerDeadBefore = deadRowsOfDay("x", "2024-01-02");
+            final long olderLive = scalar("SELECT coalesce(sum(numRows), 0) FROM table_partitions('x')" +
+                    " WHERE name LIKE '2024-01-01%'");
+            final long newerLive = scalar("SELECT coalesce(sum(numRows), 0) FROM table_partitions('x')" +
+                    " WHERE name LIKE '2024-01-02%'");
+            Assert.assertTrue("older partition has no waste", olderDeadBefore > 0);
+            Assert.assertTrue(
+                    "newer partition does not have the higher waste ratio",
+                    newerDeadBefore * olderLive > olderDeadBefore * newerLive
+            );
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "0.1");
+            append("x", nextPassDay(), 2);
+
+            Assert.assertEquals("the lower-ratio partition was compacted first", olderDeadBefore, deadRowsOfDay("x", "2024-01-01"));
+            Assert.assertEquals("the highest-ratio partition was not compacted first", 0, deadRowsOfDay("x", "2024-01-02"));
+        });
+    }
+
+    /**
+     * Piece-count candidates form the second priority tier, ordered by their piece count rather than their
+     * partition index. Waste remains disabled so it cannot decide this fixture.
+     */
+    @Test
+    public void testPiecePriorityCompactsTheHighestCountFirst() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            enableCompaction();
+            letPreSplitCut();
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
+
+            createDayTable("x", "2024-01-01", 40_000);
+            execute("INSERT INTO x SELECT cast(x AS int) + 900_000 i," +
+                    " timestamp_sequence('2024-01-02', 1_000_000L) ts FROM long_sequence(40_000)");
+            drainWalQueue();
+            backdate("x", "2024-01-01T02:00:00", 60);
+            backdate("x", "2024-01-01T06:00:00", 60);
+            backdate("x", "2024-01-02T02:00:00", 60);
+            backdate("x", "2024-01-02T06:00:00", 60);
+            backdate("x", "2024-01-02T10:00:00", 60);
+
+            final long olderPiecesBefore = pieceCountOfDay("x", "2024-01-01");
+            final long newerPiecesBefore = pieceCountOfDay("x", "2024-01-02");
+            Assert.assertTrue("older partition has no piece-count pressure", olderPiecesBefore > 1);
+            Assert.assertTrue("newer partition does not have more pieces", newerPiecesBefore > olderPiecesBefore);
+
+            pinPieceCap(1);
+            append("x", nextPassDay(), 2);
+
+            Assert.assertEquals(
+                    "the lower-piece-count partition was compacted first",
+                    olderPiecesBefore,
+                    pieceCountOfDay("x", "2024-01-01")
+            );
+            Assert.assertTrue(
+                    "the highest-piece-count partition was not compacted first",
+                    pieceCountOfDay("x", "2024-01-02") < newerPiecesBefore
+            );
+        });
+    }
+
+    /**
+     * The table-pressure percentage uses every live row visible to the user as its denominator, including
+     * rows in plain partitions. Dead rows do not join that denominator: 100 live rows plus 50 dead rows is
+     * 50% dead, not 33% of a 150-row physical extent.
+     */
+    @Test
+    public void testTablePressurePercentageUsesVisibleTableRows() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            enableCompaction();
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
+
+            createDayTable("x", "2024-01-01", 4_000);
+            backdate("x", "2024-01-01T00:30:00", 400);
+            backdate("x", "2024-01-01T00:30:00", 400);
+            backdate("x", "2024-01-01T00:30:00", 400);
+
+            // Add enough plain rows to put the whole table below 50%, while the composite partition alone
+            // remains above 50%. The old composite-only denominator would therefore compact this fixture.
+            execute("INSERT INTO x SELECT cast(x AS int) + 900_000 i," +
+                    " timestamp_sequence('2024-01-02', 1_000_000L) ts FROM long_sequence(100_000)");
+            drainWalQueue();
+
+            final long deadBefore = deadRows("x");
+            final long compositeLive = scalar("SELECT coalesce(sum(numRows), 0) FROM table_partitions('x')" +
+                    " WHERE name LIKE '2024-01-01%'");
+            final long tableLive = liveRows("x");
+            Assert.assertTrue("fixture does not cross 50% with the composite-only denominator", deadBefore > compositeLive);
+            Assert.assertTrue("fixture is not below 50% of the table's visible rows", deadBefore * 100 < tableLive * 50);
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD_PERCENT, "50");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD, "1");
+            runCompactionPasses("x");
+
+            Assert.assertEquals(
+                    "table pressure ignored live rows in plain partitions",
+                    deadBefore,
+                    deadRows("x")
+            );
+        });
+    }
+
+    /**
      * The table-wide rule picks the coldest composite partition. When every composite partition is hot -
      * written by one of the last {@link CairoConfiguration#getPartitionCompactionHotCommits()} commits -
      * "coldest" degenerates into "the one being written right now", and a REWRITE copies every live row

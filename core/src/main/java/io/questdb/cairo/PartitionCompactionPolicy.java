@@ -24,7 +24,9 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongList;
+import io.questdb.std.LongLongMaxHeap;
 import io.questdb.std.Mutable;
 import io.questdb.std.datetime.microtime.Micros;
 
@@ -37,16 +39,53 @@ public class PartitionCompactionPolicy implements Mutable {
     public static final int REASON_PIECE_COUNT = 2;
     public static final int REASON_TABLE_PRESSURE = 4;
     public static final int REASON_WASTE_RATIO = 1;
+    private static final int AGE_BITS = 30;
+    private static final long AGE_MASK = (1L << AGE_BITS) - 1;
     private static final int BACKOFF_LONGS = 3;
+    // Enough history to rank every partition written in the last ten years to the second. The remaining
+    // 24 years in the 30-bit field are future headroom before the priority epoch needs rebuilding.
+    private static final long EPOCH_HISTORY_SECONDS = 10L * 365 * 24 * 60 * 60;
+    private static final int HEAP_ENTRY_LONGS = 2;
+    private static final int HEAP_REBUILD_MIN_SIZE = 64;
     // Bounded so a table with a great many partitions cannot grow this list without end.
     private static final int MAX_TRACKED = 256;
+    private static final int PRIORITY_TIER_AGE = 1;
+    private static final int PRIORITY_TIER_PIECES = 2;
+    private static final int PRIORITY_TIER_WASTE = 3;
+    private static final int SEVERITY_BITS = 20;
+    private static final long SEVERITY_MASK = (1L << SEVERITY_BITS) - 1;
+    private static final int SEVERITY_SHIFT = AGE_BITS;
+    private static final int STATE_DEAD_ROWS_OFFSET = 1;
+    private static final int STATE_LONGS = 4;
+    private static final int STATE_PRIORITY_OFFSET = 2;
+    private static final int STATE_REF_OFFSET = 3;
+    private static final int TIER_SHIFT = AGE_BITS + SEVERITY_BITS;
+    private static final long WASTE_PERCENT_MAX = 1_000;
     // (partitionTimestamp, nextAttemptMicros, currentBackoffMicros)
     private final LongList backoff = new LongList();
     private final CairoConfiguration configuration;
+    // Valid heap entries are adjacent (priority, partitionTimestamp) longs. Geometry updates append a new
+    // entry and make any entry with a different priority stale; equal-priority duplicates are interchangeable
+    // because selection resolves current geometry by timestamp. The selector drops stale heads, and a bounded
+    // rebuild removes stale entries that never reach the head.
+    private final LongList deferredHeapEntries = new LongList();
+    private final LongLongMaxHeap heap = new LongLongMaxHeap();
+    // Dense (partitionTimestamp, deadRows, priority, geometryRef) records. The map stores record offsets.
+    private final LongList partitionStates = new LongList();
+    private final LongIntHashMap stateIndexByTimestamp = new LongIntHashMap(16, 0.5, Long.MIN_VALUE);
+    private long epochEndSeconds;
+    private long epochStartSeconds;
+    private boolean isInitialized;
     private boolean isSelectedPartitionHot;
+    private long lastAvgRecordSize = -1;
+    private long lastDeadMinSize = -1;
+    private double lastDeadRowsRatio = Double.NaN;
+    private long lastPieceAvgRowsLimit = -1;
+    private int lastPieceThreshold = -1;
     private int selectedPartitionIndex = -1;
     private int selectedReason = REASON_NONE;
     private boolean tablePressureOn;
+    private long totalDeadRows;
 
     public PartitionCompactionPolicy(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -55,10 +94,23 @@ public class PartitionCompactionPolicy implements Mutable {
     @Override
     public void clear() {
         backoff.clear();
-        tablePressureOn = false;
-        selectedReason = REASON_NONE;
-        selectedPartitionIndex = -1;
+        deferredHeapEntries.clear();
+        heap.clear();
+        partitionStates.clear();
+        stateIndexByTimestamp.clear();
+        epochEndSeconds = 0;
+        epochStartSeconds = 0;
+        isInitialized = false;
         isSelectedPartitionHot = false;
+        lastAvgRecordSize = -1;
+        lastDeadMinSize = -1;
+        lastDeadRowsRatio = Double.NaN;
+        lastPieceAvgRowsLimit = -1;
+        lastPieceThreshold = -1;
+        selectedPartitionIndex = -1;
+        selectedReason = REASON_NONE;
+        tablePressureOn = false;
+        totalDeadRows = 0;
     }
 
     /**
@@ -130,13 +182,49 @@ public class PartitionCompactionPolicy implements Mutable {
     }
 
     /**
-     * Picks the partition to compact this commit, scanning from {@code fromIndex} - the caller passes the
-     * first partition at or after the earliest composite one, so the pass skips the cold plain partitions
-     * below it rather than starting at index 0. Every partition below the earliest composite is plain, so
-     * it would contribute nothing to the table-wide dead/live totals anyway; bounding the start leaves the
-     * table-pressure rule's denominator unchanged.
+     * Removes a partition from the incrementally maintained state. Heap entries remain until lazy validation
+     * reaches them or the stale-entry bound rebuilds the heap.
      */
-    public int selectPartition(TxWriter txWriter, PartitionGeometry geometry, long avgRecordSize, long nowMicros, int fromIndex) {
+    public void onPartitionRemoved(long partitionTimestamp) {
+        if (isInitialized) {
+            removeState(partitionTimestamp);
+        }
+    }
+
+    /**
+     * Refreshes one partition after the writer publishes a new geometry reference. The callback is ignored before
+     * the initial scan; {@link #selectPartition} seeds the complete state on its first call.
+     */
+    public void onPartitionUpdated(
+            TxWriter txWriter,
+            PartitionGeometry geometry,
+            long partitionTimestamp,
+            long avgRecordSize
+    ) {
+        if (!isInitialized) {
+            return;
+        }
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        if (partitionIndex < 0 || !txWriter.isPartitionComposite(partitionIndex)) {
+            removeState(partitionTimestamp);
+            return;
+        }
+        putState(txWriter, geometry, partitionIndex, avgRecordSize);
+        rebuildHeapIfNeeded();
+    }
+
+    /**
+     * Picks the highest-priority partition. Waste-ratio candidates outrank piece-count candidates; piece-count
+     * candidates outrank age/table-pressure candidates. Within those tiers the heap orders by waste percentage,
+     * piece count and age respectively.
+     */
+    public int selectPartition(
+            TxWriter txWriter,
+            PartitionGeometry geometry,
+            long avgRecordSize,
+            long nowMicros,
+            int fromIndex
+    ) {
         selectedReason = REASON_NONE;
         selectedPartitionIndex = -1;
         isSelectedPartitionHot = false;
@@ -147,103 +235,87 @@ public class PartitionCompactionPolicy implements Mutable {
         if (n <= 0) {
             return -1;
         }
-        final long deadMinRows = avgRecordSize > 0
-                ? configuration.getPartitionCompactionDeadMinSize() / avgRecordSize
-                : configuration.getPartitionCompactionDeadMinSize();
-        final long idleTimeout = configuration.getPartitionCompactionIdleTimeout();
-        final double ratio = configuration.getPartitionCompactionDeadRowsRatio();
-        // A partition the last few commits wrote is one the next few will write again, so REWRITE - a copy
-        // of every live row it holds - only moves rows the next commit dirties straight back. The caller
-        // reads isSelectedPartitionHot() and withholds REWRITE alone: JOIN, MOVE-TAIL and MAKE-PLAIN stay
-        // available, and on the active partition they are the whole point. MOVE-TAIL is what keeps that
-        // partition bounded, by splitting its settled front off into a partition of its own, and it is
-        // reached only through a partition this method selects. Suppressing the SELECTION instead lets the
-        // active partition grow without limit until O3PartitionJob's own threshold check rewrites it whole.
-        final int hotCommits = configuration.getPartitionCompactionHotCommits();
-        final long hotSinceTxn = txWriter.getTxn() - hotCommits;
-        int chosen = -1;
-        int chosenReason = REASON_NONE;
-        int coldest = -1;
-        long coldestMicros = Long.MAX_VALUE;
-        long coldestTs = Long.MAX_VALUE;
-        long deadRowsTable = 0;
-        long liveRowsTable = 0;
+        ensureInitialized(txWriter, geometry, avgRecordSize, nowMicros, fromIndex);
+        updateTablePressure(txWriter, avgRecordSize);
 
-        for (int i = Math.max(0, fromIndex); i < n; i++) {
-            final long live = txWriter.getPartitionSize(i);
-            final long e = geometry.getE(i);
-            final int pieces = geometry.getPieceCount(i);
-            // The gate is "any composite partition" - pieces>1 or dead space above the live rows - not "more than one
-            // piece starting above row 0" as PARTITION_COMPACTION.md Sec.4 first states.
-            if (pieces < 2 && e <= live) {
-                continue;
-            }
-            final long dead = e - live;
-            // Fold this partition's waste into the table-wide totals BEFORE the backoff check. A composite
-            // partition that is only temporarily suppressed is still dead weight on the table, so excluding
-            // it would let the table-pressure denominator - and with it the latch - move with the backoff
-            // state rather than with the actual waste, flapping the rule on and off between commits.
-            deadRowsTable += dead;
-            liveRowsTable += live;
-            final long partitionTs = txWriter.getPartitionTimestampByIndex(i);
-            if (isSuppressed(partitionTs, nowMicros)) {
-                continue;
-            }
+        deferredHeapEntries.clear();
+        try {
+            while (!heap.isEmpty()) {
+                final long priority = heap.peekKey();
+                final long partitionTimestamp = heap.peekValue();
+                final int stateIndex = stateIndexByTimestamp.get(partitionTimestamp);
+                if (stateIndex < 0) {
+                    heap.pop();
+                    continue;
+                }
+                assert stateIndex % STATE_LONGS == 0;
+                assert partitionStates.getQuick(stateIndex) == partitionTimestamp;
+                if (partitionStates.getQuick(stateIndex + STATE_PRIORITY_OFFSET) != priority) {
+                    heap.pop();
+                    continue;
+                }
 
-            final long lastWrite = geometry.getLastWriteMicros(i);
-            if (lastWrite < coldestMicros || (lastWrite == coldestMicros && partitionTs < coldestTs)) {
-                coldest = i;
-                coldestMicros = lastWrite;
-                coldestTs = partitionTs;
-            }
-            if (chosen > -1) {
-                continue; // still counting totals for the table-wide rule
-            }
-            if (dead > ratio * live && dead > deadMinRows) {
-                chosen = i;
-                chosenReason = REASON_WASTE_RATIO;
-            } else if (pieces > effectiveMaxPieces(configuration, live)) {
-                chosen = i;
-                chosenReason = REASON_PIECE_COUNT;
-            } else if (lastWrite > 0 && nowMicros - lastWrite > idleTimeout && (dead > 0 || pieces > 1)) {
-                chosen = i;
-                chosenReason = REASON_AGE;
-            }
-        }
+                assert isStateCurrent(txWriter, stateIndex, partitionTimestamp)
+                        : "stale heap partition state [partitionTimestamp=" + partitionTimestamp + ']';
+                final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+                if (partitionIndex < 0 || !txWriter.isPartitionComposite(partitionIndex)) {
+                    heap.pop();
+                    removeState(partitionTimestamp);
+                    continue;
+                }
+                final long currentGeometryRef = txWriter.getGeometryRef(partitionIndex);
+                final long stateGeometryRef = partitionStates.getQuick(stateIndex + STATE_REF_OFFSET);
+                if (currentGeometryRef != stateGeometryRef) {
+                    heap.pop();
+                    putState(txWriter, geometry, partitionIndex, avgRecordSize);
+                    continue;
+                }
+                if (isSuppressed(partitionTimestamp, nowMicros)) {
+                    deferHeapHead();
+                    continue;
+                }
 
-        // Two thresholds, not one: with a single one the rule would switch on and off around that point
-        // and queue a partition on every commit forever.
-        final long total = deadRowsTable + liveRowsTable;
-        final long deadBytes = deadRowsTable * Math.max(1, avgRecordSize);
-        if (tablePressureOn) {
-            tablePressureOn = !(deadRowsTable * 100 < total * configuration.getPartitionCompactionTableDeadStopPercent()
-                    && deadBytes <= configuration.getPartitionCompactionTableDeadTrigger() / 2);
-        } else {
-            // total == 0 (no composite partition seen yet) must never turn this on: 0 >= 0 would otherwise satisfy the
-            // percentage check trivially, latching table pressure on from the very first commit of any table, well.
-            tablePressureOn = (total > 0 && deadBytes >= configuration.getPartitionCompactionTableDeadThreshold()
-                    && deadRowsTable * 100 >= total * configuration.getPartitionCompactionTableDeadThresholdPercent())
-                    || deadBytes > configuration.getPartitionCompactionTableDeadTrigger();
-        }
+                final int tier = priorityTier(priority);
+                final int reason;
+                if (tier == PRIORITY_TIER_WASTE) {
+                    reason = REASON_WASTE_RATIO;
+                } else if (tier == PRIORITY_TIER_PIECES) {
+                    reason = REASON_PIECE_COUNT;
+                } else {
+                    final long lastWrite = geometry.getLastWriteMicros(partitionIndex);
+                    if (tablePressureOn) {
+                        reason = REASON_TABLE_PRESSURE;
+                    } else if (lastWrite > 0
+                            && nowMicros - lastWrite > configuration.getPartitionCompactionIdleTimeout()
+                            && (partitionStates.getQuick(stateIndex + STATE_DEAD_ROWS_OFFSET) > 0
+                                || geometry.getPieceCount(partitionIndex) > 1)) {
+                        reason = REASON_AGE;
+                    } else if (lastWrite <= 0) {
+                        // Unknown provenance sorts as oldest for table pressure but cannot satisfy the age rule.
+                        // Skip it temporarily because an older known record below it may satisfy that rule.
+                        deferHeapHead();
+                        continue;
+                    } else {
+                        // This is the oldest known tier-1 partition. If it is not old enough, none below it is.
+                        return -1;
+                    }
+                }
 
-        if (chosen == -1 && tablePressureOn) {
-            chosen = coldest;
-            chosenReason = REASON_TABLE_PRESSURE;
+                selectedReason = reason;
+                selectedPartitionIndex = partitionIndex;
+                if (reason == REASON_TABLE_PRESSURE) {
+                    final int hotCommits = configuration.getPartitionCompactionHotCommits();
+                    final long writerTxn = geometry.getWriterTxn(partitionIndex);
+                    isSelectedPartitionHot = hotCommits > 0
+                            && writerTxn >= 0
+                            && writerTxn > txWriter.getTxn() - hotCommits;
+                }
+                return partitionIndex;
+            }
+            return -1;
+        } finally {
+            restoreDeferredHeapEntries();
         }
-        if (chosen > -1) {
-            selectedReason = chosenReason;
-            selectedPartitionIndex = chosen;
-            // Only the table-wide rule defers to the hot window. The three per-partition rules each name a
-            // condition on the partition itself that is worth a full copy even while it is being written -
-            // dead rows past a multiple of live, a piece count past its cap, a partition idle for hours -
-            // whereas this one fires on a table-level average, at a far lower bar, and picks the coldest
-            // partition precisely because the hot one is the wrong one to rewrite.
-            // A writerTxn of -1 means no committed geometry record, so nothing says the partition is hot.
-            final long writerTxn = geometry.getWriterTxn(chosen);
-            isSelectedPartitionHot = chosenReason == REASON_TABLE_PRESSURE
-                    && hotCommits > 0 && writerTxn >= 0 && writerTxn > hotSinceTxn;
-        }
-        return chosen;
     }
 
     /**
@@ -253,16 +325,24 @@ public class PartitionCompactionPolicy implements Mutable {
         if (txWriter.getLagRowCount() > 0) {
             return -1;
         }
-        // Includes the last partition: JOIN only rewrites PartitionGeometry's piece array, never a byte
-        // of the column files or the directory's nameTxn, so the writer's own active mapping stays valid.
-        final int n = txWriter.getPartitionCount();
-        for (int i = Math.max(0, fromIndex); i < n; i++) {
-            if (geometry.getPieceCount(i) > 1 && !isSuppressed(txWriter.getPartitionTimestampByIndex(i), nowMicros)) {
-                selectedPartitionIndex = i;
-                return i;
+        int selected = -1;
+        for (int stateIndex = 0, n = partitionStates.size(); stateIndex < n; stateIndex += STATE_LONGS) {
+            final long partitionTimestamp = partitionStates.getQuick(stateIndex);
+            assert isStateCurrent(txWriter, stateIndex, partitionTimestamp)
+                    : "stale foldable partition state [partitionTimestamp=" + partitionTimestamp + ']';
+            if (isSuppressed(partitionTimestamp, nowMicros)) {
+                continue;
+            }
+            final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+            if (partitionIndex >= fromIndex
+                    && (selected < 0 || partitionIndex < selected)
+                    && txWriter.isPartitionComposite(partitionIndex)
+                    && geometry.getPieceCount(partitionIndex) > 1) {
+                selected = partitionIndex;
             }
         }
-        return -1;
+        selectedPartitionIndex = selected;
+        return selected;
     }
 
     /**
@@ -293,13 +373,100 @@ public class PartitionCompactionPolicy implements Mutable {
      * The index of the next MAKE-PLAIN candidate at or after {@code fromIndex} - see {@link #isMakePlainShape} - or -1.
      */
     public int selectMakePlainCandidate(TxWriter txWriter, PartitionGeometry geometry, long nowMicros, int fromIndex) {
-        final int n = txWriter.getPartitionCount();
-        for (int i = Math.max(0, fromIndex); i < n; i++) {
-            if (isMakePlainShape(txWriter, geometry, i) && !isSuppressed(txWriter.getPartitionTimestampByIndex(i), nowMicros)) {
-                return i;
+        int selected = -1;
+        for (int stateIndex = 0, n = partitionStates.size(); stateIndex < n; stateIndex += STATE_LONGS) {
+            final long partitionTimestamp = partitionStates.getQuick(stateIndex);
+            assert isStateCurrent(txWriter, stateIndex, partitionTimestamp)
+                    : "stale make-plain partition state [partitionTimestamp=" + partitionTimestamp + ']';
+            if (isSuppressed(partitionTimestamp, nowMicros)) {
+                continue;
+            }
+            final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+            if (partitionIndex >= fromIndex
+                    && (selected < 0 || partitionIndex < selected)
+                    && isMakePlainShape(txWriter, geometry, partitionIndex)) {
+                selected = partitionIndex;
             }
         }
-        return -1;
+        return selected;
+    }
+
+    private static long clamp(long value, long min, long max) {
+        return Math.max(min, Math.min(value, max));
+    }
+
+    private static int priorityTier(long priority) {
+        return (int) (priority >>> TIER_SHIFT);
+    }
+
+    private long ageRank(long lastWriteMicros) {
+        if (lastWriteMicros <= 0) {
+            return AGE_MASK;
+        }
+        final long lastWriteSeconds = lastWriteMicros / Micros.SECOND_MICROS;
+        return clamp(epochEndSeconds - lastWriteSeconds, 0, AGE_MASK);
+    }
+
+    private long calculatePriority(
+            long liveRows,
+            long deadRows,
+            int pieceCount,
+            long lastWriteMicros,
+            long avgRecordSize
+    ) {
+        final long deadMinRows = avgRecordSize > 0
+                ? configuration.getPartitionCompactionDeadMinSize() / avgRecordSize
+                : configuration.getPartitionCompactionDeadMinSize();
+        final int tier;
+        final long severity;
+        if (deadRows > configuration.getPartitionCompactionDeadRowsRatio() * liveRows && deadRows > deadMinRows) {
+            tier = PRIORITY_TIER_WASTE;
+            severity = wastePercent(deadRows, liveRows);
+        } else if (pieceCount > effectiveMaxPieces(configuration, liveRows)) {
+            tier = PRIORITY_TIER_PIECES;
+            severity = Math.min(1_000_000L, pieceCount);
+        } else {
+            tier = PRIORITY_TIER_AGE;
+            severity = 0;
+        }
+        assert severity <= SEVERITY_MASK;
+        return ((long) tier << TIER_SHIFT) | (severity << SEVERITY_SHIFT) | ageRank(lastWriteMicros);
+    }
+
+    private static long wastePercent(long deadRows, long liveRows) {
+        if (liveRows <= 0) {
+            return WASTE_PERCENT_MAX;
+        }
+        if (deadRows <= 0) {
+            return 0;
+        }
+
+        final long whole = deadRows / liveRows;
+        if (whole >= WASTE_PERCENT_MAX / 100) {
+            return WASTE_PERCENT_MAX;
+        }
+
+        // Calculate floor((deadRows % liveRows) * 100 / liveRows) without overflowing long. For a candidate
+        // percentage p, ceil(p * liveRows / 100) is the smallest remainder that reaches p percent. Splitting
+        // liveRows into quotient and remainder before multiplication keeps every intermediate in range.
+        final long remainder = deadRows % liveRows;
+        if (remainder <= Long.MAX_VALUE / 100) {
+            return whole * 100 + remainder * 100 / liveRows;
+        }
+        final long liveHundreds = liveRows / 100;
+        final long liveRemainder = liveRows % 100;
+        int lo = 0;
+        int hi = 99;
+        while (lo <= hi) {
+            final int mid = (lo + hi) >>> 1;
+            final long threshold = mid * liveHundreds + (mid * liveRemainder + 99) / 100;
+            if (remainder >= threshold) {
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        return whole * 100 + hi;
     }
 
     private void clearBackoff(long partitionTimestamp) {
@@ -314,6 +481,42 @@ public class PartitionCompactionPolicy implements Mutable {
         }
     }
 
+    private void deferHeapHead() {
+        deferredHeapEntries.add(heap.peekKey(), heap.peekValue());
+        heap.pop();
+    }
+
+    private void ensureInitialized(
+            TxWriter txWriter,
+            PartitionGeometry geometry,
+            long avgRecordSize,
+            long nowMicros,
+            int fromIndex
+    ) {
+        final long nowSeconds = nowMicros / Micros.SECOND_MICROS;
+        if (!isInitialized
+                || nowSeconds < epochStartSeconds
+                || nowSeconds >= epochEndSeconds
+                || hasPriorityConfigurationChanged(avgRecordSize)) {
+            rebuild(txWriter, geometry, avgRecordSize, nowMicros, fromIndex);
+        }
+    }
+
+    private boolean hasPriorityConfigurationChanged(long avgRecordSize) {
+        return lastAvgRecordSize != avgRecordSize
+                || lastDeadMinSize != configuration.getPartitionCompactionDeadMinSize()
+                || Double.compare(lastDeadRowsRatio, configuration.getPartitionCompactionDeadRowsRatio()) != 0
+                || lastPieceAvgRowsLimit != configuration.getPartitionCompactionAvgRowsPieceLim()
+                || lastPieceThreshold != configuration.getPartitionCompactionPieceThreshold();
+    }
+
+    private boolean isStateCurrent(TxWriter txWriter, int stateIndex, long partitionTimestamp) {
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        return partitionIndex >= 0
+                && txWriter.isPartitionComposite(partitionIndex)
+                && txWriter.getGeometryRef(partitionIndex) == partitionStates.getQuick(stateIndex + STATE_REF_OFFSET);
+    }
+
     private boolean isSuppressed(long partitionTimestamp, long nowMicros) {
         // The overwhelmingly common case is no partition on backoff at all - nothing has been declined - so
         // the check costs nothing per composite partition per pass until a decline populates the list.
@@ -326,5 +529,131 @@ public class PartitionCompactionPolicy implements Mutable {
             }
         }
         return false;
+    }
+
+    private void putState(TxWriter txWriter, PartitionGeometry geometry, int partitionIndex, long avgRecordSize) {
+        final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final long liveRows = txWriter.getPartitionSize(partitionIndex);
+        final long deadRows = geometry.getE(partitionIndex) - liveRows;
+        final int pieceCount = geometry.getPieceCount(partitionIndex);
+        final long priority = calculatePriority(
+                liveRows,
+                deadRows,
+                pieceCount,
+                geometry.getLastWriteMicros(partitionIndex),
+                avgRecordSize
+        );
+        final long geometryRef = txWriter.getGeometryRef(partitionIndex);
+
+        final int stateIndex = stateIndexByTimestamp.get(partitionTimestamp);
+        if (stateIndex < 0) {
+            final int newStateIndex = partitionStates.size();
+            partitionStates.add(partitionTimestamp, deadRows, priority, geometryRef);
+            stateIndexByTimestamp.put(partitionTimestamp, newStateIndex);
+        } else {
+            assert stateIndex % STATE_LONGS == 0;
+            assert partitionStates.getQuick(stateIndex) == partitionTimestamp;
+            totalDeadRows -= partitionStates.getQuick(stateIndex + STATE_DEAD_ROWS_OFFSET);
+            partitionStates.setQuick(stateIndex + STATE_DEAD_ROWS_OFFSET, deadRows);
+            partitionStates.setQuick(stateIndex + STATE_PRIORITY_OFFSET, priority);
+            partitionStates.setQuick(stateIndex + STATE_REF_OFFSET, geometryRef);
+        }
+        assert partitionStates.size() == stateIndexByTimestamp.size() * STATE_LONGS;
+        totalDeadRows += deadRows;
+        heap.push(priority, partitionTimestamp);
+    }
+
+    private void rebuild(
+            TxWriter txWriter,
+            PartitionGeometry geometry,
+            long avgRecordSize,
+            long nowMicros,
+            int fromIndex
+    ) {
+        deferredHeapEntries.clear();
+        heap.clear();
+        partitionStates.clear();
+        stateIndexByTimestamp.clear();
+        totalDeadRows = 0;
+
+        final long nowSeconds = nowMicros / Micros.SECOND_MICROS;
+        epochStartSeconds = nowSeconds - EPOCH_HISTORY_SECONDS;
+        epochEndSeconds = epochStartSeconds + AGE_MASK;
+        lastAvgRecordSize = avgRecordSize;
+        lastDeadMinSize = configuration.getPartitionCompactionDeadMinSize();
+        lastDeadRowsRatio = configuration.getPartitionCompactionDeadRowsRatio();
+        lastPieceAvgRowsLimit = configuration.getPartitionCompactionAvgRowsPieceLim();
+        lastPieceThreshold = configuration.getPartitionCompactionPieceThreshold();
+        isInitialized = true;
+
+        for (int i = Math.max(0, fromIndex), n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.isPartitionComposite(i)) {
+                putState(txWriter, geometry, i, avgRecordSize);
+            }
+        }
+    }
+
+    private void rebuildHeapIfNeeded() {
+        final int maxHeapSize = Math.max(HEAP_REBUILD_MIN_SIZE, stateIndexByTimestamp.size() * 4);
+        if (heap.size() <= maxHeapSize) {
+            return;
+        }
+        heap.clear();
+        for (int stateIndex = 0, n = partitionStates.size(); stateIndex < n; stateIndex += STATE_LONGS) {
+            heap.push(
+                    partitionStates.getQuick(stateIndex + STATE_PRIORITY_OFFSET),
+                    partitionStates.getQuick(stateIndex)
+            );
+        }
+    }
+
+    private void removeState(long partitionTimestamp) {
+        final int stateIndex = stateIndexByTimestamp.get(partitionTimestamp);
+        if (stateIndex < 0) {
+            return;
+        }
+        assert stateIndex % STATE_LONGS == 0;
+        assert partitionStates.getQuick(stateIndex) == partitionTimestamp;
+        totalDeadRows -= partitionStates.getQuick(stateIndex + STATE_DEAD_ROWS_OFFSET);
+        stateIndexByTimestamp.remove(partitionTimestamp);
+
+        final int lastStateIndex = partitionStates.size() - STATE_LONGS;
+        if (stateIndex < lastStateIndex) {
+            final long movedTimestamp = partitionStates.getQuick(lastStateIndex);
+            for (int i = 0; i < STATE_LONGS; i++) {
+                partitionStates.setQuick(stateIndex + i, partitionStates.getQuick(lastStateIndex + i));
+            }
+            stateIndexByTimestamp.put(movedTimestamp, stateIndex);
+        }
+        partitionStates.setPos(lastStateIndex);
+        assert partitionStates.size() == stateIndexByTimestamp.size() * STATE_LONGS;
+        assert totalDeadRows >= 0;
+    }
+
+    private void restoreDeferredHeapEntries() {
+        for (int i = 0, n = deferredHeapEntries.size(); i < n; i += HEAP_ENTRY_LONGS) {
+            heap.push(deferredHeapEntries.getQuick(i), deferredHeapEntries.getQuick(i + 1));
+        }
+        deferredHeapEntries.clear();
+    }
+
+    private void updateTablePressure(TxWriter txWriter, long avgRecordSize) {
+        // Express dead rows as a percentage of the table's live, user-visible rows, not of the
+        // physical live-plus-dead extent. For example, 100 live rows and 50 dead rows means 50% dead,
+        // even though the column files physically hold 150 rows.
+        // Two thresholds, not one: with a single one the rule would switch on and off around that point
+        // and queue a partition on every commit forever.
+        final long tableRowCount = txWriter.getRowCount();
+        final long deadBytes = totalDeadRows * Math.max(1, avgRecordSize);
+        if (tablePressureOn) {
+            tablePressureOn = !(totalDeadRows * 100 < tableRowCount * configuration.getPartitionCompactionTableDeadStopPercent()
+                    && deadBytes <= configuration.getPartitionCompactionTableDeadTrigger() / 2);
+        } else {
+            // tableRowCount == 0 must never turn this on: 0 >= 0 would otherwise satisfy the percentage
+            // check trivially, latching table pressure on from the first commit of an empty table.
+            tablePressureOn = (tableRowCount > 0 && deadBytes >= configuration.getPartitionCompactionTableDeadThreshold()
+                    && totalDeadRows * 100 >= tableRowCount * configuration.getPartitionCompactionTableDeadThresholdPercent())
+                    || deadBytes > configuration.getPartitionCompactionTableDeadTrigger();
+        }
     }
 }

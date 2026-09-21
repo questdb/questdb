@@ -6301,6 +6301,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * writer open, a full {@code _txn} reload or reset - never on the per-commit ingest path.
      */
     private void recountCompositePartitions() {
+        if (partitionCompactionPolicy != null) {
+            partitionCompactionPolicy.clear();
+        }
         int count = 0;
         long minTs = Long.MAX_VALUE;
         for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
@@ -6325,8 +6328,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private int removeAttachedPartitionsTracked(long partitionTimestamp) {
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
-        if (partitionIndex > -1 && txWriter.isPartitionComposite(partitionIndex) && --compositePartitionCount == 0) {
-            minCompositePartitionTimestamp = Long.MAX_VALUE;
+        if (partitionIndex > -1) {
+            final long attachedPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+            if (txWriter.isPartitionComposite(partitionIndex) && --compositePartitionCount == 0) {
+                minCompositePartitionTimestamp = Long.MAX_VALUE;
+            }
+            if (partitionCompactionPolicy != null) {
+                partitionCompactionPolicy.onPartitionRemoved(attachedPartitionTimestamp);
+            }
         }
         return txWriter.removeAttachedPartitions(partitionTimestamp);
     }
@@ -6338,6 +6347,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void resetCompositePartitionTracking() {
         compositePartitionCount = 0;
         minCompositePartitionTimestamp = Long.MAX_VALUE;
+        if (partitionCompactionPolicy != null) {
+            partitionCompactionPolicy.clear();
+        }
     }
 
     /**
@@ -6360,6 +6372,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else if (--compositePartitionCount == 0) {
                 minCompositePartitionTimestamp = Long.MAX_VALUE;
             }
+        }
+        if (partitionCompactionPolicy != null) {
+            partitionCompactionPolicy.onPartitionUpdated(txWriter, getGeometry(), partitionTimestamp, avgRecordSize());
         }
     }
 

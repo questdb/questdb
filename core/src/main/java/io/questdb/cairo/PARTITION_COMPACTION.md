@@ -36,7 +36,17 @@ to MAKE-PLAIN instead.
 | **waste ratio** | dead rows exceed a ratio of live rows AND a minimum size |
 | **piece count** | the folder (or its logical partition) has too many pieces - the cap is `max(piece.threshold, liveRows / avg.rows.piece.lim)`, never below the flat floor but scaled up for a large folder, since a piece's read cost is a fixed amount per piece regardless of folder size |
 | **age** | idle past a timeout, and still has waste or more than one piece |
-| **table pressure** | the whole table's dead-row percentage crosses a high-water mark AND the absolute dead bytes clear a minimum floor (or the absolute dead bytes alone cross a much higher ceiling); picks the oldest wasteful folder first, and keeps compacting until a lower low-water mark is reached |
+| **table pressure** | dead rows as a percentage of the whole table's live, user-visible rows cross a high-water mark AND the absolute dead bytes clear a minimum floor (or the absolute dead bytes alone cross a much higher ceiling); for example, 100 live rows plus 50 dead rows means 50% dead, despite the 150-row physical extent; picks the oldest wasteful folder first, and keeps compacting until a lower low-water mark is reached |
+
+`PartitionCompactionPolicy` keeps composite partitions in a primitive max-heap instead of scanning the
+partition table on every commit. The heap stores each `(priority, partition timestamp)` pair as two adjacent
+longs in one backing array, without per-entry objects. A packed 64-bit priority puts waste-ratio candidates
+first (highest integer dead/live percentage, capped at 1000), piece-count candidates second (highest count,
+capped at 1,000,000),
+and age/table-pressure candidates last (oldest first). The age field stores seconds relative to a policy
+epoch: 30 bits preserve one-second ordering over ten years of history and leave about 24 years before the
+policy rebuilds the epoch. The policy also maintains the table's dead-row total incrementally as geometry
+changes.
 
 ## How compaction works
 
