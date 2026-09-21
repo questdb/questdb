@@ -2130,7 +2130,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // the anchor map's, so binding is where the two meet. Adopting it moves the
             // group's runtime state into the window's own map value and leaves each
             // grouped function a read-only projection of it; a declined plan leaves every
-            // function on the private map and the legacy root it has outside a group.
+            // function on the private map it has outside a group, and the seal still writes
+            // the same window root from those maps.
             window.bindCheckpointWindowStatePlan(wf.getCheckpointWindowStatePlan());
             committed = true;
             return window;
@@ -2147,10 +2148,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * this repair replays through the primary one.
      * <p>
      * Only a repair that leaves the primary's own state standing is offered it, and there
-     * are two such repairs. One stops at a finite convergence boundary: it rebuilds the
+     * are three such repairs. One stops at a finite convergence boundary: it rebuilds the
      * state of {@code [L, H)} and leaves the state above {@code H} alone, so the primary it
-     * would otherwise wipe is already correct. The other is the open-segment keyed resume:
-     * it reaches the frontier, but only for the keys its correction touched, and it hands
+     * would otherwise wipe is already correct. The other two are the keyed open-segment
+     * routes, the resume from an anchor root and the cold replay from the segment's origin:
+     * each reaches the frontier, but only for the keys its correction touched, and hands
      * those keys back through
      * {@code LiveViewWindow.transplantCheckpointWindowEntry} rather than by replacing the
      * runtime. Everything else - an unlocalized rebuild, a localized repair whose influence

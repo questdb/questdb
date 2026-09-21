@@ -198,9 +198,9 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
 
     /**
      * Returns the fused window-state plan, or null when this factory carries no group
-     * that can share one durable tree. Nothing persists it yet: the seal still writes
-     * one legacy root per function, and the plan's first durable consumer is the
-     * window-state root.
+     * that can share one durable tree. A live view's window keeps it as the storage plan
+     * every seal writes the window root under, and binds it as the runtime plan only when
+     * {@code cairo.sql.window.map.fusion.enabled} is on.
      */
     public @Nullable LiveViewWindowStatePlan getCheckpointWindowStatePlan() {
         return checkpointWindowStatePlan;

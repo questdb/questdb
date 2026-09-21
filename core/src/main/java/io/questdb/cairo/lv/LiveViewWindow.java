@@ -711,8 +711,9 @@ public class LiveViewWindow implements QuietCloseable {
 
     /**
      * Adopts the compiler's fused window-state plan, or declines it. Declining is the
-     * fail-safe direction and costs the view only the fused root: every function goes
-     * back to the private map and the legacy root it has outside a group.
+     * fail-safe direction and costs the view only the fused runtime: every function goes
+     * back to the private map it has outside a group, and a seal still writes the same
+     * window root, reading each component out of those maps.
      * <p>
      * Adopting moves runtime ownership. The anchor map is rebuilt with the fused value
      * layout, each grouped function's accumulator is copied into the component slots the

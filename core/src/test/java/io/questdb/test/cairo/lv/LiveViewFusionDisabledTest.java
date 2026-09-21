@@ -136,7 +136,7 @@ public class LiveViewFusionDisabledTest extends AbstractLiveViewTest {
                 final long repairedBefore = repairedRows(instance());
 
                 // Below the frontier, so the refresh cannot append: it has to replay the
-                // dependency interval over the legacy roots the kill switch left behind.
+                // dependency interval over the window roots the unfused seals wrote.
                 insertAccount(job, timestamp(35), "acct-1", 100.0);
                 Assert.assertTrue(
                         "the row below the frontier must be repaired rather than appended",

@@ -249,7 +249,7 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
                 // A refresh worker keeps one builder and one set of metadata readers for its
                 // whole life and serves one definition after another through them. Each outlier
                 // identity fits under the limit on its own, but together they exceed it, so a
-                // shell that parked every width it has seen would keep 1,200,064 image bytes.
+                // shell that parked every width it has seen would keep over 1,200,000 image bytes.
                 long segmentId = 100;
                 for (int i = 0; i < OUTLIER_IDENTITY_WIDTHS.length; i++) {
                     final byte[] identity = identity(OUTLIER_IDENTITY_WIDTHS[i], 'a' + i);
@@ -529,7 +529,9 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
      * function roots, seals a checkpoint root over them through {@code builder}, then
      * restores through the long-lived readers - the directory the root names, the function
      * root in it and the window root. This method detaches every shell when its operation
-     * ends, as the worker detaches its own. The window shares the function's identity width.
+     * ends, as the worker detaches its own, and only then reads what the shell decoded: a
+     * pool over its limit drops its arrays on detach, and the images it already lent must
+     * stay intact. The window shares the function's identity width.
      */
     private void serveDefinition(
             LiveViewCheckpointRootBuilder builder,
@@ -575,19 +577,19 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
         root.of(checkpointsDir(dir), checkpointRef);
         root.getFunctionDirectoryRef(directoryRef);
         directory.of(checkpointsDir(dir), directoryRef);
-        Assert.assertEquals(1, directory.size());
-        Assert.assertTrue(directory.find(identity, foundRef));
-        assertRefEquals(functionRootRef, foundRef);
         directory.detach();
         root.detach();
+        Assert.assertEquals(1, directory.size());
+        Assert.assertTrue("detached directory lost the identity it decoded", directory.find(identity, foundRef));
+        assertRefEquals(functionRootRef, foundRef);
 
         functionRoot.of(checkpointsDir(dir), functionRootRef);
-        Assert.assertArrayEquals(identity, functionRoot.getFunctionIdentity());
         functionRoot.detach();
+        Assert.assertArrayEquals("detached function root lost its identity", identity, functionRoot.getFunctionIdentity());
 
         windowRoot.of(checkpointsDir(dir), windowRootRef);
-        Assert.assertArrayEquals(identity, windowRoot.getWindowIdentity());
         windowRoot.detach();
+        Assert.assertArrayEquals("detached window root lost its identity", identity, windowRoot.getWindowIdentity());
     }
 
     private LiveViewCheckpointPageRef writeRaw(long segmentId, int pageKind, PageWriter pageWriter) {
