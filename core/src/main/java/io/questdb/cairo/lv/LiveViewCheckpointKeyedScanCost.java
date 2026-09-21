@@ -108,6 +108,11 @@ import org.jetbrains.annotations.NotNull;
  * three figures - so {@link #isSaturated()} reports the stop for any consumer that prices
  * the keyed side against something the budget does not bound.
  * <p>
+ * A posting budget does not bound the setup term: keys that hold no posting in most of the
+ * interval's partitions leave the count far below it while every partition still charges
+ * its open and seeks. A caller whose verdict is the whole keyed price passes the setup
+ * prices, and the walk then stops once that price, setup included, reaches the budget.
+ * <p>
  * One instance per refresh job, bound to the repair's pinned reader by {@link #of} and
  * reused across repairs.
  */
@@ -163,91 +168,49 @@ public final class LiveViewCheckpointKeyedScanCost {
             @NotNull IntList symbolKeys,
             long budgetRows
     ) {
-        indexOpens = 0;
-        indexSeeks = 0;
-        postingRows = 0;
-        saturated = false;
-        if (highTsInclusive < lowTs || symbolKeys.size() == 0 || reader.size() == 0) {
-            return 0;
-        }
-        final int partitionCount = reader.getPartitionCount();
-        final long tableMaxTs = reader.getMaxTimestamp();
-        // PARTITION BY NONE maintains no table minimum - it reads back as Long.MAX_VALUE,
-        // above the maximum - so the single partition's own floor is the only lower bound
-        // there is. The same clamp LiveViewCheckpointScanCost applies, for the same reason.
-        final long tableMinTs = reader.getMinTimestamp() <= tableMaxTs
-                ? reader.getMinTimestamp()
-                : reader.getPartitionMinTimestampFromMetadata(0);
-        long rows = 0;
-        // An interval starting below the table's own minimum searches to -1, which is the
-        // first partition.
-        for (int i = Math.max(0, reader.getPartitionIndexByTimestamp(lowTs)); i < partitionCount; i++) {
-            final long partitionLowTs = i == 0 ? tableMinTs : reader.getPartitionMinTimestampFromMetadata(i);
-            if (partitionLowTs > highTsInclusive) {
-                break;
-            }
-            final long partitionHighTs = i + 1 < partitionCount
-                    ? reader.getPartitionMaxTimestampFromMetadata(i)
-                    : tableMaxTs;
-            if (partitionHighTs < lowTs) {
-                continue;
-            }
-            final long partitionRows;
-            final IndexReader indexReader;
-            try {
-                // Opened, not just counted. TableReader hands out an index reader per
-                // partition, and for a partition whose columns it has not mapped yet it
-                // hands out - and caches - a null reader that yields no row at all. Pricing
-                // through that would report the keyed scan as free AND leave the cached null
-                // reader behind for the next index-driven query on this reader, which would
-                // then miss rows. The open is not extra work either: it maps exactly the
-                // partitions the scan being priced would read.
-                partitionRows = reader.openPartition(i);
-                if (partitionRows <= 0) {
-                    continue;
-                }
-                indexReader = reader.getIndexReader(i, columnIndex, IndexReader.DIR_FORWARD);
-            } catch (Throwable ignore) {
-                // A partition written before the column was indexed, a Parquet partition, or
-                // an index this reader cannot open. None is an error here: the repair reads
-                // the whole range, exactly as it did before this estimate existed.
-                indexOpens = 0;
-                indexSeeks = 0;
-                postingRows = 0;
-                return UNPRICEABLE;
-            }
-            // One open for the whole partition, whatever |Q| and F are: TableReader caches
-            // the index reader per (partition, column, direction) and hands the same one to
-            // every key of every frame. What repeats per (key, frame) is the seek that
-            // HeapRowCursorFactory rebuilds, and it is charged below at its own, far lower
-            // price.
-            indexOpens++;
-            final long partitionSeeks = countPartitionFrames(partitionRows);
-            for (int k = 0, n = symbolKeys.size(); k < n; k++) {
-                indexSeeks += partitionSeeks;
-                rows += countPostings(indexReader, symbolKeys.getQuick(k), partitionRows, budgetRows - rows);
-                if (rows >= budgetRows) {
-                    // The verdict is settled. Report what is known and stop paying for an
-                    // answer nothing reads - but say that it is what is known and not what
-                    // there is, because every key below k and every partition above i is
-                    // now uncounted in all three figures.
-                    postingRows = rows;
-                    final boolean hasPartitionAbove = i + 1 < partitionCount
-                            && reader.getPartitionMinTimestampFromMetadata(i + 1) <= highTsInclusive;
-                    saturated |= k + 1 < n || hasPartitionAbove;
-                    return rows;
-                }
-            }
-        }
-        postingRows = rows;
-        return rows;
+        return estimate(lowTs, highTsInclusive, columnIndex, symbolKeys, budgetRows, false, 0, 0);
+    }
+
+    /**
+     * {@link #estimateKeyedScanRows(long, long, int, IntList, long)}, with the budget bounding
+     * the keyed scan's whole price - {@link #keyedScanCostRows} at {@code indexOpenRows} and
+     * {@code indexSeekRows} - rather than its posting rows alone.
+     * <p>
+     * A partition's setup is known before any of its keys is looked up, so the walk stops
+     * ahead of the first partition whose setup carries the price to the budget, rather than
+     * probing every key of every partition while a sparse key domain's postings stay below
+     * it. The figures it reports then include that partition's setup, which prices them at
+     * the budget or more - the verdict a full count reaches - and {@link #isSaturated()}
+     * reports every posting from that partition up as uncounted. The check runs once per
+     * partition, so the posting rows a partition's keys add stop the walk at the next
+     * partition, or at the posting budget.
+     *
+     * @param budgetRows    the keyed price at or above which the caller's verdict cannot
+     *                      change, which also bounds the posting rows
+     * @param indexOpenRows the price of one index open, in base rows, as
+     *                      {@link #keyedScanCostRows} takes it
+     * @param indexSeekRows the price of one index seek, in base rows, as
+     *                      {@link #keyedScanCostRows} takes it
+     * @return the posting rows, or {@link #UNPRICEABLE}
+     */
+    public long estimateKeyedScanRows(
+            long lowTs,
+            long highTsInclusive,
+            int columnIndex,
+            @NotNull IntList symbolKeys,
+            long budgetRows,
+            long indexOpenRows,
+            long indexSeekRows
+    ) {
+        return estimate(lowTs, highTsInclusive, columnIndex, symbolKeys, budgetRows, true, indexOpenRows, indexSeekRows);
     }
 
     /**
      * @return how many index opens {@link #estimateKeyedScanRows} counted - one per
-     * <b>partition</b> it visited, independent of the key count and of the frame split,
-     * because {@code TableReader.getIndexReader} caches its reader per (partition, column,
-     * direction) and every key of every frame is handed the same one
+     * <b>partition</b> it visited, including the one whose setup stopped the walk short of
+     * opening its index, independent of the key count and of the frame split, because
+     * {@code TableReader.getIndexReader} caches its reader per (partition, column, direction)
+     * and every key of every frame is handed the same one
      */
     public long getIndexOpens() {
         return indexOpens;
@@ -423,6 +386,118 @@ public final class LiveViewCheckpointKeyedScanCost {
             saturated |= rows >= budgetRows && cursor.hasNext();
             return rows;
         }
+    }
+
+    private long estimate(
+            long lowTs,
+            long highTsInclusive,
+            int columnIndex,
+            IntList symbolKeys,
+            long budgetRows,
+            boolean isSetupBudgeted,
+            long indexOpenRows,
+            long indexSeekRows
+    ) {
+        indexOpens = 0;
+        indexSeeks = 0;
+        postingRows = 0;
+        saturated = false;
+        if (highTsInclusive < lowTs || symbolKeys.size() == 0 || reader.size() == 0) {
+            return 0;
+        }
+        final int partitionCount = reader.getPartitionCount();
+        final long tableMaxTs = reader.getMaxTimestamp();
+        // PARTITION BY NONE maintains no table minimum - it reads back as Long.MAX_VALUE,
+        // above the maximum - so the single partition's own floor is the only lower bound
+        // there is. The same clamp LiveViewCheckpointScanCost applies, for the same reason.
+        final long tableMinTs = reader.getMinTimestamp() <= tableMaxTs
+                ? reader.getMinTimestamp()
+                : reader.getPartitionMinTimestampFromMetadata(0);
+        final int keyCount = symbolKeys.size();
+        long rows = 0;
+        // An interval starting below the table's own minimum searches to -1, which is the
+        // first partition.
+        for (int i = Math.max(0, reader.getPartitionIndexByTimestamp(lowTs)); i < partitionCount; i++) {
+            final long partitionLowTs = i == 0 ? tableMinTs : reader.getPartitionMinTimestampFromMetadata(i);
+            if (partitionLowTs > highTsInclusive) {
+                break;
+            }
+            final long partitionHighTs = i + 1 < partitionCount
+                    ? reader.getPartitionMaxTimestampFromMetadata(i)
+                    : tableMaxTs;
+            if (partitionHighTs < lowTs) {
+                continue;
+            }
+            final long partitionRows;
+            final long partitionSeeks;
+            final IndexReader indexReader;
+            try {
+                // Opened, not just counted. TableReader hands out an index reader per
+                // partition, and for a partition whose columns it has not mapped yet it
+                // hands out - and caches - a null reader that yields no row at all. Pricing
+                // through that would report the keyed scan as free AND leave the cached null
+                // reader behind for the next index-driven query on this reader, which would
+                // then miss rows. The open is not extra work either: it maps exactly the
+                // partitions the scan being priced would read.
+                partitionRows = reader.openPartition(i);
+                if (partitionRows <= 0) {
+                    continue;
+                }
+                partitionSeeks = countPartitionFrames(partitionRows);
+                if (isSetupBudgeted) {
+                    // This partition's setup - its open, and a seek per key per frame - is
+                    // known before its index is opened or a key looked up. Where it carries
+                    // the keyed price to the budget, the verdict is settled, and probing
+                    // these keys would pay for an answer nothing reads. The figures take
+                    // the partition's setup, so they price at the budget as the full count
+                    // would, and every posting from this partition up is uncounted.
+                    final long seeksWithPartition = saturatingSum(
+                            indexSeeks,
+                            saturatingProduct(partitionSeeks, keyCount)
+                    );
+                    if (keyedScanCostRows(rows, indexOpens + 1, seeksWithPartition, keyCount, indexOpenRows, indexSeekRows)
+                            >= budgetRows) {
+                        indexOpens++;
+                        indexSeeks = seeksWithPartition;
+                        postingRows = rows;
+                        saturated = true;
+                        return rows;
+                    }
+                }
+                indexReader = reader.getIndexReader(i, columnIndex, IndexReader.DIR_FORWARD);
+            } catch (Throwable ignore) {
+                // A partition written before the column was indexed, a Parquet partition, or
+                // an index this reader cannot open. None is an error here: the repair reads
+                // the whole range, exactly as it did before this estimate existed.
+                indexOpens = 0;
+                indexSeeks = 0;
+                postingRows = 0;
+                return UNPRICEABLE;
+            }
+            // One open for the whole partition, whatever |Q| and F are: TableReader caches
+            // the index reader per (partition, column, direction) and hands the same one to
+            // every key of every frame. What repeats per (key, frame) is the seek that
+            // HeapRowCursorFactory rebuilds, and it is charged below at its own, far lower
+            // price.
+            indexOpens++;
+            for (int k = 0; k < keyCount; k++) {
+                indexSeeks += partitionSeeks;
+                rows += countPostings(indexReader, symbolKeys.getQuick(k), partitionRows, budgetRows - rows);
+                if (rows >= budgetRows) {
+                    // The verdict is settled. Report what is known and stop paying for an
+                    // answer nothing reads - but say that it is what is known and not what
+                    // there is, because every key below k and every partition above i is
+                    // now uncounted in all three figures.
+                    postingRows = rows;
+                    final boolean hasPartitionAbove = i + 1 < partitionCount
+                            && reader.getPartitionMinTimestampFromMetadata(i + 1) <= highTsInclusive;
+                    saturated |= k + 1 < keyCount || hasPartitionAbove;
+                    return rows;
+                }
+            }
+        }
+        postingRows = rows;
+        return rows;
     }
 
     /**

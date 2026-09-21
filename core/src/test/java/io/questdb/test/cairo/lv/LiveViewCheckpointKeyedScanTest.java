@@ -145,11 +145,13 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
         // query reaches afterwards.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         // The shipped 256-row open price puts a one-key scan's setup floor above this 41-row
-        // day, so the job would decline the segment before it opens a partition. At 35 the
-        // floor is 35 + 5 = 40, one row below the day, so the job still prices it - and still
-        // declines it, at 11 + 2 * 35 + 2 * 5 = 91 rows, so the repair reads whole as it does
-        // at the default.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 35);
+        // day, so the job would decline the segment before it opens a partition. At 13 the
+        // job prices it, and the walk reaches the corrected hour's partition before the
+        // verdict settles: the first partition's ten postings and both partitions' setup come
+        // to 10 + 2 * 13 + 2 * 2 = 40, one row below the day, so it opens that partition's
+        // index. Its posting brings the price to 41, and the job still declines it, so the
+        // repair reads whole as it does at the default.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 13);
         assertMemoryLeak(() -> {
             createView(seedFourAccountsOverThreeDays(), true);
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -322,6 +324,58 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                                 count\tsum
                                 41\t231.0
                                 """);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testSparseKeyPricingStopsOnceItsSetupOutpricesTheWholeSegment() throws Exception {
+        // A hundred new accounts corrected into the last hour of a closed day that spans
+        // 24 hourly partitions. At the shipped 256-row open price each partition costs
+        // 256 + 100 * 42 = 4_456 rows of setup before it yields a posting, which clears the
+        // one-partition floor against the 6_100-row day, but two partitions cost 8_912 and
+        // settle the verdict. The new keys hold no posting below the last hour, so a walk
+        // that stops only on posting rows probes every key in all 24 partitions to reach
+        // the verdict the second partition already reached, and only the last partition
+        // yields the postings it counts.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL NOCACHE INDEX CAPACITY 4, "
+                    + "amount DOUBLE) TIMESTAMP(created_at) PARTITION BY HOUR WAL");
+            // 250 rows in each hour of 2026-01-02.
+            execute("INSERT INTO tx SELECT "
+                    + "timestamp_sequence('2026-01-02T00:00:00.000000Z', 14_400_000), "
+                    + "'filler'::SYMBOL, "
+                    + "1.0 "
+                    + "FROM long_sequence(6_000)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                    + "SELECT created_at, account_id, sum(amount) OVER w AS cumulative_sum FROM tx "
+                    + "WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(3, 1, "filler"), job);
+                Assert.assertEquals(0, job.keyedScanPricedCountForTest());
+
+                execute("INSERT INTO tx SELECT "
+                        + "timestamp_sequence('2026-01-02T23:30:00.000000Z', 1), "
+                        + "('new-' || x)::SYMBOL, "
+                        + "1.0 "
+                        + "FROM long_sequence(100)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                Assert.assertEquals(1, job.keyedScanPricedCountForTest());
+                Assert.assertEquals(6_100, job.keyedScanWholeRangeRowsForTest());
+                Assert.assertEquals(0, job.keyedScanCheaperCountForTest());
+                Assert.assertEquals(
+                        "pricing must stop once the setup outprices the whole day, before it"
+                                + " reaches the last hour's partition and the new keys' postings",
+                        0,
+                        job.keyedScanPostingRowsForTest()
+                );
+                Assert.assertEquals(1, job.segmentRepairCountForTest());
                 assertViewMatchesRecompute();
             }
         });
@@ -1085,6 +1139,81 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                 );
                 Assert.assertEquals(125, cost.getPostingRows());
                 Assert.assertEquals(1, cost.getIndexOpens());
+            }
+        });
+    }
+
+    @Test
+    public void testASetupBudgetedEstimateStopsAheadOfThePartitionThatSettlesTheVerdict() throws Exception {
+        // One key whose only posting sits in the last of four single-frame partitions, priced
+        // at 100 rows per open and 100 per seek against a 401-row budget. Its posting count
+        // stays at zero for three partitions, so the posting budget alone walks all four,
+        // while the setup of two partitions prices at 400 and of three at 600.
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(100, 100);
+            try {
+                execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL NOCACHE INDEX CAPACITY 4, "
+                        + "amount DOUBLE) TIMESTAMP(created_at) PARTITION BY HOUR WAL");
+                // 100 rows in each of the first four hours of 2026-01-02, and one more row in
+                // the fourth, which is the key's only posting.
+                execute("INSERT INTO tx SELECT "
+                        + "timestamp_sequence('2026-01-02T00:00:00.000000Z', 36_000_000), "
+                        + "'filler'::SYMBOL, "
+                        + "1.0 "
+                        + "FROM long_sequence(400)");
+                execute("INSERT INTO tx VALUES ('2026-01-02T03:30:00.000000Z', 'late', 1.0)");
+                drainWalQueue();
+
+                final long lowTs = ts("2026-01-02T00:00:00.000000Z");
+                final long highTs = ts("2026-01-02T03:59:59.999999Z");
+                final IntList keys = new IntList();
+                final LiveViewCheckpointKeyedScanCost cost = new LiveViewCheckpointKeyedScanCost();
+                try (TableReader reader = engine.getReader(engine.getTableTokenIfExists("tx"))) {
+                    keys.add(reader.getSymbolMapReader(1).keyOf("late"));
+                    cost.of(reader, sqlExecutionContext);
+
+                    Assert.assertEquals(1, cost.estimateKeyedScanRows(lowTs, highTs, 1, keys, 401));
+                    Assert.assertEquals(4, cost.getIndexOpens());
+                    Assert.assertEquals(4, cost.getIndexSeeks());
+                    Assert.assertFalse(cost.isSaturated());
+
+                    Assert.assertEquals(0, cost.estimateKeyedScanRows(lowTs, highTs, 1, keys, 401, 100, 100));
+                    Assert.assertEquals(
+                            "the walk must stop on the third partition's setup, and charge it",
+                            3,
+                            cost.getIndexOpens()
+                    );
+                    Assert.assertEquals(3, cost.getIndexSeeks());
+                    Assert.assertEquals(0, cost.getPostingRows());
+                    Assert.assertTrue(
+                            "the last partition's posting is uncounted, so the figures are floors",
+                            cost.isSaturated()
+                    );
+                    Assert.assertEquals(
+                            600,
+                            LiveViewCheckpointKeyedScanCost.keyedScanCostRows(0, 3, 3, 1, 100, 100)
+                    );
+                    Assert.assertFalse(
+                            "the stopped figures must read as not cheaper, as the full count does",
+                            LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(0, 3, 3, 1, 401, 100, 100)
+                    );
+
+                    // The full price is 1 + 4 * 100 + 4 * 100 = 801, so a budget above it does
+                    // not cut the walk short, and the keyed route still wins.
+                    Assert.assertEquals(1, cost.estimateKeyedScanRows(lowTs, highTs, 1, keys, 802, 100, 100));
+                    Assert.assertEquals(4, cost.getIndexOpens());
+                    Assert.assertEquals(4, cost.getIndexSeeks());
+                    Assert.assertFalse(cost.isSaturated());
+                    Assert.assertTrue(LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(1, 4, 4, 1, 802, 100, 100));
+
+                    // A zero price disables the setup term, and with it the setup's bound.
+                    Assert.assertEquals(1, cost.estimateKeyedScanRows(lowTs, highTs, 1, keys, 401, 0, 0));
+                    Assert.assertEquals(4, cost.getIndexOpens());
+                    Assert.assertEquals(4, cost.getIndexSeeks());
+                    Assert.assertFalse(cost.isSaturated());
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
             }
         });
     }

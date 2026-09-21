@@ -1042,7 +1042,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     /**
      * Test-only: the posting rows a keyed scan of every priced segment would pull, summed.
      * Comparable with {@link #keyedScanWholeRangeRowsForTest()}, which is what those same
-     * segments read today.
+     * segments read today. Each count stops once the keyed price, setup included, reaches
+     * the whole-range rows, so one that stopped there is a floor.
      */
     @TestOnly
     public long keyedScanPostingRowsForTest() {
@@ -5119,8 +5120,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         keyedScanKeys,
                         // Above the whole-range scan the verdict cannot change, so the
                         // count saturates there rather than walking a hot key's postings
-                        // for an answer nothing reads.
-                        wholeRangeRows
+                        // for an answer nothing reads. The walk prices the setup against
+                        // it too, which stops a sparse key domain - one holding no posting
+                        // in most partitions - from probing every key of every partition.
+                        wholeRangeRows,
+                        indexOpenRows,
+                        indexSeekRows
                 );
                 if (postingRows == LiveViewCheckpointKeyedScanCost.UNPRICEABLE) {
                     keyedScanUnpricedCount++;

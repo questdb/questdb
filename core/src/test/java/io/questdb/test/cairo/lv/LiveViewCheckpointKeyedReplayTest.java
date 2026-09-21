@@ -565,28 +565,10 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     /**
-     * The reported defect, reproduced end to end: a closed-segment keyed repair used to
-     * publish a state root that dropped the anchors of every key outside its correction
-     * domain, and the next correction then restarted those keys' accumulators from zero.
-     * <p>
-     * It was reachable only with map fusion off, because that was the setting that chose
-     * the second state-root format. The legacy anchor builder treated a keyed capture as a
-     * complete snapshot and removed every entry it did not put, while the function-root
-     * builder applied the same capture's output-key domain and kept those keys' state. So
-     * the two roots of one boundary disagreed about which keys existed, and a later
-     * restore reset the accumulators of the keys only one of them still named - with no
-     * refresh fault to say so.
-     * <p>
-     * With one builder there is no second opinion to have. The window root applies the
-     * repaired output-key domain to the whole entry, so a key outside it keeps the
-     * predecessor's anchor value and components together, and the assertions below hold
-     * the ten repaired minute boundaries to exactly that.
-     * <p>
-     * The distinguishing evidence is {@code acct-3}, which no correction here ever
-     * touches: on the defective baseline its cumulative sums came back as 1.0 and 4.0
-     * instead of 7.0 and 10.0. A whole-view comparison against the oracle would catch it
-     * too, but the two rows are asserted by name so a future change that weakens the
-     * oracle cannot quietly take the case with it.
+     * A closed-segment keyed repair with map fusion off must keep the anchors of the keys
+     * outside its correction domain. {@code acct-3}, which no correction touches, is the
+     * distinguishing evidence: its cumulative sums must read 7.0 and 10.0, where the
+     * defective baseline produced 1.0 and 4.0.
      */
     @Test
     public void testAKeyedRepairWithoutFusionKeepsUntouchedAccountsAccumulating() throws Exception {
