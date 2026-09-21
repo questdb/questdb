@@ -11182,7 +11182,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             windowFunction.getType(),
                             IndexType.NONE,
                             0,
-                            false,
+                            windowFunction instanceof SymbolFunction sf && sf.isSymbolTableStatic(),
                             null
                     ));
                 } else { // column
@@ -11598,7 +11598,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 windowFunction.getType(),
                                 IndexType.NONE,
                                 0,
-                                false,
+                                windowFunction instanceof SymbolFunction sf && sf.isSymbolTableStatic(),
                                 null
                         ));
                         deferredWindowFunctions.extendAndSet(i, windowFunction);

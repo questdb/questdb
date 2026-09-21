@@ -70,6 +70,93 @@ public class NestedLagSymbolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLagLeadSymbolDownstreamFilter() throws Exception {
+        // The window column reports a static symbol table when its argument is a table column,
+        // so the outer filter resolves its constants to int keys. 'nope' is absent from the
+        // symbol table and must match nothing.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, k SYMBOL, a SYMBOL, p DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00', 'k1', 'a1', 3),
+                    ('2024-01-01T01:00:00', 'k2', NULL, 2),
+                    ('2024-01-02T02:00:00', 'k1', 'a3', 1),
+                    ('2024-01-02T03:00:00', 'k2', 'a4', 0)
+                    """);
+
+            // streaming window
+            assertQuery("SELECT ts, x FROM (SELECT ts, lag(a) OVER () x FROM t) WHERE x IN ('a1', 'a3', 'nope')")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tx
+                            2024-01-01T01:00:00.000000Z\ta1
+                            2024-01-02T03:00:00.000000Z\ta3
+                            """);
+            assertQuery("SELECT ts, x FROM (SELECT ts, lag(a) OVER (PARTITION BY k) x FROM t) WHERE x != 'a1'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tx
+                            2024-01-01T00:00:00.000000Z\t
+                            2024-01-01T01:00:00.000000Z\t
+                            2024-01-02T03:00:00.000000Z\t
+                            """);
+            // cached window
+            assertQuery("SELECT ts, x FROM (SELECT ts, lead(a) OVER (ORDER BY p) x FROM t) WHERE x = 'a3' OR x = 'nope'")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tx
+                            2024-01-02T03:00:00.000000Z\ta3
+                            """);
+        });
+    }
+
+    @Test
+    public void testLagLeadSymbolDownstreamJoin() throws Exception {
+        // dim assigns different int keys to the same symbol values, and holds a value absent
+        // from t, so the join must map keys between the two static symbol tables by value.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, k SYMBOL, a SYMBOL, p DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00', 'k1', 'a1', 3),
+                    ('2024-01-01T01:00:00', 'k2', NULL, 2),
+                    ('2024-01-02T02:00:00', 'k1', 'a3', 1),
+                    ('2024-01-02T03:00:00', 'k2', 'a4', 0)
+                    """);
+            execute("CREATE TABLE dim (a SYMBOL, v INT)");
+            execute("INSERT INTO dim VALUES ('zz', 0), ('a4', 4), ('a3', 3), ('a1', 1)");
+
+            // streaming window
+            assertQuery("SELECT w.ts, w.x, dim.v FROM (SELECT ts, lag(a) OVER () x FROM t) w JOIN dim ON w.x = dim.a")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tx\tv
+                            2024-01-01T01:00:00.000000Z\ta1\t1
+                            2024-01-02T03:00:00.000000Z\ta3\t3
+                            """);
+            // cached window
+            assertQuery("SELECT w.ts, w.x, dim.v FROM (SELECT ts, lead(a) OVER (ORDER BY p) x FROM t) w LEFT JOIN dim ON w.x = dim.a")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tx\tv
+                            2024-01-01T00:00:00.000000Z\t\tnull
+                            2024-01-01T01:00:00.000000Z\ta1\t1
+                            2024-01-02T02:00:00.000000Z\t\tnull
+                            2024-01-02T03:00:00.000000Z\ta3\t3
+                            """);
+        });
+    }
+
+    @Test
     public void testLagLeadSymbolNonLightCachedWindow() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, false);
         assertMemoryLeak(() -> {
@@ -158,6 +245,33 @@ public class NestedLagSymbolTest extends AbstractCairoTest {
                             }
                             Assert.assertEquals(1_000, rows);
                         }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLagLeadSymbolStaticSymbolTableMetadata() throws Exception {
+        // The window column shares its argument's symbol table: static for a table column,
+        // dynamic for a cast, which builds its dictionary as rows arrive.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, k SYMBOL, a SYMBOL, p DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00', 'k1', 'a1', 3),
+                    ('2024-01-01T01:00:00', 'k2', NULL, 2),
+                    ('2024-01-02T02:00:00', 'k1', 'a3', 1),
+                    ('2024-01-02T03:00:00', 'k2', 'a4', 0)
+                    """);
+
+            for (String over : new String[]{"OVER ()", "OVER (PARTITION BY k)", "OVER (PARTITION BY k ORDER BY p)"}) {
+                for (String function : new String[]{"lag", "lead"}) {
+                    try (RecordCursorFactory factory = select("SELECT " + function + "(a) " + over + " x FROM t")) {
+                        Assert.assertTrue(function + " " + over, factory.getMetadata().isSymbolTableStatic(0));
+                    }
+                    try (RecordCursorFactory factory = select("SELECT " + function + "(a::STRING::SYMBOL) " + over + " x FROM t")) {
+                        Assert.assertFalse(function + " " + over, factory.getMetadata().isSymbolTableStatic(0));
                     }
                 }
             }
