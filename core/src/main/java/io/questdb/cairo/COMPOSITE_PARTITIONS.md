@@ -122,12 +122,12 @@ timestamps.
 ```
 partition directory
   ts.d  sym.d  ...          the column files, shared by every piece
-  _geometry.0               [rec@0][rec@72][rec@136] ...  append-only
+  _geometry.0               [rec@0][rec@104][rec@256] ...  append-only
                                             ^
 _txn slot 3 for this partition:  [composite flag | generation | byte offset ]
 ```
 
-Every record is a FULL snapshot (56-byte header + 32 bytes per piece), never a delta, so a reader seeks
+Every record is a FULL snapshot (56-byte header + 48 bytes per piece), never a delta, so a reader seeks
 to the one offset `_txn` publishes and is done. The writer appends and syncs the record, THEN commits
 `_txn` - a crash between the two leaves an unreferenced record, which is harmless. Bytes past the
 committed offset are unreachable by construction. A generation rotates when a record would push the

@@ -9858,6 +9858,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$(", liveRows=").$(liveRows)
                 .$(", deadRows=").$(deadRows)
                 .I$();
+        if (clampColumnTopsToLiveRows(partitionTs, liveRows)) {
+            // Publish the lowered tops with the same commit that publishes the plain partition: _txn must
+            // never point at a plain partition while _cv still carries a top above its row count.
+            columnVersionWriter.commit();
+            txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        }
         commitTxWriterAndPublishPendingPostingSealPurges();
         // TRIM-FILES needs no reader wait of its own. A reader maps a partition's column files only as far as
         // its highest live piece reaches (TableReader#mappedRowCount), and the check at the top of this method
@@ -9875,6 +9881,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .I$();
         }
         return true;
+    }
+
+    private boolean clampColumnTopsToLiveRows(long partitionTs, long liveRows) {
+        boolean hasLowered = false;
+        for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+            if (metadata.getColumnType(colIdx) <= 0) {
+                continue;
+            }
+            final long columnTop = columnVersionWriter.getColumnTop(partitionTs, colIdx);
+            // -1 is "no record for this partition at all", which is not a top to lower.
+            if (columnTop > liveRows) {
+                columnVersionWriter.upsertColumnTop(partitionTs, colIdx, liveRows);
+                hasLowered = true;
+            }
+        }
+        return hasLowered;
     }
 
     /**
@@ -9899,7 +9921,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final long columnRows = liveRows - columnTop;
                 if (columnRows <= 0) {
                     // Row-less in this partition (added after every live row here, columnTop == liveRows) -
-                    // nothing to shorten.
+                    // nothing to shorten. clampColumnTopsToLiveRows has already ruled out a HIGHER top.
                     continue;
                 }
                 final CharSequence colName = metadata.getColumnName(colIdx);

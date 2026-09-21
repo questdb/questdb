@@ -25,16 +25,20 @@
 package io.questdb.test.cairo.composite;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 /**
  * Turning {@code cairo.o3.partition.merge.append.enabled} OFF on a database that already holds composite
@@ -74,6 +78,76 @@ public class CompositePartitionMergeAppendDisabledTest extends AbstractCairoTest
                     beforeDay,
                     fingerprintOf("SELECT i, s FROM x WHERE ts IN '2024-01-01' AND i < 500_000")
             );
+        });
+    }
+
+    /**
+     * MAKE-PLAIN drops a composite partition's dead space but leaves a column top that sat above the live
+     * row count where it was - the partition is PLAIN again, yet carries {@code top > partition size}.
+     * <p>
+     * That combination is legal for a COMPOSITE partition (ADD COLUMN records the top at E by design) and
+     * every reader guards for it, but the legacy WAL lag append does not: it computes
+     * {@code transientRowCount - columnTop} and jumps the destination column to that offset. Once the flag
+     * goes off and the partition becomes the last one again, that arithmetic goes negative.
+     * <p>
+     * The fold this suite is about does not save it either - the fold repairs COMPOSITE partitions, and
+     * MAKE-PLAIN already flattened this one, so the stale top passes straight through it.
+     */
+    @Test
+    public void testStaleColumnTopLeftByMakePlainSurvivesTheFold() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT cast(x AS int) i," +
+                    " timestamp_sequence('2024-01-01', 60*1000000L) ts FROM long_sequence(200))" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            // 2024-01-01 is still plain and active, so v's top is recorded at its row count, 200.
+            execute("ALTER TABLE x ADD COLUMN v INT");
+            drainWalQueue();
+            Assert.assertEquals(200, columnTopOf("2024-01-01", "v"));
+
+            // A later day, so 2024-01-01 stops being the last partition - MAKE-PLAIN only acts on a
+            // partition the writer is not appending to.
+            execute("INSERT INTO x (i, ts, v) SELECT cast(x AS int) + 1_000," +
+                    " timestamp_sequence('2024-01-02', 60*1000000L), 1 FROM long_sequence(10)");
+            drainWalQueue();
+
+            // A backdated range refresh that resolves to zero rows - the same commitWithParams call
+            // MatViewRefreshJob issues - empties rows 100..199 of 2024-01-01. The commit leaves one piece
+            // at row 0 with 100 dead rows above it, and MAKE-PLAIN then trims the files back to 100.
+            final TableToken xt = engine.verifyTableName("x");
+            try (WalWriter ww = engine.getWalWriter(xt)) {
+                ww.commitWithParams(
+                        MicrosTimestampDriver.floor("2024-01-01T01:40:00.000000Z"),
+                        MicrosTimestampDriver.floor("2024-01-02T00:00:00.000000Z"),
+                        WAL_DEDUP_MODE_REPLACE_RANGE
+                );
+            }
+            drainWalQueue();
+            Assert.assertFalse("the replace range suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+            Assert.assertFalse("MAKE-PLAIN did not run, the fixture proves nothing", isComposite("2024-01-01"));
+            Assert.assertEquals("MAKE-PLAIN did not trim the day", 100, rowsOfDay("2024-01-01"));
+            // No surviving row carries v either way, so a top of 100 and a top of 200 read the same - the
+            // top only has to stay AT OR BELOW the row count for the append arithmetic further down.
+            Assert.assertEquals("the replace lost the day's NULL v reading", 0,
+                    scalar("SELECT count() FROM x WHERE ts IN '2024-01-01' AND v IS NOT NULL"));
+
+            // What an operator does: flip the key back to its production default and restart. The fold
+            // repairs COMPOSITE partitions; this one is already plain, so whatever top it carries stands.
+            turnMergeAppendOff();
+
+            // Retention drops the later day, so the partition carrying the stale top is the last one again.
+            execute("ALTER TABLE x DROP PARTITION LIST '2024-01-02'");
+            drainWalQueue();
+
+            // An ordinary in-order append: the legacy lag path computes 100 - 200 = -100 rows.
+            execute("INSERT INTO x (i, ts, v) VALUES (7, '2024-01-01T01:50:00.000000Z', 42)");
+            drainWalQueue();
+            Assert.assertFalse("the append suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            Assert.assertEquals(101, rowsOfDay("2024-01-01"));
+            Assert.assertEquals("the appended row lost its late-added column's value", 1,
+                    scalar("SELECT count() FROM x WHERE v = 42"));
         });
     }
 
@@ -143,6 +217,19 @@ public class CompositePartitionMergeAppendDisabledTest extends AbstractCairoTest
             }
         }
         return count + "/" + hash;
+    }
+
+    /**
+     * The top {@code v} carries on {@code day}, resolved the way a reader does - through the column's
+     * WRITER index, which a type conversion or a rename can move away from its metadata index.
+     */
+    private static long columnTopOf(String day, String column) {
+        final TableToken tt = engine.verifyTableName("x");
+        try (TableReader reader = engine.getReader(tt)) {
+            final ColumnVersionReader cvr = reader.getColumnVersionReader();
+            final int writerIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex(column));
+            return cvr.getColumnTop(MicrosTimestampDriver.floor(day + "T00:00:00.000000Z"), writerIndex);
+        }
     }
 
     private static boolean isComposite(String day) {

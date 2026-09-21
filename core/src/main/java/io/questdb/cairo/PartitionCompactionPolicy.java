@@ -299,7 +299,7 @@ public class PartitionCompactionPolicy implements Mutable {
                     } else if (lastWrite > 0
                             && nowMicros - lastWrite > configuration.getPartitionCompactionIdleTimeout()
                             && (partitionStates.getQuick(stateIndex + STATE_DEAD_ROWS_OFFSET) > 0
-                                || geometry.getPieceCount(partitionIndex) > 1)) {
+                            || geometry.getPieceCount(partitionIndex) > 1)) {
                         reason = REASON_AGE;
                     } else if (lastWrite <= 0) {
                         // Unknown provenance sorts as oldest for table pressure but cannot satisfy the age rule.
