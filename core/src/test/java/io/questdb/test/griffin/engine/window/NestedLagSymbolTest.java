@@ -25,7 +25,12 @@
 package io.questdb.test.griffin.engine.window;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class NestedLagSymbolTest extends AbstractCairoTest {
@@ -127,6 +132,39 @@ public class NestedLagSymbolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLagLeadSymbolOverPartitionRepeatedCursorsStayUnderQueryMemoryLimit() throws Exception {
+        // Each cursor run must release what it charged: a leaked or asymmetric charge would
+        // accumulate across the runs and breach the limit, or drive the counter negative.
+        node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 4 * 1024 * 1024L);
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE tab AS (
+                              SELECT x % 10 AS k, rnd_symbol('a', 'b', 'c') AS sym, x::TIMESTAMP AS ts
+                              FROM long_sequence(1_000)
+                            ) TIMESTAMP(ts) PARTITION BY DAY
+                            """
+            );
+            for (String query : new String[]{
+                    "SELECT lag(sym) OVER (PARTITION BY k) FROM tab",
+                    "SELECT lead(sym) OVER (PARTITION BY k) FROM tab"
+            }) {
+                try (RecordCursorFactory factory = select(query)) {
+                    for (int i = 0; i < 20; i++) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            long rows = 0;
+                            while (cursor.hasNext()) {
+                                rows++;
+                            }
+                            Assert.assertEquals(1_000, rows);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLagOffsetOverSymbol() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -154,6 +192,36 @@ public class NestedLagSymbolTest extends AbstractCairoTest {
                             "a\ta\t\n" +
                             "a\ta\ta\n"
             );
+        });
+    }
+
+    @Test
+    public void testLagSymbolOverPartitionChargesQueryMemoryLimit() throws Exception {
+        // lag() over a high-cardinality partition key grows the function's partition map and
+        // ring buffer. The streaming window factory holds no other growing state, so the breach
+        // proves the SYMBOL function charges both to the per-query MemoryTracker.
+        node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024L);
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE tab AS (
+                              SELECT x AS k, rnd_symbol('a', 'b', 'c') AS sym, x::TIMESTAMP AS ts
+                              FROM long_sequence(100_000)
+                            ) TIMESTAMP(ts) PARTITION BY DAY
+                            """
+            );
+            try (
+                    RecordCursorFactory factory = select("SELECT lag(sym) OVER (PARTITION BY k) FROM tab");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                while (cursor.hasNext()) {
+                    // drain until breach
+                }
+                Assert.fail("expected per-query memory breach");
+            } catch (CairoException e) {
+                Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+            }
         });
     }
 
@@ -240,6 +308,44 @@ public class NestedLagSymbolTest extends AbstractCairoTest {
             assertQuery("select lead(sym, 1, 'x') over () from symbols")
                     .noLeakCheck()
                     .fails(20, "non-null default value is not supported for symbol lead");
+        });
+    }
+
+    @Test
+    public void testTimestampValueFunctionsRejectSymbolArgument() throws Exception {
+        // These functions have no SYMBOL variant. The function parser used to resolve them to
+        // the TIMESTAMP factory through the implicit SYMBOL -> TIMESTAMP cast, which produced a
+        // window column typed SYMBOL backed by a long.
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE symbols (" +
+                            "  sym SYMBOL," +
+                            "  ts TIMESTAMP" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY"
+            );
+            execute("INSERT INTO symbols VALUES ('a', '2024-01-01T00:00:00.000000Z')");
+
+            assertQuery("SELECT first_value(sym) OVER () FROM symbols")
+                    .noLeakCheck()
+                    .fails(19, "there is no matching window function `first_value` with the argument type: SYMBOL");
+            assertQuery("SELECT last_value(sym) OVER () FROM symbols")
+                    .noLeakCheck()
+                    .fails(18, "there is no matching window function `last_value` with the argument type: SYMBOL");
+            assertQuery("SELECT max(sym) OVER (PARTITION BY sym) FROM symbols")
+                    .noLeakCheck()
+                    .fails(11, "there is no matching window function `max` with the argument type: SYMBOL");
+            assertQuery("SELECT min(sym) OVER (PARTITION BY sym ORDER BY ts) FROM symbols")
+                    .noLeakCheck()
+                    .fails(11, "there is no matching window function `min` with the argument type: SYMBOL");
+            assertQuery("SELECT nth_value(sym, 1) OVER () FROM symbols")
+                    .noLeakCheck()
+                    .fails(17, "there is no matching window function `nth_value` with the argument type: SYMBOL");
+
+            // an explicit cast remains available
+            assertQuery("SELECT max(ts::STRING::SYMBOL::TIMESTAMP) OVER () AS m FROM symbols").expectSize().returns(
+                    "m\n" +
+                            "2024-01-01T00:00:00.000000Z\n"
+            );
         });
     }
 }

@@ -43,6 +43,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
@@ -567,6 +568,12 @@ class LeadLagSymbolFunctionFactoryHelper {
             this.partitionByRecord = partitionByRecord;
             this.partitionBySink = partitionBySink;
             this.memory = memory;
+            // Start the map closed (lazy), same as BasePartitionedWindowFunction: the owning
+            // cursor binds the per-query MemoryTracker via setMemoryTracker() and reopen() then
+            // allocates the backing under it, so reset() frees it against the same counter.
+            if (map != null) {
+                map.close();
+            }
         }
 
         @Override
@@ -596,6 +603,14 @@ class LeadLagSymbolFunctionFactoryHelper {
             super.reset();
             Misc.free(map);
             Misc.free(memory);
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            if (map != null) {
+                map.setMemoryTracker(tracker);
+            }
+            memory.setMemoryTracker(tracker);
         }
 
         @Override
