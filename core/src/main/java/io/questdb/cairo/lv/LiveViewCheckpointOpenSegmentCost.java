@@ -34,6 +34,11 @@ import org.jetbrains.annotations.TestOnly;
  * separately. Failed, forced, and sparse-fallback repairs are rejected by the caller.
  */
 public final class LiveViewCheckpointOpenSegmentCost {
+    /**
+     * What {@link #maxOverridingKeyedCostRows} returns when no keyed cost, not even zero
+     * rows, wins the override.
+     */
+    public static final long NO_OVERRIDING_KEYED_COST = -1;
     // Cold-start envelope. These are deliberately broad engineering priors, not a hardware
     // fit: successful repairs replace them with per-view measurements. The keyed upper bound
     // below adds another 50% before it may override the row-only verdict.
@@ -67,6 +72,58 @@ public final class LiveViewCheckpointOpenSegmentCost {
 
     public long getLastWholeEstimateNanos() {
         return lastWholeEstimateNanos;
+    }
+
+    /**
+     * The largest keyed cost, in keyed cost rows, at which {@link #shouldOverrideWholeRange}
+     * overrides the row verdict for these inputs, or {@link #NO_OVERRIDING_KEYED_COST} when
+     * no cost does: a reusable runtime or a root of no bytes leaves no restore to save, a
+     * key count below one has nothing to follow, and a key-state term can reach the whole
+     * side's hysteresis floor on its own.
+     * <p>
+     * The override is monotone in the keyed cost. Every step from the cost to the
+     * comparison - the per-row scale, the saturating add of the key-state term, the upper
+     * bound - is non-decreasing in it, and the whole side does not read it. So the override
+     * holds for every cost up to one point and for none above it. This method finds that
+     * point by bisecting the predicate the override itself evaluates, over the same samples
+     * and the same rounding, rather than by inverting the arithmetic in closed form:
+     * {@code scale()} rounds through a double and a ceiling, and an inversion one row off
+     * there would either grant an override the model declines or deny one it grants. The
+     * search takes at most 63 steps, allocates nothing, and leaves the last-estimate
+     * figures as the last override evaluation priced them.
+     * <p>
+     * A caller that prices the keyed side off a posting count can stop counting once the
+     * count alone prices the scan above this cost: the override is lost there whatever the
+     * uncounted postings hold.
+     */
+    public long maxOverridingKeyedCostRows(
+            boolean runtimeAnchorReusable,
+            long selectedRootLogicalBytes,
+            long wholeRangeRows,
+            long keyCount
+    ) {
+        if (runtimeAnchorReusable || selectedRootLogicalBytes <= 0 || keyCount <= 0) {
+            return NO_OVERRIDING_KEYED_COST;
+        }
+        final long wholeEstimateNanos = estimateWhole(runtimeAnchorReusable, selectedRootLogicalBytes, wholeRangeRows);
+        if (!isKeyedMateriallyCheaper(estimateKeyed(0, keyCount), wholeEstimateNanos)) {
+            return NO_OVERRIDING_KEYED_COST;
+        }
+        if (isKeyedMateriallyCheaper(estimateKeyed(Long.MAX_VALUE, keyCount), wholeEstimateNanos)) {
+            return Long.MAX_VALUE;
+        }
+        // The override holds at low and fails at high.
+        long low = 0;
+        long high = Long.MAX_VALUE;
+        while (high - low > 1) {
+            final long mid = low + (high - low) / 2;
+            if (isKeyedMateriallyCheaper(estimateKeyed(mid, keyCount), wholeEstimateNanos)) {
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        return low;
     }
 
     void reset() {
@@ -153,9 +210,7 @@ public final class LiveViewCheckpointOpenSegmentCost {
         if (runtimeAnchorReusable || selectedRootLogicalBytes <= 0 || keyCount <= 0) {
             return false;
         }
-        final long keyedUpperBound = percent(lastKeyedEstimateNanos, KEYED_UPPER_BOUND_PERCENT);
-        final long wholeWithHysteresis = percent(lastWholeEstimateNanos, 100 - ROUTE_HYSTERESIS_PERCENT);
-        return keyedUpperBound < wholeWithHysteresis;
+        return isKeyedMateriallyCheaper(lastKeyedEstimateNanos, lastWholeEstimateNanos);
     }
 
     @TestOnly
@@ -223,6 +278,16 @@ public final class LiveViewCheckpointOpenSegmentCost {
         } catch (ArithmeticException overflow) {
             return previous / 2 + capped / 2;
         }
+    }
+
+    /**
+     * The override's comparison, shared by {@link #shouldOverrideWholeRange} and the
+     * break-even search so the two cannot round apart.
+     */
+    private static boolean isKeyedMateriallyCheaper(long keyedEstimateNanos, long wholeEstimateNanos) {
+        final long keyedUpperBound = percent(keyedEstimateNanos, KEYED_UPPER_BOUND_PERCENT);
+        final long wholeWithHysteresis = percent(wholeEstimateNanos, 100 - ROUTE_HYSTERESIS_PERCENT);
+        return keyedUpperBound < wholeWithHysteresis;
     }
 
     private static long percent(long value, int percent) {

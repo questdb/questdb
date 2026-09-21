@@ -997,7 +997,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Test-only: base rows the open segment's keyed scans would pull off the posting
      * index, summed over every resume this worker priced. Comparable with
      * {@link #openSegmentKeyedWholeRangeRowsForTest()}, which is what those same resumes
-     * read whole.
+     * read whole. Each count stops at its budget - the whole-range rows, or under a zero
+     * estimate the elapsed override's break-even - so one that stopped there is a floor.
      */
     @TestOnly
     public long openSegmentKeyedPostingRowsForTest() {
@@ -1006,7 +1007,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Test-only: how many open-segment resumes this worker priced both ways. A resume is
-     * priced only when the decomposition collected the open segment's key domain in full.
+     * priced only when the decomposition collected the open segment's key domain in full,
+     * the view's key column is indexed, every key resolves against the pinned reader, and a
+     * whole range estimated at zero rows has a root restore beside it that some keyed price
+     * could win the elapsed override against.
      */
     @TestOnly
     public long openSegmentKeyedPricedCountForTest() {
@@ -1014,9 +1018,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Test-only: how many open-segment resumes could not be priced at all - no key domain,
-     * no index for the column, or a key the pinned reader does not hold. Each reads every
-     * row above its anchor, which is what every resume did before the keyed one existed.
+     * Test-only: how many open-segment resumes were not priced at all - no key domain, no
+     * index for the column, a key the pinned reader does not hold, or a whole range
+     * estimated at zero rows that no keyed price undercuts: with no root restore beside
+     * it, or beside one too small for even a scan of no rows to win the elapsed override.
+     * Each reads every row above its anchor, which is what every resume did before the
+     * keyed one existed.
      */
     @TestOnly
     public long openSegmentKeyedUnpricedCountForTest() {
@@ -1051,9 +1058,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Test-only: number of closed segments whose keyed scan could not be priced - an
-     * incomplete key domain, a key the pinned reader does not hold, or a partition with no
-     * index for the column. Every one of them reads whole, which is what it did anyway.
+     * Test-only: number of closed segments whose keyed scan was not priced - a whole range
+     * no keyed price undercuts, estimated at zero rows or at no more than one index open and
+     * one seek per key, an incomplete key domain, a key the pinned reader does not hold, or
+     * a partition with no index for the column.
+     * Every one of them reads whole, which is what it did anyway.
      */
     @TestOnly
     public long keyedScanUnpricedCountForTest() {
@@ -5064,6 +5073,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 final long segmentStart = segmentChangeSet.getSegmentStart(i);
                 final long segmentHighTsInclusive = segmentChangeSet.getSegmentEndExclusive(i) - 1;
                 final long wholeRangeRows = scanCost.estimateScanRows(segmentStart, segmentHighTsInclusive);
+                if (wholeRangeRows <= 0) {
+                    // No keyed price undercuts a whole range estimated at zero rows, so the
+                    // verdict is "read whole" before a posting is counted. A narrow anchor
+                    // over a sparse partition interpolates to zero, and a bitmap index
+                    // reports no size, so pricing it anyway would walk every posting its
+                    // keys hold across the partition to reach that same verdict.
+                    keyedScanUnpricedCount++;
+                    continue;
+                }
                 if (!segmentChangeSet.isSegmentKeyDomainComplete(i)) {
                     // The corrections carried more distinct keys than the budget, or the
                     // walk read no key column - it could not be resolved, or the base
@@ -5076,6 +5094,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     keyedScanUnpricedCount++;
                     continue;
                 }
+                // The zero-row skip above, generalised. A walk that stops on its budget has
+                // already priced the keyed side at wholeRangeRows or more. One that does not
+                // visits every partition the whole-range estimate counted rows in, so it
+                // opens at least one index and seeks it at least once per key. A whole range
+                // at or below that setup alone therefore reads "whole" before a partition is
+                // opened. A zero open price zeroes the floor, which leaves the zero-row skip.
+                final long keyedScanFloorRows = LiveViewCheckpointKeyedScanCost.keyedScanCostRows(
+                        0,
+                        1,
+                        keyedScanKeys.size(),
+                        keyedScanKeys.size(),
+                        indexOpenRows,
+                        indexSeekRows
+                );
+                if (wholeRangeRows <= keyedScanFloorRows) {
+                    keyedScanUnpricedCount++;
+                    continue;
+                }
                 final long postingRows = keyedScanCost.estimateKeyedScanRows(
                         segmentStart,
                         segmentHighTsInclusive,
@@ -5084,7 +5120,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // Above the whole-range scan the verdict cannot change, so the
                         // count saturates there rather than walking a hot key's postings
                         // for an answer nothing reads.
-                        wholeRangeRows > 0 ? wholeRangeRows : Long.MAX_VALUE
+                        wholeRangeRows
                 );
                 if (postingRows == LiveViewCheckpointKeyedScanCost.UNPRICEABLE) {
                     keyedScanUnpricedCount++;
@@ -5236,6 +5272,69 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             scanCost.of(reader);
             keyedScanCost.of(reader, executionContext);
             final long wholeRangeRows = scanCost.estimateScanRows(lowTsInclusive, highTsInclusive);
+            if (wholeRangeRows <= 0 && (coldHeadMiss || runtimeAnchorReusable || selectedRootLogicalBytes <= 0)) {
+                // Both models price the whole side at nothing here. The row model reads the
+                // zero estimate, and the elapsed model adds no restore to it: a cold replay
+                // never consults that model, a reusable runtime restores nothing, and neither
+                // does a root of no bytes. No keyed price undercuts nothing, so the verdict is
+                // "read whole" before a posting is counted - and a narrow interval over a
+                // sparse partition estimates at zero while a bitmap index would walk every
+                // posting its keys hold across that partition to reach the same verdict.
+                recordOpenSegmentKeyedUnpriced(coldHeadMiss);
+                return false;
+            }
+            final LiveViewCheckpointOpenSegmentCost elapsedCost = instance.getOpenSegmentRepairCost();
+            // The key count resolveScanKeys leaves in keyedScanKeys when it succeeds - one key
+            // per residual value and one for the null flag - read off the domain, so a resume
+            // the break-even below settles returns before any symbol lookup.
+            final int keyCount = segmentChangeSet.getResidualKeys().size()
+                    + (segmentChangeSet.hasResidualNullKey() ? 1 : 0);
+            final long postingBudgetRows;
+            if (wholeRangeRows > 0) {
+                // Above the whole-range scan the row verdict cannot change, so the count
+                // saturates there, and the override declines a saturated count below.
+                postingBudgetRows = wholeRangeRows;
+            } else {
+                // A zero estimate that gets this far carries a root restore on the whole
+                // side. The row verdict is already "not cheaper", so the count feeds only
+                // the elapsed override, which weighs it against that restore, and only up
+                // to the override's break-even: the largest keyed cost it grants. The merge
+                // charges each posting row mergeRowsPerPostingRow and the setup term only
+                // adds to that, so a count of breakEven / mergeRowsPerPostingRow + 1 prices
+                // the scan past the break-even whatever the postings it leaves uncounted
+                // hold. A count that stops there saturates, and the override declines a
+                // saturated count below - the verdict the full count reaches. A count that
+                // does not stop is exact. Either way the route is the one the full count
+                // picks, and the walk is bounded by the restore it could save rather than
+                // by every posting the keys hold.
+                final long maxKeyedCostRows = elapsedCost.maxOverridingKeyedCostRows(
+                        runtimeAnchorReusable,
+                        selectedRootLogicalBytes,
+                        wholeRangeRows,
+                        keyCount
+                );
+                if (maxKeyedCostRows == LiveViewCheckpointOpenSegmentCost.NO_OVERRIDING_KEYED_COST) {
+                    // Not even a scan of no rows wins the override: the key-state term alone
+                    // reaches the restore's hysteresis floor, so both verdicts read "whole"
+                    // before a key is resolved or a posting counted.
+                    recordOpenSegmentKeyedUnpriced(coldHeadMiss);
+                    return false;
+                }
+                // One posting row with no setup charge prices at the merge's charge alone.
+                final long mergeRowsPerPostingRow = LiveViewCheckpointKeyedScanCost.keyedScanCostRows(
+                        1,
+                        0,
+                        0,
+                        keyCount,
+                        indexOpenRows,
+                        indexSeekRows
+                );
+                // A break-even at Long.MAX_VALUE grants every cost, which leaves the count
+                // exact.
+                postingBudgetRows = maxKeyedCostRows == Long.MAX_VALUE
+                        ? Long.MAX_VALUE
+                        : maxKeyedCostRows / mergeRowsPerPostingRow + 1;
+            }
             if (!resolveScanKeys(
                     reader.getSymbolMapReader(readerColumnIndex),
                     segmentChangeSet.getResidualKeys(),
@@ -5244,12 +5343,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 recordOpenSegmentKeyedUnpriced(coldHeadMiss);
                 return false;
             }
+            // The budget and the override below price the same key count.
+            assert keyedScanKeys.size() == keyCount;
             final long postingRows = keyedScanCost.estimateKeyedScanRows(
                     lowTsInclusive,
                     highTsInclusive,
                     readerColumnIndex,
                     keyedScanKeys,
-                    wholeRangeRows > 0 ? wholeRangeRows : Long.MAX_VALUE
+                    postingBudgetRows
             );
             if (postingRows == LiveViewCheckpointKeyedScanCost.UNPRICEABLE) {
                 recordOpenSegmentKeyedUnpriced(coldHeadMiss);
@@ -5272,7 +5373,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     indexOpenRows,
                     indexSeekRows
             );
-            final LiveViewCheckpointOpenSegmentCost elapsedCost = instance.getOpenSegmentRepairCost();
             final boolean elapsedCheaper = !coldHeadMiss && elapsedCost.shouldOverrideWholeRange(
                     runtimeAnchorReusable,
                     selectedRootLogicalBytes,
@@ -5289,7 +5389,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // that sits at the budget precisely when the real posting count is furthest
             // above it. Decline the override there rather than pick a route off it, which
             // leaves the resume reading the whole range exactly as it did before the
-            // override existed.
+            // override existed. Under a zero estimate the budget is the override's own
+            // break-even, so there the decline is the verdict a full count reaches.
             final boolean keyedEstimateSaturated = keyedScanCost.isSaturated();
             final boolean restoreAwareCheaper = !rowCheaper && !keyedEstimateSaturated && elapsedCheaper;
             if (coldHeadMiss) {

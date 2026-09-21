@@ -98,12 +98,15 @@ import org.jetbrains.annotations.NotNull;
  * <p>
  * A key whose postings the index cannot count in constant time - a bitmap index reports no
  * size - is walked, and the walk stops at {@link #estimateKeyedScanRows}'s budget. The
- * budget is not an approximation of the answer: once the keyed side has passed the
- * whole-range scan's row count there is no verdict left to change, so stopping there costs
- * nothing and bounds the pricing by the cost of the option it prices. It costs nothing for
- * <b>that</b> verdict only - a stopped walk leaves every key below it and every partition
- * above it out of all three figures - so {@link #isSaturated()} reports the stop for any
- * consumer that prices the keyed side against something the budget does not bound.
+ * budget is not an approximation of the answer: it is the count past which the caller's
+ * verdict cannot change, so stopping there costs nothing and bounds the pricing by what the
+ * keyed side is weighed against. For the row verdict that is the whole-range scan's row
+ * count. An open-segment resume whose whole range estimates at zero rows beside a root
+ * restore passes the count that prices the scan past the elapsed override's break-even -
+ * the largest keyed cost that restore lets win. It costs nothing for <b>that</b> verdict
+ * only - a stopped walk leaves every key below it and every partition above it out of all
+ * three figures - so {@link #isSaturated()} reports the stop for any consumer that prices
+ * the keyed side against something the budget does not bound.
  * <p>
  * One instance per refresh job, bound to the repair's pinned reader by {@link #of} and
  * reused across repairs.

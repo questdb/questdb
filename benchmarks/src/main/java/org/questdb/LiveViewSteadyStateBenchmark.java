@@ -985,7 +985,13 @@ public class LiveViewSteadyStateBenchmark {
                     // beside what the segment replays this run actually performed did.
                     // cheaper counts the segments where the keyed side wins once the merge
                     // and the per-key-per-frame setup are priced in; unpriced counts the
-                    // ones with no usable key domain, which read whole either way.
+                    // ones never priced, which read whole either way: an incomplete key
+                    // domain, an unresolved key, a partition with no index, or a whole range
+                    // no keyed price undercuts - zero rows, or no more than one index open
+                    // and one seek per key. open_keyed's unpriced below counts the resumes
+                    // never priced: an unindexed key column, an unresolved key, a partition
+                    // with no index, or a zero-row range beside no root restore that some
+                    // keyed price could win the elapsed override against.
                     //
                     // With --repair-keyed-replay=false - the default, and the control
                     // column - nothing takes the route, so posting_rows is a

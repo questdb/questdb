@@ -65,6 +65,9 @@ import org.junit.Test;
  * timestamps span several anchor days so closed segments exist at all.
  */
 public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
+    // A 1ms anchor, which createNarrowAnchorView's partition spreads so thin that a whole
+    // segment of it estimates at zero rows.
+    private static final String NARROW_ANCHOR = "timestamp_floor('1T', created_at)";
     // Ceiling range the mid-build OOM sweep walks, and the step it advances by. A whole keyed
     // open over the fixture below allocates around 14.4 KiB of tracked native memory, so the
     // range crosses the transition from "every point faults" to "the open completes" with room
@@ -141,6 +144,12 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
         // Both halves are asserted here: the count the estimate reaches, and the count a
         // query reaches afterwards.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        // The shipped 256-row open price puts a one-key scan's setup floor above this 41-row
+        // day, so the job would decline the segment before it opens a partition. At 35 the
+        // floor is 35 + 5 = 40, one row below the day, so the job still prices it - and still
+        // declines it, at 11 + 2 * 35 + 2 * 5 = 91 rows, so the repair reads whole as it does
+        // at the default.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 35);
         assertMemoryLeak(() -> {
             createView(seedFourAccountsOverThreeDays(), true);
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -149,6 +158,13 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                 // Lands in an anchor day that is closed, and in an hour partition of its own
                 // that the pinned reader has never opened.
                 commit(row(2, 3, "acct-1"), job);
+                Assert.assertEquals(
+                        "the repair's own estimate is what the query below checks up on",
+                        1,
+                        job.keyedScanPricedCountForTest()
+                );
+                Assert.assertEquals(11, job.keyedScanPostingRowsForTest());
+                Assert.assertEquals(0, job.keyedScanCheaperCountForTest());
 
                 final String indexed = "select count() from tx "
                         + "where created_at in '2026-01-02' and account_id = 'acct-1'";
@@ -211,6 +227,302 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                 );
                 Assert.assertEquals(1, job.segmentRepairCountForTest());
                 assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testASegmentEstimatedAtZeroRowsWalksNoPostings() throws Exception {
+        // A 1ms anchor at the tail of a day-long partition. The whole-range estimate spreads
+        // the partition's rows evenly over its span, so a 1ms segment interpolates to zero
+        // rows although it really holds a few. No keyed scan undercuts a zero-row whole range
+        // - isKeyedScanCheaper wants the keyed price strictly below it - so the verdict is
+        // settled before a posting is counted. The corrected account holds every row of the
+        // partition, and a bitmap index reports no size, so pricing it anyway walks all of
+        // them to reach a verdict it already had, once per correction.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createNarrowAnchorView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+
+                for (int correction = 1; correction <= 2; correction++) {
+                    // Inside the closed 23:00:00.000 anchor, below the open 23:00:01.000 one.
+                    commit("('2026-01-02T23:00:00.00000" + correction + "Z', 'acct-1', 1.0)", job);
+
+                    Assert.assertEquals(
+                            "a segment estimated at zero rows must not walk its keys' postings",
+                            0,
+                            job.keyedScanPostingRowsForTest()
+                    );
+                    Assert.assertEquals(0, job.keyedScanPricedCountForTest());
+                    Assert.assertEquals(0, job.keyedScanWholeRangeRowsForTest());
+                    Assert.assertEquals(0, job.keyedScanCheaperCountForTest());
+                    Assert.assertEquals(
+                            "the skipped segment reads whole, which is what an unpriced one does",
+                            correction,
+                            job.keyedScanUnpricedCountForTest()
+                    );
+                    Assert.assertEquals(
+                            "the repair itself is unchanged - the segment still replays whole",
+                            correction,
+                            job.segmentRepairCountForTest()
+                    );
+                }
+
+                // The corrected anchor's running sum restarts at its own floor, so its three
+                // rows carry 1, 2 and 3; the open anchor's two rows carry 1 and 2.
+                assertNarrowAnchorTail(5, 9);
+                assertNarrowAnchorViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testASegmentBelowTheKeyedSetupFloorWalksNoPostings() throws Exception {
+        // The zero-row skip's general case. A keyed scan that can win opens at least one
+        // partition's index and seeks it once per key, so at the shipped 256-row open price
+        // one key costs at least 256 + 42 = 298 rows before it reads a posting. The corrected
+        // day holds 41 rows, so the verdict is "read whole" before a partition is opened, and
+        // pricing it anyway opens the day's partitions and walks the account's postings to
+        // reach that same verdict.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverThreeDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, "acct-1"), job);
+
+                commit(row(2, 3, "acct-1"), job);
+
+                Assert.assertEquals(
+                        "a segment at or below the keyed setup floor must not walk its keys' postings",
+                        0,
+                        job.keyedScanPostingRowsForTest()
+                );
+                Assert.assertEquals(0, job.keyedScanPricedCountForTest());
+                Assert.assertEquals(0, job.keyedScanWholeRangeRowsForTest());
+                Assert.assertEquals(0, job.keyedScanCheaperCountForTest());
+                Assert.assertEquals(
+                        "the skipped segment reads whole, which is what an unpriced one does",
+                        1,
+                        job.keyedScanUnpricedCountForTest()
+                );
+                Assert.assertEquals(1, job.segmentRepairCountForTest());
+                // acct-1 carries its ten seeded rows and the correction, 1 to 11, and each
+                // other account its ten seeded rows, 1 to 10: 66 + 3 * 55.
+                assertQuery("""
+                        SELECT count(), sum(cumulative_sum) FROM lv
+                        WHERE created_at IN '2026-01-02'""")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                count\tsum
+                                41\t231.0
+                                """);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAZeroRowOpenSegmentCountsPostingsOnlyUpToTheRestoreBreakEven() throws Exception {
+        // The open segment's resume shares the closed segments' blind spot wherever the
+        // elapsed model has no root restore to weigh: its whole side then prices at nothing
+        // in both models, and no keyed price undercuts nothing. A cold replay is the first
+        // such case - it never consults the elapsed model. A resume that restores a root is
+        // not: the override weighs the keyed count against that restore, which no row
+        // estimate bounds. That count still has an end, though - the largest keyed price
+        // the override grants against that restore. A count past it has lost the override
+        // whatever the uncounted postings hold, so it stops there rather than walking every
+        // posting the account holds.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createNarrowAnchorView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+
+                // Below the only root, which the seed sealed at the 23:00:01.000500 frontier,
+                // so the replay starts cold at the open anchor's origin. Its half-millisecond
+                // interval estimates at zero rows of a partition spanning 23 hours.
+                commit("('2026-01-02T23:00:01.000200Z', 'acct-1', 1.0)", job);
+
+                Assert.assertEquals(
+                        "a cold replay estimated at zero rows must not walk its keys' postings",
+                        0,
+                        job.openSegmentColdKeyedPostingRowsForTest()
+                );
+                Assert.assertEquals(0, job.openSegmentColdKeyedPricedCountForTest());
+                Assert.assertEquals(1, job.openSegmentColdKeyedUnpricedCountForTest());
+                Assert.assertEquals(0, job.openSegmentColdKeyedCheaperCountForTest());
+                Assert.assertEquals(0, job.openSegmentColdKeyedReplayCountForTest());
+
+                // The cold replay leaves a root at the old 23:00:01.000500 frontier. An
+                // in-order row moves the runtime past it, and a correction between the two
+                // resumes from that root - restoring it, because the runtime no longer stands
+                // there.
+                commit("('2026-01-02T23:00:01.000700Z', 'acct-1', 1.0)", job);
+                // One nanosecond per unit on every rate. The whole side is then the 40-byte
+                // root's restore alone, 40ns, under an 85% hysteresis floor of 34ns. The
+                // keyed side is a nanosecond per cost row plus one for the key's state, and
+                // its 150% upper bound, ceil(1.5 * (cost + 1)), stays below 34 up to a cost
+                // of 21 rows. A single key merges nothing, so its 22nd posting alone prices
+                // the scan past that before any setup charge, and the count stops there -
+                // at 22 of the 506 postings the account holds in the partition.
+                viewInstance().getOpenSegmentRepairCost().setRatesForTest(1, 1, 1, 1, 1, 1, 1, 1, 1, 1);
+                commit("('2026-01-02T23:00:01.000600Z', 'acct-1', 1.0)", job);
+
+                Assert.assertEquals(1, job.openSegmentKeyedPricedCountForTest());
+                Assert.assertEquals(0, job.openSegmentKeyedUnpricedCountForTest());
+                Assert.assertEquals(0, job.openSegmentKeyedWholeRangeRowsForTest());
+                Assert.assertEquals(
+                        "a restore-bearing resume estimated at zero rows must stop counting at the"
+                                + " override's break-even",
+                        22,
+                        job.openSegmentKeyedPostingRowsForTest()
+                );
+                // The route the full count picked: the override declines, and the resume
+                // reads the whole range off the restored root.
+                Assert.assertEquals(0, job.openSegmentKeyedCheaperCountForTest());
+                Assert.assertEquals(0, job.openSegmentRestoreAwareCheaperCountForTest());
+                Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
+                Assert.assertEquals(0, job.runtimeAnchorReuseCountForTest());
+
+                // The open anchor now holds five rows: 23:00:01.000000, .000200, .000500,
+                // .000600 and .000700.
+                assertNarrowAnchorTail(6, 16);
+                assertNarrowAnchorViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAReusableHeadEstimatedAtZeroRowsWalksNoPostings() throws Exception {
+        // The other resume with no root to restore. Intra-commit O3 wholly above the sealed
+        // head lets no row into the window pipeline before detection, so the selected anchor
+        // is the runtime itself and the elapsed model prices the whole side at its scan
+        // alone - zero rows, and nothing for a keyed price to undercut.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createNarrowAnchorView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+
+                commit(
+                        "('2026-01-02T23:00:01.000900Z', 'acct-1', 1.0), "
+                                + "('2026-01-02T23:00:01.000800Z', 'acct-1', 1.0)",
+                        job
+                );
+
+                Assert.assertEquals(1, job.runtimeAnchorReuseCountForTest());
+                Assert.assertEquals(
+                        "a reusable resume estimated at zero rows must not walk its keys' postings",
+                        0,
+                        job.openSegmentKeyedPostingRowsForTest()
+                );
+                Assert.assertEquals(0, job.openSegmentKeyedPricedCountForTest());
+                Assert.assertEquals(1, job.openSegmentKeyedUnpricedCountForTest());
+                Assert.assertEquals(0, job.openSegmentKeyedCheaperCountForTest());
+                Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
+
+                // The open anchor holds 23:00:01.000000, .000500, .000800 and .000900.
+                assertNarrowAnchorTail(5, 11);
+                assertNarrowAnchorViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testARootRestoreNoKeyedPriceUndercutsWalksNoPostings() throws Exception {
+        // A zero-row resume that does restore a root, but one too small for any keyed price
+        // to win the override. Under the cold priors the 40-byte root restores in 240ns,
+        // under an 85% hysteresis floor of 204ns, while the transplant of the one key's
+        // state alone prices the keyed side at 5_000ns - 7_500ns at its 150% upper bound -
+        // before the scan adds a row. The override's break-even lies below a cost of zero,
+        // so there is nothing to count up to.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createNarrowAnchorView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+
+                // An in-order row moves the runtime past the root the seed sealed at the
+                // 23:00:01.000500 frontier, and a correction between the two resumes from
+                // that root - restoring it, because the runtime no longer stands there.
+                commit("('2026-01-02T23:00:01.000700Z', 'acct-1', 1.0)", job);
+                commit("('2026-01-02T23:00:01.000600Z', 'acct-1', 1.0)", job);
+
+                Assert.assertEquals(0, job.runtimeAnchorReuseCountForTest());
+                Assert.assertEquals(
+                        "a resume whose restore no keyed price undercuts must not walk its keys' postings",
+                        0,
+                        job.openSegmentKeyedPostingRowsForTest()
+                );
+                Assert.assertEquals(0, job.openSegmentKeyedPricedCountForTest());
+                Assert.assertEquals(1, job.openSegmentKeyedUnpricedCountForTest());
+                Assert.assertEquals(0, job.openSegmentKeyedCheaperCountForTest());
+                Assert.assertEquals(0, job.openSegmentRestoreAwareCheaperCountForTest());
+                Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
+
+                // The open anchor holds 23:00:01.000000, .000500, .000600 and .000700.
+                assertNarrowAnchorTail(5, 11);
+                assertNarrowAnchorViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testARootRestoreThatOutweighsTheKeyedScanStillOverridesAZeroRowEstimate() throws Exception {
+        // The other side of the break-even budget: it may stop a count only where the
+        // override was lost anyway. A restore that dwarfs the keyed scan puts the break-even
+        // far above every posting the account holds, so the count runs to its total and the
+        // override takes the keyed route, exactly as an unbounded count does.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        // The identity the keyed resume's publication upserts on. It is a CREATE-time schema
+        // property, so it has to be on before the view exists.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createNarrowAnchorView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+
+                commit("('2026-01-02T23:00:01.000700Z', 'acct-1', 1.0)", job);
+                // A second per restored byte and a nanosecond per unit elsewhere: the 40-byte
+                // root restores in 40s, which leaves the override's break-even in the tens of
+                // billions of cost rows.
+                viewInstance().getOpenSegmentRepairCost().setRatesForTest(1_000_000_000L, 1, 1, 1, 1, 1, 1, 1, 1, 1);
+                commit("('2026-01-02T23:00:01.000600Z', 'acct-1', 1.0)", job);
+
+                Assert.assertEquals(1, job.openSegmentKeyedPricedCountForTest());
+                Assert.assertEquals(0, job.openSegmentKeyedUnpricedCountForTest());
+                Assert.assertEquals(0, job.openSegmentKeyedWholeRangeRowsForTest());
+                Assert.assertEquals(
+                        "a count below the break-even must reach every posting the account holds",
+                        505,
+                        job.openSegmentKeyedPostingRowsForTest()
+                );
+                Assert.assertEquals(
+                        "the row verdict cannot prefer a keyed scan over a zero-row estimate",
+                        0,
+                        job.openSegmentKeyedCheaperCountForTest()
+                );
+                Assert.assertEquals(
+                        "the restore must still override it",
+                        1,
+                        job.openSegmentRestoreAwareCheaperCountForTest()
+                );
+                Assert.assertEquals(1, job.openSegmentKeyedResumeCountForTest());
+                Assert.assertEquals(0, job.runtimeAnchorReuseCountForTest());
+
+                // The open anchor holds 23:00:01.000000, .000500, .000600 and .000700.
+                assertNarrowAnchorTail(5, 11);
+                assertNarrowAnchorViewMatchesRecompute();
             }
         });
     }
@@ -816,7 +1128,14 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
     }
 
     private void assertViewMatchesRecompute(String baseName, String viewName) throws Exception {
-        final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
+        assertViewMatchesRecompute(
+                baseName,
+                viewName,
+                "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)"
+        );
+    }
+
+    private void assertViewMatchesRecompute(String baseName, String viewName, String bucket) throws Exception {
         final String recompute = "select created_at, account_id, "
                 + "sum(amount) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_sum "
@@ -830,6 +1149,20 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                 true
         );
         assertNoRefreshFaults(viewName);
+    }
+
+    private void assertNarrowAnchorTail(int expectedCount, int expectedSum) throws Exception {
+        assertQuery("""
+                SELECT count(), sum(cumulative_sum) FROM lv
+                WHERE created_at >= '2026-01-02T23:00:00.000000Z'""")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\tsum\n" + expectedCount + "\t" + expectedSum + ".0\n");
+    }
+
+    private void assertNarrowAnchorViewMatchesRecompute() throws Exception {
+        assertViewMatchesRecompute("tx", "lv", NARROW_ANCHOR);
     }
 
     private void commit(String values, LiveViewRefreshJob job) throws Exception {
@@ -1004,6 +1337,33 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
             assertViewMatchesRecompute(base, view);
             return job.keyedScanCheaperCountForTest();
         }
+    }
+
+    /**
+     * One account's 500 rows at a one-second stride below 00:08:20 on 2026-01-02, then a
+     * tail at 23:00:00.000000, 23:00:01.000000 and 23:00:01.000500 in the same daily
+     * partition, under a view anchored every millisecond. The partition spans 23 hours, so
+     * any 1ms interval of it estimates at 503 * 1ms / 23h, which truncates to zero rows -
+     * while the account holds hundreds of postings across the partition, and the
+     * CAPACITY-only index is a bitmap one, which reports no size and has to be walked.
+     */
+    private void createNarrowAnchorView() throws Exception {
+        execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL NOCACHE INDEX CAPACITY 256, "
+                + "amount DOUBLE) TIMESTAMP(created_at) PARTITION BY DAY WAL");
+        execute("INSERT INTO tx SELECT "
+                + "timestamp_sequence('2026-01-02T00:00:00.000000Z', 1_000_000), "
+                + "'acct-1'::SYMBOL, "
+                + "1.0 "
+                + "FROM long_sequence(500)");
+        execute("""
+                INSERT INTO tx VALUES
+                    ('2026-01-02T23:00:00.000000Z', 'acct-1', 1.0),
+                    ('2026-01-02T23:00:01.000000Z', 'acct-1', 1.0),
+                    ('2026-01-02T23:00:01.000500Z', 'acct-1', 1.0)""");
+        drainWalQueue();
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                + "SELECT created_at, account_id, sum(amount) OVER w AS cumulative_sum FROM tx "
+                + "WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR EXPRESSION " + NARROW_ANCHOR + ")");
     }
 
     private void createView(String seedRows, boolean isKeyIndexed) throws Exception {
