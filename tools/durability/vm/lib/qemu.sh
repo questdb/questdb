@@ -202,7 +202,8 @@ replay_reset_assert() {  # PORT KEY
 vm_ssh() {  # PORT KEY CMD...
     local port="$1" key="$2"
     shift 2
-    ssh -q -i "$key" -p "$port" \
+    # -n: never read the caller's stdin.
+    ssh -n -q -i "$key" -p "$port" \
         -o StrictHostKeyChecking=no \
         -o UserKnownHostsFile=/dev/null \
         -o ConnectTimeout=5 \

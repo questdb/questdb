@@ -634,6 +634,9 @@ stages:
               EOF
               : > "$(Agent.TempDirectory)/durability-timing.txt"
               : > "$(Agent.TempDirectory)/durability-skipped.txt"
+              # Staging copies only files newer than this marker: sweep-out/ and evidence/
+              # are rolling archives, and re-staging them re-uploads old runs every night.
+              : > "$(Agent.TempDirectory)/durability-started.marker"
               echo "##vso[task.setvariable variable=DURABILITY_SKIP]false"
             displayName: "Budget, lock, and window gate"
             timeoutInMinutes: 5
@@ -1203,9 +1206,13 @@ stages:
               $DIMS
               "
 
-              while IFS='|' read -r name arm mode win pts extra; do
+              # fd 3, not stdin: a stdin reader in the loop body must not drain the table.
+              listed=$(printf '%s\n' "$CELLS" | grep -c '|')
+              iterated=0
+              while IFS='|' read -r -u 3 name arm mode win pts extra; do
                 name=$(echo "$name" | tr -d '[:space:]')
                 [ -z "$name" ] && continue
+                iterated=$((iterated + 1))
                 arm=$(echo "$arm" | tr -d '[:space:]'); mode=$(echo "$mode" | tr -d '[:space:]')
                 win=$(echo "$win" | tr -d '[:space:]'); pts=$(echo "$pts" | tr -d '[:space:]')
                 # Per-arm cost, measured on this agent by build 270631: 4.8 s per reference
@@ -1230,7 +1237,8 @@ stages:
                 # shellcheck disable=SC2086
                 run_phase "$name" "$need" \
                   env QDB_ARM="$arm" QDB_SWEEP_POINTS="$pts" QDB_SWEEP_OFFSET="$(Build.BuildId)" \
-                      QDB_JUNIT_XML="$(DURABILITY_RESULTS)/${name}.xml" $extra \
+                      QDB_JUNIT_XML="$(DURABILITY_RESULTS)/${name}.xml" \
+                      QDB_SWEEP_LOG="$(DURABILITY_RESULTS)/flush-sweep.log" $extra \
                       bash run-flush-sweep.sh "$mode" "$win"
                 cell_rc=$?
 
@@ -1249,9 +1257,14 @@ stages:
                 elif [ $cell_rc -ne 0 ]; then
                   rc=1
                 fi
-              done <<CELLS_EOF
+              done 3<<CELLS_EOF
               $CELLS
               CELLS_EOF
+              # Fail loudly on a count mismatch: an unrun cell must not report green.
+              if [ "$iterated" -ne "$listed" ]; then
+                echo "##vso[task.logissue type=error]$listed cells in the table but the loop iterated $iterated; a stdin reader in the loop body ended it early and the unrun cells were reporting green"
+                rc=1
+              fi
               exit $rc
             displayName: "Sweeps: reference W=0, reference W=50000, product W=50000"
             timeoutInMinutes: 75
@@ -1269,13 +1282,16 @@ stages:
 
               # Never the disks, and an include list: an exclude list would start uploading
               # gigabytes the day a new artifact kind appears.
+              M="$(Agent.TempDirectory)/durability-started.marker"
+              newer=(); [ -f "$M" ] && newer=(-newer "$M")
               find "$S/sweep-out" -type f \
                    \( -name '*.xml' -o -name '*.out' -o -name '*.log' \) \
+                   "${newer[@]+"${newer[@]}"}" \
                    -exec cp --parents -t "$D/sweep-out" {} + 2>/dev/null || true
-              [ -f "$S/flush-sweep.log" ] && cp "$S/flush-sweep.log" "$D/" || true
               if [ -d "$S/evidence" ]; then
                 find "$S/evidence" -type f \
                      \( -name 'cmdline' -o -name 'console.log' -o -name 'liveness-failure.out' \) \
+                     "${newer[@]+"${newer[@]}"}" \
                      -exec cp --parents -t "$D/evidence" {} + 2>/dev/null || true
               fi
 
@@ -1316,7 +1332,8 @@ stages:
                 find "$D/sweep-out" -type f -name '*.out' -delete
                 du -sm "$D"
               fi
-              ls -R "$D" | head -60
+              # sed, not head: sed reads to EOF, so ls cannot die of SIGPIPE.
+              ls -R "$D" | sed -n '1,60p'
             displayName: "Stage evidence (XML, per-boundary output, logs — never the disks)"
             timeoutInMinutes: 10
             condition: always()

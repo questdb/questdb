@@ -111,7 +111,8 @@ fi
 STATE_DIR="${QDB_VMCRASH_STATE:-/data/qdb-vmcrash}"
 BASE="$STATE_DIR/base"
 KEY="$BASE/id_ed25519"
-LOG="$STATE_DIR/flush-sweep.log"
+LOG="${QDB_SWEEP_LOG:-$STATE_DIR/flush-sweep.log}"
+mkdir -p "$(dirname "$LOG")"
 # The arm is part of the run's identity: without it, two arms at the same mode, window and profile
 # land in directories distinguishable only by PID.
 OUTDIR="$STATE_DIR/sweep-out/$ARM-$MODE-w$WINDOW-$PROFILE-e${QDB_EPOCH_MS:-1000}-$$"
