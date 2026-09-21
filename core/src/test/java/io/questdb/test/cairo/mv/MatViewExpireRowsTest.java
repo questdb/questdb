@@ -1060,7 +1060,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table base (__qdb_re_keep int, v double, k symbol, ts timestamp) timestamp(ts) partition by day wal");
             assertExceptionNoLeakCheck(
-                    "create materialized view mv as (select * from base) expire rows keep highest v partition by k",
+                    "create materialized view mv as (select * from base) expire rows keep highest on v partition by k",
                     25,
                     "cannot be used on a view with a column named '__qdb_re_keep'"
             );
@@ -1076,7 +1076,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             execute("create materialized view mv as (select * from base)");
             drainWalAndMatViewQueues();
             assertExceptionNoLeakCheck(
-                    "alter materialized view mv set expire rows keep highest v partition by k",
+                    "alter materialized view mv set expire rows keep highest on v partition by k",
                     43,
                     "cannot be used on a view with a column named '__qdb_re_keep'"
             );
@@ -1831,7 +1831,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             final String[] clauses = {
                     "KEEP LATEST PARTITION BY k",
-                    "KEEP HIGHEST v PARTITION BY k",
+                    "KEEP HIGHEST ON v PARTITION BY k",
                     "WHEN v < 2.0"
             };
             for (String clause : clauses) {
@@ -1991,7 +1991,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         // only the planted columns.
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("create materialized view mv as (select * from base) expire rows keep highest v partition by k");
+            execute("create materialized view mv as (select * from base) expire rows keep highest on v partition by k");
             drainWalAndMatViewQueues();
 
             printSql("select * from mv");
@@ -2176,14 +2176,14 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         // a view that carries both.
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("create materialized view mv as (select * from base) partition by day ttl 3 days expire rows keep 1 highest v partition by k");
+            execute("create materialized view mv as (select * from base) partition by day ttl 3 days expire rows keep 1 highest on v partition by k");
             drainWalAndMatViewQueues();
 
             sink.clear();
             printSql("show create materialized view mv", sink);
             final String ddl = sink.toString();
             final int ttlPos = ddl.indexOf("TTL 3 DAYS");
-            final int expirePos = ddl.indexOf("EXPIRE ROWS KEEP 1 HIGHEST v PARTITION BY k");
+            final int expirePos = ddl.indexOf("EXPIRE ROWS KEEP 1 HIGHEST ON v PARTITION BY k");
             assertTrue("expected TTL clause in: " + ddl, ttlPos > -1);
             assertTrue("expected EXPIRE clause in: " + ddl, expirePos > -1);
             assertTrue("TTL must precede EXPIRE ROWS in: " + ddl, ttlPos < expirePos);
@@ -2191,7 +2191,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             execute(replayShowCreate(ddl, "mv2"));
             drainWalAndMatViewQueues();
             assertTtlKept("mv2", 3);
-            assertExpiryPolicy("mv2", "KEEP 1 HIGHEST v PARTITION BY k", "1h");
+            assertExpiryPolicy("mv2", "KEEP 1 HIGHEST ON v PARTITION BY k", "1h");
         });
     }
 
@@ -2238,7 +2238,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         // The reported maximum is the maximum of the TTL window, so it can go down as the window moves.
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("create materialized view mv as (select * from base) partition by day ttl 3 days expire rows keep 1 highest v partition by k");
+            execute("create materialized view mv as (select * from base) partition by day ttl 3 days expire rows keep 1 highest on v partition by k");
             drainWalAndMatViewQueues();
 
             currentMicros = MicrosTimestampDriver.floor("2024-01-03T12:00:00.000000Z");
@@ -2316,7 +2316,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             execute("create materialized view mv as (select * from base) partition by day ttl 3 days");
             drainWalAndMatViewQueues();
 
-            execute("alter materialized view mv set expire rows keep 1 highest v partition by k");
+            execute("alter materialized view mv set expire rows keep 1 highest on v partition by k");
             drainWalAndMatViewQueues();
 
             currentMicros = MicrosTimestampDriver.floor("2024-01-03T12:00:00.000000Z");
@@ -2348,7 +2348,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         // SET TTL rewrites _meta too; the EXPIRE ROWS policy encoded there must survive it.
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("create materialized view mv as (select * from base) partition by day expire rows keep 1 highest v partition by k cleanup every 30m");
+            execute("create materialized view mv as (select * from base) partition by day expire rows keep 1 highest on v partition by k cleanup every 30m");
             drainWalAndMatViewQueues();
 
             currentMicros = MicrosTimestampDriver.floor("2024-01-03T12:00:00.000000Z");
@@ -2360,7 +2360,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
             execute("alter materialized view mv set ttl 3 days");
             drainWalAndMatViewQueues();
-            assertExpiryPolicy("mv", "KEEP 1 HIGHEST v PARTITION BY k", "30m");
+            assertExpiryPolicy("mv", "KEEP 1 HIGHEST ON v PARTITION BY k", "30m");
 
             // The new TTL takes effect on the view's next commit, which the next refresh brings.
             currentMicros = MicrosTimestampDriver.floor("2024-01-05T12:00:00.000000Z");
@@ -2604,18 +2604,18 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
 
             // KEEP HIGHEST over a value column whose name carries the separator.
-            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS KEEP HIGHEST \""
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS KEEP HIGHEST ON \""
                     + keepCol + "\" PARTITION BY k");
             drainWalAndMatViewQueues();
-            assertExpireClause("KEEP HIGHEST \"" + keepCol + "\" PARTITION BY k");
+            assertExpireClause("KEEP HIGHEST ON \"" + keepCol + "\" PARTITION BY k");
             assertQuery("SELECT k, \"" + keepCol + "\" FROM mv")
                     .noLeakCheck().returns("k\t" + keepCol + "\nA\t9.0\n");
 
             // KEEP LOWEST over a column whose name is the escape char followed by the separator's code:
             // decoding it must not turn that pair back into a separator.
-            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS KEEP LOWEST \"" + escCol + "\" PARTITION BY k");
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS KEEP LOWEST ON \"" + escCol + "\" PARTITION BY k");
             drainWalAndMatViewQueues();
-            assertExpireClause("KEEP LOWEST \"" + escCol + "\" PARTITION BY k");
+            assertExpireClause("KEEP LOWEST ON \"" + escCol + "\" PARTITION BY k");
             assertQuery("SELECT k, \"" + escCol + "\" FROM mv")
                     .noLeakCheck().returns("k\t" + escCol + "\nA\t2.0\n");
 
@@ -2937,7 +2937,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             execute("create table base2 (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into base2 values ('A', 1.0, '2024-01-01T00:00:00.000000Z'),('A', 3.0, '2024-01-02T00:00:00.000000Z')");
             drainWalAndMatViewQueues();
-            execute("create materialized view mv2 as (select * from base2) EXPIRE ROWS KEEP HIGHEST v partition by k");
+            execute("create materialized view mv2 as (select * from base2) EXPIRE ROWS KEEP HIGHEST ON v partition by k");
             drainWalAndMatViewQueues();
 
             // Reading the view, and a SAMPLE BY directly over it, both work.

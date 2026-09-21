@@ -75,33 +75,33 @@ public class RowExpiryPolicyAcceptanceTest extends AbstractCairoTest {
      */
     private static final String[] ANY_VERDICT = {
             // keep column, one per type the bare form may or may not be able to rank
-            "KEEP HIGHEST v PARTITION BY k",
-            "KEEP LOWEST v PARTITION BY k",
-            "KEEP HIGHEST i PARTITION BY k",
-            "KEEP HIGHEST l PARTITION BY k",
-            "KEEP HIGHEST ts2 PARTITION BY k",
-            "KEEP HIGHEST dt PARTITION BY k",
-            "KEEP HIGHEST s PARTITION BY k",
-            "KEEP HIGHEST vc PARTITION BY k",
-            "KEEP HIGHEST c PARTITION BY k",
-            "KEEP HIGHEST sym PARTITION BY k",
-            "KEEP HIGHEST b PARTITION BY k",
-            "KEEP HIGHEST u PARTITION BY k",
+            "KEEP HIGHEST ON v PARTITION BY k",
+            "KEEP LOWEST ON v PARTITION BY k",
+            "KEEP HIGHEST ON i PARTITION BY k",
+            "KEEP HIGHEST ON l PARTITION BY k",
+            "KEEP HIGHEST ON ts2 PARTITION BY k",
+            "KEEP HIGHEST ON dt PARTITION BY k",
+            "KEEP HIGHEST ON s PARTITION BY k",
+            "KEEP HIGHEST ON vc PARTITION BY k",
+            "KEEP HIGHEST ON c PARTITION BY k",
+            "KEEP HIGHEST ON sym PARTITION BY k",
+            "KEEP HIGHEST ON b PARTITION BY k",
+            "KEEP HIGHEST ON u PARTITION BY k",
             // the top-N form ranks instead of taking an extreme, so it accepts more types
-            "KEEP 2 HIGHEST v PARTITION BY k",
-            "KEEP 2 HIGHEST s PARTITION BY k",
-            "KEEP 2 LOWEST sym PARTITION BY k",
-            "KEEP 2 HIGHEST l256 PARTITION BY k",
-            "KEEP 2 HIGHEST b PARTITION BY k",
-            "KEEP 2 HIGHEST u PARTITION BY k",
+            "KEEP 2 HIGHEST ON v PARTITION BY k",
+            "KEEP 2 HIGHEST ON s PARTITION BY k",
+            "KEEP 2 LOWEST ON sym PARTITION BY k",
+            "KEEP 2 HIGHEST ON l256 PARTITION BY k",
+            "KEEP 2 HIGHEST ON b PARTITION BY k",
+            "KEEP 2 HIGHEST ON u PARTITION BY k",
             // no PARTITION BY at all, which the bare form allows and KEEP LATEST does not
-            "KEEP HIGHEST v",
-            "KEEP 3 HIGHEST v",
+            "KEEP HIGHEST ON v",
+            "KEEP 3 HIGHEST ON v",
             // a quoted keep column and a quoted key
-            "KEEP HIGHEST \"my val\" PARTITION BY k",
-            "KEEP HIGHEST v PARTITION BY \"k\"",
+            "KEEP HIGHEST ON \"my val\" PARTITION BY k",
+            "KEEP HIGHEST ON v PARTITION BY \"k\"",
             // composite key list
-            "KEEP HIGHEST v PARTITION BY k, sym",
+            "KEEP HIGHEST ON v PARTITION BY k, sym",
             // KEEP LATEST
             "KEEP LATEST PARTITION BY k",
             "KEEP LATEST ON ts PARTITION BY k",
@@ -112,12 +112,12 @@ public class RowExpiryPolicyAcceptanceTest extends AbstractCairoTest {
             "KEEP LATEST PARTITION BY arr",
             // a key whose unquoted name is a SQL keyword, in both modes that take a key list
             "KEEP LATEST PARTITION BY end",
-            "KEEP HIGHEST v PARTITION BY end",
+            "KEEP HIGHEST ON v PARTITION BY end",
             "KEEP LATEST PARTITION BY \"end\"",
-            "KEEP HIGHEST v PARTITION BY \"end\"",
+            "KEEP HIGHEST ON v PARTITION BY \"end\"",
             // a keep column of a type the bare form cannot rank
-            "KEEP HIGHEST d PARTITION BY k",
-            "KEEP HIGHEST arr PARTITION BY k",
+            "KEEP HIGHEST ON d PARTITION BY k",
+            "KEEP HIGHEST ON arr PARTITION BY k",
             // scalar and window WHEN predicates
             "WHEN v < 2.0",
             "WHEN v IS NULL",
@@ -133,18 +133,18 @@ public class RowExpiryPolicyAcceptanceTest extends AbstractCairoTest {
     private static final String[] MUST_REJECT = {
             // a PARTITION BY list that is not a column list: these close the generated OVER ( early,
             // so the keep filter becomes a constant and retention is silently off (or expires all)
-            "KEEP HIGHEST v PARTITION BY k) AND (1=0",
-            "KEEP HIGHEST v PARTITION BY k) OR (1=1",
-            "KEEP LOWEST v PARTITION BY k) AND (1=0",
-            "KEEP 2 HIGHEST v PARTITION BY k) AND (1=0",
+            "KEEP HIGHEST ON v PARTITION BY k) AND (1=0",
+            "KEEP HIGHEST ON v PARTITION BY k) OR (1=1",
+            "KEEP LOWEST ON v PARTITION BY k) AND (1=0",
+            "KEEP 2 HIGHEST ON v PARTITION BY k) AND (1=0",
             "KEEP LATEST PARTITION BY k) OR (1=1",
             // a window frame swallowed into the key list
-            "KEEP HIGHEST v PARTITION BY k ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW",
+            "KEEP HIGHEST ON v PARTITION BY k ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW",
             // a name that is not a column, in each field of each mode
-            "KEEP HIGHEST nosuch PARTITION BY k",
-            "KEEP HIGHEST v PARTITION BY nosuch",
-            "KEEP LOWEST v PARTITION BY nosuch",
-            "KEEP 2 HIGHEST v PARTITION BY k, nosuch",
+            "KEEP HIGHEST ON nosuch PARTITION BY k",
+            "KEEP HIGHEST ON v PARTITION BY nosuch",
+            "KEEP LOWEST ON v PARTITION BY nosuch",
+            "KEEP 2 HIGHEST ON v PARTITION BY k, nosuch",
             "KEEP LATEST PARTITION BY nosuch",
             "KEEP LATEST ON nosuch PARTITION BY k",
             // KEEP LATEST ON must name the designated timestamp, not just any timestamp
@@ -158,11 +158,17 @@ public class RowExpiryPolicyAcceptanceTest extends AbstractCairoTest {
             // No window max()/min() takes LONG256, and LONG is its overload fallback, so accepting
             // this would rank rows by the low 64 bits of the value with every read still succeeding.
             // Revisit only alongside a window max()/min() that takes LONG256 as it stands.
-            "KEEP HIGHEST l256 PARTITION BY k",
-            "KEEP LOWEST l256 PARTITION BY k",
+            "KEEP HIGHEST ON l256 PARTITION BY k",
+            "KEEP LOWEST ON l256 PARTITION BY k",
             // row counts the grammar rejects
-            "KEEP 0 HIGHEST v PARTITION BY k",
-            "KEEP -1 HIGHEST v PARTITION BY k",
+            "KEEP 0 HIGHEST ON v PARTITION BY k",
+            "KEEP -1 HIGHEST ON v PARTITION BY k",
+            // the keep column must be introduced by ON, in both the extreme and the top-N form
+            "KEEP HIGHEST v PARTITION BY k",
+            "KEEP LOWEST v PARTITION BY k",
+            "KEEP 2 HIGHEST v PARTITION BY k",
+            "KEEP HIGHEST v",
+            "KEEP HIGHEST",
     };
 
     @Before
@@ -183,14 +189,14 @@ public class RowExpiryPolicyAcceptanceTest extends AbstractCairoTest {
             policies.add(new Policy("KEEP LATEST ON ts PARTITION BY k", 3));
             policies.add(new Policy("KEEP LATEST PARTITION BY k, sym CLEANUP EVERY 30m", 3));
             policies.add(new Policy("KEEP LATEST ON ts PARTITION BY k, sym CLEANUP EVERY 30m", 3));
-            policies.add(new Policy("KEEP HIGHEST v", 2));
-            policies.add(new Policy("KEEP LOWEST v CLEANUP EVERY 30m", 2));
-            policies.add(new Policy("KEEP HIGHEST v PARTITION BY k", 3));
-            policies.add(new Policy("KEEP LOWEST v PARTITION BY k, sym CLEANUP EVERY 30m", 3));
-            policies.add(new Policy("KEEP 2 HIGHEST v", 2));
-            policies.add(new Policy("KEEP 2 LOWEST v CLEANUP EVERY 30m", 2));
-            policies.add(new Policy("KEEP 2 HIGHEST v PARTITION BY k", 4));
-            policies.add(new Policy("KEEP 2 LOWEST v PARTITION BY k, sym CLEANUP EVERY 30m", 4));
+            policies.add(new Policy("KEEP HIGHEST ON v", 2));
+            policies.add(new Policy("KEEP LOWEST ON v CLEANUP EVERY 30m", 2));
+            policies.add(new Policy("KEEP HIGHEST ON v PARTITION BY k", 3));
+            policies.add(new Policy("KEEP LOWEST ON v PARTITION BY k, sym CLEANUP EVERY 30m", 3));
+            policies.add(new Policy("KEEP 2 HIGHEST ON v", 2));
+            policies.add(new Policy("KEEP 2 LOWEST ON v CLEANUP EVERY 30m", 2));
+            policies.add(new Policy("KEEP 2 HIGHEST ON v PARTITION BY k", 4));
+            policies.add(new Policy("KEEP 2 LOWEST ON v PARTITION BY k, sym CLEANUP EVERY 30m", 4));
 
             for (int i = 0, n = policies.size(); i < n; i++) {
                 final Policy policy = policies.getQuick(i);

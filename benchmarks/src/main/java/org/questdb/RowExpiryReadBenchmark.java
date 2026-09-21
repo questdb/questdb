@@ -64,7 +64,7 @@ import java.util.Arrays;
  *   <li>{@code mv_val}    - WHEN v &lt; 500.0 on a value column;</li>
  *   <li>{@code mv_latest} - KEEP LATEST PARTITION BY sym (rewrites to LATEST ON; sym is an indexed symbol,
  *       so the keep-set is the latest row per symbol);</li>
- *   <li>{@code mv_max}    - KEEP HIGHEST v PARTITION BY sym (a window keep-filter; full scan + per-key max).</li>
+ *   <li>{@code mv_max}    - KEEP HIGHEST ON v PARTITION BY sym (a window keep-filter; full scan + per-key max).</li>
  * </ul>
  * Four reads run against each view - a whole-view {@code count()}, a single-symbol lookup, a JIT-compilable
  * value filter, and a one-day range - and each row reports the plan features the policy left standing. Then
@@ -159,7 +159,7 @@ public class RowExpiryReadBenchmark {
                 engine.execute("create materialized view mv_ts as (select * from base) expire rows when ts < " + midThreshold, ctx);
                 engine.execute("create materialized view mv_val as (select * from base) expire rows when v < 500.0", ctx);
                 engine.execute("create materialized view mv_latest as (select * from base) expire rows keep latest partition by sym", ctx);
-                engine.execute("create materialized view mv_max as (select * from base) expire rows keep highest v partition by sym", ctx);
+                engine.execute("create materialized view mv_max as (select * from base) expire rows keep highest on v partition by sym", ctx);
                 drainWal(engine);
                 drainMatView(engine);
                 drainWal(engine);

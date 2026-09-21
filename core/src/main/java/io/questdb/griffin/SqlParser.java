@@ -536,7 +536,7 @@ public class SqlParser {
             // Relative retention modes (passthrough-mat-view-only, validated at create), stored encoded in
             // the predicate slot and rewritten by the read filter:
             //   KEEP LATEST [ON <ts>] PARTITION BY <cols>      -> latest row per key (LATEST ON)
-            //   KEEP [<N>] HIGHEST|LOWEST <col> [PARTITION BY <cols>] -> group max/min (or top-N) by a column
+            //   KEEP [<N>] HIGHEST|LOWEST ON <col> [PARTITION BY <cols>] -> group max/min (or top-N) by a column
             predicateStart = lexer.lastTokenPosition();
             tok = tok(lexer, "'latest', 'highest', 'lowest' or a row count");
             if (isLatestKeyword(tok)) {
@@ -560,7 +560,7 @@ public class SqlParser {
                 foundCleanup = cap.foundCleanup;
                 tok = cap.nextTok;
             } else {
-                // KEEP [<N>] HIGHEST|LOWEST <col> [PARTITION BY <cols>]. Stored structurally and desugared to
+                // KEEP [<N>] HIGHEST|LOWEST ON <col> [PARTITION BY <cols>]. Stored structurally and desugared to
                 // a window predicate at use (the designated timestamp is needed only for the top-N tiebreak).
                 int n = 0;
                 if (!isHighestKeyword(tok) && !isLowestKeyword(tok)) {
@@ -578,6 +578,7 @@ public class SqlParser {
                 if (!highest && !isLowestKeyword(tok)) {
                     throw SqlException.$(lexer.lastTokenPosition(), "'highest' or 'lowest' expected");
                 }
+                expectTok(lexer, "on");
                 final String col = Chars.toString(unquote(tok(lexer, "column name")));
                 tok = optTok(lexer);
                 String keysCsv = "";

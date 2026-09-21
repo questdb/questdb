@@ -125,13 +125,13 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
             assertQuery("SELECT k, \"group key\", \"select\", v FROM mv_replay ORDER BY v")
                     .expectSize().noLeakCheck().returns(latestExpected);
 
-            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS KEEP HIGHEST v PARTITION BY "
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY "
                     + "/* before */ k/* after */,/* between */\"group key\", \"select\"/* at end */");
             drainWalAndMatViewQueues();
             assertQuery("SELECT k, \"group key\", \"select\", v FROM mv ORDER BY v")
                     .noLeakCheck().returns(latestExpected);
 
-            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS KEEP LOWEST v PARTITION BY "
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS KEEP LOWEST ON v PARTITION BY "
                     + "k, /* comma, KEEP HIGHEST */ \"group key\", \"select\" CLEANUP EVERY 2h;");
             drainWalAndMatViewQueues();
             assertQuery("SELECT k, \"group key\", \"select\", v FROM mv ORDER BY v")
@@ -140,7 +140,7 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
                             + "A\tY\tS\t3.0\n"
                             + "\tX\tS\t4.0\n");
 
-            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS KEEP 1 HIGHEST v PARTITION BY "
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS KEEP 1 HIGHEST ON v PARTITION BY "
                     + "k, \"group key\" /* around comma */, /* TOP N */ \"select\";");
             drainWalAndMatViewQueues();
             assertQuery("SELECT k, \"group key\", \"select\", v FROM mv ORDER BY v")
@@ -194,7 +194,7 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
 
             // The raw text names a real column, but without quotes it would add a LIMIT to the
             // generated latest-by query. Reject it before either CREATE or ALTER persists it.
-            final ObjList<String> modes = new ObjList<>("LATEST", "HIGHEST v", "LOWEST v", "2 HIGHEST v", "2 LOWEST v");
+            final ObjList<String> modes = new ObjList<>("LATEST", "HIGHEST ON v", "LOWEST ON v", "2 HIGHEST ON v", "2 LOWEST ON v");
             for (int i = 0; i < modes.size(); i++) {
                 final String clause = " EXPIRE ROWS KEEP " + modes.getQuick(i) + " PARTITION BY k limit 1";
                 final String create = "CREATE MATERIALIZED VIEW bad AS (SELECT * FROM base)" + clause;
@@ -226,7 +226,7 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
                     B\t3.0
                     """;
             assertQuery("SELECT k, v FROM mv ORDER BY k").noLeakCheck().expectSize().returns(expected);
-            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS KEEP HIGHEST v PARTITION BY \"k limit 1\", k CLEANUP EVERY 1h;");
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY \"k limit 1\", k CLEANUP EVERY 1h;");
             drainWalAndMatViewQueues();
             assertQuery("SELECT k, v FROM mv ORDER BY k").noLeakCheck().returns(expected);
         });

@@ -66,7 +66,7 @@ import java.nio.file.attribute.BasicFileAttributes;
  *   ts < T  (designated)      5         0              0    7.2   day-aligned threshold -> whole partitions wiped, no rewrite
  *   ts2 < T (2nd ts)          0         9          13918   29.5   no bounds alignment -> every partition partial -> rewrite ~half the table
  *   KEEP LATEST               0         0              0    0.2   structural policy -> no physical cleanup at all
- *   KEEP HIGHEST v            0         0              0    0.2   structural policy -> no physical cleanup at all
+ *   KEEP HIGHEST ON v         0         0              0    0.2   structural policy -> no physical cleanup at all
  * </pre>
  * Part 2 - re-churn over 8 sweeps as the threshold advances one day per epoch; cumulative:
  * <pre>
@@ -124,7 +124,7 @@ public class RowExpiryCleanupBenchmark {
                 onceSweep(engine, compiler, ctx, "v_ts2", "expire rows when ts2 < cast(" + midThreshold + " as timestamp)");
                 // Structural policies: the sweep returns before it opens a reader, so every counter stays 0.
                 onceSweep(engine, compiler, ctx, "v_latest", "expire rows keep latest partition by sym");
-                onceSweep(engine, compiler, ctx, "v_max", "expire rows keep highest v partition by sym");
+                onceSweep(engine, compiler, ctx, "v_max", "expire rows keep highest on v partition by sym");
 
                 System.out.println();
                 System.out.println("Part 2 - re-churn over " + EPOCHS + " sweeps, threshold advancing 1 day/epoch (cumulative):");

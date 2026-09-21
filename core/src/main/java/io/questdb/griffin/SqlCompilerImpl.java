@@ -7071,7 +7071,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (!RowExpiryUtil.isKeepExtremeType(type)) {
             throw SqlException.$(position, "EXPIRE ROWS KEEP HIGHEST/LOWEST requires a BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP or DECIMAL column, but '")
                     .put(col).put("' is ").put(ColumnType.nameOf(type))
-                    .put("; use KEEP <N> HIGHEST/LOWEST to rank an orderable column of any type");
+                    .put("; use KEEP <N> HIGHEST/LOWEST ON <column> to rank an orderable column of any type");
         }
     }
 

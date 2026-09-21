@@ -350,7 +350,7 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
         assertEquals("KEEP LATEST ON \"" + ts + "\" PARTITION BY " + keys, RowExpiryUtil.displayPredicate(keepLatest));
 
         final String keepBy = RowExpiryUtil.encodeKeepBy(0, true, col, keys);
-        assertEquals("KEEP HIGHEST \"" + col + "\" PARTITION BY " + keys, RowExpiryUtil.displayPredicate(keepBy));
+        assertEquals("KEEP HIGHEST ON \"" + col + "\" PARTITION BY " + keys, RowExpiryUtil.displayPredicate(keepBy));
 
         // A name with no reserved character is stored verbatim, so an ordinary policy is unchanged.
         assertEquals("KEEP LATEST PARTITION BY k", RowExpiryUtil.displayPredicate(RowExpiryUtil.encodeKeepLatest(null, "k")));
@@ -358,7 +358,7 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
         // A lone escape character is not something the encoder emits. Decoding passes it through instead of
         // guessing, so a hand-built (or corrupt) policy still reads back verbatim rather than losing a char.
         final String handBuilt = sep + "N0" + sep + "H" + sep + "a" + esc + "b" + sep + "k";
-        assertEquals("KEEP HIGHEST \"a" + esc + "b\" PARTITION BY k", RowExpiryUtil.displayPredicate(handBuilt));
+        assertEquals("KEEP HIGHEST ON \"a" + esc + "b\" PARTITION BY k", RowExpiryUtil.displayPredicate(handBuilt));
     }
 
     @Test
@@ -374,7 +374,7 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
         assertFalse(decoded.isHighest);
         assertEquals("v", decoded.col);
         assertEquals("k", decoded.keys);
-        assertEquals("KEEP 3 LOWEST v PARTITION BY k", RowExpiryUtil.displayPredicate(topN));
+        assertEquals("KEEP 3 LOWEST ON v PARTITION BY k", RowExpiryUtil.displayPredicate(topN));
         assertEquals(
                 "row_number() OVER (PARTITION BY k ORDER BY \"v\" ASC, \"ts\" DESC) > 3",
                 RowExpiryUtil.windowPredicate(topN, "ts")
@@ -384,7 +384,7 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
         // validation rules.
         final String badCount = sep + "N" + "x7" + sep + "H" + sep + "v" + sep + "k";
         assertEquals(0, new RowExpiryUtil.KeepBy(badCount).n);
-        assertEquals("KEEP HIGHEST v PARTITION BY k", RowExpiryUtil.displayPredicate(badCount));
+        assertEquals("KEEP HIGHEST ON v PARTITION BY k", RowExpiryUtil.displayPredicate(badCount));
         assertEquals("\"v\" < max(\"v\") OVER (PARTITION BY k)", RowExpiryUtil.windowPredicate(badCount, "ts"));
 
         // Truncated right after the mode char: every field is missing, so each one reads empty.
@@ -393,7 +393,7 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
         assertEquals(0, empty.n);
         assertEquals("", empty.col);
         assertEquals("", empty.keys);
-        assertEquals("KEEP LOWEST \"\"", RowExpiryUtil.displayPredicate(truncated));
+        assertEquals("KEEP LOWEST ON \"\"", RowExpiryUtil.displayPredicate(truncated));
     }
 
     @Test

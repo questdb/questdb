@@ -8447,10 +8447,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     {"when_v", "WHEN v < 2", "v < 2", "1h", " OWNED BY 'group'"},
                     {"latest", "KEEP LATEST PARTITION BY k", "KEEP LATEST PARTITION BY k", "1h", " OWNED BY 'group'"},
                     {"latest_on", "KEEP LATEST ON ts PARTITION BY k", "KEEP LATEST ON ts PARTITION BY k", "1h", " OWNED BY 'group'"},
-                    {"highest", "KEEP HIGHEST v PARTITION BY k", "KEEP HIGHEST v PARTITION BY k", "1h", " OWNED BY 'group'"},
-                    {"lowest", "KEEP LOWEST v PARTITION BY k", "KEEP LOWEST v PARTITION BY k", "1h", " OWNED BY 'group'"},
-                    {"top_n", "KEEP 2 HIGHEST v PARTITION BY k", "KEEP 2 HIGHEST v PARTITION BY k", "1h", " OWNED BY 'group'"},
-                    {"no_keys", "KEEP HIGHEST v", "KEEP HIGHEST v", "1h", " OWNED BY 'group'"},
+                    {"highest", "KEEP HIGHEST ON v PARTITION BY k", "KEEP HIGHEST ON v PARTITION BY k", "1h", " OWNED BY 'group'"},
+                    {"lowest", "KEEP LOWEST ON v PARTITION BY k", "KEEP LOWEST ON v PARTITION BY k", "1h", " OWNED BY 'group'"},
+                    {"top_n", "KEEP 2 HIGHEST ON v PARTITION BY k", "KEEP 2 HIGHEST ON v PARTITION BY k", "1h", " OWNED BY 'group'"},
+                    {"no_keys", "KEEP HIGHEST ON v", "KEEP HIGHEST ON v", "1h", " OWNED BY 'group'"},
                     {"owned_col", "WHEN owned < 2", "owned < 2", "1h", " OWNED BY 'group'"},
                     {"owned_key", "KEEP LATEST PARTITION BY owned", "KEEP LATEST PARTITION BY owned", "1h", " OWNED BY 'group'"},
                     {"owned_first_key", "KEEP LATEST PARTITION BY owned, k", "KEEP LATEST PARTITION BY owned, k", "1h", " OWNED BY 'group'"},
@@ -8496,7 +8496,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 assertExpireRowsExtensionRejected(
                         compiler,
                         "create materialized view injected as (select * from erb_base) " +
-                                "expire rows keep highest v partition by k) and (1=0 owned by 'group'",
+                                "expire rows keep highest on v partition by k) and (1=0 owned by 'group'",
                         "',' expected"
                 );
 

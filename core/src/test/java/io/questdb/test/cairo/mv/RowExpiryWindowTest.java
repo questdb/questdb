@@ -39,8 +39,8 @@ import org.junit.Test;
 /**
  * Verifies the window-based EXPIRE ROWS retention modes on PASSTHROUGH materialized views:
  * <ul>
- *     <li>{@code KEEP HIGHEST|LOWEST <col> [PARTITION BY <cols>]} — keep the group max/min (all ties);</li>
- *     <li>{@code KEEP <N> HIGHEST|LOWEST <col> [PARTITION BY <cols>]} — keep the top-N by a column;</li>
+ *     <li>{@code KEEP HIGHEST|LOWEST ON <col> [PARTITION BY <cols>]} — keep the group max/min (all ties);</li>
+ *     <li>{@code KEEP <N> HIGHEST|LOWEST ON <col> [PARTITION BY <cols>]} — keep the top-N by a column;</li>
  *     <li>{@code WHEN <window predicate>} — an arbitrary window-function predicate (the escape hatch).</li>
  * </ul>
  * All desugar to / are a window predicate behind the projection-CASE read filter. Physical cleanup is
@@ -106,7 +106,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     @Test
     public void testExpiryWindowCompositeKeyRequiresEveryKey() throws Exception {
         assertMemoryLeak(() -> {
-            createIndexedView("EXPIRE ROWS KEEP HIGHEST v PARTITION BY k, region");
+            createIndexedView("EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY k, region");
 
             assertQuery("SELECT k, region, v FROM mv WHERE k = 'A' AND region = 'X'").noLeakCheck().returns("""
                     k\tregion\tv
@@ -127,7 +127,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     @Test
     public void testExpiryWindowPartitionKeyAliasAndBindPushDown() throws Exception {
         assertMemoryLeak(() -> {
-            createIndexedView("EXPIRE ROWS KEEP HIGHEST v PARTITION BY k");
+            createIndexedView("EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY k");
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "A");
 
@@ -145,7 +145,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     @Test
     public void testExpiryWindowPartitionKeyPushDownPreservesResults() throws Exception {
         assertMemoryLeak(() -> {
-            createIndexedView("EXPIRE ROWS KEEP HIGHEST v PARTITION BY k");
+            createIndexedView("EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY k");
 
             final String expected = "k\tregion\tv\n" +
                     "A\tX\t9.0\n";
@@ -208,7 +208,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         // window would see a subset that no longer holds key A's real maximum, and the query would report
         // A's second-highest row as a survivor.
         assertMemoryLeak(() -> {
-            createIndexedView("EXPIRE ROWS KEEP HIGHEST v PARTITION BY k");
+            createIndexedView("EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY k");
             // Kept rows: (A, X, 9.0) and (B, X, 7.0).
             assertQuery("SELECT k, region, v FROM mv WHERE k = 'B' OR v < 5 ORDER BY k").noLeakCheck().returns("""
                     k	region	v
@@ -254,7 +254,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             execute("""
                     CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base), INDEX (k)
-                    EXPIRE ROWS KEEP HIGHEST v PARTITION BY k""");
+                    EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY k""");
             drainWalAndMatViewQueues();
 
             // A's kept row is (A, X, 9.0), so nothing satisfies k = region.
@@ -286,7 +286,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             execute("""
                     CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base), INDEX (k)
-                    EXPIRE ROWS KEEP HIGHEST v PARTITION BY k""");
+                    EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY k""");
             drainWalAndMatViewQueues();
 
             assertQuery("SELECT k, region, v FROM mv ORDER BY v").noLeakCheck().returns("""
@@ -308,7 +308,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     @Test
     public void testExpiryWindowRepeatedReferencesPushDownIndependently() throws Exception {
         assertMemoryLeak(() -> {
-            createIndexedView("EXPIRE ROWS KEEP HIGHEST v PARTITION BY k");
+            createIndexedView("EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY k");
 
             assertQuery("SELECT k FROM mv WHERE k = 'A' UNION ALL SELECT k FROM mv WHERE k = 'B'").noRandomAccess().noLeakCheck().returns("""
                     k
@@ -358,7 +358,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     @Test
     public void testKeepHighestAllTiesPerKey() throws Exception {
         assertMemoryLeak(() -> {
-            createViewWith("expire rows keep highest v partition by k");
+            createViewWith("expire rows keep highest on v partition by k");
             // Keep every row tied at the per-key max; NULL-group rows survive (v<max is UNKNOWN, kept).
             assertQuery("select k, v, ts from mv order by k, ts").noLeakCheck().returns("""
                     k\tv\tts
@@ -375,7 +375,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     @Test
     public void testKeepLowestPerKey() throws Exception {
         assertMemoryLeak(() -> {
-            createViewWith("expire rows keep lowest v partition by k");
+            createViewWith("expire rows keep lowest on v partition by k");
             assertQuery("select k, v, ts from mv order by k, ts").noLeakCheck().returns("""
                     k\tv\tts
                     A\t1.0\t2024-01-01T00:00:00.000000Z
@@ -390,7 +390,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     @Test
     public void testKeepTopNPerKey() throws Exception {
         assertMemoryLeak(() -> {
-            createViewWith("expire rows keep 2 highest v partition by k");
+            createViewWith("expire rows keep 2 highest on v partition by k");
             // top-2 by v desc, with the designated timestamp as the deterministic tiebreak.
             assertQuery("select k, v, ts from mv order by k, v desc, ts desc").noLeakCheck().returns("""
                     k\tv\tts
@@ -421,7 +421,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                     ('A', 7.0, '2024-01-03T00:00:00.000000Z'),
                     ('A', null, '2024-01-04T00:00:00.000000Z')""");
             drainWalAndMatViewQueues();
-            execute("create materialized view mv as (select * from base) expire rows keep 2 highest v partition by k");
+            execute("create materialized view mv as (select * from base) expire rows keep 2 highest on v partition by k");
             drainWalAndMatViewQueues();
             assertQuery("select k, v from mv order by v").noLeakCheck().returns("""
                     k\tv
@@ -447,7 +447,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                     ('A', 7, '2024-01-03T00:00:00.000000Z'),
                     ('A', null, '2024-01-04T00:00:00.000000Z')""");
             drainWalAndMatViewQueues();
-            execute("create materialized view mv as (select * from base) expire rows keep 2 highest n partition by k");
+            execute("create materialized view mv as (select * from base) expire rows keep 2 highest on n partition by k");
             drainWalAndMatViewQueues();
             // ORDER BY n -- with NULLs sorting per QuestDB convention; only the two real top values survive.
             assertQuery("select k, n from mv order by n").noLeakCheck().returns("""
@@ -474,7 +474,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                     ('A', '2024-01-01T00:00:00.000000Z', '2024-01-03T00:00:00.000000Z'),
                     ('A', null, '2024-01-04T00:00:00.000000Z')""");
             drainWalAndMatViewQueues();
-            execute("create materialized view mv as (select * from base) expire rows keep 2 highest w partition by k");
+            execute("create materialized view mv as (select * from base) expire rows keep 2 highest on w partition by k");
             drainWalAndMatViewQueues();
             assertQuery("select k, w from mv order by w").timestamp("w").noLeakCheck().returns("""
                     k\tw
@@ -489,7 +489,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     @Test
     public void testKeepHighestNoPartition() throws Exception {
         assertMemoryLeak(() -> {
-            createViewWith("expire rows keep highest v");
+            createViewWith("expire rows keep highest on v");
             // Global max is 7.0 (D). NULL rows (C) survive (v<max is UNKNOWN). Everything else expires.
             assertQuery("select k, v from mv order by k, ts").noLeakCheck().returns("""
                     k\tv
@@ -504,7 +504,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     public void testRawWindowWhen() throws Exception {
         assertMemoryLeak(() -> {
             createViewWith("expire rows when v < max(v) over (partition by k)");
-            // Equivalent to KEEP HIGHEST v PARTITION BY k.
+            // Equivalent to KEEP HIGHEST ON v PARTITION BY k.
             assertQuery("select k, v, ts from mv order by k, ts").noLeakCheck().returns("""
                     k\tv\tts
                     A\t3.0\t2024-01-02T00:00:00.000000Z
@@ -520,7 +520,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     @Test
     public void testComposesWithOuterWhere() throws Exception {
         assertMemoryLeak(() -> {
-            createViewWith("expire rows keep highest v partition by k");
+            createViewWith("expire rows keep highest on v partition by k");
             // The outer predicate filters the already-kept (per-key max) rows.
             assertQuery("select k, v from mv where v > 3 order by k, ts").noLeakCheck().returns("""
                     k\tv
@@ -538,7 +538,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             execute("create materialized view mv as (select * from base)");
             drainWalAndMatViewQueues();
             assertQuery("select count() c from mv").noRandomAccess().expectSize().noLeakCheck().returns("c\n9\n");
-            execute("alter materialized view mv set expire rows keep 2 highest v partition by k");
+            execute("alter materialized view mv set expire rows keep 2 highest on v partition by k");
             drainWalAndMatViewQueues();
             assertQuery("select count() c from mv").noRandomAccess().expectSize().noLeakCheck().returns("c\n7\n"); // 9 rows -> top-2 per key keeps 7 (A2,B2,C2,D1)
         });
@@ -548,11 +548,11 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     public void testShowCreateRoundTrips() throws Exception {
         assertMemoryLeak(() -> {
             createBase();
-            execute("create materialized view mv as (select * from base) expire rows keep 2 highest v partition by k");
+            execute("create materialized view mv as (select * from base) expire rows keep 2 highest on v partition by k");
             drainWalAndMatViewQueues();
             sink.clear();
             printSql("show create materialized view mv", sink);
-            TestUtils.assertContains(sink.toString(), "EXPIRE ROWS KEEP 2 HIGHEST v PARTITION BY k");
+            TestUtils.assertContains(sink.toString(), "EXPIRE ROWS KEEP 2 HIGHEST ON v PARTITION BY k");
 
             execute("create materialized view mv2 as (select * from base) expire rows when v < max(v) over (partition by k)");
             drainWalAndMatViewQueues();
@@ -576,7 +576,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             execute("""
                     CREATE MATERIALIZED VIEW "m v" AS (SELECT * FROM base)
-                    EXPIRE ROWS KEEP HIGHEST v PARTITION BY k""");
+                    EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY k""");
             drainWalAndMatViewQueues();
 
             final String expected = "k\tv\textra\tts\n" +
@@ -605,12 +605,12 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, \"my val\" double, ts timestamp) timestamp(ts) partition by day wal");
             // The CREATE accepts the quoted keep column -> proves the parse side of the round-trip.
-            execute("create materialized view mv as (select * from base) expire rows keep highest \"my val\" partition by k");
+            execute("create materialized view mv as (select * from base) expire rows keep highest on \"my val\" partition by k");
             drainWalAndMatViewQueues();
             sink.clear();
             printSql("show create materialized view mv", sink);
             // The render side must emit it quoted (unquoted "my val" would not re-parse).
-            TestUtils.assertContains(sink.toString(), "EXPIRE ROWS KEEP HIGHEST \"my val\" PARTITION BY k");
+            TestUtils.assertContains(sink.toString(), "EXPIRE ROWS KEEP HIGHEST ON \"my val\" PARTITION BY k");
         });
     }
 
@@ -618,11 +618,11 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     public void testCatalogueRendersClause() throws Exception {
         assertMemoryLeak(() -> {
             createBase();
-            execute("create materialized view mv as (select * from base) expire rows keep highest v partition by k cleanup every 30m");
+            execute("create materialized view mv as (select * from base) expire rows keep highest on v partition by k cleanup every 30m");
             drainWalAndMatViewQueues();
             assertQuery("select expire_clause, expire_cleanup_every from tables() where table_name = 'mv'").noRandomAccess().noLeakCheck().returns("""
                     expire_clause\texpire_cleanup_every
-                    KEEP HIGHEST v PARTITION BY k\t30m
+                    KEEP HIGHEST ON v PARTITION BY k\t30m
                     """);
         });
     }
@@ -630,7 +630,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     @Test
     public void testRejectedOnBaseTable() throws Exception {
         assertException(
-                "create table t (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal expire rows keep highest v partition by k",
+                "create table t (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal expire rows keep highest on v partition by k",
                 85,
                 "EXPIRE ROWS is only supported on materialized views"
         );
@@ -668,7 +668,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             createBase();
             execute(
                     "create materialized view mvagg as (select k, last(v) v, ts from base sample by 1d) " +
-                            "partition by day expire rows keep highest v partition by k"
+                            "partition by day expire rows keep highest on v partition by k"
             );
             drainWalAndMatViewQueues();
             try (TableMetadata m = engine.getTableMetadata(engine.verifyTableName("mvagg"))) {
@@ -682,7 +682,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createBase();
             assertExceptionNoLeakCheck(
-                    "create materialized view mvbad as (select * from base) expire rows keep highest nope partition by k",
+                    "create materialized view mvbad as (select * from base) expire rows keep highest on nope partition by k",
                     25,
                     "invalid EXPIRE ROWS KEEP column: nope"
             );
@@ -694,19 +694,19 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createBase();
             assertExceptionNoLeakCheck(
-                    "create materialized view mvbad as (select * from base) expire rows keep highest v partition by nope",
+                    "create materialized view mvbad as (select * from base) expire rows keep highest on v partition by nope",
                     25,
                     "invalid EXPIRE ROWS KEEP HIGHEST PARTITION BY column: nope"
             );
             assertExceptionNoLeakCheck(
-                    "create materialized view mvbad as (select * from base) expire rows keep 2 lowest v partition by k, nope",
+                    "create materialized view mvbad as (select * from base) expire rows keep 2 lowest on v partition by k, nope",
                     25,
                     "invalid EXPIRE ROWS KEEP LOWEST PARTITION BY column: nope"
             );
             execute("CREATE MATERIALIZED VIEW mvalt AS (SELECT * FROM base) PARTITION BY DAY");
             drainWalAndMatViewQueues();
             assertExceptionNoLeakCheck(
-                    "ALTER MATERIALIZED VIEW mvalt SET EXPIRE ROWS KEEP HIGHEST v PARTITION BY nope",
+                    "ALTER MATERIALIZED VIEW mvalt SET EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY nope",
                     46,
                     "invalid EXPIRE ROWS KEEP HIGHEST PARTITION BY column: nope"
             );
@@ -733,8 +733,8 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             for (int i = 0; i < injections.size(); i++) {
                 final String injection = injections.getQuick(i);
                 final int errorOffset = injection.charAt(1) == ')' ? 1 : 2;
-                final String create = "CREATE MATERIALIZED VIEW mvbad AS (SELECT * FROM base) EXPIRE ROWS KEEP HIGHEST v PARTITION BY ";
-                final String alter = "ALTER MATERIALIZED VIEW mvalt SET EXPIRE ROWS KEEP HIGHEST v PARTITION BY ";
+                final String create = "CREATE MATERIALIZED VIEW mvbad AS (SELECT * FROM base) EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY ";
+                final String alter = "ALTER MATERIALIZED VIEW mvalt SET EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY ";
                 assertExceptionNoLeakCheck(create + injection, create.length() + errorOffset, "',' expected");
                 assertExceptionNoLeakCheck(alter + injection, alter.length() + errorOffset, "',' expected");
             }
@@ -746,7 +746,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createBase();
             assertExceptionNoLeakCheck(
-                    "create materialized view mvbad as (select * from base) expire rows keep 0 highest v partition by k",
+                    "create materialized view mvbad as (select * from base) expire rows keep 0 highest on v partition by k",
                     72,
                     "positive row count"
             );
@@ -761,7 +761,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             createTypedBase();
             for (String col : new String[]{"s", "vc", "sy", "c", "b", "u", "ip", "g", "l256"}) {
                 final String view = "mv_topn_" + col;
-                execute("CREATE MATERIALIZED VIEW " + view + " AS (SELECT * FROM typed) EXPIRE ROWS KEEP 2 HIGHEST " + col + " PARTITION BY k");
+                execute("CREATE MATERIALIZED VIEW " + view + " AS (SELECT * FROM typed) EXPIRE ROWS KEEP 2 HIGHEST ON " + col + " PARTITION BY k");
                 drainWalAndMatViewQueues();
                 // Three rows under one key, all values distinct: the top two by the column survive.
                 assertQuery("SELECT count() FROM " + view).noRandomAccess().expectSize().noLeakCheck().returns("count\n2\n");
@@ -777,7 +777,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             createTypedBase();
             for (String col : new String[]{"by", "sh", "i", "l", "f", "d", "dt", "dec", "ts"}) {
                 final String view = "mv_ext_" + col;
-                execute("CREATE MATERIALIZED VIEW " + view + " AS (SELECT * FROM typed) EXPIRE ROWS KEEP HIGHEST " + col + " PARTITION BY k");
+                execute("CREATE MATERIALIZED VIEW " + view + " AS (SELECT * FROM typed) EXPIRE ROWS KEEP HIGHEST ON " + col + " PARTITION BY k");
                 drainWalAndMatViewQueues();
                 // k1 holds the three rows and every column rises with the timestamp, so only the last one
                 // sits at the per-key maximum and survives.
@@ -802,16 +802,16 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
 
             assertExceptionNoLeakCheck(
-                    "CREATE MATERIALIZED VIEW mvbad AS (SELECT * FROM l256base) EXPIRE ROWS KEEP HIGHEST v PARTITION BY k",
+                    "CREATE MATERIALIZED VIEW mvbad AS (SELECT * FROM l256base) EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY k",
                     25,
                     "EXPIRE ROWS KEEP HIGHEST/LOWEST requires a BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DATE,"
                             + " TIMESTAMP or DECIMAL column, but 'v' is LONG256"
-                            + "; use KEEP <N> HIGHEST/LOWEST to rank an orderable column of any type"
+                            + "; use KEEP <N> HIGHEST/LOWEST ON <column> to rank an orderable column of any type"
             );
             Assert.assertNull(engine.getTableTokenIfExists("mvbad"));
 
             // The form the message recommends keeps the row the bare form would have expired.
-            execute("CREATE MATERIALIZED VIEW mv256 AS (SELECT * FROM l256base) EXPIRE ROWS KEEP 1 HIGHEST v PARTITION BY k");
+            execute("CREATE MATERIALIZED VIEW mv256 AS (SELECT * FROM l256base) EXPIRE ROWS KEEP 1 HIGHEST ON v PARTITION BY k");
             drainWalAndMatViewQueues();
             assertQuery("SELECT v FROM mv256").noLeakCheck().returns("""
                     v
@@ -850,7 +850,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             execute("CREATE MATERIALIZED VIEW mvalt AS (SELECT * FROM typed) PARTITION BY DAY");
             drainWalAndMatViewQueues();
             assertExceptionNoLeakCheck(
-                    "ALTER MATERIALIZED VIEW mvalt SET EXPIRE ROWS KEEP HIGHEST s PARTITION BY k",
+                    "ALTER MATERIALIZED VIEW mvalt SET EXPIRE ROWS KEEP HIGHEST ON s PARTITION BY k",
                     46,
                     "EXPIRE ROWS KEEP HIGHEST/LOWEST requires a BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DATE,"
                             + " TIMESTAMP or DECIMAL column, but 's' is STRING"
@@ -866,7 +866,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTypedBase();
             assertExceptionNoLeakCheck(
-                    "CREATE MATERIALIZED VIEW mvbad AS (SELECT * FROM typed) EXPIRE ROWS KEEP 2 HIGHEST bin PARTITION BY k",
+                    "CREATE MATERIALIZED VIEW mvbad AS (SELECT * FROM typed) EXPIRE ROWS KEEP 2 HIGHEST ON bin PARTITION BY k",
                     25,
                     "EXPIRE ROWS KEEP <N> HIGHEST/LOWEST requires an orderable column, but 'bin' is BINARY"
             );
@@ -901,6 +901,62 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeepWithoutOnRejected() throws Exception {
+        // ON introduces the keep column in both the extreme and the top-N form. Without it the column name
+        // sits where ON belongs, so the parser reports 'on' expected at that token -- on CREATE and ALTER
+        // alike, since both go through the same EXPIRE ROWS clause parser.
+        assertMemoryLeak(() -> {
+            createBase();
+            execute("CREATE MATERIALIZED VIEW mvalt AS (SELECT * FROM base) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "create materialized view mvbad as (select * from base) expire rows keep highest v partition by k",
+                    80,
+                    "'on' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "create materialized view mvbad as (select * from base) expire rows keep lowest v partition by k",
+                    79,
+                    "'on' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "create materialized view mvbad as (select * from base) expire rows keep 2 highest v partition by k",
+                    82,
+                    "'on' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW mvalt SET EXPIRE ROWS KEEP HIGHEST v PARTITION BY k",
+                    59,
+                    "'on' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW mvalt SET EXPIRE ROWS KEEP 2 LOWEST v PARTITION BY k",
+                    60,
+                    "'on' expected"
+            );
+            // the clause may also simply end where ON belongs
+            assertExceptionNoLeakCheck(
+                    "create materialized view mvbad as (select * from base) expire rows keep highest",
+                    79,
+                    "'on' expected"
+            );
+        });
+    }
+
+    @Test
+    public void testKeepOnWithoutColumnRejected() throws Exception {
+        // ON alone is not enough: the keep column must follow it.
+        assertMemoryLeak(() -> {
+            createBase();
+            assertExceptionNoLeakCheck(
+                    "create materialized view mvbad as (select * from base) expire rows keep highest on",
+                    82,
+                    "column name expected"
+            );
+        });
+    }
+
+    @Test
     public void testKeepUnknownColumnRejectedOnAlter() throws Exception {
         // The keep column resolves against the view's metadata before the policy is stored, so it names the
         // column whatever the mode. The create-path counterpart is testRejectedForUnknownColumn.
@@ -909,7 +965,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             execute("CREATE MATERIALIZED VIEW mvalt AS (SELECT * FROM base) PARTITION BY DAY");
             drainWalAndMatViewQueues();
             assertExceptionNoLeakCheck(
-                    "ALTER MATERIALIZED VIEW mvalt SET EXPIRE ROWS KEEP 2 LOWEST nope PARTITION BY k",
+                    "ALTER MATERIALIZED VIEW mvalt SET EXPIRE ROWS KEEP 2 LOWEST ON nope PARTITION BY k",
                     46,
                     "invalid EXPIRE ROWS KEEP column: nope"
             );
@@ -923,8 +979,8 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createBase();
             assertExceptionNoLeakCheck(
-                    "create materialized view mvbad as (select * from base) expire rows keep highest v partition by cleanup every 1h",
-                    95,
+                    "create materialized view mvbad as (select * from base) expire rows keep highest on v partition by cleanup every 1h",
+                    98,
                     "requires a column list"
             );
         });
@@ -940,7 +996,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                     "('A', 5.0, '2024-01-02T00:00:00.000000Z')," +   // expired (A max=9)
                     "('A', 9.0, '2024-01-03T00:00:00.000000Z')");    // A max (active partition)
             drainWalAndMatViewQueues();
-            execute("create materialized view mv as (select * from base) expire rows keep highest v partition by k");
+            execute("create materialized view mv as (select * from base) expire rows keep highest on v partition by k");
             drainWalAndMatViewQueues();
 
             assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
@@ -974,7 +1030,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                     "('A', 5.0, '2024-01-02T00:00:00.000000Z')," +   // expired (A min=1)
                     "('A', 1.0, '2024-01-03T00:00:00.000000Z')");    // A min (active partition)
             drainWalAndMatViewQueues();
-            execute("create materialized view mv as (select * from base) expire rows keep lowest v partition by k");
+            execute("create materialized view mv as (select * from base) expire rows keep lowest on v partition by k");
             drainWalAndMatViewQueues();
 
             assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
@@ -999,7 +1055,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                     "('A', 4.0, '2024-01-02T00:00:00.000000Z')," +   // rank4 -> expired (d2 wiped)
                     "('A', 10.0, '2024-01-03T00:00:00.000000Z')");   // rank1 (active partition)
             drainWalAndMatViewQueues();
-            execute("create materialized view mv as (select * from base) expire rows keep 2 highest v partition by k");
+            execute("create materialized view mv as (select * from base) expire rows keep 2 highest on v partition by k");
             drainWalAndMatViewQueues();
 
             assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
@@ -1058,7 +1114,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                     "('C', null, '2024-01-02T00:00:00.000000Z')," +  // NULL group -> kept (d2 all-kept -> skipped)
                     "('A', 9.0, '2024-01-03T00:00:00.000000Z')");    // A max (active partition)
             drainWalAndMatViewQueues();
-            execute("create materialized view mv as (select * from base) expire rows keep highest v partition by k");
+            execute("create materialized view mv as (select * from base) expire rows keep highest on v partition by k");
             drainWalAndMatViewQueues();
 
             assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
@@ -1090,7 +1146,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                     // 01-02 active partition (protected).
                     "('C', 1.0, '2024-01-02T00:00:00.000000Z')");
             drainWalAndMatViewQueues();
-            execute("create materialized view mv as (select * from base) expire rows keep highest v partition by k");
+            execute("create materialized view mv as (select * from base) expire rows keep highest on v partition by k");
             drainWalAndMatViewQueues();
 
             assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t4\n");
@@ -1117,7 +1173,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                     "('A', 8.0, '2024-01-01T00:00:00.000000Z')," +   // non-active, within N=5
                     "('A', 7.0, '2024-01-02T00:00:00.000000Z')");    // active partition
             drainWalAndMatViewQueues();
-            execute("create materialized view mv as (select * from base) expire rows keep 5 highest v partition by k");
+            execute("create materialized view mv as (select * from base) expire rows keep 5 highest on v partition by k");
             drainWalAndMatViewQueues();
 
             assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t3\n");
@@ -1141,7 +1197,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                     "('A', 9.0, '2024-01-01T06:00:00.000000Z')," +   // A max
                     "('B', 4.0, '2024-01-01T12:00:00.000000Z')");    // B max -- all in ONE partition
             drainWalAndMatViewQueues();
-            execute("create materialized view mv as (select * from base) expire rows keep highest v partition by k");
+            execute("create materialized view mv as (select * from base) expire rows keep highest on v partition by k");
             drainWalAndMatViewQueues();
 
             // One physical partition, 3 rows; the read filter shows the two per-key maxima.
@@ -1171,7 +1227,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                     ('B', 5.0, '2024-01-01T00:00:00.000000Z'),
                     ('B', 2.0, '2024-01-02T00:00:00.000000Z')""");
             drainWalAndMatViewQueues();
-            execute("create materialized view mv as (select * from base) expire rows keep highest v partition by k");
+            execute("create materialized view mv as (select * from base) expire rows keep highest on v partition by k");
             drainWalAndMatViewQueues();
             // kept per key: A -> (3.0 @ 01-02), B -> (5.0 @ 01-01)
             assertQuery("select k, v, ts from mv order by ts").timestamp("ts").noLeakCheck().returns("""
@@ -1229,11 +1285,11 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
 
     private void assertKeepExtremeRejected(String col, String typeName) throws Exception {
         assertExceptionNoLeakCheck(
-                "CREATE MATERIALIZED VIEW mvbad AS (SELECT * FROM typed) EXPIRE ROWS KEEP HIGHEST " + col + " PARTITION BY k",
+                "CREATE MATERIALIZED VIEW mvbad AS (SELECT * FROM typed) EXPIRE ROWS KEEP HIGHEST ON " + col + " PARTITION BY k",
                 25,
                 "EXPIRE ROWS KEEP HIGHEST/LOWEST requires a BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP"
                         + " or DECIMAL column, but '" + col + "' is " + typeName
-                        + "; use KEEP <N> HIGHEST/LOWEST to rank an orderable column of any type"
+                        + "; use KEEP <N> HIGHEST/LOWEST ON <column> to rank an orderable column of any type"
         );
         Assert.assertNull(engine.getTableTokenIfExists("mvbad"));
     }
@@ -1327,7 +1383,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                     ('A', 2.0, '2024-01-06T00:00:00.000000Z'),
                     ('B', 3.0, '2024-01-07T00:00:00.000000Z')""");
             drainWalQueue();
-            execute("create materialized view mv as (select * from base) expire rows keep highest v partition by \"@k\"");
+            execute("create materialized view mv as (select * from base) expire rows keep highest on v partition by \"@k\"");
             drainWalAndMatViewQueues();
 
             assertQuery("select v from mv order by v").noLeakCheck().returns("v\n2.0\n3.0\n");

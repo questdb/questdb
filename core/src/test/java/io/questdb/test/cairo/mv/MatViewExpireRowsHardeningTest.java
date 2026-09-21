@@ -581,7 +581,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             execute("""
                     CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)
-                    EXPIRE ROWS KEEP HIGHEST v PARTITION BY k CLEANUP EVERY 1s""");
+                    EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY k CLEANUP EVERY 1s""");
             drainWalAndMatViewQueues();
             final TableToken token = engine.verifyTableName("mv");
             final String predicate = RowExpiryUtil.encodeKeepBy(1, true, "v", "k");
@@ -758,7 +758,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             execute("""
                     CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)
-                    EXPIRE ROWS KEEP HIGHEST v PARTITION BY k CLEANUP EVERY 1s""");
+                    EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY k CLEANUP EVERY 1s""");
             drainWalAndMatViewQueues();
             final TableToken token = engine.verifyTableName("mv");
             final String predicate;
@@ -798,7 +798,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                 new Policy("EXPIRE ROWS WHEN ts < '2024-01-03T00:00:00.000000Z'", "FILTER_AND_RECLAIM", "2\t2", true),
                 new Policy("EXPIRE ROWS WHEN ts > now()", "FILTER_ONLY", "4\t4", false),
                 new Policy("EXPIRE ROWS KEEP LATEST PARTITION BY k", "FILTER_ONLY", "4\t4", false),
-                new Policy("EXPIRE ROWS KEEP HIGHEST v PARTITION BY k", "FILTER_ONLY", "4\t4", false),
+                new Policy("EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY k", "FILTER_ONLY", "4\t4", false),
                 new Policy("EXPIRE ROWS WHEN v < max(v) OVER (PARTITION BY k)", "FILTER_ONLY", "4\t4", false),
         };
         assertMemoryLeak(() -> {

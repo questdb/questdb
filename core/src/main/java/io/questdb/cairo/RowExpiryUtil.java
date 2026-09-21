@@ -262,7 +262,7 @@ public final class RowExpiryUtil {
 
     /**
      * True when the group extreme of {@code columnType} is well-defined, i.e. the bare
-     * {@code KEEP HIGHEST|LOWEST <col>} form ({@link KeepBy#n} == 0) may desugar to
+     * {@code KEEP HIGHEST|LOWEST ON <col>} form ({@link KeepBy#n} == 0) may desugar to
      * {@code <col> < max(<col>) OVER (...)} on it. The window {@code max}/{@code min} overloads take LONG,
      * DOUBLE, DATE, TIMESTAMP or DECIMAL, and only the types listed here reach one of them through a
      * widening cast that preserves order. A text-ish column reaches them through an implicit parsing cast
@@ -390,7 +390,7 @@ public final class RowExpiryUtil {
         if (k.n > 0) {
             sink.put(k.n).putAscii(' ');
         }
-        sink.putAscii(k.isHighest ? "HIGHEST " : "LOWEST ");
+        sink.putAscii(k.isHighest ? "HIGHEST ON " : "LOWEST ON ");
         appendMaybeQuotedName(sink, k.col);
         if (k.keys.length() > 0) {
             sink.putAscii(" PARTITION BY ").put(k.keys);

@@ -242,10 +242,10 @@ public class RowExpiryFuzzTest extends AbstractCairoTest {
 
     private enum Mode {
         KEEP_LATEST("expire rows keep latest partition by k"),
-        KEEP_MAX("expire rows keep highest v partition by k"),
-        KEEP_MAX_GLOBAL("expire rows keep highest v"),
-        KEEP_MIN("expire rows keep lowest v partition by k"),
-        TOP_N("expire rows keep 2 highest v partition by k"),
+        KEEP_MAX("expire rows keep highest on v partition by k"),
+        KEEP_MAX_GLOBAL("expire rows keep highest on v"),
+        KEEP_MIN("expire rows keep lowest on v partition by k"),
+        TOP_N("expire rows keep 2 highest on v partition by k"),
         WINDOW_WHEN("expire rows when v < max(v) over (partition by k)"),
         SCALAR_WHEN("expire rows when v < 3");
 
