@@ -193,7 +193,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 slaveTimeFrameCursor.open();
                 frameIndex = slaveTimeFrame.getFrameIndex();
                 rowMax = slaveTimeFrame.getRowHi() - 1;
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             }
         }
     }

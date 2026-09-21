@@ -63,7 +63,7 @@ public class SingleValueRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
-        circuitBreaker.statefulThrowExceptionIfTripped();
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         return remaining-- > 0;
     }
 

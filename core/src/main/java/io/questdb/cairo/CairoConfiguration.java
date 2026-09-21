@@ -1067,6 +1067,10 @@ public interface CairoConfiguration {
 
     int getStrFunctionMaxBufferLength();
 
+    default long getSubsampleMaxRows() {
+        return 100_000_000L;
+    }
+
     int getSymbolPatternIndexThreshold();
 
     long getSymbolTableMaxAllocationPageSize();

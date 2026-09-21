@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -65,6 +66,11 @@ public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return delegate.getSymbolTable(columnIndex);
+    }
+
+    @Override
+    public @Nullable LongList getIntervals() {
+        return delegate.getIntervals();
     }
 
     @Override
