@@ -1171,8 +1171,9 @@ stages:
               #   recoveras   restart under a different global commit mode, so recovery must
               #               decide from the durable enrolment record and not from the mode
               #               it finds
-              #   rebase      REBASE WAL publish: hard-suspend, rebase, idle, so the swept
-              #               boundaries land after the registry rename
+              #   rebase      REBASE WAL publish: hard-suspend, rebase, idle -- tail-sampled,
+              #               since the rebase is the last recorded activity, not spread
+              #               through the recording.
               #
               # The block is ROTATED by build id. Sized to fit, it runs whole; on a night
               # that starts late the deadline trims the tail, and without rotation the same
@@ -1193,7 +1194,7 @@ stages:
               rewrite-sibling-table|reference|adaptive|50000|$MTX|QDB_SIBLING_TABLE=true QDB_JUNIT_SUITE_SUFFIX=sibling
               rewrite-lazy-gap|reference|adaptive|50000|$MTX|QDB_EPOCH_MS=-1 QDB_JUNIT_SUITE_SUFFIX=lazygap
               rewrite-recover-as-nosync|reference|adaptive|50000|$MTX|QDB_RECOVER_AS=nosync QDB_JUNIT_SUITE_SUFFIX=recoveras
-              rewrite-rebase-wal|reference|adaptive|50000|$MTX|QDB_REBASE_AT_ROWS=100000 QDB_JUNIT_SUITE_SUFFIX=rebase
+              rewrite-rebase-wal|reference|adaptive|50000|$MTX|QDB_REBASE_AT_ROWS=5000 QDB_SWEEP_MODE=tail QDB_JUNIT_SUITE_SUFFIX=rebase
               "
                 n=$(printf '%s\n' "$DIMS" | grep -c '|')
                 if [ "$n" -gt 0 ]; then
