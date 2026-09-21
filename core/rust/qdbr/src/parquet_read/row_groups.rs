@@ -3,14 +3,16 @@ use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol};
 use crate::parquet_read::column_sink::var::fixup_varchar_slice_spill_pointers;
 use crate::parquet_read::decode::{
-    decode_page, decode_page_filtered, decompress_sliced_data, decompress_sliced_dict,
-    page_row_count, resize_decompress_buffer, sliced_page_row_count,
+    decode_page, decode_page_filtered, decompress_sliced_data, decompress_sliced_data_into,
+    decompress_sliced_dict, page_row_count, resize_decompress_buffer,
+    sliced_data_requires_decompression, sliced_page_row_count,
 };
 use crate::parquet_read::page::{DataPage, DictPage};
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnFilterPacked, ColumnFilterValues, ColumnMeta, DecodeContext,
-    VarcharSliceBufGuard, FILTER_OP_BETWEEN, FILTER_OP_EQ, FILTER_OP_GE, FILTER_OP_GT,
-    FILTER_OP_IS_NOT_NULL, FILTER_OP_IS_NULL, FILTER_OP_LE, FILTER_OP_LT, MILLIS_PER_DAY,
+    PageBufferPool, VarcharSliceBufGuard, FILTER_OP_BETWEEN, FILTER_OP_EQ, FILTER_OP_GE,
+    FILTER_OP_GT, FILTER_OP_IS_NOT_NULL, FILTER_OP_IS_NULL, FILTER_OP_LE, FILTER_OP_LT,
+    MILLIS_PER_DAY,
 };
 use nonmax::NonMaxU32;
 use parquet2::encoding::Encoding;
@@ -153,18 +155,32 @@ pub(crate) fn decompress_varchar_slice_data<'a>(
     page: &'a SlicedDataPage<'a>,
     reusable_buf: &'a mut Vec<u8>,
     persistent_bufs: &'a mut Vec<Vec<u8>>,
-    buf_pool: &mut Vec<Vec<u8>>,
+    buf_pool: &mut PageBufferPool,
+    owner: &mut ColumnChunkBuffers,
 ) -> ParquetResult<DataPage<'a>> {
     match page.encoding() {
         Encoding::RleDictionary | Encoding::PlainDictionary | Encoding::DeltaByteArray => {
             decompress_sliced_data(page, reusable_buf)
         }
-        _ => {
-            let mut buf = buf_pool.pop().unwrap_or_default();
+        _ if sliced_data_requires_decompression(page) => {
+            let pooled = buf_pool.pooled_capacity();
+            let reserved = page.uncompressed_size.saturating_sub(pooled);
+            owner.reserve_page_buffer(reserved)?;
+            let mut buf = buf_pool.take(owner);
             buf.clear();
+            if let Err(error) = decompress_sliced_data_into(page, &mut buf, true) {
+                drop(buf);
+                owner.cancel_page_buffer_reservation(reserved + pooled);
+                return Err(error);
+            }
             persistent_bufs.push(buf);
-            decompress_sliced_data(page, persistent_bufs.last_mut().unwrap())
+            Ok(DataPage {
+                buffer: persistent_bufs.last().unwrap(),
+                header: &page.header,
+                descriptor: &page.descriptor,
+            })
         }
+        _ => decompress_sliced_data(page, reusable_buf),
     }
 }
 
@@ -1648,20 +1664,32 @@ pub(super) fn plan_decode_conversion(
 pub(super) fn decompress_varchar_slice_dict<'bufs>(
     dict_page: SlicedDictPage<'_>,
     persistent_bufs: &'bufs mut Vec<Vec<u8>>,
-    buf_pool: &mut Vec<Vec<u8>>,
+    buf_pool: &mut PageBufferPool,
+    owner: &mut ColumnChunkBuffers,
 ) -> ParquetResult<DictPage<'bufs>> {
     let num_values = dict_page.num_values;
     let is_sorted = dict_page.is_sorted;
     let (ptr, len) = if dict_page.compression == parquet2::compression::Compression::Uncompressed {
         (dict_page.buffer.as_ptr(), dict_page.buffer.len())
     } else {
-        let mut buf = buf_pool.pop().unwrap_or_default();
+        let pooled = buf_pool.pooled_capacity();
+        let reserved = dict_page.uncompressed_size.saturating_sub(pooled);
+        owner.reserve_page_buffer(reserved)?;
+        let mut buf = buf_pool.take(owner);
         // The grow-only resize_decompress_buffer won't zero a reused pool buffer;
         // clear so a malformed under-filling dict page can't expose stale tail bytes
         // (aux entries retain pointers into this dict for the whole column-chunk decode).
         buf.clear();
-        resize_decompress_buffer(&mut buf, dict_page.uncompressed_size)?;
-        parquet2::compression::decompress(dict_page.compression, dict_page.buffer, &mut buf)?;
+        if let Err(error) = resize_decompress_buffer(&mut buf, dict_page.uncompressed_size, true)
+            .and_then(|_| {
+                parquet2::compression::decompress(dict_page.compression, dict_page.buffer, &mut buf)
+                    .map_err(Into::into)
+            })
+        {
+            drop(buf);
+            owner.cancel_page_buffer_reservation(reserved + pooled);
+            return Err(error);
+        }
         let ptr = buf.as_ptr();
         let len = buf.len();
         persistent_bufs.push(buf);
@@ -2071,8 +2099,7 @@ impl ParquetDecoder {
             ..
         } = ctx;
 
-        varchar_slice_buf_pool.append(&mut column_chunk_bufs.page_buffers);
-        column_chunk_bufs.reset();
+        column_chunk_bufs.reset_for_decode(varchar_slice_buf_pool);
 
         // Reuse the hoisted scratch outer-vecs across calls so we don't pay an outer
         // allocation per column chunk. Defensive clear: the end-of-chunk append and the
@@ -2090,6 +2117,7 @@ impl ParquetDecoder {
                             dict_page,
                             varchar_slice_dict_bufs,
                             varchar_slice_buf_pool,
+                            column_chunk_bufs,
                         )?
                     } else {
                         decompress_sliced_dict(dict_page, dict_decompress_buffer)?
@@ -2130,6 +2158,7 @@ impl ParquetDecoder {
                                     decompress_buffer,
                                     varchar_slice_page_bufs,
                                     varchar_slice_buf_pool,
+                                    column_chunk_bufs,
                                 )?
                             } else {
                                 decompress_sliced_data(&page, decompress_buffer)?
@@ -2164,6 +2193,7 @@ impl ParquetDecoder {
                                     decompress_buffer,
                                     varchar_slice_page_bufs,
                                     varchar_slice_buf_pool,
+                                    column_chunk_bufs,
                                 )?
                             } else {
                                 decompress_sliced_data(&page, decompress_buffer)?
@@ -2204,6 +2234,7 @@ impl ParquetDecoder {
                                 decompress_buffer,
                                 varchar_slice_page_bufs,
                                 varchar_slice_buf_pool,
+                                column_chunk_bufs,
                             )?
                         } else {
                             decompress_sliced_data(&page, decompress_buffer)?
@@ -2351,8 +2382,7 @@ impl ParquetDecoder {
             ..
         } = ctx;
 
-        varchar_slice_buf_pool.append(&mut column_chunk_bufs.page_buffers);
-        column_chunk_bufs.reset();
+        column_chunk_bufs.reset_for_decode(varchar_slice_buf_pool);
 
         // Reuse the hoisted scratch outer-vecs across calls so we don't pay an outer
         // allocation per column chunk. Defensive clear: the end-of-chunk append and the
@@ -2370,6 +2400,7 @@ impl ParquetDecoder {
                             dict_page,
                             varchar_slice_dict_bufs,
                             varchar_slice_buf_pool,
+                            column_chunk_bufs,
                         )?
                     } else {
                         decompress_sliced_dict(dict_page, dict_decompress_buffer)?
@@ -2387,6 +2418,7 @@ impl ParquetDecoder {
                                     decompress_buffer,
                                     varchar_slice_page_bufs,
                                     varchar_slice_buf_pool,
+                                    column_chunk_bufs,
                                 )?
                             } else {
                                 decompress_sliced_data(&page, decompress_buffer)?
@@ -2419,6 +2451,7 @@ impl ParquetDecoder {
                                 decompress_buffer,
                                 varchar_slice_page_bufs,
                                 varchar_slice_buf_pool,
+                                column_chunk_bufs,
                             )?
                         } else {
                             decompress_sliced_data(&page, decompress_buffer)?
@@ -4109,7 +4142,34 @@ fn compare_signed_be_varlen(a: &[u8], b: &[u8]) -> cmp::Ordering {
 #[cfg(test)]
 mod multi_dict_tests {
     use super::*;
+    use crate::allocator::TestAllocatorState;
     use parquet2::compression::Compression;
+    use parquet2::metadata::Descriptor;
+    use parquet2::page::{DataPageHeader, DataPageHeaderV1};
+    use parquet2::schema::types::PrimitiveType;
+
+    fn make_snappy_data(compressed: &[u8], uncompressed_size: usize) -> SlicedDataPage<'_> {
+        SlicedDataPage {
+            header: DataPageHeader::V1(DataPageHeaderV1 {
+                num_values: 1,
+                encoding: Encoding::Plain.into(),
+                definition_level_encoding: Encoding::Rle.into(),
+                repetition_level_encoding: Encoding::Rle.into(),
+                statistics: None,
+            }),
+            buffer: compressed,
+            compression: Compression::Snappy,
+            uncompressed_size,
+            descriptor: Descriptor {
+                primitive_type: PrimitiveType::from_physical(
+                    "c".to_string(),
+                    PhysicalType::ByteArray,
+                ),
+                max_def_level: 0,
+                max_rep_level: 0,
+            },
+        }
+    }
 
     fn make_uncompressed_dict(buf: &[u8], num_values: usize) -> SlicedDictPage<'_> {
         SlicedDictPage {
@@ -4161,10 +4221,15 @@ mod multi_dict_tests {
         let dict2_compressed = snappy_compress(&dict2_raw);
 
         let mut persistent: Vec<Vec<u8>> = Vec::new();
-        let mut pool: Vec<Vec<u8>> = Vec::new();
+        let mut pool = PageBufferPool::default();
+        let tas = TestAllocatorState::new().with_memory_tracker();
+        tas.set_tracker_limit(1024);
+        let mut owner = ColumnChunkBuffers::new(tas.allocator());
 
         let dict1_page = make_snappy_dict(&dict1_compressed, dict1_raw.len(), 4);
-        let page1 = decompress_varchar_slice_dict(dict1_page, &mut persistent, &mut pool).unwrap();
+        let page1 =
+            decompress_varchar_slice_dict(dict1_page, &mut persistent, &mut pool, &mut owner)
+                .unwrap();
         let page1_ptr = page1.buffer.as_ptr();
         let page1_len = page1.buffer.len();
         // Capture the bytes via raw pointer so the borrow is released for the next call.
@@ -4174,14 +4239,30 @@ mod multi_dict_tests {
         let _ = page1;
 
         let dict2_page = make_snappy_dict(&dict2_compressed, dict2_raw.len(), 4);
-        let page2 = decompress_varchar_slice_dict(dict2_page, &mut persistent, &mut pool).unwrap();
+        let page2 =
+            decompress_varchar_slice_dict(dict2_page, &mut persistent, &mut pool, &mut owner)
+                .unwrap();
         assert_eq!(page2.buffer, dict2_raw.as_slice());
         // dict1 must still be intact after dict2 was decompressed.
         assert_eq!(page1_view, dict1_raw.as_slice());
         // The two buffers must live at different addresses.
         assert_ne!(page1_view.as_ptr(), page2.buffer.as_ptr());
+        let _ = page2;
         // Both buffers must end up persisted.
         assert_eq!(persistent.len(), 2);
+        assert_eq!(
+            tas.tracker_used(),
+            dict1_raw.len() + dict2_raw.len(),
+            "retained pages must be charged before publication"
+        );
+
+        // Publishing the already-reserved pages must not charge them a second
+        // time, and reset must release the exact retained amount.
+        owner.page_buffers.append(&mut persistent);
+        owner.refresh_ptrs().unwrap();
+        assert_eq!(tas.tracker_used(), dict1_raw.len() + dict2_raw.len());
+        owner.reset();
+        assert_eq!(tas.tracker_used(), 0);
     }
 
     /// post_convert must reject pairs that are not handled by an explicit
@@ -4219,6 +4300,7 @@ mod multi_dict_tests {
                 page_buffers_size: 0,
                 page_buffers: Vec::new(),
                 column_top: 0,
+                page_buffers_capacity: 0,
                 page_buffers_charged: 0,
                 page_buffers_counted: 0,
             };
@@ -4273,6 +4355,7 @@ mod multi_dict_tests {
                 page_buffers_size: 0,
                 page_buffers: Vec::new(),
                 column_top: 0,
+                page_buffers_capacity: 0,
                 page_buffers_charged: 0,
                 page_buffers_counted: 0,
             };
@@ -4314,6 +4397,7 @@ mod multi_dict_tests {
                 page_buffers_size: 0,
                 page_buffers: Vec::new(),
                 column_top: 0,
+                page_buffers_capacity: 0,
                 page_buffers_charged: 0,
                 page_buffers_counted: 0,
             }
@@ -4383,12 +4467,14 @@ mod multi_dict_tests {
         let dict2_bytes: Vec<u8> = b"second dict bytes!".to_vec();
 
         let mut persistent: Vec<Vec<u8>> = Vec::new();
-        let mut pool: Vec<Vec<u8>> = Vec::new();
+        let mut pool = PageBufferPool::default();
+        let mut owner = ColumnChunkBuffers::new(TestAllocatorState::new().allocator());
 
         let page1 = decompress_varchar_slice_dict(
             make_uncompressed_dict(&dict1_bytes, 1),
             &mut persistent,
             &mut pool,
+            &mut owner,
         )
         .unwrap();
         let page1_ptr = page1.buffer.as_ptr();
@@ -4401,6 +4487,7 @@ mod multi_dict_tests {
             make_uncompressed_dict(&dict2_bytes, 1),
             &mut persistent,
             &mut pool,
+            &mut owner,
         )
         .unwrap();
         assert_eq!(page2.buffer, dict2_bytes.as_slice());
@@ -4427,12 +4514,15 @@ mod multi_dict_tests {
         // A dirty pooled buffer longer than the page's uncompressed_size: the
         // grow-only resize truncates it in place without re-zeroing, so absent the
         // clear() its tail would still read back as these stale 0xAB bytes.
-        let mut pool: Vec<Vec<u8>> = vec![vec![0xABu8; 64]];
+        let mut pool = PageBufferPool::default();
+        pool.park(vec![0xABu8; 64]);
+        let mut owner = ColumnChunkBuffers::new(TestAllocatorState::new().allocator());
 
         // uncompressed_size (32) over-claims the real decompressed length (16), so
         // the codec under-fills: it writes 16 bytes and never touches the last 16.
         let dict_page = make_snappy_dict(&compressed, 32, 4);
-        let page = decompress_varchar_slice_dict(dict_page, &mut persistent, &mut pool).unwrap();
+        let page = decompress_varchar_slice_dict(dict_page, &mut persistent, &mut pool, &mut owner)
+            .unwrap();
 
         assert_eq!(page.buffer.len(), 32);
         assert_eq!(&page.buffer[..payload.len()], payload.as_slice());
@@ -4441,6 +4531,152 @@ mod multi_dict_tests {
             "the under-filled tail must be zeroed by clear(), not stale pool bytes: {:?}",
             &page.buffer[payload.len()..]
         );
+    }
+
+    /// A pool holding one spare buffer of `capacity` bytes charged to the tracker, parked the
+    /// way a previous column chunk parks its page buffers.
+    fn charged_pool(tas: &TestAllocatorState, capacity: usize) -> PageBufferPool {
+        let mut owner = ColumnChunkBuffers::new(tas.allocator());
+        owner.page_buffers.push(Vec::with_capacity(capacity));
+        owner.refresh_ptrs().unwrap();
+        let mut pool = PageBufferPool::default();
+        owner.reset_for_decode(&mut pool);
+        pool
+    }
+
+    #[test]
+    fn pooled_page_buffer_is_reused_with_its_charge() {
+        let payload: Vec<u8> = (0..32u8).collect();
+        let compressed = snappy_compress(&payload);
+        let page = make_snappy_data(&compressed, payload.len());
+        let tas = TestAllocatorState::new().with_memory_tracker();
+        let mut owner = ColumnChunkBuffers::new(tas.allocator());
+        let mut reusable: Vec<u8> = Vec::new();
+        let mut persistent: Vec<Vec<u8>> = Vec::new();
+        let mut pool = charged_pool(&tas, 256);
+        let pooled_ptr = pool.bufs()[0].as_ptr();
+        assert_eq!(tas.tracker_used(), 256);
+
+        decompress_varchar_slice_data(&page, &mut reusable, &mut persistent, &mut pool, &mut owner)
+            .unwrap();
+
+        assert!(pool.is_empty());
+        assert_eq!(persistent.len(), 1);
+        assert_eq!(persistent[0].as_ptr(), pooled_ptr);
+        assert_eq!(owner.page_buffers_charged, 256);
+        assert_eq!(tas.tracker_used(), 256);
+        owner.page_buffers.append(&mut persistent);
+        owner.refresh_ptrs().unwrap();
+        assert_eq!(tas.tracker_used(), 256);
+        pool.release();
+        drop(owner);
+        assert_eq!(tas.tracker_used(), 0);
+    }
+
+    #[test]
+    fn compressed_data_rejects_before_taking_or_growing_a_buffer() {
+        let payload: Vec<u8> = (0..32u8).collect();
+        let compressed = snappy_compress(&payload);
+        let page = make_snappy_data(&compressed, payload.len());
+        let tas = TestAllocatorState::new().with_memory_tracker();
+        tas.set_tracker_limit(payload.len() - 1);
+        let mut owner = ColumnChunkBuffers::new(tas.allocator());
+        let mut reusable: Vec<u8> = Vec::new();
+        let mut persistent: Vec<Vec<u8>> = Vec::new();
+        let mut pool = charged_pool(&tas, 16);
+        let pooled_ptr = pool.bufs()[0].as_ptr();
+        let pooled_capacity = pool.bufs()[0].capacity();
+
+        let error = decompress_varchar_slice_data(
+            &page,
+            &mut reusable,
+            &mut persistent,
+            &mut pool,
+            &mut owner,
+        )
+        .unwrap_err();
+
+        assert!(
+            error.to_string().contains("query memory limit exceeded"),
+            "unexpected error: {error}"
+        );
+        assert!(reusable.is_empty());
+        assert!(persistent.is_empty());
+        assert_eq!(
+            pool.len(),
+            1,
+            "reservation must fail before the pooled buffer is taken"
+        );
+        assert_eq!(pool.bufs()[0].as_ptr(), pooled_ptr);
+        assert_eq!(pool.bufs()[0].capacity(), pooled_capacity);
+        assert_eq!(owner.page_buffers_charged, 0);
+        assert_eq!(tas.tracker_used(), pooled_capacity);
+        pool.release();
+        assert_eq!(tas.tracker_used(), 0);
+    }
+
+    #[test]
+    fn compressed_dict_rejects_before_taking_or_growing_a_buffer() {
+        let payload: Vec<u8> = (0..32u8).collect();
+        let compressed = snappy_compress(&payload);
+        let tas = TestAllocatorState::new().with_memory_tracker();
+        tas.set_tracker_limit(payload.len() - 1);
+        let mut owner = ColumnChunkBuffers::new(tas.allocator());
+        let mut persistent: Vec<Vec<u8>> = Vec::new();
+        let mut pool = charged_pool(&tas, 16);
+        let pooled_ptr = pool.bufs()[0].as_ptr();
+        let pooled_capacity = pool.bufs()[0].capacity();
+
+        let error = decompress_varchar_slice_dict(
+            make_snappy_dict(&compressed, payload.len(), 4),
+            &mut persistent,
+            &mut pool,
+            &mut owner,
+        )
+        .unwrap_err();
+
+        assert!(
+            error.to_string().contains("query memory limit exceeded"),
+            "unexpected error: {error}"
+        );
+        assert!(persistent.is_empty());
+        assert_eq!(
+            pool.len(),
+            1,
+            "reservation must fail before the pooled buffer is taken"
+        );
+        assert_eq!(pool.bufs()[0].as_ptr(), pooled_ptr);
+        assert_eq!(pool.bufs()[0].capacity(), pooled_capacity);
+        assert_eq!(owner.page_buffers_charged, 0);
+        assert_eq!(tas.tracker_used(), pooled_capacity);
+        pool.release();
+        assert_eq!(tas.tracker_used(), 0);
+    }
+
+    #[test]
+    fn compressed_dict_returns_reservation_when_decompression_fails() {
+        let payload: Vec<u8> = (0..32u8).collect();
+        let compressed = snappy_compress(&payload);
+        let tas = TestAllocatorState::new().with_memory_tracker();
+        tas.set_tracker_limit(1024);
+        let mut owner = ColumnChunkBuffers::new(tas.allocator());
+        let mut persistent: Vec<Vec<u8>> = Vec::new();
+        let mut pool = PageBufferPool::default();
+
+        // The output is deliberately one byte too small, so Snappy rejects the
+        // page after its reservation and Vec sizing have both succeeded.
+        let result = decompress_varchar_slice_dict(
+            make_snappy_dict(&compressed, payload.len() - 1, 4),
+            &mut persistent,
+            &mut pool,
+            &mut owner,
+        );
+
+        assert!(result.is_err());
+        assert!(persistent.is_empty());
+        assert!(pool.is_empty());
+        assert_eq!(owner.page_buffers_charged, 0);
+        assert_eq!(tas.tracker_used(), 0);
     }
 }
 

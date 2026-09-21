@@ -1412,6 +1412,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSubsampleMaxRows() {
+        return 100_000_000L;
+    }
+
+    @Override
     public int getSymbolPatternIndexThreshold() {
         return 100;
     }
