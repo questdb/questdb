@@ -74,7 +74,9 @@ public final class PartitionFrameState {
         return headerValue(state, HEADER_HAS_CUSTOM_FRAMES) != 0;
     }
 
-    /** Data summaries exist only after TableReader binds the snapshot for data-frame access. */
+    /**
+     * Data summaries exist only after TableReader binds the snapshot for data-frame access.
+     */
     public static boolean isBound(long state) {
         return headerValue(state, HEADER_SUMMARIES_ADDR) != 0;
     }

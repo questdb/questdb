@@ -26,7 +26,9 @@ package io.questdb.cairo.idx;
 
 import io.questdb.std.QuietCloseable;
 
-/** Iterates covered index hits. */
+/**
+ * Iterates covered index hits.
+ */
 public interface CoveringIndexCursor extends QuietCloseable, CoveringRow {
 
     boolean hasNext();

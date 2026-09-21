@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
-import io.questdb.cairo.sql.PartitionFrameState;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.std.Misc;
@@ -115,12 +114,7 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
         if (!reader.getTxFile().getPartitionHasDelta(partitionIndex)) {
             return baseRows;
         }
-        reader.openPartition(partitionIndex);
-        final long state = reader.getOrOpenPartitionFrameState(partitionIndex);
-        if (state == 0 || !PartitionFrameState.hasCustomFrames(state)) {
-            return baseRows;
-        }
-        return PartitionFrameState.getLogicalPartitionRowCount(state);
+        return reader.getLogicalPartitionRowCount(partitionIndex, baseRows);
     }
 
     /**

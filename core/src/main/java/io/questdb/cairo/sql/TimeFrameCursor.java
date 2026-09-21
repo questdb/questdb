@@ -150,7 +150,9 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
      */
     void recordAt(Record record, int frameIndex, long rowIndex);
 
-    /** Positions a data record from the current index cursor's timestamp and SourceRowRef. */
+    /**
+     * Positions a data record from the current index cursor's timestamp and SourceRowRef.
+     */
     default boolean recordAtSourceRow(Record record, long sourceRowRef, long timestamp) {
         throw new UnsupportedOperationException();
     }

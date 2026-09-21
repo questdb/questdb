@@ -478,6 +478,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         return indexes.getQuick(indexIndex);
     }
 
+    public long getLogicalPartitionRowCount(int partitionIndex, long baseRows) {
+        final long state = getOrOpenPartitionState(partitionIndex);
+        return state == 0 ? baseRows : partitionFrameStateFactory.getLogicalRowCount(state);
+    }
+
     public long getMaxTimestamp() {
         return txFile.getMaxTimestamp();
     }
@@ -1346,7 +1351,9 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    /** Shares one pinned snapshot between index readers and lazy data-frame binding. */
+    /**
+     * Shares one pinned snapshot between index readers and lazy data-frame binding.
+     */
     private long getOrOpenPartitionState(int partitionIndex) {
         final long existing = partitionFrameStates.getQuick(partitionIndex);
         if (existing != 0) {

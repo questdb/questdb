@@ -212,9 +212,9 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
         final TableReader tableReader = frameCursor.getTableReader();
         frameCount = 0;
 
-        if (frameCursor.hasIntervalFilter()) {
-            // Interval filtering makes frame counts unpredictable from metadata.
-            // Fall back to eager enumeration of all page frames (like master).
+        if (frameCursor.hasIntervalFilter() || tableReader.hasAnyDelta()) {
+            // Interval filters and delta merges make logical frame counts unpredictable from base metadata.
+            // Fall back to eager enumeration of all page frames.
             buildFrameCacheEagerly();
         } else {
             // Pre-compute frame boundaries for all partitions.

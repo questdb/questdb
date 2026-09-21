@@ -245,12 +245,12 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
                 foundCount += fullPartition
                         ? indexReader.collectDistinctKeys(foundKeys)
                         : indexReader.collectDistinctKeysInRange(
-                                foundKeys,
-                                rowLo,
-                                rowHi - 1,
-                                frame.getTimestampLo(),
-                                frame.getTimestampHi()
-                        );
+                        foundKeys,
+                        rowLo,
+                        rowHi - 1,
+                        frame.getTimestampLo(),
+                        frame.getTimestampHi()
+                );
             }
         }
 

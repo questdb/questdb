@@ -34,7 +34,9 @@ public interface SourceRowCursor extends CoveringIndexCursor {
 
     long getCursorSeqTxn();
 
-    /** Returns the current hit's raw symbol key, including {@code VALUE_IS_NULL}. */
+    /**
+     * Returns the current hit's raw symbol key, including {@code VALUE_IS_NULL}.
+     */
     int getCursorSymbolKey();
 
     long getCursorTimestamp();

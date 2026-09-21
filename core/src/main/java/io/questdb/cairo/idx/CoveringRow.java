@@ -28,7 +28,9 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.str.Utf8Sequence;
 
-/** Covered-column values for the current index hit. */
+/**
+ * Covered-column values for the current index hit.
+ */
 public interface CoveringRow {
 
     ArrayView getCoveredArray(int includeIdx, int columnType);

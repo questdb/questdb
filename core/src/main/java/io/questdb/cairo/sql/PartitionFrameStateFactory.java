@@ -35,10 +35,14 @@ import org.jetbrains.annotations.Nullable;
  * instances borrow it while materializing page frames.
  */
 public interface PartitionFrameStateFactory extends QuietCloseable {
-    /** Binds data windows before TableReader exposes the handle to page-frame workers. */
+    /**
+     * Binds data windows before TableReader exposes the handle to page-frame workers.
+     */
     void bind(long state);
 
-    /** Returns the index reader for a partition state, or {@code null} when unavailable. */
+    /**
+     * Returns the index reader for a partition state, or {@code null} when unavailable.
+     */
     default @Nullable IndexReader getIndexReader(
             TableReader reader,
             long state,
@@ -47,6 +51,14 @@ public interface PartitionFrameStateFactory extends QuietCloseable {
             int direction
     ) {
         return null;
+    }
+
+    /**
+     * Returns the snapshot's row count. Implementations can avoid binding data windows.
+     */
+    default long getLogicalRowCount(long state) {
+        bind(state);
+        return PartitionFrameState.getLogicalPartitionRowCount(state);
     }
 
     /**

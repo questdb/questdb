@@ -123,7 +123,9 @@ public interface PageFrameMemory {
      */
     long getRowIdOffset();
 
-    /** Returns the source-row resolver for the current decoded frame. */
+    /**
+     * Returns the source-row resolver for the current decoded frame.
+     */
     default IndexReader.SourceRowResolver getSourceRowResolver() {
         return IndexReader.SourceRowResolver.NONE;
     }

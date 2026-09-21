@@ -3060,13 +3060,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 return count == 0
                         ? null
                         : finalizeFrame(
-                                count,
-                                partitionIndex,
-                                SymbolTable.VALUE_NOT_FOUND,
-                                0,
-                                count,
-                                true
-                        );
+                        count,
+                        partitionIndex,
+                        SymbolTable.VALUE_NOT_FOUND,
+                        0,
+                        count,
+                        true
+                );
             }
             // nextImpl re-enters once more per partition to learn it is drained:
             // the prior call emitted the last rows but left mergePartitionIndex
