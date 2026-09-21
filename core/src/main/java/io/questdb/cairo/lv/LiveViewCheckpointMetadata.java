@@ -36,6 +36,19 @@ final class LiveViewCheckpointMetadata {
     static final byte[] EMPTY_KEY_SCHEMA = {0, 0, 0, 0};
     static final int MAX_BYTE_ARRAY_LENGTH = 1 << 20;
     static final int MAX_ENTRY_COUNT = 1 << 20;
+    /**
+     * Image bytes the identity pool of one reusable metadata reader or root builder keeps
+     * once {@code detach()} ends its operation. The pool lends every identity, key schema
+     * and manifest it decodes or stages an exact-width array, and keeps each width an
+     * earlier operation used. A refresh worker keeps these shells for its whole life, so
+     * without a limit it would keep one array for every identity width of every definition
+     * it has ever served, including dropped ones. A compiled identity runs to a few hundred
+     * bytes, so a pool within the limit keeps thousands of them warm and a same-width
+     * operation allocates nothing; a pool past it drops every array, and the next
+     * operation allocates only the widths it reads. A definition whose own images exceed
+     * the limit therefore allocates them again after every detach.
+     */
+    static final long MAX_RETAINED_IDENTITY_BYTES = 1_048_576;
     static final int MAX_STATE_PAGE_REFS = 1 << 16;
 
     private LiveViewCheckpointMetadata() {

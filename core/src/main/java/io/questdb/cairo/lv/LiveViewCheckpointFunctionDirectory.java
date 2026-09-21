@@ -66,10 +66,16 @@ public class LiveViewCheckpointFunctionDirectory implements Closeable {
     /**
      * Unmaps the metadata segment this root was read from while keeping the
      * reader itself, so a reader that outlives one restore holds no mapping into
-     * files a later retire, repair or compaction deletes.
+     * files a later retire, repair or compaction deletes. An identity pool that
+     * keeps more than {@link LiveViewCheckpointMetadata#MAX_RETAINED_IDENTITY_BYTES}
+     * drops every array. The identities of the open directory stay intact, since
+     * dropping an array only stops the pool lending it again.
      */
     public void detach() {
         reader.close();
+        if (identityBytes.getRetainedBytes() > LiveViewCheckpointMetadata.MAX_RETAINED_IDENTITY_BYTES) {
+            identityBytes.clear();
+        }
     }
 
     public boolean find(@NotNull byte[] identity, @NotNull LiveViewCheckpointPageRef out) {

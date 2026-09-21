@@ -1556,14 +1556,20 @@ public interface CairoConfiguration {
      * key is reloadable and read once per compile, so flipping it moves the next compile and
      * nothing already compiled.
      * <p>
-     * An anchored live view is the exception, because it persists the shape this switch selects.
-     * {@code LiveViewWindow} reads the flag when it decides whether to adopt the compiled state
-     * plan, so a view sealed with the switch on and restarted with it off meets a fused window
-     * root it has no plan to restore into. The restore rejects that root as recoverable
-     * corruption and walks back through predecessors, which were sealed fused as well, so the
-     * view rebuilds from the base table. The answers stay correct either way, but turning the
-     * switch off across a restart costs every anchored live view a replay. Turning it back on
-     * is the cheaper direction: a legacy root upgrades into the fused shape in place.
+     * An anchored live view reads the switch when {@code LiveViewWindow} builds the view's
+     * window, and there too the switch gates only the runtime binding: the group's
+     * accumulators sit either in the window's own map value or in a private map per function.
+     * The checkpoint layout does not depend on it. Every seal writes one window root under the
+     * manifest the view compiles, reading each component out of its contributor's private map
+     * when the group is unfused, and a restore puts that root back into whichever runtime the
+     * current setting built. A view sealed under either setting therefore restarts from its
+     * timeline under the other, reading the same root rather than rebuilding from the base
+     * table. What the switch does cost an unfused view is the two keyed open-segment repair
+     * routes, which {@code live_views()} counts as {@code o3_open_segment_keyed_resume_count}
+     * and {@code o3_open_segment_cold_keyed_replay_count}. Both hand a correction's keys back
+     * through the fused map value, so with the switch off an out-of-order correction inside
+     * the open anchor segment replays every key rather than only its own, over the whole range
+     * above its anchor root, or from the segment's origin when no usable root lies below it.
      */
     boolean isSqlWindowMapFusionEnabled();
 

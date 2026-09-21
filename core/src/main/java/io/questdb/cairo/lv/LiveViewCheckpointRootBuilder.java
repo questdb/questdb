@@ -202,7 +202,10 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
 
     /**
      * Releases every mapping this build read and discards any in-flight segment,
-     * keeping the reader, writer and identity shells for the next build.
+     * keeping the reader, writer and identity shells for the next build. The
+     * identity slots let go of what they staged, and an identity pool that keeps
+     * more than {@link LiveViewCheckpointMetadata#MAX_RETAINED_IDENTITY_BYTES}
+     * drops every array.
      */
     public void detach() {
         functionRoot.detach();
@@ -212,6 +215,14 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
         initialized = false;
         functionCount = 0;
         segmentIds.clear();
+        // A build reads only the slots addFunction() stages after begin(). A slot past the
+        // next build's function count would otherwise keep an image the pool below has dropped.
+        for (int i = 0, n = functionIdentities.size(); i < n; i++) {
+            functionIdentities.setQuick(i, null);
+        }
+        if (functionIdentityBytes.getRetainedBytes() > LiveViewCheckpointMetadata.MAX_RETAINED_IDENTITY_BYTES) {
+            functionIdentityBytes.clear();
+        }
     }
 
     public void getReferencedSegmentIds(@NotNull LongList out) {

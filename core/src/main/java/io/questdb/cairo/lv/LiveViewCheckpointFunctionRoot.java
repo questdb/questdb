@@ -74,10 +74,16 @@ public class LiveViewCheckpointFunctionRoot implements Closeable {
     /**
      * Unmaps the metadata segment this root was read from while keeping the
      * reader itself, so a reader that outlives one restore holds no mapping into
-     * files a later retire, repair or compaction deletes.
+     * files a later retire, repair or compaction deletes. A decode pool that keeps
+     * more than {@link LiveViewCheckpointMetadata#MAX_RETAINED_IDENTITY_BYTES}
+     * drops every array. The identity and key schema of the open root stay
+     * intact, since dropping an array only stops the pool lending it again.
      */
     public void detach() {
         reader.close();
+        if (decodedBytes.getRetainedBytes() > LiveViewCheckpointMetadata.MAX_RETAINED_IDENTITY_BYTES) {
+            decodedBytes.clear();
+        }
     }
 
     public byte[] getFunctionIdentity() {
