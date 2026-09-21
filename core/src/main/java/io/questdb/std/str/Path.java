@@ -26,7 +26,7 @@ package io.questdb.std.str;
 
 import io.questdb.ParanoiaState;
 import io.questdb.cairo.TableToken;
-import io.questdb.std.CarrierLocal;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
@@ -63,10 +63,10 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     private static final java.util.concurrent.ConcurrentHashMap<Path, Integer> liveTlPaths = TL_ATTRIBUTION
             ? new java.util.concurrent.ConcurrentHashMap<>()
             : null;
-    public static final CarrierLocal<Path> PATH = new CarrierLocal<>(Path::newTLPath);
-    public static final CarrierLocal<Path> PATH2 = new CarrierLocal<>(Path::newTLPath);
+    public static final FiberLocal<Path> PATH = new FiberLocal<>(Path::newTLPath);
+    public static final FiberLocal<Path> PATH2 = new FiberLocal<>(Path::newTLPath);
     public static final Closeable THREAD_LOCAL_CLEANER = Path::clearThreadLocals;
-    private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
+    private static final FiberLocal<StringSink> tlSink = new FiberLocal<>(StringSink::new);
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final Exception creationStackTrace;
     private final int initialCapacity;

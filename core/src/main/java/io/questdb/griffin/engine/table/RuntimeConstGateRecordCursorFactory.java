@@ -121,7 +121,7 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
         }
         // The empty result never iterates and never consults the circuit breaker on its own.
         // Honor cancellation once at open, so a gated-out query still observes a tripped breaker.
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         return EmptyTableRandomRecordCursor.INSTANCE;
     }
 
@@ -142,7 +142,7 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
         }
         // The empty result never iterates and never consults the circuit breaker on its own.
         // Honor cancellation once at open, so a gated-out query still observes a tripped breaker.
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         // FALSE: open a real base page-frame cursor so getColumnMapping()/getSymbolTable()/
         // newSymbolTable() honor their contracts during a parallel consumer's setup, then wrap it
         // to yield ZERO frames so no column data is ever lifted. This acquires the base reader on

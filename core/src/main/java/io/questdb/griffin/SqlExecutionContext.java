@@ -197,6 +197,13 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     QueryFutureUpdateListener getQueryFutureUpdateListener();
 
+    /**
+     * Returns the protocol execution owner currently mounted on this context, or {@code -1}.
+     */
+    default long getQueryRegistryOwnerId() {
+        return -1;
+    }
+
     Rnd getRandom();
 
     default TableReader getReader(TableToken tableToken, long version) {
@@ -249,18 +256,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     default TableToken getTableTokenIfExists(CharSequence tableName, int lo, int hi) {
         return getCairoEngine().getTableTokenIfExists(tableName, lo, hi);
-    }
-
-    /**
-     * Tells the context which name the statement being compiled uses for the table it targets - the
-     * table named by {@code UPDATE <name>} or {@code ALTER TABLE <name>}. Called before that name,
-     * or any other table in the statement, is resolved.
-     * <p>
-     * Only contexts that resolve a target differently from the name in the SQL need this; for
-     * everything else it is a no-op. See {@code WalApplySqlExecutionContext}, where the stored SQL
-     * may name a table that has since been renamed, or whose name now belongs to a different table.
-     */
-    default void setStatementTargetTableName(CharSequence tableName) {
     }
 
     WindowContext getWindowContext();
@@ -426,6 +421,12 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void setParquetRowGroupPruningEnabled(boolean parquetRowGroupPruningEnabled);
 
+    /**
+     * Binds the protocol execution owner for nested QueryRegistry registrations on this context.
+     */
+    default void setQueryRegistryOwnerId(long queryRegistryOwnerId) {
+    }
+
     void setRandom(Rnd rnd);
 
     /**
@@ -436,6 +437,18 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      * not track reader leaks.
      */
     default void setReaderPoolSupervisor(@Nullable ResourcePoolSupervisor<TableReader> supervisor) {
+    }
+
+    /**
+     * Tells the context which name the statement being compiled uses for the table it targets - the
+     * table named by {@code UPDATE <name>} or {@code ALTER TABLE <name>}. Called before that name,
+     * or any other table in the statement, is resolved.
+     * <p>
+     * Only contexts that resolve a target differently from the name in the SQL need this; for
+     * everything else it is a no-op. See {@code WalApplySqlExecutionContext}, where the stored SQL
+     * may name a table that has since been renamed, or whose name now belongs to a different table.
+     */
+    default void setStatementTargetTableName(CharSequence tableName) {
     }
 
     void setUseSimpleCircuitBreaker(boolean value);
