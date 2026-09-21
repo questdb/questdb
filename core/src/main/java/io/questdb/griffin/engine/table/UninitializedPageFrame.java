@@ -24,9 +24,9 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PageFrame;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 
 /**
  * A stub for an actual <code>PageFrame</code> object, used only to satisfy the
@@ -55,11 +55,6 @@ class UninitializedPageFrame implements PageFrame {
     }
 
     @Override
-    public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
-        return null;
-    }
-
-    @Override
     public int getColumnCount() {
         return 0;
     }
@@ -67,6 +62,11 @@ class UninitializedPageFrame implements PageFrame {
     @Override
     public byte getFormat() {
         return format;
+    }
+
+    @Override
+    public IndexReader getIndexReader(int columnIndex, int direction) {
+        return null;
     }
 
     @Override
@@ -80,7 +80,7 @@ class UninitializedPageFrame implements PageFrame {
     }
 
     @Override
-    public PartitionDecoder getParquetPartitionDecoder() {
+    public ParquetDecoder getParquetDecoder() {
         return null;
     }
 

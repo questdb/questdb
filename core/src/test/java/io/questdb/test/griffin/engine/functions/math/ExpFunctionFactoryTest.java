@@ -30,36 +30,46 @@ import org.junit.Test;
 public class ExpFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testExpDouble() throws Exception {
-        assertSql("exp\n" +
-                        "7.38905609893065\n",
-                "select exp(cast (2 as double))");
+        assertQuery("select exp(cast (2 as double))")
+                .noLeakCheck()
+                .expectSize()
+                .returns("exp\n" +
+                        "7.38905609893065\n");
     }
 
     @Test
     public void testExpDoubleNaN() throws Exception {
-        assertSql("exp\n" +
-                        "null\n",
-                "select exp(NaN)");
+        assertQuery("select exp(NaN)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("exp\n" +
+                        "null\n");
     }
 
     @Test
     public void testExpDoubleNull() throws Exception {
-        assertSql("exp\n" +
-                        "null\n",
-                "select exp(null)");
+        assertQuery("select exp(null)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("exp\n" +
+                        "null\n");
     }
 
     @Test
     public void testExpFloat() throws Exception {
-        assertSql("exp\n" +
-                        "7.38905609893065\n",
-                "select exp(cast (2 as float))");
+        assertQuery("select exp(cast (2 as float))")
+                .noLeakCheck()
+                .expectSize()
+                .returns("exp\n" +
+                        "7.38905609893065\n");
     }
 
     @Test
     public void testExpNegative() throws Exception {
-        assertSql("exp\n" +
-                        "0.1353352832366127\n",
-                "select exp(-2)");
+        assertQuery("select exp(-2)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("exp\n" +
+                        "0.1353352832366127\n");
     }
 }

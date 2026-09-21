@@ -64,10 +64,10 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
 
     @Override
     public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        if (!isOpen) {
-            isOpen = true;
-            map.reopen();
-        }
+        // open before the first allocation so close() frees the map if a later alloc in of() breaches
+        isOpen = true;
+        map.setMemoryTracker(executionContext.getMemoryTracker());
+        map.reopen();
         super.of(pageFrameCursor, executionContext);
     }
 
@@ -80,7 +80,7 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
     protected void buildTreeMap() {
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;

@@ -57,14 +57,18 @@ public class ViewCompilerJob implements Job, QuietCloseable {
     private final ViewCompilerTask compilerTask = new ViewCompilerTask();
     private final CairoEngine engine;
     private final ObjList<TableToken> invalidateViewsSink = new ObjList<>();
+    private final int sharedQueryWorkerCount;
     private final ViewStateStore stateStore;
     private final ViewGraph viewGraph;
-    private final int workerId;
 
     public ViewCompilerJob(int workerId, CairoEngine engine, int sharedQueryWorkerCount) {
+        this(engine, sharedQueryWorkerCount);
+    }
+
+    public ViewCompilerJob(CairoEngine engine, int sharedQueryWorkerCount) {
         try {
-            this.workerId = workerId;
             this.engine = engine;
+            this.sharedQueryWorkerCount = sharedQueryWorkerCount;
             this.compilerExecutionContext = engine.createViewCompilerContext(sharedQueryWorkerCount);
             this.viewGraph = engine.getViewGraph();
             this.stateStore = engine.getViewStateStore();
@@ -76,7 +80,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
 
     @TestOnly
     public ViewCompilerJob(int workerId, CairoEngine engine) {
-        this(workerId, engine, 1);
+        this(engine, 1);
     }
 
     /**
@@ -110,15 +114,23 @@ public class ViewCompilerJob implements Job, QuietCloseable {
     }
 
     @Override
+    public Job cloneInstance() {
+        return new ViewCompilerJob(engine, sharedQueryWorkerCount);
+    }
+
+    @Override
     public void close() {
-        LOG.debug().$("view compiler job closing [workerId=").$(workerId).I$();
+        LOG.debug().$("view compiler job closing").$();
         Misc.free(compilerExecutionContext);
     }
 
     @Override
-    public boolean run(int workerId, @NotNull RunStatus runStatus) {
-        // there is job instance per thread, the worker id must never change for this job
-        assert this.workerId == workerId;
+    public void closeInstance() {
+        close();
+    }
+
+    @Override
+    public boolean run(@NotNull WorkerContext workerContext) {
         return processNotifications();
     }
 

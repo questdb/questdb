@@ -107,7 +107,7 @@ public class CopyImportRequestJob extends SynchronizedJob implements Closeable {
                         .createTable(sqlExecutionContext);
             }
 
-            this.writer = engine.getWriter(statusTableToken, "QuestDB system");
+            this.writer = engine.getWriter(statusTableToken, TableUtils.SYSTEM_WRITER_LOCK_REASON);
             this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();
             this.copyImportContext = engine.getCopyImportContext();
             this.path = new Path();
@@ -188,7 +188,7 @@ public class CopyImportRequestJob extends SynchronizedJob implements Closeable {
             // if we closed the writer, we need to reopen it again
             if (writer == null) {
                 try {
-                    writer = engine.getWriter(statusTableToken, "QuestDB system");
+                    writer = engine.getWriter(statusTableToken, TableUtils.SYSTEM_WRITER_LOCK_REASON);
                 } catch (Throwable e) {
                     LOG.error()
                             .$("could not re-open writer [table=").$(statusTableToken)

@@ -37,8 +37,10 @@ import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class EqStrCharFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "=(SA)";
@@ -50,7 +52,13 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         // there are optimisation opportunities
         // 1. when one of args is constant null comparison can boil down to checking
         //    length of non-constant (must be -1)
@@ -65,7 +73,13 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
 
         if (strFunc.isConstant() && !charFunc.isConstant()) {
             CharSequence str = strFunc.getStrA(null);
-            if (str == null || str.length() != 1) {
+            if (str == null) {
+                // CHAR(0) routed here through the supportImplicitCastCharToStr
+                // exact-match overload arrives as a null string. Keep parity with
+                // Chars.equalsNc, which treats a null string as equal to CHAR(0).
+                return new ConstStrFunc(charFunc, (char) 0);
+            }
+            if (str.length() != 1) {
                 return new NegatedAwareBooleanConstantFunc();
             }
             return new ConstStrFunc(charFunc, str.charAt(0));

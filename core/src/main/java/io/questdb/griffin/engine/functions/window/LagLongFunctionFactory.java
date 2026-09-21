@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.Function;
@@ -120,8 +121,11 @@ public class LagLongFunctionFactory extends AbstractWindowFunctionFactory {
                                         Function arg,
                                         boolean ignoreNulls,
                                         Function defaultValue,
-                                        long offset) {
-            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
+                                        long offset,
+                                        ColumnTypes partitionByKeyTypes,
+                                        boolean liveView) {
+            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset,
+                    partitionByKeyTypes, liveView);
         }
 
         @Override

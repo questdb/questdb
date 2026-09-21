@@ -29,7 +29,6 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.client.std.bytes.DirectByteSequence;
 import io.questdb.client.std.str.DirectUtf8Sequence;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -48,7 +47,7 @@ import org.junit.Test;
  * hit the split path. Keeping the frame size small here also keeps the
  * tests fast (no need to ingest millions of rows).
  */
-public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
+public class QwpEgressPageFrameTest extends AbstractQwpBootstrapTest {
 
     /**
      * Force the SQL compiler to emit small page frames so every test exercises
@@ -95,7 +94,7 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
         // across 3 partitions with multiple frames per partition. Rebuilds the
         // expected checksums locally so any mismatch points at a specific column.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(SMALL_PAGE_FRAME_ENV)) {
+            try (final TestServerMain serverMain = startFragmented(SMALL_PAGE_FRAME_ENV)) {
                 serverMain.execute("""
                         CREATE TABLE allp(
                             ts TIMESTAMP,
@@ -219,7 +218,7 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
         // row crosses aux -> data pointer mapping, same as the VARCHAR failure
         // mode.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(SMALL_PAGE_FRAME_ENV)) {
+            try (final TestServerMain serverMain = startFragmented(SMALL_PAGE_FRAME_ENV)) {
                 serverMain.execute("CREATE TABLE binp(b BINARY, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO binp SELECT rnd_bin(1, 64, 5), x::TIMESTAMP FROM long_sequence(800)");
@@ -267,7 +266,7 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
         // does not support a PageFrameCursor; verify the RecordCursor fallback path
         // still works end-to-end when the fork chooses it.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(SMALL_PAGE_FRAME_ENV)) {
+            try (final TestServerMain serverMain = startFragmented(SMALL_PAGE_FRAME_ENV)) {
                 serverMain.execute("CREATE TABLE tcnt(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO tcnt SELECT x, x::TIMESTAMP FROM long_sequence(500)");
@@ -307,7 +306,7 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
         // state, and streaming must wrap up with a single empty RESULT_BATCH
         // followed by RESULT_END.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(SMALL_PAGE_FRAME_ENV)) {
+            try (final TestServerMain serverMain = startFragmented(SMALL_PAGE_FRAME_ENV)) {
                 serverMain.execute("CREATE TABLE empty_t(x LONG, v VARCHAR, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
 
@@ -347,7 +346,7 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
         // only care here that the fork surface + fallback both produce the same
         // rows).
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(SMALL_PAGE_FRAME_ENV)) {
+            try (final TestServerMain serverMain = startFragmented(SMALL_PAGE_FRAME_ENV)) {
                 serverMain.execute("CREATE TABLE tf(x LONG, s VARCHAR, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute(
@@ -391,7 +390,7 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
         // Hits the appendLongOrNull path on a multi-frame scan. Every 7th row is
         // NULL to force the null-bitmap encoding on at least one non-first frame.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(SMALL_PAGE_FRAME_ENV)) {
+            try (final TestServerMain serverMain = startFragmented(SMALL_PAGE_FRAME_ENV)) {
                 serverMain.execute("CREATE TABLE longnull(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("""
@@ -445,7 +444,7 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
         // crosses partition boundaries several times within a single client
         // batch. Works in the benchmark's shape (WAL + partitioned + SELECT all).
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(SMALL_PAGE_FRAME_ENV)) {
+            try (final TestServerMain serverMain = startFragmented(SMALL_PAGE_FRAME_ENV)) {
                 serverMain.execute(
                         "CREATE TABLE big_multi(ts TIMESTAMP, id LONG, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL"
                 );
@@ -505,7 +504,7 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
         // Verifies the page-frame path correctly routes the STRING CharSequence
         // through the row-indexed path with rows in every frame.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(SMALL_PAGE_FRAME_ENV)) {
+            try (final TestServerMain serverMain = startFragmented(SMALL_PAGE_FRAME_ENV)) {
                 serverMain.execute("CREATE TABLE strp(s STRING, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // 800 rows: mix of short ASCII, unicode, and NULL.
@@ -574,7 +573,7 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
         // batch rebuilds a local dict; verify that dict IDs resolve to the
         // correct values when a partition boundary lies inside a batch.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(SMALL_PAGE_FRAME_ENV)) {
+            try (final TestServerMain serverMain = startFragmented(SMALL_PAGE_FRAME_ENV)) {
                 serverMain.execute(
                         "CREATE TABLE sym_t(ts TIMESTAMP, sy SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL"
                 );
@@ -644,7 +643,7 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
         // Pre-fix: "varchar is outside of file boundary" thrown on the second
         // frame onwards. Post-fix: every row round-trips.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(SMALL_PAGE_FRAME_ENV)) {
+            try (final TestServerMain serverMain = startFragmented(SMALL_PAGE_FRAME_ENV)) {
                 serverMain.execute("CREATE TABLE vcp(v VARCHAR, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // 500 rows, values long enough to exceed the 9-byte inline threshold
@@ -691,4 +690,5 @@ public class QwpEgressPageFrameTest extends AbstractBootstrapTest {
             }
         });
     }
+
 }

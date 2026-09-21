@@ -28,7 +28,6 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -62,7 +61,7 @@ import org.junit.Test;
  *       compressed column in batch N+1 doesn't read batch N's decoded bytes.</li>
  * </ul>
  */
-public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
+public class QwpEgressTimestampGorillaTest extends AbstractQwpBootstrapTest {
 
     @Before
     public void setUp() {
@@ -79,7 +78,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
         // right encoding byte. All scenarios run on the same server to keep
         // the test under a second; distinct table names avoid collisions.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 for (int n : new int[]{0, 1, 2, 3, 4, 10}) {
                     String tbl = "bnd_" + n;
                     serverMain.execute("CREATE TABLE " + tbl + "(ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -129,7 +128,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
         // DATE is also a 64-bit signed integer (ms since epoch). Same wire
         // handling as TIMESTAMP, same Gorilla path.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE dt(d DATE)");
                 // 500 rows, 100 ms apart starting at 0.
                 serverMain.execute("""
@@ -183,7 +182,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
         // overall batch payload must be significantly smaller than the raw
         // (8 * rowCount) baseline.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute(
                         "CREATE TABLE dts(ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL"
                 );
@@ -244,7 +243,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
         // single Gorilla/uncompressed choice for the whole batch. Client reads
         // both encoding bytes and round-trips each column correctly.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute(
                         "CREATE TABLE mix(ts TIMESTAMP, scrambled TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL"
                 );
@@ -306,7 +305,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
         // heapPos between batches) would bleed decoded bytes from batch N into
         // batch N+1.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute(
                         "CREATE TABLE multi(ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL"
                 );
@@ -365,7 +364,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
         // happens to return rows in ts order, Gorilla still compresses. We
         // select WHERE x > 0 then ORDER BY ts to guarantee ordering.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE nonsts(x LONG, ts2 TIMESTAMP)");
                 // ts2 ascending, x scrambled.
                 serverMain.execute("""
@@ -419,7 +418,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
         // Client must still round-trip every value correctly via the
         // encoding=0x00 path.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE scr(ts2 TIMESTAMP)");
                 // Pseudo-random: multiply by a prime and take modulo of a
                 // large value. Delta-of-delta won't fit in int32 reliably.
@@ -469,7 +468,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
         // TIMESTAMP_NANOS shares the same 8-byte int64 shape but different
         // unit. Same Gorilla path applies. 100 ns cadence compresses tightly.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE nanos(t TIMESTAMP_NS)");
                 serverMain.execute("""
                         INSERT INTO nanos
@@ -514,7 +513,7 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
         // access. Every 5th row null; non-null ts values stay 1 s cadence so
         // they compress (delta-of-delta on the dense sequence is 0).
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE tsn(ts TIMESTAMP)");
                 serverMain.execute("""
                         INSERT INTO tsn
@@ -560,4 +559,5 @@ public class QwpEgressTimestampGorillaTest extends AbstractBootstrapTest {
             }
         });
     }
+
 }

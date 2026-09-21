@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.TableToken;
@@ -37,6 +38,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
@@ -133,6 +135,38 @@ public class ReaderLeakTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeakPreventionMultipleReaders() throws Exception {
+        // A query that leaks two or more readers exercises the cleanup loop in
+        // QueryProgress.unregisterAndCleanup. Each leaked reader still references the
+        // QueryProgress as its pool supervisor, so closing it re-enters onResourceReturned()
+        // -> readers.remove(). A fixed-index walk (Misc.freeObjListAndClear) would resize the
+        // list mid-iteration and skip the second reader - leaving it borrowed (pool capacity
+        // lost) and tripping an assertion under -ea. Both readers must return to the pool.
+        assertMemoryLeak(() -> {
+            staticOverrides.freeLeakedReaders(true);
+            engine.execute("create table x as (select rnd_int() a from long_sequence(20))");
+            TableToken token = engine.verifyTableName("x");
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                try (
+                        RecordCursorFactory factory = new QueryProgress(
+                                engine.getQueryRegistry(),
+                                "select * from x",
+                                new TwoReaderLeakingFactory(metadata, token)
+                        )
+                ) {
+                    //noinspection EmptyTryBlock
+                    try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                        // Opening then closing the cursor leaks both borrowed readers; the
+                        // close path must free both without throwing.
+                    }
+                    Assert.assertEquals(0, engine.getBusyReaderCount());
+                    Assert.assertEquals(2, engine.getMetrics().healthMetrics().readerLeakCounter());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSQLErrorsAreRecordedInMetrics() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table abc(a int, b int, c int)");
@@ -191,6 +225,31 @@ public class ReaderLeakTest extends AbstractCairoTest {
         @Override
         public void toTop() {
             base.toTop();
+        }
+    }
+
+    private static class TwoReaderLeakingFactory extends AbstractRecordCursorFactory {
+        private final TableToken token;
+
+        private TwoReaderLeakingFactory(RecordMetadata metadata, TableToken token) {
+            super(metadata);
+            this.token = token;
+        }
+
+        @Override
+        public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            // Borrow two readers through the supervised path so both land in the QueryProgress
+            // leaked-readers list, then return a no-op-close cursor so neither is returned when
+            // the cursor closes. The borrowed references are intentionally discarded: ownership
+            // passes to the QueryProgress supervisor, whose cleanup must free them.
+            executionContext.getReader(token);
+            executionContext.getReader(token);
+            return EmptyTableRecordCursor.INSTANCE;
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return false;
         }
     }
 

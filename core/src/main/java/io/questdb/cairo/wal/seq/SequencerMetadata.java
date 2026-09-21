@@ -26,12 +26,16 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.AbstractRecordMetadata;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.view.ViewDefinition;
@@ -43,6 +47,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
@@ -55,6 +60,7 @@ import static io.questdb.cairo.wal.WalUtils.*;
 
 public class SequencerMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Closeable {
     private final int commitMode;
+    private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final MemoryMARW metaMem;
     private final IntList readColumnOrder = new IntList();
@@ -69,6 +75,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     public SequencerMetadata(CairoConfiguration configuration, boolean readonly) {
+        this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.commitMode = configuration.getCommitMode();
         this.readonly = readonly;
@@ -85,12 +92,44 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isDedupKey
     ) {
-        addColumn0(columnName, columnType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isDedupKey);
+        addColumn0(columnName, columnType, symbolCapacity, symbolCacheFlag, indexType, indexValueBlockCapacity, isDedupKey);
         readColumnOrder.add(columnMetadata.size() - 1);
+        structureVersion.incrementAndGet();
+    }
+
+    public void addIndex(CharSequence columnName, int indexValueBlockSize, byte indexType, ObjList<CharSequence> coveringColumnNames) {
+        int colIdx = columnNameIndexMap.get(columnName);
+        if (colIdx < 0) {
+            throw CairoException.critical(0).put("column not found for addIndex [name=").put(columnName).put(']');
+        }
+        TableColumnMetadata colMeta = columnMetadata.getQuick(colIdx);
+        colMeta.setIndexType(indexType);
+        colMeta.setIndexValueBlockCapacity(indexValueBlockSize);
+
+        if (coveringColumnNames != null && coveringColumnNames.size() > 0) {
+            IntList coveringIndices = new IntList(coveringColumnNames.size());
+            for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
+                CharSequence covName = coveringColumnNames.get(i);
+                int covIdx = columnNameIndexMap.get(covName);
+                if (covIdx < 0) {
+                    throw CairoException.nonCritical().put("INCLUDE column does not exist [column=").put(covName).put(']');
+                }
+                if (covIdx == colIdx) {
+                    throw CairoException.nonCritical().put("INCLUDE must not contain the indexed column [column=").put(covName).put(']');
+                }
+                for (int j = 0; j < i; j++) {
+                    if (coveringIndices.getQuick(j) == covIdx) {
+                        throw CairoException.nonCritical().put("duplicate column in INCLUDE [column=").put(covName).put(']');
+                    }
+                }
+                coveringIndices.add(covIdx);
+            }
+            colMeta.setCoveringColumnIndices(coveringIndices);
+        }
         structureVersion.incrementAndGet();
     }
 
@@ -99,7 +138,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity
     ) {
         int existingColumnIndex = TableUtils.changeColumnTypeInMetadata(
@@ -107,7 +146,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                 columnType,
                 symbolCapacity,
                 symbolCacheFlag,
-                isIndexed,
+                indexType,
                 indexValueBlockCapacity,
                 columnNameIndexMap, columnMetadata
         );
@@ -153,6 +192,19 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
                 writer.of(path.trimTo(pathLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                 MatViewDefinition.append(tableStruct.getMatViewDefinition(), writer);
+            }
+            path.trimTo(pathLen);
+        }
+
+        // Persist the live view definition into the sequencer directory so it
+        // replicates with the sequencer metadata (the LV table dir is rebuilt
+        // from WAL on a replica and never ships its own _lv). reconstructLiveViewFiles
+        // copies it back into the LV table dir on the replica. Mirrors _mv above.
+        if (writeInitialMetadata && tableStruct.isLiveView()) {
+            assert tableStruct.getLiveViewDefinition() != null;
+            try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
+                writer.of(path.trimTo(pathLen).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$());
+                LiveViewDefinition.append(tableStruct.getLiveViewDefinition(), writer);
             }
             path.trimTo(pathLen);
         }
@@ -222,25 +274,21 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
     public void open(Path path, int pathLen, TableToken tableToken) {
         reset();
-        openSmallFile(ff, path, pathLen, roMetaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
+        open0(path, pathLen, tableToken);
+    }
 
-        // get written data size
-        if (!readonly) {
-            metaMem.jumpTo(SEQ_META_OFFSET_WAL_VERSION);
-            int size = metaMem.getInt(0);
-            metaMem.jumpTo(size);
-        }
-
-        loadSequencerMetadata(path, roMetaMem);
-        structureVersion.set(roMetaMem.getLong(SEQ_META_OFFSET_STRUCTURE_VERSION));
-        columnCount = columnMetadata.size();
-        timestampIndex = roMetaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
-        tableId = roMetaMem.getInt(SEQ_META_TABLE_ID);
-        this.tableToken = tableToken;
-
-        if (readonly) {
-            // close early
-            roMetaMem.close();
+    public void openTableSequencerMetadata(Path path, int pathLen, TableToken tableToken) {
+        try {
+            open(path, pathLen, tableToken);
+        } catch (CairoException ex) {
+            if (ex.isMetadataVersionMismatch()
+                    || ex.isSequencerMetadataOpenFailed()
+                    || (!ex.isFileCannotRead() && !ex.isFileTooSmall() && !ex.isMetadataValidation())) {
+                throw ex;
+            }
+            final int errno = ex.getErrno();
+            final String message = ex.getFlyweightMessage().toString();
+            throw CairoException.sequencerMetadataOpenFailed(tableToken, errno, message);
         }
     }
 
@@ -275,7 +323,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isDedupKey
     ) {
@@ -287,7 +335,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                 new TableColumnMetadata(
                         name,
                         columnType,
-                        isIndexed,
+                        indexType,
                         indexValueBlockCapacity,
                         false,
                         null,
@@ -317,15 +365,43 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                     tableStruct.getColumnType(i),
                     tableStruct.getSymbolCapacity(i),
                     tableStruct.getSymbolCacheFlag(i),
-                    tableStruct.isIndexed(i),
+                    tableStruct.getIndexType(i),
                     tableStruct.getIndexBlockCapacity(i),
                     tableStruct.isDedupKey(i)
             );
+            // Propagate covering column indices (INCLUDE list) from the table structure
+            IntList coveringIndices = tableStruct.getCoveringColumnIndices(i);
+            if (coveringIndices != null && coveringIndices.size() > 0) {
+                columnMetadata.getQuick(columnMetadata.size() - 1).setCoveringColumnIndices(new IntList(coveringIndices));
+            }
             readColumnOrder.add(i);
         }
 
         this.structureVersion.set(0);
         columnCount = columnMetadata.size();
+    }
+
+    private void open0(Path path, int pathLen, TableToken tableToken) {
+        openSmallFile(ff, path, pathLen, roMetaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
+
+        // get written data size
+        if (!readonly) {
+            metaMem.jumpTo(SEQ_META_OFFSET_WAL_VERSION);
+            int size = metaMem.getInt(0);
+            metaMem.jumpTo(size);
+        }
+
+        loadSequencerMetadata(path, roMetaMem);
+        structureVersion.set(roMetaMem.getLong(SEQ_META_OFFSET_STRUCTURE_VERSION));
+        columnCount = columnMetadata.size();
+        timestampIndex = roMetaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
+        tableId = roMetaMem.getInt(SEQ_META_TABLE_ID);
+        this.tableToken = tableToken;
+
+        if (readonly) {
+            // close early
+            roMetaMem.close();
+        }
     }
 
     private void loadSequencerMetadata(Utf8Sequence metaPath, MemoryMR metaMem) {
@@ -354,7 +430,8 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                 }
 
                 if (ColumnType.isSymbol(Math.abs(type))) {
-                    columnMetadata.add(new TableColumnMetadata(name, type, true, 1024, true, null));
+                    // Default to BITMAP; overridden by optional index-type section if present
+                    columnMetadata.add(new TableColumnMetadata(name, type, IndexType.BITMAP, 1024, true, null));
                 } else {
                     columnMetadata.add(new TableColumnMetadata(name, type));
                 }
@@ -388,6 +465,53 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                     }
                 }
             }
+
+            // Optional section: index types (backward compatible)
+            if (memSize > offset + 8 + 4) {
+                long indexTypeCheckSum = checkSum * 31 + SEQ_META_INDEX_TYPE_CHECKSUM_SALT;
+                long storedCheckSum = metaMem.getLong(offset);
+                offset += Long.BYTES;
+                if (storedCheckSum == indexTypeCheckSum) {
+                    int indexTypeCount = metaMem.getInt(offset);
+                    offset += Integer.BYTES;
+                    if (indexTypeCount == columnCount && memSize - offset >= columnCount) {
+                        for (int i = 0; i < columnCount; i++) {
+                            byte indexType = metaMem.getByte(offset);
+                            offset += Byte.BYTES;
+                            columnMetadata.getQuick(i).setIndexType(indexType);
+                        }
+                    } else if (memSize - offset >= indexTypeCount) {
+                        offset += indexTypeCount;
+                    }
+                }
+            }
+
+            // Optional section: covering column indices (backward compatible)
+            if (memSize > offset + 8 + 4) {
+                long coverCheckSum = checkSum * 31 + SEQ_META_COVERING_COLUMN_CHECKSUM_SALT;
+                long storedCoverSum = metaMem.getLong(offset);
+                offset += Long.BYTES;
+                if (storedCoverSum == coverCheckSum) {
+                    int coveringColumnCount = metaMem.getInt(offset);
+                    offset += Integer.BYTES;
+                    for (int c = 0; c < coveringColumnCount; c++) {
+                        if (memSize - offset < 2 * Integer.BYTES) break;
+                        int colIdx = metaMem.getInt(offset);
+                        offset += Integer.BYTES;
+                        int includeCount = metaMem.getInt(offset);
+                        offset += Integer.BYTES;
+                        if (includeCount > 0 && memSize - offset >= (long) includeCount * Integer.BYTES
+                                && colIdx >= 0 && colIdx < columnCount) {
+                            IntList indices = new IntList(includeCount);
+                            for (int j = 0; j < includeCount; j++) {
+                                indices.add(metaMem.getInt(offset));
+                                offset += Integer.BYTES;
+                            }
+                            columnMetadata.getQuick(colIdx).setCoveringColumnIndices(indices);
+                        }
+                    }
+                }
+            }
         } catch (Throwable e) {
             columnNameIndexMap.clear();
             columnMetadata.clear();
@@ -408,6 +532,25 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     private void switchTo(Path path, int pathLen) {
         openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
         syncToMetaFile();
+    }
+
+    void openFromInitialMetadata(Path path, int pathLen, TableToken tableToken) {
+        assert !readonly;
+        try (TableReaderMetadata initialMetadata = new TableReaderMetadata(configuration)) {
+            try {
+                // _meta.0 is the immutable create-time metadata; recovery replays committed changes over it.
+                initialMetadata.loadMetadata(path.trimTo(pathLen).concat(WalUtils.INITIAL_META_FILE_NAME).$());
+            } finally {
+                path.trimTo(pathLen);
+            }
+            copyFrom(initialMetadata, tableToken, initialMetadata.getTableId());
+        }
+        openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
+    }
+
+    void skipTableRename() {
+        // Replaying historical renames can move metadata away from the registry token after rename chains or abandoned renames.
+        structureVersion.incrementAndGet();
     }
 
     void syncToMetaFile() {
@@ -431,12 +574,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             checkSum = checkSum * 31 + getColumnName(i).hashCode();
         }
 
-        // write column order
-        metaMem.putLong(checkSum);
-        metaMem.putInt(readColumnOrder.size());
-        for (int i = 0, n = readColumnOrder.size(); i < n; i++) {
-            metaMem.putInt(readColumnOrder.get(i));
-        }
+        writeSequencerMetadataOptionalSections(metaMem, columnCount, checkSum, this, readColumnOrder);
 
         // update metadata size
         metaMem.putInt(0, (int) metaMem.getAppendOffset());

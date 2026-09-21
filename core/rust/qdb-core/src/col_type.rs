@@ -181,7 +181,7 @@ impl ColumnTypeTag {
     // of constructing an invalid `ColumnType`, e.g. one without the appropriate
     // extra type info for Geo types.
     #[cfg(test)]
-    pub(crate) const fn into_type(self) -> ColumnType {
+    pub const fn into_type(self) -> ColumnType {
         ColumnType::new(self, 0)
     }
 }
@@ -285,6 +285,15 @@ impl ColumnType {
         Some(Self {
             code: NonZeroI32::new(tag as i32 | extra_type_info).unwrap(),
         })
+    }
+
+    /// Constructs a `ColumnType` from its raw `i32` code.
+    /// Returns `None` if the code is zero (undefined type).
+    pub const fn new_raw(code: i32) -> Option<Self> {
+        match NonZeroI32::new(code) {
+            Some(code) => Some(Self { code }),
+            None => None,
+        }
     }
 
     pub fn code(&self) -> i32 {

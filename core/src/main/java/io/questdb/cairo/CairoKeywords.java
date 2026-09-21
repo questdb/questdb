@@ -46,6 +46,28 @@ public class CairoKeywords {
 
     }
 
+    public static boolean isLiveViewCheckpoints(long lpsz) {
+        // "_checkpoints" - the live view checkpoint directory
+        // (LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
+        if (length(lpsz) != 12) {
+            return false;
+        }
+
+        long i = lpsz;
+        return Unsafe.getByte(i++) == '_'
+                && Unsafe.getByte(i++) == 'c'
+                && Unsafe.getByte(i++) == 'h'
+                && Unsafe.getByte(i++) == 'e'
+                && Unsafe.getByte(i++) == 'c'
+                && Unsafe.getByte(i++) == 'k'
+                && Unsafe.getByte(i++) == 'p'
+                && Unsafe.getByte(i++) == 'o'
+                && Unsafe.getByte(i++) == 'i'
+                && Unsafe.getByte(i++) == 'n'
+                && Unsafe.getByte(i++) == 't'
+                && Unsafe.getByte(i) == 's';
+    }
+
     public static boolean isLock(long lpsz) {
         int len = length(lpsz);
         if (len < 6) {
@@ -69,6 +91,22 @@ public class CairoKeywords {
                 && Unsafe.getByte(i++) == 'e'
                 && Unsafe.getByte(i++) == 't'
                 && Unsafe.getByte(i) == 'a';
+    }
+
+    /**
+     * Matches the {@code _rebase_new} / {@code _rebase_source} markers of ALTER TABLE ... REBASE WAL
+     * by their shared {@code _rebase_} prefix.
+     */
+    public static boolean isRebaseMarker(long lpsz) {
+        long i = lpsz;
+        return Unsafe.getByte(i++) == '_'
+                && Unsafe.getByte(i++) == 'r'
+                && Unsafe.getByte(i++) == 'e'
+                && Unsafe.getByte(i++) == 'b'
+                && Unsafe.getByte(i++) == 'a'
+                && Unsafe.getByte(i++) == 's'
+                && Unsafe.getByte(i++) == 'e'
+                && Unsafe.getByte(i) == '_';
     }
 
     public static boolean isSeq(long lpsz) {

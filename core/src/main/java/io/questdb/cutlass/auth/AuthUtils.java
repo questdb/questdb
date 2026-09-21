@@ -26,7 +26,7 @@ package io.questdb.cutlass.auth;
 
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
@@ -70,14 +70,14 @@ public final class AuthUtils {
     public static final String SIGNATURE_TYPE_P1363 = "SHA256withECDSAinP1363Format";
     private static final Pattern TOKEN_PATTERN = Pattern.compile("\\s*(\\S+)(.*)");
 
-    private static final ThreadLocal<Signature> tlSigDER = new ThreadLocal<>(() -> {
+    private static final CarrierLocal<Signature> tlSigDER = new CarrierLocal<>(() -> {
         try {
             return Signature.getInstance(AuthUtils.SIGNATURE_TYPE_DER);
         } catch (NoSuchAlgorithmException ex) {
             throw new Error(ex);
         }
     });
-    private static final ThreadLocal<Signature> tlSigP1363 = new ThreadLocal<>(() -> {
+    private static final CarrierLocal<Signature> tlSigP1363 = new CarrierLocal<>(() -> {
         try {
             return Signature.getInstance(AuthUtils.SIGNATURE_TYPE_P1363);
         } catch (NoSuchAlgorithmException ex) {

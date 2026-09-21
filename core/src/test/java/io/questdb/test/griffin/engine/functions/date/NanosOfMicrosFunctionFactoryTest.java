@@ -30,58 +30,48 @@ import org.junit.Test;
 public class NanosOfMicrosFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNull() throws Exception {
-        assertQuery(
-                "nanos\n" +
-                        "null\n",
-                "select nanos(null)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select nanos(null)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        nanos
+                        null
+                        """);
     }
 
     @Test
     public void testPreEpoch() throws Exception {
-        assertQuery(
-                "nanos\n" +
-                        "0\n",
-                "select nanos('1901-04-11T22:00:30.555998Z'::timestamp)",
-                null,
-                null,
-                true,
-                true
-        );
-        assertQuery(
-                "nanos\n" +
-                        "123\n",
-                "select nanos('1901-04-11T22:00:30.555998123Z'::timestamp_ns)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select nanos('1901-04-11T22:00:30.555998Z'::timestamp)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        nanos
+                        0
+                        """);
+        assertQuery("select nanos('1901-04-11T22:00:30.555998123Z'::timestamp_ns)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        nanos
+                        123
+                        """);
     }
 
     @Test
     public void testVanilla() throws Exception {
-        assertQuery(
-                "nanos\n" +
-                        "0\n",
-                "select nanos('1997-04-11T22:00:30.555555Z'::timestamp)",
-                null,
-                null,
-                true,
-                true
-        );
-        assertQuery(
-                "nanos\n" +
-                        "123\n",
-                "select nanos('1997-04-11T22:00:30.555555123Z'::timestamp_ns)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select nanos('1997-04-11T22:00:30.555555Z'::timestamp)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        nanos
+                        0
+                        """);
+        assertQuery("select nanos('1997-04-11T22:00:30.555555123Z'::timestamp_ns)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        nanos
+                        123
+                        """);
     }
 }

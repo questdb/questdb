@@ -31,18 +31,22 @@ public class StdDevGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testStddevAllNull() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "stddev\nnull\n", "select stddev(x) from (select cast(null as double) x from long_sequence(100))"
-        ));
+        assertMemoryLeak(() -> assertQuery("select stddev(x) from (select cast(null as double) x from long_sequence(100))")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("stddev\nnull\n"));
     }
 
     @Test
     public void testStddevAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select 17.2151921 x from long_sequence(100))");
-            assertSql(
-                    "stddev\n0.0\n", "select stddev(x) from tbl1"
-            );
+            assertQuery("select stddev(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("stddev\n0.0\n");
         });
     }
 
@@ -50,9 +54,11 @@ public class StdDevGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testStddevDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as double) x from long_sequence(100))");
-            assertSql(
-                    "stddev\n29.011491975882016\n", "select stddev(x) from tbl1"
-            );
+            assertQuery("select stddev(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("stddev\n29.011491975882016\n");
         });
     }
 
@@ -62,9 +68,11 @@ public class StdDevGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tbl1(x double)");
             execute("insert into 'tbl1' VALUES (null)");
             execute("insert into 'tbl1' select x from long_sequence(100)");
-            assertSql(
-                    "stddev\n29.011491975882016\n", "select stddev(x) from tbl1"
-            );
+            assertQuery("select stddev(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("stddev\n29.011491975882016\n");
         });
     }
 
@@ -72,9 +80,11 @@ public class StdDevGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testStddevFloatValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as float) x from long_sequence(100))");
-            assertSql(
-                    "stddev\n29.011491975882016\n", "select stddev(x) from tbl1"
-            );
+            assertQuery("select stddev(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("stddev\n29.011491975882016\n");
         });
     }
 
@@ -82,9 +92,11 @@ public class StdDevGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testStddevIntValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as int) x from long_sequence(100))");
-            assertSql(
-                    "stddev\n29.011491975882016\n", "select stddev(x) from tbl1"
-            );
+            assertQuery("select stddev(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("stddev\n29.011491975882016\n");
         });
     }
 
@@ -92,9 +104,11 @@ public class StdDevGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testStddevNoValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1(x int)");
-            assertSql(
-                    "stddev\nnull\n", "select stddev(x) from tbl1"
-            );
+            assertQuery("select stddev(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("stddev\nnull\n");
         });
     }
 
@@ -104,9 +118,11 @@ public class StdDevGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tbl1(x int)");
             execute("insert into 'tbl1' VALUES " +
                     "(17.2151920)");
-            assertSql(
-                    "stddev\nnull\n", "select stddev(x) from tbl1"
-            );
+            assertQuery("select stddev(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("stddev\nnull\n");
         });
     }
 
@@ -114,9 +130,11 @@ public class StdDevGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testStddevOverflow() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select 100000000 x from long_sequence(1000000))");
-            assertSql(
-                    "stddev\n0.0\n", "select stddev(x) from tbl1"
-            );
+            assertQuery("select stddev(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("stddev\n0.0\n");
         });
     }
 
@@ -125,9 +143,11 @@ public class StdDevGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as double) x from long_sequence(100))");
             execute("insert into 'tbl1' VALUES (null)");
-            assertSql(
-                    "stddev\n29.011491975882016\n", "select stddev(x) from tbl1"
-            );
+            assertQuery("select stddev(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("stddev\n29.011491975882016\n");
         });
     }
 }

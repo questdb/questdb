@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -48,6 +49,7 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     private final String viewName;
     private final int viewPosition;
     private @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
+    private long pushdownPartitionTableVersion = -1;
 
     AbstractPartitionFrameCursorFactory(
             TableToken tableToken,
@@ -86,15 +88,11 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     }
 
     @Override
-    public boolean hasParquetFormatPartitions(SqlExecutionContext executionContext) {
-        try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().readLock()) {
-            CairoTable table = metadataRO.getTable(tableToken);
-            return table != null && table.hasParquetPartitions();
-        }
-    }
-
-    @Override
-    public void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
+    public void setPushdownFilterCondition(
+            long partitionTableVersion,
+            @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions
+    ) {
+        this.pushdownPartitionTableVersion = partitionTableVersion;
         this.pushdownFilterConditions = pushdownFilterConditions;
     }
 
@@ -131,11 +129,15 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
 
             // columns not referenced by the view require explicit permission
             final LowerCaseCharSequenceHashSet depCols = viewDefinition.getDependencies().get(tableToken.getTableName());
-            if (!depCols.contains("*")) {
+            // A null depCols means the view's persisted dependency map has no entry for this base
+            // table - either a dependency-collector gap missed the reference, or the base table was
+            // renamed after the view was created. Fail safe: treat the table as not covered by the
+            // view, so every column read here requires explicit per-column SELECT on the base table.
+            if (depCols == null || !depCols.contains("*")) {
                 columnNames.clear();
                 for (int i = 0, n = columnIndexes.size(); i < n; i++) {
                     final String columnName = metadata.getColumnName(columnIndexes.getQuick(i));
-                    if (!depCols.contains(columnName)) {
+                    if (depCols == null || !depCols.contains(columnName)) {
                         columnNames.add(columnName);
                     }
                 }
@@ -158,9 +160,22 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     }
 
     TableReader getReader(SqlExecutionContext executionContext) {
-        return executionContext.getReader(
+        final TableReader reader = executionContext.getReader(
                 tableToken,
                 metadataVersion
         );
+        if (pushdownPartitionTableVersion > -1) {
+            final long currentPartitionTableVersion = reader.getTxFile().getPartitionTableVersion();
+            if (currentPartitionTableVersion != pushdownPartitionTableVersion) {
+                final boolean hasParquetPushdown = pushdownFilterConditions != null;
+                if (!executionContext.isPartitionFormatChangeTolerated()
+                        && reader.hasParquetPartitions() != hasParquetPushdown) {
+                    Misc.free(reader);
+                    throw TableReferenceOutOfDateException.ofPartitionFormatChange(tableToken);
+                }
+                pushdownPartitionTableVersion = currentPartitionTableVersion;
+            }
+        }
+        return reader;
     }
 }

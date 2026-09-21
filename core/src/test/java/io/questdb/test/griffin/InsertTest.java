@@ -85,25 +85,37 @@ public class InsertTest extends AbstractCairoTest {
             execute("create table currencies(id long, ccy symbol, ts timestamp) timestamp(ts)");
 
             execute("insert into currencies values (1, 'USD', '2019-03-10T00:00:00.000000Z')");
-            assertSql("""
-                    id\tccy\tts
-                    1\tUSD\t2019-03-10T00:00:00.000000Z
-                    """, "currencies");
+            assertQuery("currencies")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tccy\tts
+                            1\tUSD\t2019-03-10T00:00:00.000000Z
+                            """);
 
             execute("insert into currencies select max(id) + 1, 'EUR', '2019-03-10T01:00:00.000000Z' from currencies");
-            assertSql("""
-                    id\tccy\tts
-                    1\tUSD\t2019-03-10T00:00:00.000000Z
-                    2\tEUR\t2019-03-10T01:00:00.000000Z
-                    """, "currencies");
+            assertQuery("currencies")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tccy\tts
+                            1\tUSD\t2019-03-10T00:00:00.000000Z
+                            2\tEUR\t2019-03-10T01:00:00.000000Z
+                            """);
 
             execute("insert into currencies select max(id) + 1, 'GBP', '2019-03-10T02:00:00.000000Z' from currencies");
-            assertSql("""
-                    id\tccy\tts
-                    1\tUSD\t2019-03-10T00:00:00.000000Z
-                    2\tEUR\t2019-03-10T01:00:00.000000Z
-                    3\tGBP\t2019-03-10T02:00:00.000000Z
-                    """, "currencies");
+            assertQuery("currencies")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tccy\tts
+                            1\tUSD\t2019-03-10T00:00:00.000000Z
+                            2\tEUR\t2019-03-10T01:00:00.000000Z
+                            3\tGBP\t2019-03-10T02:00:00.000000Z
+                            """);
         });
     }
 
@@ -113,25 +125,37 @@ public class InsertTest extends AbstractCairoTest {
             execute("create table currencies(ccy symbol, id long, ts timestamp) timestamp(ts)");
 
             execute("insert into currencies values ('USD', 1, '2019-03-10T00:00:00.000000Z')");
-            assertSql("""
-                    ccy\tid\tts
-                    USD\t1\t2019-03-10T00:00:00.000000Z
-                    """, "currencies");
+            assertQuery("currencies")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ccy\tid\tts
+                            USD\t1\t2019-03-10T00:00:00.000000Z
+                            """);
 
             execute("insert into currencies select 'EUR', max(id) + 1, '2019-03-10T01:00:00.000000Z' from currencies");
-            assertSql("""
-                    ccy\tid\tts
-                    USD\t1\t2019-03-10T00:00:00.000000Z
-                    EUR\t2\t2019-03-10T01:00:00.000000Z
-                    """, "currencies");
+            assertQuery("currencies")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ccy\tid\tts
+                            USD\t1\t2019-03-10T00:00:00.000000Z
+                            EUR\t2\t2019-03-10T01:00:00.000000Z
+                            """);
 
             execute("insert into currencies select 'GBP', max(id) + 1, '2019-03-10T02:00:00.000000Z' from currencies");
-            assertSql("""
-                    ccy\tid\tts
-                    USD\t1\t2019-03-10T00:00:00.000000Z
-                    EUR\t2\t2019-03-10T01:00:00.000000Z
-                    GBP\t3\t2019-03-10T02:00:00.000000Z
-                    """, "currencies");
+            assertQuery("currencies")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ccy\tid\tts
+                            USD\t1\t2019-03-10T00:00:00.000000Z
+                            EUR\t2\t2019-03-10T01:00:00.000000Z
+                            GBP\t3\t2019-03-10T02:00:00.000000Z
+                            """);
         });
     }
 
@@ -670,15 +694,16 @@ public class InsertTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("arithmetic")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             id\tbase\tcalculated\tts
                             1\t100.50\t110.5500\t1970-01-01T00:00:00.000000Z
                             2\t75.25\t100.0000\t1970-01-01T00:00:01.000000Z
                             3\t200.00\t100.0000\t1970-01-01T00:00:02.000000Z
-                            """,
-                    "arithmetic"
-            );
+                            """);
         });
     }
 
@@ -692,14 +717,15 @@ public class InsertTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("int_to_decimal")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             id\toriginal\tconverted\tts
                             1\t100\t100.00\t1970-01-01T00:00:00.000000Z
                             2\t250\t250.00\t1970-01-01T00:00:01.000000Z
-                            """,
-                    "int_to_decimal"
-            );
+                            """);
         });
     }
 
@@ -717,14 +743,15 @@ public class InsertTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("target")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             id\tprice\tadjusted\tts
                             2\t1578.024\t789.012\t1970-01-01T00:00:01.000000Z
                             3\t913.578\t456.789\t1970-01-01T00:00:02.000000Z
-                            """,
-                    "target"
-            );
+                            """);
         });
     }
 
@@ -738,14 +765,15 @@ public class InsertTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("high_precision")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             id\tlarge_value\tts
                             1\t12345678901234567890.1234567890\t1970-01-01T00:00:00.000000Z
                             2\t98765432109876543210.9876543210\t1970-01-01T00:00:01.000000Z
-                            """,
-                    "high_precision"
-            );
+                            """);
         });
     }
 
@@ -761,16 +789,17 @@ public class InsertTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("decimals")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             id\tprice\trate\tts
                             1\t99.99\t0.1234\t1970-01-01T00:00:00.000000Z
                             2\t1234.56\t1.2345\t1970-01-01T00:00:01.000000Z
                             3\t0.01\t0.0001\t1970-01-01T00:00:02.000000Z
                             4\t9999.99\t9.9999\t1970-01-01T00:00:03.000000Z
-                            """,
-                    "decimals"
-            );
+                            """);
         });
     }
 
@@ -792,14 +821,15 @@ public class InsertTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("mixed_types")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             id\tprice\tname\tactive\tquantity\trate\tsymbol\tts
                             1\t99.99\tItem1\ttrue\t100\t1.5\tABC\t1970-01-01T00:00:00.000000Z
                             2\t150.75\tItem2\tfalse\t50\t2.25\tDEF\t1970-01-01T00:00:01.000000Z
-                            """,
-                    "mixed_types"
-            );
+                            """);
         });
     }
 
@@ -814,15 +844,16 @@ public class InsertTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("decimal_nulls")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             id\tvalue\tts
                             1\t123.4567\t1970-01-01T00:00:00.000000Z
                             2\t\t1970-01-01T00:00:01.000000Z
                             3\t999.9999\t1970-01-01T00:00:02.000000Z
-                            """,
-                    "decimal_nulls"
-            );
+                            """);
         });
     }
 
@@ -831,7 +862,9 @@ public class InsertTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (id int, val symbol index)");
             execute("insert into tab values (1, '')");
-            assertSql("id\n1\n", "select id from tab where val = ''");
+            assertQuery("select id from tab where val = ''")
+                    .noLeakCheck()
+                    .returns("id\n1\n");
         });
     }
 
@@ -840,7 +873,9 @@ public class InsertTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (id int, val symbol index)");
             execute("insert into tab values (1, '')");
-            assertSql("id\n", "select id from tab where val = null");
+            assertQuery("select id from tab where val = null")
+                    .noLeakCheck()
+                    .returns("id\n");
         });
     }
 
@@ -849,7 +884,9 @@ public class InsertTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (id int, val symbol index)");
             execute("insert into tab values (1, ''::varchar)");
-            assertSql("id\n1\n", "select id from tab where val = ''");
+            assertQuery("select id from tab where val = ''")
+                    .noLeakCheck()
+                    .returns("id\n1\n");
         });
     }
 
@@ -858,7 +895,9 @@ public class InsertTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (id int, val symbol index)");
             execute("insert into tab values (1, ''::varchar)");
-            assertSql("id\n", "select id from tab where val = null");
+            assertQuery("select id from tab where val = null")
+                    .noLeakCheck()
+                    .returns("id\n");
         });
     }
 
@@ -1312,19 +1351,24 @@ public class InsertTest extends AbstractCairoTest {
             execute("create table trades (i int, sym symbol)");
 
             // No comma delimiter between rows
-            assertException("insert into trades VALUES (1, 'USDJPY')(2, 'USDFJD');", 39, "',' expected");
+            assertQuery("insert into trades VALUES (1, 'USDJPY')(2, 'USDFJD');")
+                    .fails(39, "',' expected");
 
             // Empty row
-            assertException("insert into trades VALUES (1, 'USDJPY'), ();", 42, "Expression expected");
+            assertQuery("insert into trades VALUES (1, 'USDJPY'), ();")
+                    .fails(42, "Expression expected");
 
             // Empty row with comma delimiter inside
-            assertException("insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'), (,);", 57, "Expression expected");
+            assertQuery("insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'), (,);")
+                    .fails(57, "Expression expected");
 
             // Empty row column
-            assertException("insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'), (3,);", 59, "Expression expected");
+            assertQuery("insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'), (3,);")
+                    .fails(59, "Expression expected");
 
             // Multi row insert can't end in comma token
-            assertException("insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'),;", 55, "'(' expected");
+            assertQuery("insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'),;")
+                    .fails(55, "'(' expected");
         });
     }
 
@@ -1332,7 +1376,8 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertMultipleRowsFailRowWrongColumnCount() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table trades (i int, sym symbol)");
-            assertException("insert into trades VALUES (1, 'USDJPY'), ('USDFJD');", 50, "row value count does not match column count [expected=2, actual=1, tuple=2]");
+            assertQuery("insert into trades VALUES (1, 'USDJPY'), ('USDFJD');")
+                    .fails(50, "row value count does not match column count [expected=2, actual=1, tuple=2]");
         });
     }
 
@@ -1340,7 +1385,8 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertMultipleRowsFailTypeConversion() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table trades (sym symbol)");
-            assertException("insert into trades VALUES ('USDJPY'), (1), ('USDFJD');", 39, "inconvertible types: INT -> SYMBOL [from=1, to=sym]");
+            assertQuery("insert into trades VALUES ('USDJPY'), (1), ('USDFJD');")
+                    .fails(39, "inconvertible types: INT -> SYMBOL [from=1, to=sym]");
         });
     }
 
@@ -1392,7 +1438,8 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertNoSelfReference() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades_aapl (ts TIMESTAMP, px INT, qty int, side STRING) TIMESTAMP(ts)");
-            assertException("insert into trades_aapl (ts) values (ts)", 37, "Invalid column");
+            assertQuery("insert into trades_aapl (ts) values (ts)")
+                    .fails(37, "Invalid column");
         });
     }
 
@@ -1414,7 +1461,8 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertNotEnoughFields() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            assertException("insert into balances values (1, 'USD')", 37, "row value count does not match column count [expected=3, actual=2, tuple=1]");
+            assertQuery("insert into balances values (1, 'USD')")
+                    .fails(37, "row value count does not match column count [expected=3, actual=2, tuple=1]");
         });
     }
 
@@ -1423,7 +1471,9 @@ public class InsertTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (id int, val symbol index)");
             execute("insert into tab values (1, NULL)");
-            assertSql("id\n", "select id from tab where val = ''");
+            assertQuery("select id from tab where val = ''")
+                    .noLeakCheck()
+                    .returns("id\n");
         });
     }
 
@@ -1432,7 +1482,9 @@ public class InsertTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (id int, val symbol index)");
             execute("insert into tab values (1, null)");
-            assertSql("id\n1\n", "select id from tab where val = null");
+            assertQuery("select id from tab where val = null")
+                    .noLeakCheck()
+                    .returns("id\n1\n");
         });
     }
 
@@ -1441,7 +1493,9 @@ public class InsertTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (id int, val symbol index)");
             execute("insert into tab values (1, NULL::varchar)");
-            assertSql("id\n", "select id from tab where val = ''");
+            assertQuery("select id from tab where val = ''")
+                    .noLeakCheck()
+                    .returns("id\n");
         });
     }
 
@@ -1450,7 +1504,9 @@ public class InsertTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (id int, val symbol index)");
             execute("insert into tab values (1, null::varchar)");
-            assertSql("id\n1\n", "select id from tab where val = null");
+            assertQuery("select id from tab where val = null")
+                    .noLeakCheck()
+                    .returns("id\n1\n");
         });
     }
 
@@ -1459,11 +1515,9 @@ public class InsertTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table result (r long)");
 
-            assertExceptionNoLeakCheck(
-                    "insert into result select * from long_sequence(1) where true where false;",
-                    61,
-                    "unexpected token [where]"
-            );
+            assertQuery("insert into result select * from long_sequence(1) where true where false;")
+                    .noLeakCheck()
+                    .fails(61, "unexpected token [where]");
         });
     }
 
@@ -1483,16 +1537,21 @@ public class InsertTest extends AbstractCairoTest {
                 BB\t339631474\t1970-01-03T00:54:00.000000Z
                 """;
 
-        assertQuery("sym\tid\tts\n", "x", """
-                create table x (
-                    sym symbol index,
-                    id int,
-                    ts timestamp
-                ) timestamp(ts) partition by DAY""", "ts", """
-                insert into x select * from (select rnd_symbol('A', 'BB', 'CC', 'DDD') sym,\s
-                        rnd_int() id,\s
-                        timestamp_sequence(172800000000, 360000000) ts\s
-                    from long_sequence(10)) timestamp (ts)""", expected, true, true, false);
+        assertQuery("x")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            id int,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .timestamp("ts")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('A', 'BB', 'CC', 'DDD') sym,\s
+                                rnd_int() id,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(10)) timestamp (ts)""")
+                .expectSize()
+                .returns("sym\tid\tts\n", expected);
     }
 
     @Test
@@ -1531,10 +1590,13 @@ public class InsertTest extends AbstractCairoTest {
             assertQueryCheckWal(expected);
 
             // check symbol null was inserted as a null varch and not as an empty varchar
-            assertQuery("""
-                    ts\tvch
-                    1970-01-01T00:00:00.020000Z\t
-                    """, "select * from dest where vch is null", "ts", true, false);
+            assertQuery("select * from dest where vch is null")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tvch
+                            1970-01-01T00:00:00.020000Z\t
+                            """);
         });
     }
 
@@ -1700,7 +1762,8 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertTimestampNSOverflowException() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (t1 timestamp_ns) timestamp(t1) partition by day;");
-            assertException("insert into tab values ('2300-01-03T00:00:00.000001123')", 24, "timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
+            assertQuery("insert into tab values ('2300-01-03T00:00:00.000001123')")
+                    .fails(24, "timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
         });
     }
 
@@ -1714,7 +1777,8 @@ public class InsertTest extends AbstractCairoTest {
                     2321-01-03T00:00:00.123000Z\t2021-01-03T00:00:00.456000Z
                     """, "tab");
             execute("create table tab1 (t1 timestamp_ns, t2 timestamp_ns) timestamp(t2) partition by DAY;");
-            assertException("insert into tab1 select t1, t2 from tab", 0, "inconvertible value: 11076652800123000 [TIMESTAMP -> TIMESTAMP_NS]");
+            assertQuery("insert into tab1 select t1, t2 from tab")
+                    .fails(0, "inconvertible value: 11076652800123000 [TIMESTAMP -> TIMESTAMP_NS]");
         });
     }
 
@@ -1737,7 +1801,8 @@ public class InsertTest extends AbstractCairoTest {
 
             assertReaderCheckWal(expected2, "t");
 
-            assertException("insert into t values  (timestamp with time zone)", 47, "String literal expected after 'timestamp with time zone'");
+            assertQuery("insert into t values  (timestamp with time zone)")
+                    .fails(47, "String literal expected after 'timestamp with time zone'");
         });
     }
 
@@ -1760,7 +1825,8 @@ public class InsertTest extends AbstractCairoTest {
 
             assertReaderCheckWal(expected2, "t");
 
-            assertException("insert into t values  (timestamp with time zone)", 47, "String literal expected after 'timestamp with time zone'");
+            assertQuery("insert into t values  (timestamp with time zone)")
+                    .fails(47, "String literal expected after 'timestamp with time zone'");
         });
     }
 
@@ -1801,7 +1867,8 @@ public class InsertTest extends AbstractCairoTest {
 
             assertReaderCheckWal(expected2, "t");
 
-            assertException("insert into t values  (timestamp with time zone)", 47, "String literal expected after 'timestamp with time zone'");
+            assertQuery("insert into t values  (timestamp with time zone)")
+                    .fails(47, "String literal expected after 'timestamp with time zone'");
         });
     }
 
@@ -1832,7 +1899,8 @@ public class InsertTest extends AbstractCairoTest {
 
             assertReaderCheckWal(expected2, "t");
 
-            assertException("insert into t values  (timestamp with time zone)", 47, "String literal expected after 'timestamp with time zone'");
+            assertQuery("insert into t values  (timestamp with time zone)")
+                    .fails(47, "String literal expected after 'timestamp with time zone'");
         });
     }
 
@@ -1876,10 +1944,13 @@ public class InsertTest extends AbstractCairoTest {
             assertQueryCheckWal(expected);
 
             // check symbol null was inserted as a null varch and not as an empty varchar
-            assertQuery("""
-                    ts\tvch
-                    1970-01-01T00:00:00.020000Z\t
-                    """, "select * from dest where vch is null", "ts", true, false);
+            assertQuery("select * from dest where vch is null")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tvch
+                            1970-01-01T00:00:00.020000Z\t
+                            """);
         });
     }
 
@@ -1887,13 +1958,15 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertValueCannotReferenceTableColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            assertException("insert into balances values (1, ccy, 356.12)", 32, "Invalid column: ccy");
+            assertQuery("insert into balances values (1, ccy, 356.12)")
+                    .fails(32, "Invalid column: ccy");
         });
     }
 
     @Test
     public void testInsertValuesAsLambda() throws Exception {
-        assertException("insert into names values(select rnd_str('Tom', 'Anna', 'John', 'Tim', 'Kim', 'Jim'), rnd_str('Smith', 'Mason', 'Johnson', 'Thompson') from long_sequence(8))", 25, "query is not allowed here");
+        assertQuery("insert into names values(select rnd_str('Tom', 'Anna', 'John', 'Tim', 'Kim', 'Jim'), rnd_str('Smith', 'Mason', 'Johnson', 'Thompson') from long_sequence(8))")
+                .fails(25, "query is not allowed here");
     }
 
     @Test
@@ -1918,10 +1991,13 @@ public class InsertTest extends AbstractCairoTest {
             assertQueryCheckWal(expected);
 
             // check varchar null was inserted as a null string and not as an empty string
-            assertQuery("""
-                    ts\ts\tl\tsh\ti\tb\tc\tf\td\tu\tdt\tts2\tsym
-                    1970-01-01T00:00:00.020000Z\t\tnull\t0\tnull\t0\t\tnull\tnull\t\t\t\t
-                    """, "select * from dest where s is null", "ts", true, false);
+            assertQuery("select * from dest where s is null")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts\tl\tsh\ti\tb\tc\tf\td\tu\tdt\tts2\tsym
+                            1970-01-01T00:00:00.020000Z\t\tnull\t0\tnull\t0\t\tnull\tnull\t\t\t\t
+                            """);
         });
     }
 
@@ -1929,7 +2005,8 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertWithLessColumnsThanExistingTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab(seq long, ts timestamp) timestamp(ts);");
-            assertException("insert into tab select x ac  from long_sequence(10)", 12, "select clause must provide timestamp column");
+            assertQuery("insert into tab select x ac  from long_sequence(10)")
+                    .fails(12, "select clause must provide timestamp column");
         });
     }
 
@@ -1937,7 +2014,8 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertWithWrongDesignatedColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab(seq long, ts timestamp) timestamp(ts);");
-            assertException("insert into tab select * from (select  timestamp_sequence(0, x) ts, x ac from long_sequence(10)) timestamp(ts)", 12, "designated timestamp of existing table");
+            assertQuery("insert into tab select * from (select  timestamp_sequence(0, x) ts, x ac from long_sequence(10)) timestamp(ts)")
+                    .fails(12, "designated timestamp of existing table");
         });
     }
 
@@ -1960,14 +2038,20 @@ public class InsertTest extends AbstractCairoTest {
         if (walEnabled) {
             drainWalQueue();
         }
-        assertQuery("seq\tts\n", "tab", "create table tab(seq long, ts timestamp) timestamp(ts);", "ts", "insert into tab select x ac, timestamp_sequence(0, x) ts from long_sequence(10)", expected, true, true, false);
+        assertQuery("tab")
+                .ddl("create table tab(seq long, ts timestamp) timestamp(ts);")
+                .timestamp("ts")
+                .mutateWith("insert into tab select x ac, timestamp_sequence(0, x) ts from long_sequence(10)")
+                .expectSize()
+                .returns("seq\tts\n", expected);
     }
 
     @Test
     public void testInsertWithoutDesignatedTimestampAndTypeDoesNotMatch() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab(seq long, ts timestamp) timestamp(ts);");
-            assertException("insert into tab select x ac, rnd_int() id from long_sequence(10)", 12, "expected timestamp column");
+            assertQuery("insert into tab select x ac, rnd_int() id from long_sequence(10)")
+                    .fails(12, "expected timestamp column");
         });
     }
 
@@ -1975,8 +2059,10 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertWrongTypeConstant() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test (a timestamp)", sqlExecutionContext);
-            assertException("insert into test values ('foobar')", 0, "inconvertible value: `foobar` [STRING -> TIMESTAMP]");
-            assertException("insert into test values ('foobar'::varchar)", 0, "inconvertible value: `foobar` [VARCHAR -> TIMESTAMP]");
+            assertQuery("insert into test values ('foobar')")
+                    .fails(0, "inconvertible value: `foobar` [STRING -> TIMESTAMP]");
+            assertQuery("insert into test values ('foobar'::varchar)")
+                    .fails(0, "inconvertible value: `foobar` [VARCHAR -> TIMESTAMP]");
         });
     }
 
@@ -1994,8 +2080,11 @@ public class InsertTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tb\tts
                             a\tb\t1970-01-01T00:00:00.000000Z
                             2HEz*Dq\tcVԕΖVq\t1970-01-01T00:00:00.000000Z
@@ -2004,16 +2093,17 @@ public class InsertTest extends AbstractCairoTest {
                             te\t葈ﾫ!\uD8F3\uDD99Ҧ\uDB8D\uDFC8R\uD988\uDCEEOa*\t1970-01-01T00:00:00.000000Z
                             +٘ˣ聉|凜-،W.ƣ\t1);86rU)\t1970-01-01T00:00:00.000000Z
                             {[pG5d^fG>v [6\tȔ\uDB75\uDF17ߚ`ŷ֪\t1970-01-01T00:00:00.000000Z
-                            """,
-                    "test"
-            );
+                            """);
 
             execute("create table y as (select * from test) timestamp(ts) partition by day");
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tb\tts
                             a\tb\t1970-01-01T00:00:00.000000Z
                             2HEz*Dq\tcVԕΖVq\t1970-01-01T00:00:00.000000Z
@@ -2022,13 +2112,13 @@ public class InsertTest extends AbstractCairoTest {
                             te\t葈ﾫ!\uD8F3\uDD99Ҧ\uDB8D\uDFC8R\uD988\uDCEEOa*\t1970-01-01T00:00:00.000000Z
                             +٘ˣ聉|凜-،W.ƣ\t1);86rU)\t1970-01-01T00:00:00.000000Z
                             {[pG5d^fG>v [6\tȔ\uDB75\uDF17ߚ`ŷ֪\t1970-01-01T00:00:00.000000Z
-                            """,
-                    "y"
-            );
+                            """);
 
             // sort rows without using rowid
-            assertSql(
-                    """
+            assertQuery("'*!*y' order by a, b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tb\tts
                             +٘ˣ聉|凜-،W.ƣ\t1);86rU)\t1970-01-01T00:00:00.000000Z
                             2HEz*Dq\tcVԕΖVq\t1970-01-01T00:00:00.000000Z
@@ -2037,9 +2127,7 @@ public class InsertTest extends AbstractCairoTest {
                             te\t葈ﾫ!\uD8F3\uDD99Ҧ\uDB8D\uDFC8R\uD988\uDCEEOa*\t1970-01-01T00:00:00.000000Z
                             {[pG5d^fG>v [6\tȔ\uDB75\uDF17ߚ`ŷ֪\t1970-01-01T00:00:00.000000Z
                             Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:\tC>Wy;\t1970-01-01T00:00:00.000000Z
-                            """,
-                    "'*!*y' order by a, b"
-            );
+                            """);
         });
     }
 
@@ -2055,7 +2143,11 @@ public class InsertTest extends AbstractCairoTest {
                     if (walEnabled) {
                         drainWalQueue();
                     }
-                    assertSql(expected, "tab");
+                    assertQuery("tab")
+                            .noLeakCheck()
+                            .expectSize()
+                            .timestamp("ts")
+                            .returns(expected);
                 } catch (Throwable e) {
                     if (exceptionType == null) {
                         throw e;
@@ -2073,7 +2165,11 @@ public class InsertTest extends AbstractCairoTest {
                     if (walEnabled) {
                         drainWalQueue();
                     }
-                    assertSql(expected, "tab");
+                    assertQuery("tab")
+                            .noLeakCheck()
+                            .expectSize()
+                            .timestamp("ts")
+                            .returns(expected);
                 } catch (Throwable e) {
                     if (exceptionType == null) throw e;
                     Assert.assertSame(exceptionType, e.getClass());
@@ -2090,7 +2186,10 @@ public class InsertTest extends AbstractCairoTest {
                     if (exceptionType != null) {
                         Assert.fail("SqlException expected");
                     }
-                    assertSql(expected, "tab");
+                    assertQuery("tab")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns(expected);
                 } catch (Throwable e) {
                     if (exceptionType == null) throw e;
                     Assert.assertSame(exceptionType, e.getClass());
@@ -2103,7 +2202,10 @@ public class InsertTest extends AbstractCairoTest {
                     if (exceptionType != null) {
                         Assert.fail("SqlException expected");
                     }
-                    assertSql(expected, "tab");
+                    assertQuery("tab")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns(expected);
                 } catch (Throwable e) {
                     e.printStackTrace(System.out);
                     if (exceptionType == null) throw e;
@@ -2119,7 +2221,11 @@ public class InsertTest extends AbstractCairoTest {
             drainWalQueue();
         }
 
-        assertQueryNoLeakCheck(expected, "dest", "ts", true, true);
+        assertQuery("dest")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns(expected);
     }
 
     private void testBindVariableInsert(int partitionBy, TimestampFunction timestampFunction, boolean initBindVariables, boolean columnSet, int timestampType) throws Exception {

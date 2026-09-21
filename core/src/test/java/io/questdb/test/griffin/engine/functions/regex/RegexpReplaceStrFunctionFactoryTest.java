@@ -36,26 +36,22 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNullRegex() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select regexp_replace('abc', null, 'def')")
+                .expectSize()
+                .returns("""
                         regexp_replace
                         
-                        """,
-                "select regexp_replace('abc', null, 'def')",
-                true
-        );
+                        """);
     }
 
     @Test
     public void testNullReplacement() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select regexp_replace('abc', 'a', null)")
+                .expectSize()
+                .returns("""
                         regexp_replace
                         
-                        """,
-                "select regexp_replace('abc', 'a', null)",
-                true
-        );
+                        """);
     }
 
     @Test
@@ -78,10 +74,10 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractCairoTest {
                     example2.com
                     """;
             execute("create table x as (select rnd_str('https://example1.com/abc','https://example2.com/def','http://example3.com',null) url from long_sequence(5))");
-            assertSql(
-                    expected,
-                    "select regexp_replace(url, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') from x"
-            );
+            assertQuery("select regexp_replace(url, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 

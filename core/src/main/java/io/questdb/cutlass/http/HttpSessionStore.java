@@ -1,6 +1,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.security.PrincipalContext;
+import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -89,16 +90,14 @@ public interface HttpSessionStore {
         private final String principal;
         private volatile long expiresAt;
         private volatile boolean invalid = false;
-        private volatile long rotateAt;
-        private volatile String sessionId;
+        private volatile RotationInfo rotationInfo;
 
         public SessionInfo(@NotNull String sessionId, String principal, @NotNull ConcurrentHashMap<ReadOnlyObjList<CharSequence>> groupsByEntity, byte authType, long expiresAt, long rotateAt) {
-            this.sessionId = sessionId;
+            this.rotationInfo = new RotationInfo(sessionId, rotateAt);
             this.principal = principal;
             this.groupsByEntity = groupsByEntity;
             this.authType = authType;
             this.expiresAt = expiresAt;
-            this.rotateAt = rotateAt;
         }
 
         @Override
@@ -122,11 +121,11 @@ public interface HttpSessionStore {
         }
 
         public long getRotateAt() {
-            return rotateAt;
+            return rotationInfo.rotateAt;
         }
 
         public String getSessionId() {
-            return sessionId;
+            return rotationInfo.sessionId;
         }
 
         public void invalidate() {
@@ -143,21 +142,27 @@ public interface HttpSessionStore {
 
         @Override
         public String toString() {
+            final RotationInfo rotationInfo = this.rotationInfo;
             final StringSink sink = Misc.getThreadLocalSink();
             sink.put("SessionInfo [principal=").put(principal)
                     .put(", groups=").put(getGroups())
                     .put(", authType=").put(authType)
                     .put(", expiresAt=").put(expiresAt)
-                    .put(", rotateAt=").put(rotateAt)
-                    .put(", sessionId=").put(sessionId)
+                    .put(", rotateAt=").put(rotationInfo.rotateAt)
+                    .put(", sessionId=").put(rotationInfo.sessionId)
                     .put(", invalid=").put(invalid)
                     .put("]");
             return sink.toString();
         }
 
+        boolean isEvictableOldSessionId(@NotNull CharSequence mappedSessionId, long evictionGracePeriod, long currentMicros) {
+            final RotationInfo rotationInfo = this.rotationInfo;
+            return !Chars.equals(mappedSessionId, rotationInfo.sessionId)
+                    && rotationInfo.rotateAt - evictionGracePeriod < currentMicros;
+        }
+
         void rotate(String newSessionId, long nextRotationAt) {
-            this.sessionId = newSessionId;
-            this.rotateAt = nextRotationAt;
+            rotationInfo = new RotationInfo(newSessionId, nextRotationAt);
         }
 
         boolean tryLock() {
@@ -166,6 +171,14 @@ public interface HttpSessionStore {
 
         void unlock() {
             lock.set(false);
+        }
+
+        /**
+         * Immutable (sessionId, rotateAt) pair. The two values are logically coupled:
+         * rotation must replace them in a single volatile store, so concurrent readers
+         * never observe the id of one rotation generation with the deadline of another.
+         */
+        private record RotationInfo(String sessionId, long rotateAt) {
         }
     }
 }

@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.math;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.math.LeastNumericFunctionFactory;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
@@ -32,12 +33,164 @@ import org.junit.Test;
 public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
+    public void testLeastNumericFunctionFactoryDecimalNulls() throws Exception {
+        // NULL arguments are skipped, the result is NULL only when every argument is NULL
+        assertQuery("select least(null::decimal(2,0), null::decimal(2,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select least(null::decimal(4,0), null::decimal(4,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select least(null::decimal(9,0), null::decimal(9,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select least(null::decimal(18,0), null::decimal(18,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select least(null::decimal(38,0), null::decimal(38,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select least(null::decimal(76,0), null::decimal(76,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+
+        // single argument
+        assertQuery("select least(null::decimal(2,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select least(null::decimal(4,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select least(null::decimal(9,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select least(null::decimal(18,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select least(null::decimal(38,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select least(null::decimal(76,0)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+
+        // differing scales
+        assertQuery("select least(null::decimal(1,0), null::decimal(2,1)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select least(null::decimal(2,0), null::decimal(4,2)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select least(null::decimal(5,0), null::decimal(9,4)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select least(null::decimal(9,0), null::decimal(18,9)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select least(null::decimal(19,0), null::decimal(38,19)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select least(null::decimal(38,0), null::decimal(76,38)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+
+        // mixed NULL and non-NULL, the non-NULL argument wins
+        assertQuery("select least(1::decimal(1,0), null::decimal(2,1))")
+                .expectSize()
+                .columnType(0, ColumnType.getDecimalType(2, 1))
+                .returns("least\n1.0\n");
+        assertQuery("select least(null::decimal(2,0), 1::decimal(4,2))")
+                .expectSize()
+                .columnType(0, ColumnType.getDecimalType(4, 2))
+                .returns("least\n1.00\n");
+        assertQuery("select least(1::decimal(5,0), null::decimal(9,4))")
+                .expectSize()
+                .columnType(0, ColumnType.getDecimalType(9, 4))
+                .returns("least\n1.0000\n");
+        assertQuery("select least(null::decimal(9,0), 1::decimal(18,9))")
+                .expectSize()
+                .columnType(0, ColumnType.getDecimalType(18, 9))
+                .returns("least\n1.000000000\n");
+        assertQuery("select least(1::decimal(19,0), null::decimal(38,19))")
+                .expectSize()
+                .columnType(0, ColumnType.getDecimalType(38, 19))
+                .returns("least\n1.0000000000000000000\n");
+        assertQuery("select least(null::decimal(38,0), 1::decimal(76,38))")
+                .expectSize()
+                .columnType(0, ColumnType.getDecimalType(76, 38))
+                .returns("least\n1.00000000000000000000000000000000000000\n");
+    }
+
+    @Test
+    public void testLeastNumericFunctionFactoryDecimalNullsMixedWithDouble() throws Exception {
+        // a NULL decimal must be skipped, not treated as a value, once the result is promoted to double
+        assertQuery("select least(1.5, null::decimal(2,0)) = 1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+        assertQuery("select least(1.5, null::decimal(4,1)) = 1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+        assertQuery("select least(1.5, null::decimal(9,2)) = 1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+        assertQuery("select least(1.5, null::decimal(18,3)) = 1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+        assertQuery("select least(1.5, null::decimal(38,2)) = 1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+        assertQuery("select least(1.5, null::decimal(76,2)) = 1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+
+        // reversed argument order
+        assertQuery("select least(null::decimal(2,0), 1.5) = 1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+        assertQuery("select least(null::decimal(38,2), 1.5) = 1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+        assertQuery("select least(null::decimal(76,2), 1.5) = 1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+
+        // float promotes to the double path too
+        assertQuery("select least(1.5f, null::decimal(38,2)) = 1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+
+        // a NULL decimal next to a non-NULL decimal, both widened to the double path
+        assertQuery("select least(9.5, 2::decimal(9,2), null::decimal(9,2)) = 2.0 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+        assertQuery("select least(9.5, null::decimal(76,2), 2::decimal(38,2)) = 2.0 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+
+        // NULL only when every argument is NULL
+        assertQuery("select least(null::double, null::decimal(38,2)) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select least(null::decimal(2,0), null::double) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+        assertQuery("select least(null::decimal(76,2), null::decimal(2,0), null::double) is null n")
+                .expectSize()
+                .returns("n\ntrue\n");
+
+        // no-regression guard, no NULL argument at all
+        assertQuery("select least(9.5, 2::decimal(38,2)) = 2.0 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+        assertQuery("select least(1.5, 2::decimal(38,2)) = 1.5 v")
+                .expectSize()
+                .returns("v\ntrue\n");
+    }
+
+    @Test
     public void testLeastNumericFunctionFactoryDecimalOverflow() throws Exception {
-        assertException(
-                "select least(123.456::decimal(76,73), 99999::int)",
-                43,
-                "inconvertible value: 99999 [INT -> DECIMAL(76,73)]"
-        );
+        assertQuery("select least(123.456::decimal(76,73), 99999::int)")
+                .fails(43, "inconvertible value: 99999 [INT -> DECIMAL(76,73)]");
     }
 
     @Test
@@ -153,21 +306,25 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
                 "select least('2020-09-10T00:00:00.000Z'::date, '2020-09-10T20:01:00.000000Z'::timestamp, '2020-09-11T20:00:00.000000789Z'::timestamp_ns, null)"
         );
         assertSqlWithTypes(
-                "least\n" +
-                        "1970-01-01T00:00:00.123456789Z:TIMESTAMP_NS\n",
+                """
+                        least
+                        1970-01-01T00:00:00.123456789Z:TIMESTAMP_NS
+                        """,
                 "select least('2020-09-10T00:00:00.000Z'::date, '2020-09-10T20:01:00.000000Z'::timestamp, '2020-09-11T20:00:00.000000789Z'::timestamp_ns, null, 123456789L)"
         );
         assertSqlWithTypes(
-                "least\n" +
-                        "2020-09-10T00:00:00.000000Z:TIMESTAMP\n",
+                """
+                        least
+                        2020-09-10T00:00:00.000000Z:TIMESTAMP
+                        """,
                 "select least('2020-09-10T00:00:00.000Z'::date, '2020-09-10T20:01:00.000000Z'::timestamp, '2020-09-11T20:00:00.000000Z'::timestamp, null, 123456789000000000L)"
         );
     }
 
     @Test
     public void testLeastNumericFunctionFactoryUnsupportedTypes() throws Exception {
-        assertException("select least(5, 5.2, 'abc', 2)", 21, "unsupported type");
-        assertException("select least(5, 5.2, 'abc'::varchar, 2)", 26, "unsupported type");
+        assertQuery("select least(5, 5.2, 'abc', 2)").fails(21, "unsupported type");
+        assertQuery("select least(5, 5.2, 'abc'::varchar, 2)").fails(26, "unsupported type");
     }
 
     @Test
@@ -182,27 +339,29 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
             execute("create table x as (select rnd_int() a, rnd_int() b from long_sequence(20))");
 
             assertSqlWithTypes(
-                    "least\n" +
-                            "-1148479920:INT\n" +
-                            "-727724771:INT\n" +
-                            "-948263339:INT\n" +
-                            "592859671:INT\n" +
-                            "-847531048:INT\n" +
-                            "-2041844972:INT\n" +
-                            "-1575378703:INT\n" +
-                            "806715481:INT\n" +
-                            "1569490116:INT\n" +
-                            "-409854405:INT\n" +
-                            "1530831067:INT\n" +
-                            "-1532328444:INT\n" +
-                            "-1849627000:INT\n" +
-                            "-1432278050:INT\n" +
-                            "-1792928964:INT\n" +
-                            "-1844391305:INT\n" +
-                            "-1153445279:INT\n" +
-                            "-1715058769:INT\n" +
-                            "-1125169127:INT\n" +
-                            "-1975183723:INT\n",
+                    """
+                            least
+                            -1148479920:INT
+                            -727724771:INT
+                            -948263339:INT
+                            592859671:INT
+                            -847531048:INT
+                            -2041844972:INT
+                            -1575378703:INT
+                            806715481:INT
+                            1569490116:INT
+                            -409854405:INT
+                            1530831067:INT
+                            -1532328444:INT
+                            -1849627000:INT
+                            -1432278050:INT
+                            -1792928964:INT
+                            -1844391305:INT
+                            -1153445279:INT
+                            -1715058769:INT
+                            -1125169127:INT
+                            -1975183723:INT
+                            """,
                     "select least(a, b) from x"
             );
         });
@@ -210,7 +369,7 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Test
     public void testLeastNumericFunctionFactoryWithNoArgs() throws Exception {
-        assertException("select least();", 7, "at least one argument is required ");
+        assertQuery("select least();").fails(7, "at least one argument is required ");
     }
 
     @Test
@@ -225,14 +384,15 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
                             "('2021-10-05T14:31:35.878Z', 'AAPL', 250, 123.0);"
             );
 
-            assertQuery(
-                    "least\tleast1\n" +
-                            "245.0\t123.2\n" +
-                            "245.0\t123.2\n" +
-                            "247.0\t123.1\n" +
-                            "247.0\t123.0\n",
-                    "select least(price, 247), least(amount, 123.2) from x"
-            );
+            assertQuery("select least(price, 247), least(amount, 123.2) from x")
+                    .expectSize()
+                    .returns("""
+                            least\tleast1
+                            245.0\t123.2
+                            245.0\t123.2
+                            247.0\t123.1
+                            247.0\t123.0
+                            """);
         });
     }
 

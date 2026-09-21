@@ -61,32 +61,26 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLastDouble() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select last(x) x from tab")
+                .ddl("create table tab as (select cast(x as double) x from long_sequence(10))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         x
                         10.0
-                        """,
-                "select last(x) x from tab",
-                "create table tab as (select cast(x as double) x from long_sequence(10))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testLastDoubleNull() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select last(y) y from tab")
+                .ddl("create table tab as (select cast(x as double) x, cast(null as double) y from long_sequence(100))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         y
                         null
-                        """,
-                "select last(y) y from tab",
-                "create table tab as (select cast(x as double) x, cast(null as double) y from long_sequence(100))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -114,8 +108,27 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select b, last(a), k from x sample by 3h fill(linear)")
+                .ddl("create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0) a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 360000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE")
+                .mutateWith("insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0) a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(277200000000, 360000000) k" +
+                        " from" +
+                        " long_sequence(35)" +
+                        ") timestamp(k)")
+                .timestamp("k")
+                .expectSize()
+                .returns("""
                         b\tlast\tk
                         \t0.44804689668613573\t1970-01-03T00:00:00.000000Z
                         VTJW\t0.8685154305419587\t1970-01-03T00:00:00.000000Z
@@ -141,27 +154,7 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         PEHN\t0.13271564102902209\t1970-01-03T09:00:00.000000Z
                         HYRX\t0.4182912727422209\t1970-01-03T09:00:00.000000Z
                         CPSW\t0.7317695244811556\t1970-01-03T09:00:00.000000Z
-                        """,
-                "select b, last(a), k from x sample by 3h fill(linear)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0) a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 360000000) k" +
-                        " from" +
-                        " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0) a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(277200000000, 360000000) k" +
-                        " from" +
-                        " long_sequence(35)" +
-                        ") timestamp(k)",
-                """
+                        """, """
                         b\tlast\tk
                         \t0.44804689668613573\t1970-01-03T00:00:00.000000Z
                         VTJW\t0.8685154305419587\t1970-01-03T00:00:00.000000Z
@@ -284,10 +277,6 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         PEHN\t-1.9805699408189095\t1970-01-04T06:00:00.000000Z
                         HYRX\t1.7017646298154117\t1970-01-04T06:00:00.000000Z
                         CPSW\t0.8636461872776237\t1970-01-04T06:00:00.000000Z
-                        """,
-                true,
-                true,
-                false
-        );
+                        """);
     }
 }

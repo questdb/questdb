@@ -71,9 +71,11 @@ pub trait StatsUpdater<T, const UNSIGNED: bool> {
     fn update_stats(&mut self, v: T);
 }
 
-impl StatsUpdater<i32, false> for MaxMin<i32> {
+// Signed ordering is the default for every native type. Only IPv4 (stored as
+// i32 but logically UINT_32) overrides this with the unsigned impl below.
+impl<T: Copy + NativeType> StatsUpdater<T, false> for MaxMin<T> {
     #[inline]
-    fn update_stats(&mut self, v: i32) {
+    fn update_stats(&mut self, v: T) {
         self.update(v);
     }
 }
@@ -82,13 +84,6 @@ impl StatsUpdater<i32, true> for MaxMin<i32> {
     #[inline]
     fn update_stats(&mut self, v: i32) {
         self.update_unsigned(v);
-    }
-}
-
-impl<const UNSIGNED: bool> StatsUpdater<i64, UNSIGNED> for MaxMin<i64> {
-    #[inline]
-    fn update_stats(&mut self, v: i64) {
-        self.update(v);
     }
 }
 
@@ -107,7 +102,14 @@ where
     F: Fn(&[T], usize, Vec<u8>) -> Vec<u8>,
     MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
 {
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    if primitive_type.field_info.repetition != Repetition::Optional {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "nullable encoder requires Optional repetition, got {:?} for column {}",
+            primitive_type.field_info.repetition,
+            primitive_type.field_info.name
+        ));
+    }
     let num_rows = column_top + slice.len();
     let mut null_count = 0;
     let write_stats = options.write_statistics;
@@ -216,7 +218,14 @@ where
     P: NativeType,
     T: Default + num_traits::AsPrimitive<P> + Debug,
 {
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Required);
+    if primitive_type.field_info.repetition != Repetition::Required {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "notnull encoder requires Required repetition, got {:?} for column {}",
+            primitive_type.field_info.repetition,
+            primitive_type.field_info.name
+        ));
+    }
 
     let statistics = match (options.write_statistics, bloom_hashes) {
         (true, Some(h)) => {
@@ -386,12 +395,14 @@ pub trait SimdEncodable: NativeType {
         mut buffer: Vec<u8>,
     ) -> ParquetResult<Vec<u8>> {
         let non_null_count = slice.len() - null_count;
-        if non_null_count == 0 {
-            return Ok(buffer);
-        }
 
         match encoding {
             Encoding::Plain => {
+                // An all-null page has no values to write. PLAIN reads the empty
+                // values buffer back as zero values, driven by definition levels.
+                if non_null_count == 0 {
+                    return Ok(buffer);
+                }
                 buffer.reserve(size_of::<Self>() * non_null_count);
                 if null_count == 0 {
                     // Fast path: no nulls, memcpy entire slice
@@ -410,6 +421,11 @@ pub trait SimdEncodable: NativeType {
                 Ok(buffer)
             }
             Encoding::DeltaBinaryPacked => {
+                // Always emit a self-describing DELTA_BINARY_PACKED header, even
+                // with zero non-null values: the empty-iterator encode still
+                // writes block size, miniblock count, value_count=0 and
+                // first_value=0. Returning an empty buffer instead would produce
+                // a page the decoder cannot parse (block size decoded as 0).
                 if Self::encode_delta(slice, non_null_count, &mut buffer) {
                     Ok(buffer)
                 } else {
@@ -445,6 +461,14 @@ impl SimdEncodable for i64 {
     }
 
     fn encode_delta(slice: &[Self], non_null_count: usize, buffer: &mut Vec<u8>) -> bool {
+        if non_null_count == 0 {
+            // All-null page: emit the value_count=0 header directly. This is
+            // byte-identical to encoding the filtered iterator (which yields
+            // nothing) but skips the O(n) scan of the whole slice for non-null
+            // values that do not exist.
+            encode(std::iter::empty::<i64>(), buffer);
+            return true;
+        }
         let iterator = slice.iter().filter(|&&x| x != nulls::LONG).copied();
         let iterator = ExactSizedIter::new(iterator, non_null_count);
         encode(iterator, buffer);
@@ -477,6 +501,12 @@ impl SimdEncodable for i32 {
     }
 
     fn encode_delta(slice: &[Self], non_null_count: usize, buffer: &mut Vec<u8>) -> bool {
+        if non_null_count == 0 {
+            // See the i64 impl: byte-identical to the empty filtered iterator,
+            // without scanning the all-null slice.
+            encode_i32(std::iter::empty::<i64>(), buffer);
+            return true;
+        }
         let iterator = slice
             .iter()
             .filter(|&&x| x != nulls::INT)
@@ -554,7 +584,14 @@ pub fn slice_to_page_simd<T: SimdEncodable>(
     encoding: Encoding,
     bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    if primitive_type.field_info.repetition != Repetition::Optional {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "delta_binary_packed nullable encoder requires Optional repetition, got {:?} for column {}",
+            primitive_type.field_info.repetition,
+            primitive_type.field_info.name
+        ));
+    }
     let num_rows = column_top + slice.len();
 
     let mut buffer = vec![];
@@ -977,5 +1014,30 @@ mod tests {
         let (num_values, num_nulls, _) = v2_header(&page);
         assert_eq!(num_values, 5);
         assert_eq!(num_nulls, 5);
+    }
+
+    #[test]
+    fn encode_data_delta_all_null_writes_header() {
+        // An all-null DELTA_BINARY_PACKED page (non_null_count == 0) must still
+        // carry a self-describing header so the reader can parse it. Regression
+        // for the suspended-table fuzz failure: this previously returned an
+        // empty buffer that the decoder rejected with "block size must be
+        // greater than zero". The full write->read round trip through QuestDB's
+        // reader is covered in tests/encode_primitives.rs.
+        let slice: Vec<i64> = vec![i64::MIN; 8];
+        let buf = <i64 as SimdEncodable>::encode_data(
+            &slice,
+            slice.len(),
+            Encoding::DeltaBinaryPacked,
+            vec![],
+        )
+        .expect("encode delta");
+        assert!(!buf.is_empty(), "all-null DELTA page must carry a header");
+
+        // PLAIN, by contrast, legitimately writes an empty values buffer.
+        let plain =
+            <i64 as SimdEncodable>::encode_data(&slice, slice.len(), Encoding::Plain, vec![])
+                .expect("encode plain");
+        assert!(plain.is_empty());
     }
 }

@@ -63,202 +63,215 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
 
     @Test
     public void testAsyncFilterWithNegativeLimitNoOrderBy() throws Exception {
-        assertQuery("sensor_time\ttemperature_out\n" +
+        assertQuery("select sensor_time, temperature_out\n" +
+                "from weather_data \n" +
+                "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
+                "limit -5; ")
+                .ddl(DDL)
+                .timestamp("sensor_time")
+                .expectSize()
+                .returns("sensor_time\ttemperature_out\n" +
                         "2022-07-31T23:56:00.000000Z\t4\n" +
                         "2022-07-31T23:57:00.000000Z\t3\n" +
                         "2022-07-31T23:58:00.000000Z\t2\n" +
                         "2022-07-31T23:59:00.000000Z\t1\n" +
-                        "2022-08-01T00:00:00.000000Z\t0\n",
-                "select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
-                        "limit -5; ",
-                DDL,
-                "sensor_time", true, true);
+                        "2022-08-01T00:00:00.000000Z\t0\n");
     }
 
     @Test
     public void testAsyncFilterWithNegativeLimitNoOrderByThenCount() throws Exception {
-        assertQuery("count\n" +
-                        "5\n",
-                "select count(*) from ( " +
-                        "select sensor_time, temperature_out " +
-                        "from weather_data " +
-                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) " +
-                        "limit -5 )",
-                DDL,
-                null, false, true);
+        assertQuery("select count(*) from ( " +
+                "select sensor_time, temperature_out " +
+                "from weather_data " +
+                "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) " +
+                "limit -5 )")
+                .ddl(DDL)
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n" +
+                        "5\n");
     }
 
     @Test
     public void testAsyncFilterWithNegativeLimitOrderByAsc() throws Exception {
-        assertQuery("sensor_time\ttemperature_out\n" +
+        assertQuery("select sensor_time, temperature_out\n" +
+                "from weather_data \n" +
+                "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
+                "order by sensor_time  asc \n" +
+                "limit -5")
+                .ddl(DDL)
+                .timestamp("sensor_time")
+                .expectSize()
+                .returns("sensor_time\ttemperature_out\n" +
                         "2022-07-31T23:56:00.000000Z\t4\n" +
                         "2022-07-31T23:57:00.000000Z\t3\n" +
                         "2022-07-31T23:58:00.000000Z\t2\n" +
                         "2022-07-31T23:59:00.000000Z\t1\n" +
-                        "2022-08-01T00:00:00.000000Z\t0\n",
-                "select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
-                        "order by sensor_time  asc \n" +
-                        "limit -5",
-                DDL,
-                "sensor_time", true, true);
+                        "2022-08-01T00:00:00.000000Z\t0\n");
     }
 
     @Test
     public void testAsyncFilterWithNegativeLimitOrderByDesc() throws Exception {
-        assertQuery("sensor_time\ttemperature_out\n" +
+        assertQuery("select sensor_time, temperature_out\n" +
+                "from weather_data \n" +
+                "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
+                "order by sensor_time  desc \n" +
+                "limit -5; ")
+                .ddl(DDL)
+                .timestampDesc("sensor_time")
+                .expectSize()
+                .returns("sensor_time\ttemperature_out\n" +
                         "2022-07-31T07:25:00.000000Z\t995\n" +
                         "2022-07-31T07:24:00.000000Z\t996\n" +
                         "2022-07-31T07:23:00.000000Z\t997\n" +
                         "2022-07-31T07:22:00.000000Z\t998\n" +
-                        "2022-07-31T07:21:00.000000Z\t999\n",
-                "select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
-                        "order by sensor_time  desc \n" +
-                        "limit -5; ",
-                DDL,
-                "sensor_time###DESC", true, true);
+                        "2022-07-31T07:21:00.000000Z\t999\n");
     }
 
     @Test
     public void testAsyncFilterWithOrderByAsc() throws Exception {
-        assertQuery("sensor_time\ttemperature_out\n" +
+        assertQuery("select sensor_time, temperature_out\n" +
+                "from weather_data \n" +
+                "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-07-31:07:25:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
+                "order by sensor_time  asc \n")
+                .ddl(DDL)
+                .timestamp("sensor_time")
+                .returns("sensor_time\ttemperature_out\n" +
                         "2022-07-31T07:21:00.000000Z\t999\n" +
                         "2022-07-31T07:22:00.000000Z\t998\n" +
                         "2022-07-31T07:23:00.000000Z\t997\n" +
                         "2022-07-31T07:24:00.000000Z\t996\n" +
-                        "2022-07-31T07:25:00.000000Z\t995\n",
-                "select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-07-31:07:25:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
-                        "order by sensor_time  asc \n",
-                DDL,
-                "sensor_time", true, false);
+                        "2022-07-31T07:25:00.000000Z\t995\n");
     }
 
     @Test
     public void testAsyncFilterWithOrderByDesc() throws Exception {
-        assertQuery("sensor_time\ttemperature_out\n" +
+        assertQuery("select sensor_time, temperature_out\n" +
+                "from weather_data \n" +
+                "where sensor_time >= dateadd( 's', rnd_int(0,1,0)*0, to_timestamp('2022-07-31:23:56:00', 'yyyy-MM-dd:HH:mm:ss'))  \n" +
+                "order by sensor_time  desc \n")
+                .ddl(DDL)
+                .timestampDesc("sensor_time")
+                .returns("sensor_time\ttemperature_out\n" +
                         "2022-08-01T00:00:00.000000Z\t0\n" +
                         "2022-07-31T23:59:00.000000Z\t1\n" +
                         "2022-07-31T23:58:00.000000Z\t2\n" +
                         "2022-07-31T23:57:00.000000Z\t3\n" +
-                        "2022-07-31T23:56:00.000000Z\t4\n",
-                "select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where sensor_time >= dateadd( 's', rnd_int(0,1,0)*0, to_timestamp('2022-07-31:23:56:00', 'yyyy-MM-dd:HH:mm:ss'))  \n" +
-                        "order by sensor_time  desc \n",
-                DDL,
-                "sensor_time###DESC", true, false);
+                        "2022-07-31T23:56:00.000000Z\t4\n");
     }
 
     @Test
     public void testAsyncFilterWithPositiveLimitNoOrderBy() throws Exception {
-        assertQuery("sensor_time\ttemperature_out\n" +
+        assertQuery("select sensor_time, temperature_out\n" +
+                "from weather_data \n" +
+                "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
+                "limit 5; ")
+                .ddl(DDL)
+                .timestamp("sensor_time")
+                .returns("sensor_time\ttemperature_out\n" +
                         "2022-07-31T07:21:00.000000Z\t999\n" +
                         "2022-07-31T07:22:00.000000Z\t998\n" +
                         "2022-07-31T07:23:00.000000Z\t997\n" +
                         "2022-07-31T07:24:00.000000Z\t996\n" +
-                        "2022-07-31T07:25:00.000000Z\t995\n",
-                "select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
-                        "limit 5; ",
-                DDL,
-                "sensor_time", true, false);
+                        "2022-07-31T07:25:00.000000Z\t995\n");
     }
 
     @Test
     public void testAsyncFilterWithPositiveLimitOrderByAsc() throws Exception {
-        assertQuery("sensor_time\ttemperature_out\n" +
+        assertQuery("select sensor_time, temperature_out\n" +
+                "from weather_data \n" +
+                "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
+                "order by sensor_time  asc \n" +
+                "limit 5; ")
+                .ddl(DDL)
+                .timestamp("sensor_time")
+                .returns("sensor_time\ttemperature_out\n" +
                         "2022-07-31T07:21:00.000000Z\t999\n" +
                         "2022-07-31T07:22:00.000000Z\t998\n" +
                         "2022-07-31T07:23:00.000000Z\t997\n" +
                         "2022-07-31T07:24:00.000000Z\t996\n" +
-                        "2022-07-31T07:25:00.000000Z\t995\n",
-                "select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
-                        "order by sensor_time  asc \n" +
-                        "limit 5; ",
-                DDL,
-                "sensor_time", true, false);
+                        "2022-07-31T07:25:00.000000Z\t995\n");
     }
 
     @Test
     public void testAsyncFilterWithPositiveLimitOrderByDesc() throws Exception {
-        assertQuery("sensor_time\ttemperature_out\n" +
+        assertQuery("select sensor_time, temperature_out\n" +
+                "from weather_data \n" +
+                "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
+                "order by sensor_time  desc \n" +
+                "limit 5; ")
+                .ddl(DDL)
+                .timestampDesc("sensor_time")
+                .returns("sensor_time\ttemperature_out\n" +
                         "2022-08-01T00:00:00.000000Z\t0\n" +
                         "2022-07-31T23:59:00.000000Z\t1\n" +
                         "2022-07-31T23:58:00.000000Z\t2\n" +
                         "2022-07-31T23:57:00.000000Z\t3\n" +
-                        "2022-07-31T23:56:00.000000Z\t4\n",
-                "select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
-                        "order by sensor_time  desc \n" +
-                        "limit 5; ",
-                DDL,
-                "sensor_time###DESC", true, false);
+                        "2022-07-31T23:56:00.000000Z\t4\n");
     }
 
     @Test
     public void testAsyncJitFilterWithNegativeLimitNoOrderBy() throws Exception {
-        assertQuery("sensor_time\ttemperature_out\n" +
+        assertQuery("select sensor_time, temperature_out\n" +
+                "from weather_data \n" +
+                "where temperature_out <= 10000 \n" +
+                "limit -5; ")
+                .ddl(DDL)
+                .timestamp("sensor_time")
+                .expectSize()
+                .returns("sensor_time\ttemperature_out\n" +
                         "2022-07-31T23:56:00.000000Z\t4\n" +
                         "2022-07-31T23:57:00.000000Z\t3\n" +
                         "2022-07-31T23:58:00.000000Z\t2\n" +
                         "2022-07-31T23:59:00.000000Z\t1\n" +
-                        "2022-08-01T00:00:00.000000Z\t0\n",
-                "select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where temperature_out <= 10000 \n" +
-                        "limit -5; ",
-                DDL,
-                "sensor_time", true, true);
+                        "2022-08-01T00:00:00.000000Z\t0\n");
     }
 
     @Test
     public void testAsyncJitFilterWithNegativeLimitOrderByAsc() throws Exception {
-        assertQuery("sensor_time\ttemperature_out\n" +
+        assertQuery("select sensor_time, temperature_out\n" +
+                "from weather_data \n" +
+                "where temperature_out <= 10000 \n" +
+                "order by sensor_time  asc \n" +
+                "limit -5; ")
+                .ddl(DDL)
+                .timestamp("sensor_time")
+                .expectSize()
+                .returns("sensor_time\ttemperature_out\n" +
                         "2022-07-31T23:56:00.000000Z\t4\n" +
                         "2022-07-31T23:57:00.000000Z\t3\n" +
                         "2022-07-31T23:58:00.000000Z\t2\n" +
                         "2022-07-31T23:59:00.000000Z\t1\n" +
-                        "2022-08-01T00:00:00.000000Z\t0\n",
-                "select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where temperature_out <= 10000 \n" +
-                        "order by sensor_time  asc \n" +
-                        "limit -5; ",
-                DDL,
-                "sensor_time", true, true);
+                        "2022-08-01T00:00:00.000000Z\t0\n");
     }
 
     @Test
     public void testAsyncJitFilterWithNegativeLimitOrderByDesc() throws Exception {
-        assertQuery("sensor_time\ttemperature_out\n" +
+        assertQuery("select sensor_time, temperature_out\n" +
+                "from weather_data \n" +
+                "where temperature_out <= 10000 \n" +
+                "order by sensor_time  desc \n" +
+                "limit -5; ")
+                .ddl(DDL)
+                .timestampDesc("sensor_time")
+                .expectSize()
+                .returns("sensor_time\ttemperature_out\n" +
                         "2022-07-31T07:25:00.000000Z\t995\n" +
                         "2022-07-31T07:24:00.000000Z\t996\n" +
                         "2022-07-31T07:23:00.000000Z\t997\n" +
                         "2022-07-31T07:22:00.000000Z\t998\n" +
-                        "2022-07-31T07:21:00.000000Z\t999\n",
-                "select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where temperature_out <= 10000 \n" +
-                        "order by sensor_time  desc \n" +
-                        "limit -5; ",
-                DDL,
-                "sensor_time###DESC", true, true);
+                        "2022-07-31T07:21:00.000000Z\t999\n");
     }
 
     @Test
     public void testAsyncJitFilterWithOrderByAsc() throws Exception {
-        assertQuery("sensor_time\ttemperature_out\n" +
+        assertQuery("select sensor_time, temperature_out\n" +
+                "from weather_data \n" +
+                "where temperature_out > 990 \n" +
+                "order by sensor_time  asc \n")
+                .ddl(DDL)
+                .timestamp("sensor_time")
+                .returns("sensor_time\ttemperature_out\n" +
                         "2022-07-31T07:21:00.000000Z\t999\n" +
                         "2022-07-31T07:22:00.000000Z\t998\n" +
                         "2022-07-31T07:23:00.000000Z\t997\n" +
@@ -267,18 +280,18 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
                         "2022-07-31T07:26:00.000000Z\t994\n" +
                         "2022-07-31T07:27:00.000000Z\t993\n" +
                         "2022-07-31T07:28:00.000000Z\t992\n" +
-                        "2022-07-31T07:29:00.000000Z\t991\n",
-                "select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where temperature_out > 990 \n" +
-                        "order by sensor_time  asc \n",
-                DDL,
-                "sensor_time", true, false);
+                        "2022-07-31T07:29:00.000000Z\t991\n");
     }
 
     @Test
     public void testAsyncJitFilterWithOrderByDesc() throws Exception {
-        assertQuery("sensor_time\ttemperature_out\n" +
+        assertQuery("select sensor_time, temperature_out\n" +
+                "from weather_data \n" +
+                "where temperature_out < 10 \n" +
+                "order by sensor_time desc \n")
+                .ddl(DDL)
+                .timestampDesc("sensor_time")
+                .returns("sensor_time\ttemperature_out\n" +
                         "2022-08-01T00:00:00.000000Z\t0\n" +
                         "2022-07-31T23:59:00.000000Z\t1\n" +
                         "2022-07-31T23:58:00.000000Z\t2\n" +
@@ -288,62 +301,56 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
                         "2022-07-31T23:54:00.000000Z\t6\n" +
                         "2022-07-31T23:53:00.000000Z\t7\n" +
                         "2022-07-31T23:52:00.000000Z\t8\n" +
-                        "2022-07-31T23:51:00.000000Z\t9\n",
-                "select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where temperature_out < 10 \n" +
-                        "order by sensor_time desc \n",
-                DDL,
-                "sensor_time###DESC", true, false);
+                        "2022-07-31T23:51:00.000000Z\t9\n");
     }
 
     @Test
     public void testAsyncJitFilterWithPositiveLimitNoOrderBy() throws Exception {
-        assertQuery("sensor_time\ttemperature_out\n" +
+        assertQuery("select sensor_time, temperature_out\n" +
+                "from weather_data \n" +
+                "where temperature_out <= 10000 \n" +
+                "limit 5; ")
+                .ddl(DDL)
+                .timestamp("sensor_time")
+                .returns("sensor_time\ttemperature_out\n" +
                         "2022-07-31T07:21:00.000000Z\t999\n" +
                         "2022-07-31T07:22:00.000000Z\t998\n" +
                         "2022-07-31T07:23:00.000000Z\t997\n" +
                         "2022-07-31T07:24:00.000000Z\t996\n" +
-                        "2022-07-31T07:25:00.000000Z\t995\n",
-                "select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where temperature_out <= 10000 \n" +
-                        "limit 5; ",
-                DDL,
-                "sensor_time", true, false);
+                        "2022-07-31T07:25:00.000000Z\t995\n");
     }
 
     @Test
     public void testAsyncJitFilterWithPositiveLimitOrderByAsc() throws Exception {
-        assertQuery("sensor_time\ttemperature_out\n" +
+        assertQuery("select sensor_time, temperature_out\n" +
+                "from weather_data \n" +
+                "where temperature_out <= 10000 \n" +
+                "order by sensor_time  asc \n" +
+                "limit 5; ")
+                .ddl(DDL)
+                .timestamp("sensor_time")
+                .returns("sensor_time\ttemperature_out\n" +
                         "2022-07-31T07:21:00.000000Z\t999\n" +
                         "2022-07-31T07:22:00.000000Z\t998\n" +
                         "2022-07-31T07:23:00.000000Z\t997\n" +
                         "2022-07-31T07:24:00.000000Z\t996\n" +
-                        "2022-07-31T07:25:00.000000Z\t995\n",
-                "select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where temperature_out <= 10000 \n" +
-                        "order by sensor_time  asc \n" +
-                        "limit 5; ",
-                DDL,
-                "sensor_time", true, false);
+                        "2022-07-31T07:25:00.000000Z\t995\n");
     }
 
     @Test
     public void testAsyncJitFilterWithPositiveLimitOrderByDesc() throws Exception {
-        assertQuery("sensor_time\ttemperature_out\n" +
+        assertQuery("select sensor_time, temperature_out\n" +
+                "from weather_data \n" +
+                "where temperature_out <= 100000000 \n" +
+                "order by sensor_time desc \n" +
+                "limit 5; ")
+                .ddl(DDL)
+                .timestampDesc("sensor_time")
+                .returns("sensor_time\ttemperature_out\n" +
                         "2022-08-01T00:00:00.000000Z\t0\n" +
                         "2022-07-31T23:59:00.000000Z\t1\n" +
                         "2022-07-31T23:58:00.000000Z\t2\n" +
                         "2022-07-31T23:57:00.000000Z\t3\n" +
-                        "2022-07-31T23:56:00.000000Z\t4\n",
-                "select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where temperature_out <= 100000000 \n" +
-                        "order by sensor_time desc \n" +
-                        "limit 5; ",
-                DDL,
-                "sensor_time###DESC", true, false);
+                        "2022-07-31T23:56:00.000000Z\t4\n");
     }
 }

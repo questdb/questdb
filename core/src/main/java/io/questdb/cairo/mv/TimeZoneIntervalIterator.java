@@ -106,45 +106,23 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
             long maxTs,
             long step
     ) {
-        super.of(sampler, intervals);
-        this.tzRules = tzRules;
-
-        sampler.setOffset(fixedOffset);
-        final long localMinTs = minTs + tzRules.getOffset(minTs);
-        localMinTimestamp = sampler.round(localMinTs);
-        final long localMaxTs = maxTs + tzRules.getOffset(maxTs);
-        localMaxTimestamp = sampler.nextTimestamp(sampler.round(localMaxTs));
-
-        // Collect shift intervals.
-        localShifts.clear();
-        final long limitTs = driver.ceilYYYY(localMaxTimestamp);
-        long ts = tzRules.getNextDST(driver.floorYYYY(localMinTimestamp));
-        while (ts < limitTs) {
-            long offsetBefore = tzRules.getOffset(ts - 1);
-            long offsetAfter = tzRules.getOffset(ts);
-            long duration = offsetAfter - offsetBefore;
-            if (duration < 0) { // backward shift
-                final long localStart = ts + offsetAfter;
-                final long localEnd = localStart - duration;
-                localShifts.add(localStart, localEnd);
-            } else { // forward shift (gap)
-                final long localStart = ts + offsetBefore;
-                final long localEnd = localStart + duration;
-                // We don't want the gap to be used as the iterated interval, so increment
-                // the right boundary to force the next sample by bucket to be included.
-                localShifts.add(localStart, localEnd + 1);
-            }
-            ts = tzRules.getNextDST(ts);
-        }
-
-        // Adjust min/max boundaries in case if they're in a backward shift.
-        localMinTimestamp = adjustLoBoundary(localMinTimestamp);
-        localMaxTimestamp = adjustHiBoundary(localMaxTimestamp);
-
-        utcMinTimestamp = driver.toUTC(localMinTimestamp, tzRules);
-        utcMaxTimestamp = driver.toUTC(localMaxTimestamp, tzRules);
-
+        ofCommon(driver, sampler, tzRules, fixedOffset, intervals, minTs, maxTs);
         toTop(step);
+        return this;
+    }
+
+    public TimeZoneIntervalIterator of(
+            TimestampDriver driver,
+            @NotNull TimestampSampler sampler,
+            @NotNull TimeZoneRules tzRules,
+            long fixedOffset,
+            @NotNull LongList intervals,
+            long minTs,
+            long maxTs,
+            @NotNull LongList stepPerInterval
+    ) {
+        ofCommon(driver, sampler, tzRules, fixedOffset, intervals, minTs, maxTs);
+        toTop(stepPerInterval);
         return this;
     }
 
@@ -204,11 +182,85 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
     }
 
     @Override
+    protected void snapToCluster(long clusterLoUtc) {
+        // Re-anchor the iterator at the bucket floor of clusterLoUtc, in local
+        // time. The next next0() call sets utcTimestampLo = utcTimestampHi and
+        // advances localTimestampHi by `step` buckets from the snapped point.
+        // We also reset shiftLoIndex / shiftOffset so subsequent shift-tracking
+        // resumes from the correct position.
+        long localTs = clusterLoUtc + tzRules.getOffset(clusterLoUtc);
+        localTs = adjustLoBoundary(localTs);
+        final long snappedLocal = Math.min(sampler.round(localTs), localMaxTimestamp);
+
+        shiftLoIndex = 0;
+        shiftOffset = tzRules.getLocalOffset(snappedLocal);
+        for (int n = localShifts.size(); shiftLoIndex < n; shiftLoIndex += 2) {
+            final long shiftLo = localShifts.getQuick(shiftLoIndex);
+            if (snappedLocal <= shiftLo) {
+                break;
+            }
+            final long shiftHi = localShifts.getQuick(shiftLoIndex + 1);
+            shiftOffset = tzRules.getLocalOffset(shiftHi);
+        }
+
+        localTimestampHi = snappedLocal;
+        utcTimestampHi = snappedLocal - shiftOffset;
+    }
+
+    @Override
     protected void toTop0() {
         this.utcTimestampLo = Numbers.LONG_NULL;
         this.localTimestampHi = localMinTimestamp;
         this.utcTimestampHi = utcMinTimestamp;
         this.shiftLoIndex = 0;
         this.shiftOffset = tzRules.getLocalOffset(localMinTimestamp);
+    }
+
+    private void ofCommon(
+            TimestampDriver driver,
+            @NotNull TimestampSampler sampler,
+            @NotNull TimeZoneRules tzRules,
+            long fixedOffset,
+            @Nullable LongList intervals,
+            long minTs,
+            long maxTs
+    ) {
+        super.of(sampler, intervals);
+        this.tzRules = tzRules;
+
+        sampler.setOffset(fixedOffset);
+        final long localMinTs = minTs + tzRules.getOffset(minTs);
+        localMinTimestamp = sampler.round(localMinTs);
+        final long localMaxTs = maxTs + tzRules.getOffset(maxTs);
+        localMaxTimestamp = sampler.nextTimestamp(sampler.round(localMaxTs));
+
+        // Collect shift intervals.
+        localShifts.clear();
+        final long limitTs = driver.ceilYYYY(localMaxTimestamp);
+        long ts = tzRules.getNextDST(driver.floorYYYY(localMinTimestamp));
+        while (ts < limitTs) {
+            long offsetBefore = tzRules.getOffset(ts - 1);
+            long offsetAfter = tzRules.getOffset(ts);
+            long duration = offsetAfter - offsetBefore;
+            if (duration < 0) { // backward shift
+                final long localStart = ts + offsetAfter;
+                final long localEnd = localStart - duration;
+                localShifts.add(localStart, localEnd);
+            } else { // forward shift (gap)
+                final long localStart = ts + offsetBefore;
+                final long localEnd = localStart + duration;
+                // We don't want the gap to be used as the iterated interval, so increment
+                // the right boundary to force the next sample by bucket to be included.
+                localShifts.add(localStart, localEnd + 1);
+            }
+            ts = tzRules.getNextDST(ts);
+        }
+
+        // Adjust min/max boundaries in case if they're in a backward shift.
+        localMinTimestamp = adjustLoBoundary(localMinTimestamp);
+        localMaxTimestamp = adjustHiBoundary(localMaxTimestamp);
+
+        utcMinTimestamp = driver.toUTC(localMinTimestamp, tzRules);
+        utcMaxTimestamp = driver.toUTC(localMaxTimestamp, tzRules);
     }
 }

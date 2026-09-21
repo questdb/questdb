@@ -47,7 +47,8 @@ public interface UnnestSource {
      * @param sourceCol    column within this source (0-based)
      * @param elementIndex current element index (0-based)
      * @param columnType   the expected column type
-     * @return the array view, or null if out of bounds or null
+     * @return the array view; a NULL {@link ArrayView}, never a Java null, when the array is NULL or
+     * the index is past the end of a source shorter than the one UNNEST is running to
      */
     default ArrayView getArray(int sourceCol, int elementIndex, int columnType) {
         throw new UnsupportedOperationException();

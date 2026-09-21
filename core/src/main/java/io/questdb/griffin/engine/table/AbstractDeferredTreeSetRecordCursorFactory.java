@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
@@ -38,6 +39,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -52,10 +54,6 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
      */
     protected final int columnIndex;
     /**
-     * Functions for deferred symbol resolution.
-     */
-    protected final ObjList<Function> deferredSymbolFuncs;
-    /**
      * Keys for deferred symbols.
      */
     protected final IntHashSet deferredSymbolKeys;
@@ -63,6 +61,10 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
      * Symbol keys that were resolved during construction.
      */
     protected final IntHashSet symbolKeys;
+    /**
+     * Functions for deferred symbol resolution.
+     */
+    protected ObjList<Function> deferredSymbolFuncs;
 
     /**
      * Constructs a new deferred tree set record cursor factory.
@@ -126,6 +128,20 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
     }
 
     @Override
+    protected void _close() {
+        final ObjList<Function> deferredSymbolFuncs = this.deferredSymbolFuncs;
+        this.deferredSymbolFuncs = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeObjListBestEffort(failure, deferredSymbolFuncs);
+        CairoException.rethrowCleanupFailure(failure);
+    }
+
+    @Override
     protected RecordCursor initRecordCursor(
             PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
@@ -138,7 +154,10 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
                 final CharSequence symbol = symbolFunc.getStrA(null);
                 int symbolKey = symbolTable.keyOf(symbol);
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                    deferredSymbolKeys.add(TableUtils.toIndexKey(symbolKey));
+                    int indexKey = TableUtils.toIndexKey(symbolKey);
+                    if (!symbolKeys.contains(indexKey)) {
+                        deferredSymbolKeys.add(indexKey);
+                    }
                 }
             }
         }

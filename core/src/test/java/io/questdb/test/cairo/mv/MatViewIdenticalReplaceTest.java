@@ -72,13 +72,16 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
             execute("insert into test(ts,x,v) values ('2022-02-24', 1, '123'), ('2022-02-24T01', 2, null), ('2022-02-24T02', 3, '2345567')");
 
             drainWalAndMatViewQueues();
-            assertSql(
-                    replaceExpectedTimestamp("""
+            assertQuery("test_mv")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(replaceExpectedTimestamp("""
                             ts\tx\tv
                             2022-02-24T00:00:00.000000Z\t1\t123
                             2022-02-24T01:00:00.000000Z\t2\t
                             2022-02-24T02:00:00.000000Z\t3\t2345567
-                            """), "test_mv");
+                            """));
 
             try (WalWriter ww = engine.getWalWriter(engine.verifyTableName("test"))) {
                 var row = ww.newRow(timestampType.getDriver().parseFloorLiteral("2022-02-24"));
@@ -104,17 +107,18 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
             }
 
             drainWalAndMatViewQueues();
-            assertSql(
-                    replaceExpectedTimestamp(
+            assertQuery("test_mv")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(replaceExpectedTimestamp(
                             """
                                     ts\tx\tv
                                     2022-02-24T00:00:00.000000Z\t1\t123
                                     2022-02-24T00:55:00.000000Z\t2\t
                                     2022-02-24T02:00:00.000000Z\t3\t2345567
                                     """
-                    ),
-                    "test_mv"
-            );
+                    ));
 
         });
     }
@@ -181,21 +185,23 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
 
             String value1Unquoted = unquote(value1);
             String value2Unquoted = unquote(value2);
-            assertSql(
-                    replaceExpectedTimestamp("ts\tx\tv\n" +
+            assertQuery("test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(replaceExpectedTimestamp("ts\tx\tv\n" +
                             "2022-02-24T00:00:00.000000Z\t1\t" + value1Unquoted + "\n" +
                             "2022-02-24T00:00:00.000000Z\t2\t" + nullValue + "\n" +
-                            "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n"),
-                    "test"
-            );
+                            "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n"));
 
-            assertSql(
-                    replaceExpectedTimestamp("ts\tx\tv\n" +
+            assertQuery("test_mv")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(replaceExpectedTimestamp("ts\tx\tv\n" +
                             "2022-02-24T00:00:00.000000Z\t1\t" + value1Unquoted + "\n" +
                             "2022-02-24T00:00:00.000000Z\t2\t" + nullValue + "\n" +
-                            "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n"),
-                    "test_mv"
-            );
+                            "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n"));
 
             TableToken tt = engine.verifyTableName("test_mv");
             String partitionsTxnFile = readTxnToString(tt, false, true, true, true);
@@ -204,39 +210,42 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
             execute("insert into test(ts,x,v) values ('2022-02-24', 1, " + value1 + "), ('2022-02-24', 2, null), ('2022-02-24', 3, " + value2 + ")");
             drainWalAndMatViewQueues();
 
-            assertSql(
-                    replaceExpectedTimestamp("ts\tx\tv\n" +
+            assertQuery("test_mv")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(replaceExpectedTimestamp("ts\tx\tv\n" +
                             "2022-02-24T00:00:00.000000Z\t1\t" + value1Unquoted + "\n" +
                             "2022-02-24T00:00:00.000000Z\t2\t" + nullValue + "\n" +
-                            "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n"),
-                    "test_mv"
-            );
+                            "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n"));
             Assert.assertEquals(partitionsTxnFile, readTxnToString(tt, false, true, true, true));
 
             // Insert same values recorded
             execute("insert into test(ts,x,v) values ('2022-02-24', 3, " + value2 + "), ('2022-02-24', 2, null)");
             drainWalAndMatViewQueues();
 
-            assertSql(
-                    replaceExpectedTimestamp("ts\tx\tv\n" +
+            assertQuery("test_mv")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(replaceExpectedTimestamp("ts\tx\tv\n" +
                             "2022-02-24T00:00:00.000000Z\t1\t" + value1Unquoted + "\n" +
                             "2022-02-24T00:00:00.000000Z\t2\t" + nullValue + "\n" +
-                            "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n"),
-                    "test_mv"
-            );
+                            "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n"));
             Assert.assertEquals(partitionsTxnFile, readTxnToString(tt, false, true, true, true));
 
             // Change one varchar
             execute("insert into test(ts,x,v) values ('2022-02-24', 3, " + value2 + "), ('2022-02-24', 2, " + nullValueUpdated + ")");
             drainWalAndMatViewQueues();
 
-            assertSql(
-                    replaceExpectedTimestamp("ts\tx\tv\n" +
+            assertQuery("test_mv")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(replaceExpectedTimestamp("ts\tx\tv\n" +
                             "2022-02-24T00:00:00.000000Z\t1\t" + value1Unquoted + "\n" +
                             "2022-02-24T00:00:00.000000Z\t2\t" + unquote(nullValueUpdated) + "\n" +
-                            "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n"),
-                    "test_mv"
-            );
+                            "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n"));
         });
     }
 

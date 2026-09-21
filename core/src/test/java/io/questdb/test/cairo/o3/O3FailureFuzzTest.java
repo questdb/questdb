@@ -253,7 +253,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " rnd_varchar(1, 40, 1) varc," +
                         " rnd_varchar(1, 1, 1) varc2," +
                         " from long_sequence(510)" +
-                        "), index(sym) timestamp (ts) partition by DAY",
+                        "), index(sym " + randomIndexTypeClause() + ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
 
@@ -343,7 +343,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " rnd_varchar(1, 40, 1) varc," +
                         " rnd_varchar(1, 1, 1) varc2," +
                         " from long_sequence(510)" +
-                        "), index(sym) timestamp (ts) partition by DAY",
+                        "), index(sym " + randomIndexTypeClause() + ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
 
@@ -469,7 +469,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " rnd_varchar(1, 40, 1) varc," +
                         " rnd_varchar(1, 1, 1) varc2," +
                         " from long_sequence(510)" +
-                        "), index(sym) timestamp (ts) partition by DAY",
+                        "), index(sym " + randomIndexTypeClause() + ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
 
@@ -552,5 +552,28 @@ public class O3FailureFuzzTest extends AbstractO3Test {
         failCounter = rnd.nextInt(26);
         LOG.info().$("failCounter=").$(failCounter).$();
         executeWithPool(workerCount, routine, ffOpenFailure);
+    }
+
+    /**
+     * Picks an index type clause for the fuzz table create. Uses the
+     * test's static rnd so the choice is reproducible across runs of the
+     * same seed and varies across runs of different seeds. Empty string
+     * means BITMAP (the default for the inline INDEX clause).
+     */
+    private static String randomIndexTypeClause() {
+        if (rnd == null) {
+            return "";
+        }
+        double pick = rnd.nextDouble();
+        if (pick < 0.5) {
+            return ""; // BITMAP
+        }
+        if (pick < 0.7) {
+            return "TYPE POSTING";
+        }
+        if (pick < 0.85) {
+            return "TYPE POSTING DELTA";
+        }
+        return "TYPE POSTING EF";
     }
 }

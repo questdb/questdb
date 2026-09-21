@@ -27,6 +27,7 @@ package io.questdb.std;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 import java.util.Comparator;
@@ -219,6 +220,22 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         return hashCode;
     }
 
+    /**
+     * Checks that every backing slot at index size() and beyond is null, i.e.
+     * that removal operations released their references to removed elements.
+     *
+     * @return true if all backing slots beyond size() are null
+     */
+    @TestOnly
+    public boolean hasOnlyNullsBeyondSizeForTesting() {
+        for (int i = pos, n = buffer.length; i < n; i++) {
+            if (buffer[i] != null) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     @Override
     public int indexOf(Object o) {
         if (o == null) {
@@ -251,6 +268,16 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         pos += length;
     }
 
+    public T popLast() {
+        assert pos > 0 : "index out of bounds, " + pos;
+
+        int last = pos - 1;
+        T item = buffer[last];
+        buffer[last] = null;
+        pos = last;
+        return item;
+    }
+
     public void remove(int index) {
         if (pos < 1 || index >= pos) {
             return;
@@ -269,7 +296,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
             System.arraycopy(buffer, to + 1, buffer, from, move);
         }
         pos = Math.max(0, pos - (to - from + 1));
-        Arrays.fill(buffer, pos, buffer.length - 1, null);
+        Arrays.fill(buffer, pos, buffer.length, null);
     }
 
     public int remove(Object o) {

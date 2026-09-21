@@ -31,7 +31,6 @@ import org.junit.Test;
 import static io.questdb.test.griffin.InsertNullTest.expectedNullInserts;
 
 public class InsertNullGeoHashTest extends AbstractCairoTest {
-
     private static final int NULL_INSERTS = 15;
 
     @Test
@@ -39,7 +38,10 @@ public class InsertNullGeoHashTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table g(a geohash(4b))");
             execute("insert into g values (cast(null as geohash(5b)))");
-            assertSql("a\n\n", "g");
+            assertQuery("g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\n\n");
         });
     }
 
@@ -48,7 +50,10 @@ public class InsertNullGeoHashTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table g(a geohash(22b))");
             execute("insert into g values (cast(null as geohash(24b)))");
-            assertSql("a\n\n", "g");
+            assertQuery("g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\n\n");
         });
     }
 
@@ -57,7 +62,10 @@ public class InsertNullGeoHashTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table g(a geohash(42b))");
             execute("insert into g values (cast(null as geohash(44b)))");
-            assertSql("a\n\n", "g");
+            assertQuery("g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\n\n");
         });
     }
 
@@ -66,68 +74,67 @@ public class InsertNullGeoHashTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table g(a geohash(12b))");
             execute("insert into g values (cast(null as geohash(14b)))");
-            assertSql("a\n\n", "g");
+            assertQuery("g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\n\n");
         });
     }
 
     @Test
     public void testInsertNullGeoHash() throws Exception {
-        assertGeoHashQueryForAllValidBitSizes("", NULL_INSERTS, true);
+        assertGeoHashQueryForAllValidBitSizes("", NULL_INSERTS);
     }
 
     @Test
     public void testInsertNullGeoHashThenFilterEq1() throws Exception {
-        assertGeoHashQueryForAllValidBitSizes("where geohash = null", NULL_INSERTS, true);
+        assertGeoHashQueryForAllValidBitSizes("where geohash = null", NULL_INSERTS);
     }
 
     @Test
     public void testInsertNullGeoHashThenFilterEq2() throws Exception {
-        assertGeoHashQueryForAllValidBitSizes("where null = geohash", NULL_INSERTS, true);
+        assertGeoHashQueryForAllValidBitSizes("where null = geohash", NULL_INSERTS);
     }
 
     @Test
     public void testInsertNullGeoHashThenFilterEq3() throws Exception {
-        assertGeoHashQueryForAllValidBitSizes("where geohash = geohash", NULL_INSERTS, true);
+        assertGeoHashQueryForAllValidBitSizes("where geohash = geohash", NULL_INSERTS);
     }
 
     @Test
     public void testInsertNullGeoHashThenFilterNotEq1() throws Exception {
-        assertGeoHashQueryForAllValidBitSizes("where geohash != null", 0, true);
+        assertGeoHashQueryForAllValidBitSizes("where geohash != null", 0);
     }
 
     @Test
     public void testInsertNullGeoHashThenFilterNotEq2() throws Exception {
-        assertGeoHashQueryForAllValidBitSizes("where null != geohash", 0, true);
+        assertGeoHashQueryForAllValidBitSizes("where null != geohash", 0);
     }
 
     @Test
     public void testInsertNullGeoHashThenFilterNotEq3() throws Exception {
-        assertGeoHashQueryForAllValidBitSizes("where geohash != geohash", 0, false);
+        assertGeoHashQueryForAllValidBitSizes("where geohash != geohash", 0);
     }
 
-    private void assertGeoHashQueryForAllValidBitSizes(String queryExtra,
-                                                       int expectedEmptyLines,
-                                                       boolean supportsRandomAccess) throws Exception {
+    private void assertGeoHashQueryForAllValidBitSizes(
+            String queryExtra,
+            int expectedEmptyLines
+    ) throws Exception {
         for (int b = 1; b <= ColumnType.GEOLONG_MAX_BITS; b++) {
             if (b > 1) {
                 setUp();
             }
             try {
-                assertQuery(
-                        "geohash\n",
-                        "geohash " + queryExtra,
-                        String.format(
+                assertQuery("geohash " + queryExtra)
+                        .ddl(String.format(
                                 "create table geohash (geohash %s)",
-                                ColumnType.nameOf(ColumnType.getGeoHashTypeWithBits(b))),
-                        null,
-                        String.format(
+                                ColumnType.nameOf(ColumnType.getGeoHashTypeWithBits(b))))
+                        .mutateWith(String.format(
                                 "insert into geohash select null from long_sequence(%d)",
-                                expectedEmptyLines),
-                        expectedNullInserts("geohash\n", "", expectedEmptyLines, true),
-                        supportsRandomAccess,
-                        expectedEmptyLines > 0,
-                        expectedEmptyLines > 0
-                );
+                                expectedEmptyLines))
+                        .expectSize(expectedEmptyLines > 0)
+                        .sizeMayVary(expectedEmptyLines > 0)
+                        .returns("geohash\n", expectedNullInserts("geohash\n", "", expectedEmptyLines, true));
             } finally {
                 tearDown();
             }

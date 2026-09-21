@@ -84,6 +84,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     // types of set operations between this and union model
     int SET_OPERATION_UNION_ALL = 0;
     int SHOW_COLUMNS = 2;
+    int SHOW_CREATE_DATABASE = 18;
+    int SHOW_CREATE_LIVE_VIEW = 19;
     int SHOW_CREATE_MAT_VIEW = 15;
     int SHOW_CREATE_TABLE = 14;
     int SHOW_CREATE_VIEW = 17;
@@ -198,6 +200,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void addJoinModel(IQueryModel joinModel);
 
+    void addLateralCountTemplate(QueryColumn template);
+
     void addLatestBy(ExpressionNode latestBy);
 
     boolean addModelAliasIndex(ExpressionNode node, int index);
@@ -284,7 +288,11 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     ExpressionNode getFillFrom();
 
+    ExpressionNode getFillOffset();
+
     ExpressionNode getFillStride();
+
+    ExpressionNode getFillTimezoneName();
 
     ExpressionNode getFillTo();
 
@@ -308,7 +316,7 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     int getJoinType();
 
-    ObjList<CharSequence> getLateralCountColumns();
+    ObjList<QueryColumn> getLateralCountTemplates();
 
     ObjList<ExpressionNode> getLatestBy();
 
@@ -396,7 +404,13 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     ObjList<QueryModelWrapper> getSharedRefs();
 
+    int getShowCreateDatabaseInclude();
+
     int getShowKind();
+
+    ExpressionNode getSubsample();
+
+    int getSubsamplePosition();
 
     int getTableId();
 
@@ -474,11 +488,26 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     boolean isForceBackwardScan();
 
+    boolean isLateralCountCoalesceRequired();
+
+    /**
+     * Boolean guard deciding, at execution time, whether the lateral scalar-count
+     * compensation applies. Non-null only when the lateral body carried a LIMIT whose
+     * value is not known at compile time (a bind variable). The guard mirrors the
+     * row_number filter generated for that LIMIT evaluated at row 1, so the
+     * compensation can never disagree with whether the body kept its aggregate row.
+     * Kept as an expression rather than a folded decision because a bind variable is
+     * only runtime-constant: its value may differ between executions of a cached plan.
+     */
+    ExpressionNode getLateralCountCoalesceGuard();
+
     boolean isNestedModelIsSubQuery();
 
     boolean isOptimisable();
 
     boolean isOrderDescendingByDesignatedTimestampOnly();
+
+    boolean isOuterRefWildcardExcluded();
 
     boolean isOwnCorrelatedAtDepth(int depth, int flag);
 
@@ -513,6 +542,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void moveLimitFrom(IQueryModel baseModel);
 
     void moveOrderByFrom(IQueryModel model);
+
+    void moveSubsampleFrom(IQueryModel baseModel);
 
     void moveSampleByFrom(IQueryModel model);
 
@@ -556,7 +587,11 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void setFillFrom(ExpressionNode fillFrom);
 
+    void setFillOffset(ExpressionNode fillOffset);
+
     void setFillStride(ExpressionNode fillStride);
+
+    void setFillTimezoneName(ExpressionNode fillTimezoneName);
 
     void setFillTo(ExpressionNode fillTo);
 
@@ -573,6 +608,10 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setJoinKeywordPosition(int position);
 
     void setJoinType(int joinType);
+
+    void setLateralCountCoalesceGuard(ExpressionNode guard);
+
+    void setLateralCountCoalesceRequired(boolean isLateralCountCoalesceRequired);
 
     void setLatestByType(int latestByType);
 
@@ -604,6 +643,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause);
 
+    void setOuterRefWildcardExcluded(boolean isOuterRefWildcardExcluded);
+
     void setPivotGroupByColumnHasNoAlias(boolean pivotGroupByColumnHasNoAlias);
 
     void setPostJoinWhereClause(ExpressionNode postJoinWhereClause);
@@ -611,6 +652,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setSampleBy(ExpressionNode sampleBy);
 
     void setSampleBy(ExpressionNode sampleBy, ExpressionNode sampleByUnit);
+
+    void setSampleByFill(ObjList<ExpressionNode> fill);
 
     void setSampleByFromTo(ExpressionNode from, ExpressionNode to);
 
@@ -624,7 +667,11 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void setSetOperationType(int setOperationType);
 
+    void setShowCreateDatabaseInclude(int includeMask);
+
     void setShowKind(int showKind);
+
+    void setSubsample(ExpressionNode subsample, int position);
 
     void setSkipped(boolean skipped);
 

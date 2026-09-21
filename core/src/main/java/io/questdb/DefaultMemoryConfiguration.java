@@ -26,6 +26,11 @@ package io.questdb;
 
 public class DefaultMemoryConfiguration implements MemoryConfiguration {
     @Override
+    public long getMemoryUsageLogInterval() {
+        return 60_000;
+    }
+
+    @Override
     public long getRamUsageLimitBytes() {
         return 0;
     }
@@ -43,5 +48,10 @@ public class DefaultMemoryConfiguration implements MemoryConfiguration {
     @Override
     public long getTotalSystemMemory() {
         return 0;
+    }
+
+    @Override
+    public boolean isMemoryUsageLogEnabled() {
+        return false;
     }
 }

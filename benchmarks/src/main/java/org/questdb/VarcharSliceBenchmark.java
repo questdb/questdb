@@ -34,7 +34,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
@@ -93,7 +93,7 @@ public class VarcharSliceBenchmark {
     private RowGroupBuffers legacyRowGroupBuffers;
     private Utf8SplitString legacyView;
     private DefaultCairoConfiguration configuration;
-    private PartitionDecoder parquetDecoder;
+    private ParquetFileDecoder parquetDecoder;
     private long parquetFd = -1;
     private long parquetFileAddr;
     private long parquetFileSize;
@@ -342,7 +342,7 @@ public class VarcharSliceBenchmark {
     }
 
     private void openDecoder() {
-        parquetDecoder = new PartitionDecoder();
+        parquetDecoder = new ParquetFileDecoder();
         try (Path path = new Path()) {
             path.of(parquetPath);
             parquetFd = TableUtils.openRO(ff, path.$(), LOG);

@@ -25,43 +25,30 @@
 package io.questdb.test.griffin;
 
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class PowerTest extends AbstractCairoTest {
     @Test
     public void testPowerDouble() throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                engine,
-                sqlExecutionContext,
-                "select power(10.2, 3)",
-                sink,
-                "power\n" +
-                        "1061.2079999999999\n"
-        ));
+        assertQuery("select power(10.2, 3)")
+                .expectSize()
+                .returns("power\n" +
+                        "1061.2079999999999\n");
     }
 
     @Test
     public void testPowerDoubleLeftNull() throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                engine,
-                sqlExecutionContext,
-                "select power(NaN, 3)",
-                sink,
-                "power\n" +
-                        "null\n"
-        ));
+        assertQuery("select power(NaN, 3)")
+                .expectSize()
+                .returns("power\n" +
+                        "null\n");
     }
 
     @Test
     public void testPowerDoubleRightNull() throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                engine,
-                sqlExecutionContext,
-                "select power(1.5, NaN)",
-                sink,
-                "power\n" +
-                        "null\n"
-        ));
+        assertQuery("select power(1.5, NaN)")
+                .expectSize()
+                .returns("power\n" +
+                        "null\n");
     }
 }

@@ -42,8 +42,10 @@ import io.questdb.std.Files;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -87,6 +89,37 @@ public class O3MaxLagTest extends AbstractO3Test {
                     .col("str", ColumnType.STRING)
                     .timestamp("ts", timestampType.getTimestampType());
             testBigUncommittedMove1(engine, compiler, sqlExecutionContext, tableModel);
+        });
+    }
+
+    // Cancelling a partition switch must leave the writer's maxTimestamp correct on the next O3
+    // lag commit. With the same data, the committed high-water mark comes from a different place
+    // depending on the lag: a shorter lag commits a second-partition row, so the max comes from
+    // the O3 buffer; a longer lag holds every second-partition row in lag, so the max comes from
+    // the sealed first partition the O3 commit never touches. Both must be reported exactly.
+    @Test
+    public void testCancelPartitionSwitchMaxTimestamp() throws Exception {
+        executeWithPool(0, (engine, compiler, sqlExecutionContext, timestampTypeName) -> {
+            final TimestampDriver driver = timestampType.getDriver();
+            final long o3Ts = driver.parseFloorLiteral("1970-01-01T12:00:00.000000Z");
+            final long firstPartitionMaxTs = driver.parseFloorLiteral("1970-01-01T23:00:00.000000Z");
+            final long secondPartitionLoTs = driver.parseFloorLiteral("1970-01-02T06:00:00.000000Z");
+            final long secondPartitionHiTs = driver.parseFloorLiteral("1970-01-02T22:00:00.000000Z");
+            final long cancelledThirdPartitionTs = driver.parseFloorLiteral("1970-01-03T00:00:00.000000Z");
+
+            // 12h lag: secondPartitionLoTs commits, so the max comes from the O3 buffer.
+            assertMaxTimestampAfterCancelledSwitch(
+                    engine, sqlExecutionContext, timestampTypeName, "x_buffer", 43_200,
+                    o3Ts, firstPartitionMaxTs, secondPartitionLoTs, secondPartitionHiTs, cancelledThirdPartitionTs,
+                    secondPartitionLoTs
+            );
+
+            // 18h lag: both second-partition rows stay in lag, so the max comes from the sealed partition.
+            assertMaxTimestampAfterCancelledSwitch(
+                    engine, sqlExecutionContext, timestampTypeName, "x_sealed", 64_800,
+                    o3Ts, firstPartitionMaxTs, secondPartitionLoTs, secondPartitionHiTs, cancelledThirdPartitionTs,
+                    firstPartitionMaxTs
+            );
         });
     }
 
@@ -272,14 +305,25 @@ public class O3MaxLagTest extends AbstractO3Test {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
                     int lo = (longsPerPage - 8) * 2;
-                    int maxUncommitted = TestUtils.generateRandom(null).nextInt(hi);
+                    Rnd rnd = TestUtils.generateRandom(LOG);
+                    int maxUncommitted = rnd.nextInt(hi);
 
                     int initialCountLo = longsPerPage - 1;
                     int additionalCountLo = longsPerPage - 1;
 
+                    // Sample a sliding window of the inner range; smaller on slow CI runners (Mac, Windows).
+                    // The window always covers the page boundary (longsPerPage * 2), the value this test
+                    // exists to exercise, so every run still hits the boundary while total iterations drop.
+                    int pageBoundary = longsPerPage * 2;
+                    int innerWindow = Os.isLinux() ? 8 : 2;
+                    int startLo = Math.max(lo, pageBoundary - innerWindow + 1);
+                    int startHi = Math.min(pageBoundary, hi - innerWindow);
+                    int innerStart = startLo + rnd.nextInt(Math.max(1, startHi - startLo + 1));
+                    int innerEnd = innerStart + innerWindow;
+
                     for (int initialCount = initialCountLo; initialCount < initialCountLo + 3; initialCount++) {
                         for (int additionalCount = additionalCountLo; additionalCount < additionalCountLo + 3; additionalCount++) {
-                            for (int i = lo; i < hi; i++) {
+                            for (int i = innerStart; i < innerEnd; i++) {
                                 LOG.info().$("=========== count1 ").$(initialCount).$(" count2 = ").$(additionalCount).$("iteration ").$(i).$(", max uncommitted ").$(maxUncommitted).$(" ===================").$();
                                 testVarColumnMergeWithColumnTops(
                                         engine,
@@ -467,6 +511,51 @@ public class O3MaxLagTest extends AbstractO3Test {
             putVariantStr(metadata, row, 4, "dd");
             row.putLong(5, 444444L);
             row.append();
+        }
+    }
+
+    private void assertMaxTimestampAfterCancelledSwitch(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName,
+            String tableName,
+            long o3MaxLagSeconds,
+            long o3Ts,
+            long firstPartitionMaxTs,
+            long secondPartitionLoTs,
+            long secondPartitionHiTs,
+            long cancelledThirdPartitionTs,
+            long expectedMaxTs
+    ) throws SqlException {
+        engine.execute(
+                "CREATE TABLE " + tableName + " (i INT, ts " + timestampTypeName + ") TIMESTAMP(ts) PARTITION BY DAY"
+                        + " WITH maxUncommittedRows=2, o3MaxLag=" + o3MaxLagSeconds + "s",
+                sqlExecutionContext
+        );
+        try (TableWriter writer = TestUtils.getWriter(engine, tableName)) {
+            Row row = writer.newRow(firstPartitionMaxTs);
+            row.putInt(0, 1);
+            row.append();
+
+            row = writer.newRow(secondPartitionLoTs);
+            row.putInt(0, 2);
+            row.append();
+
+            row = writer.newRow(secondPartitionHiTs);
+            row.putInt(0, 3);
+            row.append();
+
+            row = writer.newRow(cancelledThirdPartitionTs);
+            row.putInt(0, 4);
+            row.cancel();
+
+            row = writer.newRow(o3Ts);
+            row.putInt(0, 5);
+            row.append();
+
+            writer.ic();
+
+            Assert.assertEquals(expectedMaxTs, writer.getMaxTimestamp());
         }
     }
 
@@ -1212,7 +1301,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testO3MaxLagWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws SqlException {
+    private void testO3MaxLagWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws Exception {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -1261,7 +1350,7 @@ public class O3MaxLagTest extends AbstractO3Test {
             int iteration,
             int maxUncommittedRows,
             Rnd rnd
-    ) throws SqlException, NumericException {
+    ) throws Exception {
         // Day 1 '1970-01-01'
         int appendCount = iteration / 2;
         engine.execute(
@@ -1321,13 +1410,13 @@ public class O3MaxLagTest extends AbstractO3Test {
 
         // We will not insert value 'aa' in str column. The count of rows with 'aa' is our invariant
         int aaCount = 2 * (initialCount + additionalCount);
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "select count() from x where str = 'aa'", sink,
-                "count\n" +
-                        aaCount + "\n"
-        );
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, "select count() from x where str = 'aa'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n" +
+                        aaCount + "\n");
         engine.execute("create table y as (select * from x where str = 'aa')", sqlExecutionContext);
 
         try (TableWriter tw = TestUtils.getWriter(engine, "x")) {
@@ -1369,7 +1458,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         );
     }
 
-    private void testVarColumnPageBoundaryIterationWithColumnTop(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, int iteration, int maxUncommittedRows) throws SqlException, NumericException {
+    private void testVarColumnPageBoundaryIterationWithColumnTop(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, int iteration, int maxUncommittedRows) throws Exception {
         // Day 1 '1970-01-01'
         int appendCount = iteration / 2;
         sqlExecutionContext.getCairoEngine().execute(
@@ -1408,27 +1497,28 @@ public class O3MaxLagTest extends AbstractO3Test {
             appendRowsWithDroppedColumn(tw, halfCount, rnd);
             tw.ic(MicrosTimestampDriver.INSTANCE.fromHours(1));
 
-            TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
-                    replaceTimestampSuffix("""
+            new QueryAssertion(engine, sqlExecutionContext, () -> {
+            }, "select * from x where str = 'aa'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
                             str\tts\tx\tstr2\ty
                             aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull
                             aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull
-                            """, timestampType.getTypeName())
-            );
+                            """, timestampType.getTypeName()));
 
             appendRowsWithDroppedColumn(tw, appendCount - halfCount, rnd);
             tw.ic(MicrosTimestampDriver.INSTANCE.fromHours(1));
 
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "select * from x where str = 'aa'", sink,
-                    replaceTimestampSuffix("""
+            new QueryAssertion(engine, sqlExecutionContext, () -> {
+            }, "select * from x where str = 'aa'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
                             str\tts\tx\tstr2\ty
                             aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull
                             aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull
-                            """, timestampType.getTypeName())
-            );
+                            """, timestampType.getTypeName()));
 
             if (iteration % 2 == 0) {
                 tw.commit();
@@ -1439,12 +1529,14 @@ public class O3MaxLagTest extends AbstractO3Test {
             engine.releaseAllWriters();
         }
 
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
-                replaceTimestampSuffix("""
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, "select * from x where str = 'aa'")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns(replaceTimestampSuffix("""
                         str\tts\tx\tstr2\ty
                         aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull
                         aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull
-                        """, timestampType.getTypeName())
-        );
+                        """, timestampType.getTypeName()));
     }
 }

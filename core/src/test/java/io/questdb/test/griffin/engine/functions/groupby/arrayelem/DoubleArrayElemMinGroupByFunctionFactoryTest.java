@@ -164,7 +164,11 @@ public class DoubleArrayElemMinGroupByFunctionFactoryTest extends AbstractDouble
             execute("CREATE TABLE tab (arr DOUBLE[])");
             execute("INSERT INTO tab VALUES (null)");
             execute("INSERT INTO tab VALUES (null)");
-            assertQueryNoLeakCheck("arr\nnull\n", "SELECT array_elem_min(arr) arr FROM tab", null, false, true);
+            assertQuery("SELECT array_elem_min(arr) arr FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("arr\nnull\n");
         });
     }
 
@@ -195,8 +199,10 @@ public class DoubleArrayElemMinGroupByFunctionFactoryTest extends AbstractDouble
             execute("INSERT INTO tab VALUES (1, ARRAY[30.0, 31.0])");
             execute("INSERT INTO tab VALUES (2, ARRAY[40.0, 41.0])");
             execute("INSERT INTO tab VALUES (2, ARRAY[50.0, 51.0])");
-            assertQueryNoLeakCheck("grp\tarr\n1\t[10.0,11.0]\n2\t[40.0,41.0]\n",
-                    "SELECT grp, array_elem_min(arr) arr FROM tab ORDER BY grp", null, true, true);
+            assertQuery("SELECT grp, array_elem_min(arr) arr FROM tab ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("grp\tarr\n1\t[10.0,11.0]\n2\t[40.0,41.0]\n");
         });
     }
 
@@ -206,7 +212,11 @@ public class DoubleArrayElemMinGroupByFunctionFactoryTest extends AbstractDouble
             execute("CREATE TABLE tab (arr DOUBLE[])");
             execute("INSERT INTO tab VALUES (ARRAY[1.0, 2.0, 1.0])");
             execute("INSERT INTO tab VALUES (ARRAY[3.0, null, 5.0])");
-            assertQueryNoLeakCheck("arr\n[1.0,2.0,1.0]\n", "SELECT array_elem_min(arr) arr FROM tab", null, false, true);
+            assertQuery("SELECT array_elem_min(arr) arr FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("arr\n[1.0,2.0,1.0]\n");
         });
     }
 
@@ -216,7 +226,11 @@ public class DoubleArrayElemMinGroupByFunctionFactoryTest extends AbstractDouble
             execute("CREATE TABLE tab (arr DOUBLE[])");
             execute("INSERT INTO tab VALUES (ARRAY[1.0, 2.0])");
             execute("INSERT INTO tab VALUES (ARRAY[3.0, 4.0])");
-            assertQueryNoLeakCheck("arr\n[1.0,2.0]\n", "SELECT array_elem_min(arr) arr FROM tab", null, false, true);
+            assertQuery("SELECT array_elem_min(arr) arr FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("arr\n[1.0,2.0]\n");
         });
     }
 
@@ -226,7 +240,11 @@ public class DoubleArrayElemMinGroupByFunctionFactoryTest extends AbstractDouble
             execute("CREATE TABLE tab (arr DOUBLE[])");
             execute("INSERT INTO tab VALUES (null)");
             execute("INSERT INTO tab VALUES (ARRAY[1.0, 2.0])");
-            assertQueryNoLeakCheck("arr\n[1.0,2.0]\n", "SELECT array_elem_min(arr) arr FROM tab", null, false, true);
+            assertQuery("SELECT array_elem_min(arr) arr FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("arr\n[1.0,2.0]\n");
         });
     }
 
@@ -237,8 +255,11 @@ public class DoubleArrayElemMinGroupByFunctionFactoryTest extends AbstractDouble
             execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00', ARRAY[1.0, 2.0])");
             execute("INSERT INTO tab VALUES ('2024-01-01T00:30:00', ARRAY[3.0, 4.0])");
             execute("INSERT INTO tab VALUES ('2024-01-01T01:00:00', ARRAY[10.0, 20.0])");
-            assertQueryNoLeakCheck("ts\tarr\n2024-01-01T00:00:00.000000Z\t[1.0,2.0]\n2024-01-01T01:00:00.000000Z\t[10.0,20.0]\n",
-                    "SELECT ts, array_elem_min(arr) arr FROM tab SAMPLE BY 1h", "ts", true, true);
+            assertQuery("SELECT ts, array_elem_min(arr) arr FROM tab SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tarr\n2024-01-01T00:00:00.000000Z\t[1.0,2.0]\n2024-01-01T01:00:00.000000Z\t[10.0,20.0]\n");
         });
     }
 
@@ -247,7 +268,11 @@ public class DoubleArrayElemMinGroupByFunctionFactoryTest extends AbstractDouble
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (arr DOUBLE[])");
             execute("INSERT INTO tab VALUES (ARRAY[1.0, 2.0])");
-            assertQueryNoLeakCheck("arr\n[1.0,2.0]\n", "SELECT array_elem_min(arr) arr FROM tab", null, false, true);
+            assertQuery("SELECT array_elem_min(arr) arr FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("arr\n[1.0,2.0]\n");
         });
     }
 
@@ -257,11 +282,11 @@ public class DoubleArrayElemMinGroupByFunctionFactoryTest extends AbstractDouble
             execute("CREATE TABLE tab (arr DOUBLE[][])");
             execute("INSERT INTO tab VALUES (ARRAY[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])");
             execute("INSERT INTO tab VALUES (ARRAY[[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]])");
-            assertQueryNoLeakCheck(
-                    "arr\n[[1.0,3.0,5.0],[2.0,4.0,6.0],[30.0,60.0,null]]\n",
-                    "SELECT array_elem_min(transpose(arr)) arr FROM tab",
-                    null, false, true
-            );
+            assertQuery("SELECT array_elem_min(transpose(arr)) arr FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("arr\n[[1.0,3.0,5.0],[2.0,4.0,6.0],[30.0,60.0,null]]\n");
         });
     }
 
@@ -271,11 +296,11 @@ public class DoubleArrayElemMinGroupByFunctionFactoryTest extends AbstractDouble
             execute("CREATE TABLE tab (arr DOUBLE[][])");
             execute("INSERT INTO tab VALUES (ARRAY[[1.0, 2.0], [3.0, 4.0]])");
             execute("INSERT INTO tab VALUES (ARRAY[[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]])");
-            assertQueryNoLeakCheck(
-                    "arr\n[[1.0,3.0],[2.0,4.0],[30.0,60.0]]\n",
-                    "SELECT array_elem_min(transpose(arr)) arr FROM tab",
-                    null, false, true
-            );
+            assertQuery("SELECT array_elem_min(transpose(arr)) arr FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("arr\n[[1.0,3.0],[2.0,4.0],[30.0,60.0]]\n");
         });
     }
 
@@ -285,7 +310,11 @@ public class DoubleArrayElemMinGroupByFunctionFactoryTest extends AbstractDouble
             execute("CREATE TABLE tab (arr DOUBLE[])");
             execute("INSERT INTO tab VALUES (ARRAY[1.0, 2.0])");
             execute("INSERT INTO tab VALUES (ARRAY[3.0, 4.0, 5.0])");
-            assertQueryNoLeakCheck("arr\n[1.0,2.0,5.0]\n", "SELECT array_elem_min(arr) arr FROM tab", null, false, true);
+            assertQuery("SELECT array_elem_min(arr) arr FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("arr\n[1.0,2.0,5.0]\n");
         });
     }
 

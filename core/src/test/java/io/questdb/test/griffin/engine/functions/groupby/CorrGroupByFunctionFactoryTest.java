@@ -139,18 +139,22 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCorrAllNull() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "corr\nnull\n", "select corr(x, y) from (select cast(null as double) x, cast(null as double) y from long_sequence(100))"
-        ));
+        assertMemoryLeak(() -> assertQuery("select corr(x, y) from (select cast(null as double) x, cast(null as double) y from long_sequence(100))")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("corr\nnull\n"));
     }
 
     @Test
     public void testCorrAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select 17.2151921 x, 17.2151921 y from long_sequence(100))");
-            assertSql(
-                    "corr\nnull\n", "select corr(x, y) from tbl1"
-            );
+            assertQuery("select corr(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("corr\nnull\n");
         });
     }
 
@@ -158,9 +162,11 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testCorrDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
-            assertSql(
-                    "corr\n1.0\n", "select corr(x, y) from tbl1"
-            );
+            assertQuery("select corr(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("corr\n1.0\n");
         });
     }
 
@@ -170,9 +176,11 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tbl1(x double, y double)");
             execute("insert into 'tbl1' VALUES (null, null)");
             execute("insert into 'tbl1' select x, x as y from long_sequence(100)");
-            assertSql(
-                    "corr\n1.0\n", "select corr(x, y) from tbl1"
-            );
+            assertQuery("select corr(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("corr\n1.0\n");
         });
     }
 
@@ -180,9 +188,11 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testCorrFloatValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as float) x, cast(x as float) y from long_sequence(100))");
-            assertSql(
-                    "corr\n1.0\n", "select corr(x, y) from tbl1"
-            );
+            assertQuery("select corr(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("corr\n1.0\n");
         });
     }
 
@@ -190,9 +200,11 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testCorrIntValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as int) x, cast(x as int) y from long_sequence(100))");
-            assertSql(
-                    "corr\n1.0\n", "select corr(x, y) from tbl1"
-            );
+            assertQuery("select corr(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("corr\n1.0\n");
         });
     }
 
@@ -200,17 +212,21 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testCorrNoValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1(x int, y int)");
-            assertSql(
-                    "corr\nnull\n", "select corr(x, y) from tbl1"
-            );
+            assertQuery("select corr(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("corr\nnull\n");
         });
     }
 
     @Test
     public void testCorrOneColumnAllNull() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "corr\nnull\n", "select corr(x, y) from (select cast(null as double) x, x as y from long_sequence(100))"
-        ));
+        assertMemoryLeak(() -> assertQuery("select corr(x, y) from (select cast(null as double) x, x as y from long_sequence(100))")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("corr\nnull\n"));
     }
 
     @Test
@@ -219,9 +235,11 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tbl1(x int, y int)");
             execute("insert into 'tbl1' VALUES " +
                     "(1, 1)");
-            assertSql(
-                    "corr\nnull\n", "select corr(x, y) from tbl1"
-            );
+            assertQuery("select corr(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("corr\nnull\n");
         });
     }
 
@@ -229,9 +247,61 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testCorrOverflow() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select 100000000 x, 100000000 y from long_sequence(1000000))");
-            assertSql(
-                    "corr\nnull\n", "select corr(x, y) from tbl1"
-            );
+            assertQuery("select corr(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("corr\nnull\n");
+        });
+    }
+
+    @Test
+    public void testCorrLargeMagnitudeOverflow() throws Exception {
+        // Regression test: prior to the sqrt(a)*sqrt(b) refactor, the denominator
+        // sqrt(sumY * sumX) overflowed to +Infinity for inputs of magnitude ~1e153,
+        // causing corr() to return 0.0 instead of the true correlation.
+        assertMemoryLeak(() -> {
+            execute("create table tbl1(x double, y double)");
+            execute("insert into 'tbl1' VALUES (1e153, 1e153), (-1e153, -1e153)");
+            assertQuery("select corr(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("corr\n1.0\n");
+        });
+    }
+
+    @Test
+    public void testCorrLargeMagnitudeNegative() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tbl1(x double, y double)");
+            execute("insert into 'tbl1' VALUES (1e153, -1e153), (-1e153, 1e153)");
+            assertQuery("select corr(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("corr\n-1.0\n");
+        });
+    }
+
+    @Test
+    public void testCorrSmallMagnitudeUnderflow() throws Exception {
+        // Regression test: for inputs of very small magnitude (~1e-150) the sums of squared
+        // deviations are ~1e-300, so their product sumY * sumX underflows to exactly 0.0
+        // while each factor stays finite and non-zero. Prior to widening the split-sqrt
+        // fallback to this case, sqrt(0.0) made the denominator 0.0 and corr() returned NaN
+        // instead of the true correlation.
+        assertMemoryLeak(() -> {
+            execute("create table tbl1(x double, y double)");
+            execute("insert into 'tbl1' VALUES (1e-150, 1e-150), (-1e-150, -1e-150)");
+            // The split-sqrt fallback uses two sqrt roundings instead of one, so the result
+            // lands 1 ULP below the true 1.0 rather than overshooting it (the clamp only
+            // bounds the > 1 / < -1 tails). The point is that it is finite, not NaN.
+            assertQuery("select corr(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("corr\n0.9999999999999999\n");
         });
     }
 
@@ -240,9 +310,11 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
             execute("insert into 'tbl1' VALUES (null, null)");
-            assertSql(
-                    "corr\n1.0\n", "select corr(x, y) from tbl1"
-            );
+            assertQuery("select corr(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("corr\n1.0\n");
         });
     }
 
@@ -252,9 +324,11 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tbl1(x int, y int)");
             execute("insert into 'tbl1' VALUES " +
                     "(1, 1), (2, 2)");
-            assertSql(
-                    "corr\n1.0\n", "select corr(x, y) from tbl1"
-            );
+            assertQuery("select corr(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("corr\n1.0\n");
         });
     }
 
@@ -263,13 +337,21 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
         execute(TRADES_TABLE);
         execute(TRADES_DATA);
 
-        assertSql("""
-                corr
-                -0.10692047006371702
-                """, "select corr(price, amount) from trades");
-        assertSql("""
-                corr
-                -0.10692047006371702
-                """, "select corr(price, amount) from trades");
+        assertQuery("select corr(price, amount) from trades")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        corr
+                        -0.10692047006371702
+                        """);
+        assertQuery("select corr(price, amount) from trades")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        corr
+                        -0.10692047006371702
+                        """);
     }
 }

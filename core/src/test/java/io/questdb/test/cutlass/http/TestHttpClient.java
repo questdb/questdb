@@ -301,7 +301,9 @@ public class TestHttpClient implements QuietCloseable {
             }
 
             reqToSink(req, sink, username, password, null, null);
-            TestUtils.assertContains(sink.toString(), expectedResponse);
+            if (!Utf8s.containsAscii(sink, expectedResponse)) {
+                Assert.fail("'" + sinkToAsciiString(sink) + "' does not contain: " + expectedResponse);
+            }
         } finally {
             if (!keepConnection) {
                 httpClient.disconnect();
@@ -456,6 +458,15 @@ public class TestHttpClient implements QuietCloseable {
                 httpClient.disconnect();
             }
         }
+    }
+
+    private static String sinkToAsciiString(Utf8StringSink sink) {
+        StringBuilder sb = new StringBuilder(sink.size());
+        for (int i = 0, n = sink.size(); i < n; i++) {
+            byte b = sink.byteAt(i);
+            sb.append((b >= 0x20 && b < 0x7f) || b == '\n' || b == '\r' || b == '\t' ? (char) b : '?');
+        }
+        return sb.toString();
     }
 
     private static String toUnicodeEscape(Utf8StringSink sink) {

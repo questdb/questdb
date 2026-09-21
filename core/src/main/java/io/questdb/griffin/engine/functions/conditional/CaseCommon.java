@@ -34,12 +34,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.Decimals;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.IntList;
 import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.ThreadLocal;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -48,8 +48,8 @@ import static io.questdb.cairo.ColumnType.*;
 public class CaseCommon {
     private static final LongObjHashMap<FunctionFactory> castFactories = new LongObjHashMap<>();
     private static final ObjList<CaseFunctionConstructor> constructors = new ObjList<>(NULL + 1);
-    private static final ThreadLocal<IntList> tlArgPositions = new ThreadLocal<>(IntList::new);
-    private static final ThreadLocal<ObjList<Function>> tlArgs = new ThreadLocal<>(ObjList::new);
+    private static final FiberLocal<IntList> tlArgPositions = new FiberLocal<>(IntList::new);
+    private static final FiberLocal<ObjList<Function>> tlArgs = new FiberLocal<>(ObjList::new);
     private static final LongIntHashMap typeEscalationMap = new LongIntHashMap();
 
     // public for testing
@@ -345,7 +345,6 @@ public class CaseCommon {
         constructors.extendAndSet(LONG128, (position, picker, args, returnType) -> new Long128CaseFunction(picker, args));
         constructors.extendAndSet(UUID, (position, picker, args, returnType) -> new UuidCaseFunction(picker, args));
         constructors.extendAndSet(IPv4, (position, picker, args, returnType) -> new IPv4CaseFunction(picker, args));
-        constructors.extendAndSet(VARCHAR, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
         constructors.extendAndSet(DECIMAL8, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
         constructors.extendAndSet(DECIMAL16, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
         constructors.extendAndSet(DECIMAL32, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));

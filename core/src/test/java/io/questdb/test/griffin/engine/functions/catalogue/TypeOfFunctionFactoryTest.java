@@ -35,29 +35,52 @@ import org.junit.Test;
 public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testBindVarNotSupported() throws Exception {
-        assertException(
-                "select typeOf($1) from test",
-                "create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))",
-                14,
-                "bind variables are not supported"
-        );
+    public void testArgumentIsClosed() throws Exception {
+        // typeOf answers from the argument's type alone and keeps no argument, so it owns and must
+        // close it; trim() holds two native sinks that only its close() frees
+        assertQuery("select typeOf(trim(a)) t from test")
+                .ddl("create table test as (select cast(x as varchar) a from long_sequence(4))")
+                .expectSize()
+                .returns("t\nVARCHAR\nVARCHAR\nVARCHAR\nVARCHAR\n");
     }
 
     @Test
-    public void testOfNull() throws SqlException {
-        assertSql("typeOf\n" +
-                "NULL\n", "select typeOf(null)"
-        );
-        assertSql("typeOf\n" +
-                "STRING\n", "select typeOf(cast(null as string))"
-        );
-        assertSql("typeOf\n" +
-                "NULL\n", "select typeOf(value) from (select null value from long_sequence(1))"
-        );
-        assertSql("typeOf\n" +
-                "LONG\n", "select typeOf(value) from (select cast(null as long) value from long_sequence(1))"
-        );
+    public void testBindVarNotSupported() throws Exception {
+        assertQuery("select typeOf($1) from test")
+                .ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))")
+                .fails(14, "bind variables are not supported");
+    }
+
+    @Test
+    public void testOfNull() throws Exception {
+        assertQuery("select typeOf(null)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        typeOf
+                        NULL
+                        """);
+        assertQuery("select typeOf(cast(null as string))")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        typeOf
+                        STRING
+                        """);
+        assertQuery("select typeOf(value) from (select null value from long_sequence(1))")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        typeOf
+                        NULL
+                        """);
+        assertQuery("select typeOf(value) from (select cast(null as long) value from long_sequence(1))")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        typeOf
+                        LONG
+                        """);
     }
 
     @Test
@@ -71,7 +94,7 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTypeOfAllRegularDataTypes() throws SqlException {
+    public void testTypeOfAllRegularDataTypes() throws Exception {
         for (int i = ColumnType.BOOLEAN; i < ColumnType.NULL; i++) {
             String name = ColumnType.nameOf(i);
             if (Chars.equals("unknown", name)
@@ -91,17 +114,60 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
                 continue;
             }
 
-            assertSql("typeOf\n" + ColumnType.nameOf(i) + "\n", "select typeOf(cast(null as " + name + "  ))");
+            assertQuery("select typeOf(cast(null as " + name + "  ))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("typeOf\n" + ColumnType.nameOf(i) + "\n");
         }
     }
 
     @Test
-    public void testTypeOfGeoHash() throws SqlException {
+    public void testTypeOfDecimal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table dec (d8 decimal(2,1), d16 decimal(4,0), d32 decimal(9,3), d64 decimal(18,2), d128 decimal(38,10), d256 decimal(76,20))");
+            execute("insert into dec values (1.1m, 2m, 3.333m, 4.44m, 5.5m, 6.6m)");
+            execute("insert into dec values (null, null, null, null, null, null)");
+
+            // column references, one per storage width
+            assertQuery("select typeOf(d8) t8, typeOf(d16) t16, typeOf(d32) t32, typeOf(d64) t64, typeOf(d128) t128, typeOf(d256) t256 from dec")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            t8\tt16\tt32\tt64\tt128\tt256
+                            DECIMAL(2,1)\tDECIMAL(4,0)\tDECIMAL(9,3)\tDECIMAL(18,2)\tDECIMAL(38,10)\tDECIMAL(76,20)
+                            DECIMAL(2,1)\tDECIMAL(4,0)\tDECIMAL(9,3)\tDECIMAL(18,2)\tDECIMAL(38,10)\tDECIMAL(76,20)
+                            """);
+
+            // literal
+            assertQuery("select typeOf(123.45m)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            typeOf
+                            DECIMAL(5,2)
+                            """);
+
+            // null decimal
+            assertQuery("select typeOf(cast(null as decimal(38,10)))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            typeOf
+                            DECIMAL(38,10)
+                            """);
+        });
+    }
+
+    @Test
+    public void testTypeOfGeoHash() throws Exception {
         for (int i = 1; i <= ColumnType.GEOLONG_MAX_BITS; i++) {
             int type = ColumnType.getGeoHashTypeWithBits(i);
             sink.clear();
             sink.put("select typeOf(rnd_geohash(").put(i).put("))");
-            assertSql("typeOf\n" + ColumnType.nameOf(type) + "\n", sink);
+            assertQuery(sink)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("typeOf\n" + ColumnType.nameOf(type) + "\n");
         }
     }
 

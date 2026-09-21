@@ -24,11 +24,11 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.PropertyKey;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.std.Unsafe;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -38,32 +38,40 @@ import org.junit.Test;
 /**
  * Coverage for credit-based flow control on QWP egress.
  * <p>
- * The feature is byte-budgeted: the client advertises {@code initial_credit}
- * in its QUERY_REQUEST, the server streams at most that many result-payload
- * bytes before parking, and the client's I/O thread auto-replenishes by the
- * size of each batch after the user's handler releases it.
+ * The feature is byte-budgeted: the client advertises {@code initial_credit} in
+ * its QUERY_REQUEST, the server streams at most that many result-payload bytes
+ * before parking, and the client's I/O thread auto-replenishes by each batch's
+ * size after the handler releases it.
  * <p>
  * Tests cover:
  * <ul>
- *   <li>Credit = 0 (default, unbounded) -- Phase-1 back-compat;
- *       the existing {@code QwpEgressFuzzTest} + exhaustive suite already pin
- *       this. A dedicated sanity check lives here for completeness.</li>
- *   <li>Small credit that spans many batches -- the query must still complete
- *       correctly under client-driven replenishment, and every row must arrive.</li>
- *   <li>Credit = exactly one batch -- forces at least one suspend/resume
- *       round per batch, exercising the full credit-suspended -> CREDIT -> resume
- *       loop on the server.</li>
- *   <li>CREDIT for an unknown request -- logged and dropped, doesn't disrupt
- *       the stream.</li>
+ *   <li>Credit = 0 (default) - unbounded back-compat path.</li>
+ *   <li>Tiny credit over many batches - the query still completes and every row
+ *       arrives under client-driven replenishment.</li>
+ *   <li>Credit below one batch - forces a suspend/resume round per batch,
+ *       exercising the suspend -> CREDIT -> resume loop on the server.</li>
+ *   <li>Mixed credit across queries on one connection - credit state resets
+ *       between queries.</li>
  * </ul>
  */
-public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
+public class QwpEgressCreditFlowTest extends AbstractQwpBootstrapTest {
 
     @Before
     public void setUp() {
         super.setUp();
-        TestUtils.unchecked(() -> createDummyConfiguration());
+        TestUtils.unchecked(() -> createDummyConfiguration(
+                PropertyKey.HTTP_MIN_ENABLED.getPropertyPath() + "=false",
+                PropertyKey.LINE_TCP_ENABLED.getPropertyPath() + "=false",
+                PropertyKey.PG_ENABLED.getPropertyPath() + "=false"
+        ));
         dbPath.parent().$();
+        // setUpFragmentationChunks (superclass @Before) draws sendChunk/recvChunk from
+        // [1, 500]. A 1-byte draw streams this class's multi-MB payloads one byte per
+        // dispatcher round-trip - millions of them, blowing the global timeout on slow
+        // CI (the mac-other hang). Floor it: still fragments every batch, and credit
+        // cycling tracks the credit budget not chunk size, so no coverage is lost.
+        sendChunk = Math.max(sendChunk, 64);
+        recvChunk = Math.max(recvChunk, 64);
     }
 
     @Test
@@ -72,7 +80,7 @@ public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
         // (several MB). The client's auto-replenish per batch must keep the
         // pipe moving to completion.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute(
                         "CREATE TABLE big AS (SELECT x AS id, CAST(x * 1.5 AS DOUBLE) AS v, " +
                                 "x::TIMESTAMP AS ts " +
@@ -117,12 +125,71 @@ public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testCreditFlowTinyCreditLotsOfRoundTrips() throws Exception {
-        // Credit sized below the smallest batch -- forces the server to
-        // suspend after every batch and wait for the client to replenish.
-        // This exercises the CREDIT -> wake -> emit -> suspend cycle hardest.
+    public void testCreditSuspensionAccumulatesQueryWait() throws Exception {
+        // The pinned client returns a batch buffer only after onBatch returns. Holding the
+        // first three buffers therefore withholds their CREDIT frames while the server retains
+        // the live QWP page-frame cursor. Query tracing is the stable public timing surface.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            // This test deterministically creates credit wait only. Dedicated processor tests
+            // cover matching-CREDIT resume ordering separately.
+            sendChunk = 1_000_000;
+            try (TestServerMain serverMain = startFragmented(
+                    PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "true"
+            )) {
+                final String query = "SELECT * FROM qwp_wait_credit";
+                serverMain.execute("CREATE TABLE qwp_wait_credit AS (SELECT x, x::TIMESTAMP ts FROM long_sequence(500_000)) TIMESTAMP(ts) PARTITION BY DAY");
+                serverMain.awaitTable("qwp_wait_credit");
+
+                final int[] rows = {0};
+                final int[] batches = {0};
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                                "ws::addr=127.0.0.1:" + HTTP_PORT + ";")
+                        .withInitialCredit(1)) {
+                    client.connect();
+                    client.execute(query, new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            rows[0] += batch.getRowCount();
+                            if (++batches[0] <= 3) {
+                                try {
+                                    Thread.sleep(100);
+                                } catch (InterruptedException e) {
+                                    Thread.currentThread().interrupt();
+                                    Assert.fail("interrupted while deliberately delaying CREDIT");
+                                }
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                            Assert.assertEquals(500_000L, totalRows);
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("credit-flow query error: " + message);
+                        }
+                    });
+                }
+
+                Assert.assertEquals(500_000, rows[0]);
+                Assert.assertTrue("expected multiple credit cycles", batches[0] > 3);
+                TestUtils.assertEventually(() -> serverMain.assertSql(
+                        "SELECT count() FROM _query_trace WHERE query_text = '" + query + "' "
+                                + "AND client_wait_micros >= 200_000",
+                        "count\n1\n"
+                ), 20);
+            }
+        });
+    }
+
+    @Test
+    public void testCreditFlowTinyCreditLotsOfRoundTrips() throws Exception {
+        // Credit below the smallest batch - the server suspends after every batch
+        // and waits for the client to replenish, exercising the CREDIT -> wake ->
+        // emit -> suspend cycle hardest.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute(
                         "CREATE TABLE tiny AS (SELECT x AS id, x::TIMESTAMP AS ts FROM long_sequence(50000))"
                                 + " TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -160,7 +227,7 @@ public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
         // Sanity: default initial_credit (0) is the unbounded back-compat path.
         // Query runs without client-side CREDIT emission; server never checks.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute(
                         "CREATE TABLE un AS (SELECT x AS id, x::TIMESTAMP AS ts FROM long_sequence(10000))"
                                 + " TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -193,11 +260,10 @@ public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
 
     @Test
     public void testMultipleQueriesOnSameConnectionMixedCredit() throws Exception {
-        // Connection must keep working across queries with different credit
-        // configs -- this exercises state reset in beginStreaming/endStreaming
-        // for the credit fields.
+        // The connection must keep working across queries with different credit
+        // configs - exercises credit-field reset in beginStreaming/endStreaming.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE a(id LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO a SELECT x, x::TIMESTAMP FROM long_sequence(3000)");
@@ -231,4 +297,5 @@ public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
             }
         });
     }
+
 }

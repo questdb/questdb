@@ -7,16 +7,17 @@ use parquet2::schema::types::PrimitiveType;
 use parquet2::types::NativeType;
 
 use crate::parquet::error::ParquetResult;
+use crate::parquet_write::encoders::numeric::StatsUpdater;
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
-use crate::parquet_write::util::transmute_slice;
+use crate::parquet_write::util::{transmute_slice, MaxMin};
 use crate::parquet_write::Nullable;
 
 use super::{encode_primitive, Repetition};
 
 /// Encode a SIMD-encodable primitive type (Int, Long, Float, Double, Date,
 /// Timestamp) as RleDictionary pages: 1 DictPage + 1 DataPage.
-pub fn encode_simd<T>(
+pub fn encode_simd<T, const UNSIGNED_STATS: bool>(
     columns: &[Column],
     first_partition_start: usize,
     last_partition_end: usize,
@@ -27,8 +28,9 @@ pub fn encode_simd<T>(
 where
     T: NativeType + Nullable + Copy + Debug,
     T::Bytes: Eq + Hash,
+    MaxMin<T>: StatsUpdater<T, UNSIGNED_STATS>,
 {
-    encode_primitive::<T, T, _, _>(
+    encode_primitive::<T, T, _, _, UNSIGNED_STATS>(
         columns,
         first_partition_start,
         last_partition_end,
@@ -50,7 +52,7 @@ where
 /// Encode a notnull integer (Byte, Short, Char) as RleDictionary pages.
 /// Column-top rows use `T::default()` (projected via the supplied function) as
 /// the dict value.
-pub fn encode_int_notnull<T, P>(
+pub fn encode_int_notnull<T, P, const UNSIGNED_STATS: bool>(
     columns: &[Column],
     first_partition_start: usize,
     last_partition_end: usize,
@@ -62,9 +64,10 @@ where
     P: NativeType + num_traits::AsPrimitive<i64>,
     P::Bytes: Eq + Hash,
     T: Default + num_traits::AsPrimitive<P> + Copy + Debug,
+    MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
 {
     let column_top_default: P = T::default().as_();
-    encode_primitive::<T, P, _, _>(
+    encode_primitive::<T, P, _, _, UNSIGNED_STATS>(
         columns,
         first_partition_start,
         last_partition_end,
@@ -81,7 +84,7 @@ where
 
 /// Encode a nullable integer (IPv4, GeoByte/Short/Int/Long) as RleDictionary
 /// pages.
-pub fn encode_int_nullable<T, P>(
+pub fn encode_int_nullable<T, P, const UNSIGNED_STATS: bool>(
     columns: &[Column],
     first_partition_start: usize,
     last_partition_end: usize,
@@ -93,8 +96,9 @@ where
     P: NativeType + num_traits::AsPrimitive<i64>,
     P::Bytes: Eq + Hash,
     T: Nullable + num_traits::AsPrimitive<P> + Copy + Debug,
+    MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
 {
-    encode_primitive::<T, P, _, _>(
+    encode_primitive::<T, P, _, _, UNSIGNED_STATS>(
         columns,
         first_partition_start,
         last_partition_end,

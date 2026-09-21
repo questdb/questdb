@@ -34,7 +34,10 @@ import io.questdb.cairo.O3CopyJob;
 import io.questdb.cairo.O3OpenColumnJob;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.PostingSealPurgeJob;
+import io.questdb.cairo.sql.async.PageFrameReduceDispatcher;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
+import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReduceJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.GroupByLongTopKJob;
@@ -43,6 +46,7 @@ import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.std.AsyncMunmapJob;
 import io.questdb.std.Files;
+import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.Clock;
@@ -65,9 +69,36 @@ public class WorkerPoolUtils {
             WorkerPool sharedPoolQuery,
             CairoEngine cairoEngine
     ) {
+        setupQueryJobs(sharedPoolQuery, cairoEngine, false);
+    }
+
+    /**
+     * @param isFiberDispatcherAllowed pass true only when {@code sharedPoolQuery} is dedicated to
+     *                                 query work. A pool that also hosts protocol fibers must not own
+     *                                 a query dispatcher because same-runtime fan-out is refused.
+     */
+    public static void setupQueryJobs(
+            WorkerPool sharedPoolQuery,
+            CairoEngine cairoEngine,
+            boolean isFiberDispatcherAllowed
+    ) {
         final CairoConfiguration configuration = cairoEngine.getConfiguration();
         final MessageBus messageBus = cairoEngine.getMessageBus();
-        final int workerCount = sharedPoolQuery.getWorkerCount();
+
+        if (isFiberDispatcherAllowed && sharedPoolQuery.isFiberHost()) {
+            final QueryParallelFiberDispatcher dispatcher = new QueryParallelFiberDispatcher(
+                    cairoEngine,
+                    messageBus,
+                    sharedPoolQuery.getFiberRuntime()
+            );
+            try {
+                messageBus.setQueryParallelFiberDispatcher(dispatcher);
+                sharedPoolQuery.freeResourceOnExit(dispatcher);
+            } catch (Throwable th) {
+                Misc.free(dispatcher, th);
+                throw th;
+            }
+        }
 
         sharedPoolQuery.assign(new LatestByAllIndexedJob(messageBus));
 
@@ -78,39 +109,44 @@ public class WorkerPoolUtils {
         }
 
         if (configuration.isSqlParallelFilterEnabled() || configuration.isSqlParallelGroupByEnabled()) {
-            final io.questdb.std.datetime.Clock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
-            final Clock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();
-            for (int i = 0; i < workerCount; i++) {
-                // create job per worker to allow each worker to have own shard walk sequence
-                final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(
+            if (isFiberDispatcherAllowed && sharedPoolQuery.isFiberHost()) {
+                final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
                         cairoEngine,
                         messageBus,
-                        new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks())
+                        sharedPoolQuery.getFiberRuntime()
                 );
-                sharedPoolQuery.assign(i, pageFrameReduceJob);
-                sharedPoolQuery.freeOnExit(pageFrameReduceJob);
-
-                final UnorderedPageFrameReduceJob unorderedJob = new UnorderedPageFrameReduceJob(cairoEngine, messageBus);
-                sharedPoolQuery.assign(i, unorderedJob);
-                sharedPoolQuery.freeOnExit(unorderedJob);
+                try {
+                    messageBus.setPageFrameReduceDispatcher(dispatcher);
+                    sharedPoolQuery.freeResourceOnExit(dispatcher);
+                } catch (Throwable th) {
+                    Misc.free(dispatcher, th);
+                    throw th;
+                }
             }
+            final io.questdb.std.datetime.Clock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
+            final Clock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();
+            sharedPoolQuery.assign(new PageFrameReduceJob(
+                    cairoEngine,
+                    messageBus,
+                    new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks())
+            ));
+            sharedPoolQuery.assign(new UnorderedPageFrameReduceJob(cairoEngine, messageBus));
         }
     }
 
     public static void setupWriterJobs(WorkerPool sharedPoolWrite, CairoEngine cairoEngine) throws SqlException {
         final MessageBus messageBus = cairoEngine.getMessageBus();
-        final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(
-                cairoEngine,
-                sharedPoolWrite.getWorkerCount()
-        );
-        sharedPoolWrite.freeOnExit(purgeDiscoveryJob);
-        sharedPoolWrite.assign(purgeDiscoveryJob);
+        sharedPoolWrite.assign(new O3PartitionPurgeJob(cairoEngine));
 
         // ColumnPurgeJob has expensive init (it creates a table), disable it in some tests.
         if (!cairoEngine.getConfiguration().disableColumnPurgeJob()) {
             final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine);
             sharedPoolWrite.freeOnExit(columnPurgeJob);
             sharedPoolWrite.assign(columnPurgeJob);
+
+            final PostingSealPurgeJob postingSealPurgeJob = new PostingSealPurgeJob(cairoEngine);
+            sharedPoolWrite.freeOnExit(postingSealPurgeJob);
+            sharedPoolWrite.assign(postingSealPurgeJob);
         }
 
         sharedPoolWrite.assign(new ColumnIndexerJob(messageBus));

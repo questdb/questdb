@@ -29,12 +29,21 @@ import io.questdb.std.Os;
 public class MemoryConfigurationImpl implements MemoryConfiguration {
     private final long configuredLimitBytes;
     private final long configuredLimitPercent;
+    private final boolean memoryUsageLogEnabled;
+    private final long memoryUsageLogInterval;
     private final long ramUsageLimit;
     private final long totalSystemMemory;
 
-    public MemoryConfigurationImpl(long configuredLimitBytes, long configuredLimitPercent) {
+    public MemoryConfigurationImpl(
+            long configuredLimitBytes,
+            long configuredLimitPercent,
+            boolean memoryUsageLogEnabled,
+            long memoryUsageLogInterval
+    ) {
         this.configuredLimitBytes = configuredLimitBytes;
         this.configuredLimitPercent = configuredLimitPercent;
+        this.memoryUsageLogEnabled = memoryUsageLogEnabled;
+        this.memoryUsageLogInterval = memoryUsageLogInterval;
         this.totalSystemMemory = Os.getMemorySizeFromMXBean();
         assert totalSystemMemory >= -1 : "Os.getMemorySizeFromMXBean() reported negative memory size";
         this.ramUsageLimit = resolveRamUsageLimit(configuredLimitBytes, configuredLimitPercent, totalSystemMemory);
@@ -46,7 +55,12 @@ public class MemoryConfigurationImpl implements MemoryConfiguration {
         long limitByPercent = (totalSystemMemory != -1) ? totalSystemMemory / 100 * configuredLimitPercent : 0;
         return (configuredLimitBytes == 0) ? limitByPercent
                 : (limitByPercent == 0) ? configuredLimitBytes
-                : Math.min(configuredLimitBytes, limitByPercent);
+                  : Math.min(configuredLimitBytes, limitByPercent);
+    }
+
+    @Override
+    public long getMemoryUsageLogInterval() {
+        return memoryUsageLogInterval;
     }
 
     @Override
@@ -67,5 +81,10 @@ public class MemoryConfigurationImpl implements MemoryConfiguration {
     @Override
     public long getTotalSystemMemory() {
         return totalSystemMemory;
+    }
+
+    @Override
+    public boolean isMemoryUsageLogEnabled() {
+        return memoryUsageLogEnabled;
     }
 }

@@ -61,6 +61,26 @@ public class QwpMessageHeader {
     }
 
     /**
+     * Returns true only for the exact v1 durable-ack poll control frame.
+     * Keeping the marker structural prevents a table-less poll from entering
+     * the normal commit path and closing a user's deferred-commit group.
+     * <p>
+     * Every term is an equality on purpose. Relaxing the length to {@code >=},
+     * or the flags to a bitmask test, would classify a longer frame or a
+     * flag superset as a poll: the server would then ack a sequence whose
+     * payload it never processed, and a store-and-forward client would trim
+     * the matching record.
+     */
+    public static boolean isDurableAckPoll(long address, int length) {
+        return length == HEADER_SIZE
+                && Unsafe.getInt(address + HEADER_OFFSET_MAGIC) == MAGIC_MESSAGE
+                && Unsafe.getByte(address + HEADER_OFFSET_VERSION) == VERSION
+                && Unsafe.getByte(address + HEADER_OFFSET_FLAGS) == FLAG_DURABLE_ACK_POLL
+                && Unsafe.getShort(address + HEADER_OFFSET_TABLE_COUNT) == 0
+                && Unsafe.getInt(address + HEADER_OFFSET_PAYLOAD_LENGTH) == 0;
+    }
+
+    /**
      * Checks if the given 4 bytes match the QWP v1 message magic.
      *
      * @param magic the magic integer to check
@@ -285,10 +305,9 @@ public class QwpMessageHeader {
             throw QwpParseException.invalidMagic();
         }
 
-        // Validate version. Ingest pins to v1 (the v2 bump is egress-only) so
-        // a v2 message arriving on the ingest path is rejected at the wire
-        // level rather than silently accepted with no v2-specific handling.
-        if (version < VERSION_1 || version > MAX_SUPPORTED_INGEST_VERSION) {
+        // Validate version. QWP runs at a single version; reject anything else
+        // at the wire level.
+        if (version != VERSION) {
             throw QwpParseException.unsupportedVersion();
         }
 

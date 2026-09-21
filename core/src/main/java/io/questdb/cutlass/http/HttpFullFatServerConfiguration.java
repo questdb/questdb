@@ -27,6 +27,7 @@ package io.questdb.cutlass.http;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.ObjHashSet;
 
@@ -137,7 +138,14 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
 
     boolean isAcceptingWrites();
 
+    @Override
+    default WorkerPoolMode getWorkerPoolMode() {
+        return isFiberEnabled() ? WorkerPoolMode.FIBER_HOST : WorkerPoolMode.LEGACY;
+    }
+
     boolean isQueryCacheEnabled();
+
+    boolean isQwpBrowserTlsTerminationEnabled();
 
     boolean isSettingsReadOnly();
 }

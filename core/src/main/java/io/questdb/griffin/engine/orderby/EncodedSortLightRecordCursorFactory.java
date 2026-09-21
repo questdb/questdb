@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -33,17 +34,19 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 
 /**
  * Factory for {@link EncodedSortLightRecordCursor} that sorts multiple columns
- * by encoding them into a fixed-size byte-comparable key and sorting with
- * radix/quicksort. This replaces the red-black tree approach for cases where
- * all sort columns can be encoded into 8, 16, 24, or 32 bytes.
+ * by encoding them into a byte-comparable key and sorting with
+ * radix/quicksort. Keys of up to 32 fixed-width bytes are stored inline in
+ * the sort entries; wider or variable-length keys live in a key heap with a
+ * 16-byte prefix inline. This replaces the red-black tree approach.
  */
 public class EncodedSortLightRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
-    private final EncodedSortLightRecordCursor cursor;
     private final ListColumnFilter sortColumnFilter;
+    private RecordCursorFactory base;
+    private EncodedSortLightRecordCursor cursor;
 
     public EncodedSortLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -52,6 +55,8 @@ public class EncodedSortLightRecordCursorFactory extends AbstractRecordCursorFac
             ListColumnFilter sortColumnFilter
     ) {
         super(metadata);
+        // The light cursor re-fetches rows with baseCursor.recordAt during emit.
+        assert base.recordCursorSupportsRandomAccess();
         this.base = base;
         this.cursor = new EncodedSortLightRecordCursor(
                 configuration,
@@ -107,7 +112,12 @@ public class EncodedSortLightRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     protected void _close() {
-        base.close();
-        cursor.close();
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final EncodedSortLightRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

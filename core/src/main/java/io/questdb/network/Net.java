@@ -251,6 +251,10 @@ public final class Net {
         return isDead(toOsFd(fd));
     }
 
+    public static boolean isPeerDisconnected(long fd) {
+        return fd == -1 || isPeerDisconnected(toOsFd(fd));
+    }
+
     public static boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address) {
         return join(toOsFd(fd), parseIPv4(bindIPv4Address), parseIPv4(groupIPv4Address));
     }
@@ -406,6 +410,8 @@ public final class Net {
     private native static int getTcpNoDelay(int fd);
 
     private static native boolean isDead(int fd);
+
+    private static native boolean isPeerDisconnected(int fd);
 
     private native static boolean join(int fd, int bindIPv4Address, int groupIPv4Address);
 

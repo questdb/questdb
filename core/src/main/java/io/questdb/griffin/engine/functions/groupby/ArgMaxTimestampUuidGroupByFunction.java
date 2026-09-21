@@ -40,8 +40,8 @@ public class ArgMaxTimestampUuidGroupByFunction extends TimestampFunction implem
     private final Function valueArg;
     private int valueIndex;
 
-    public ArgMaxTimestampUuidGroupByFunction(@NotNull Function valueArg, @NotNull Function keyArg) {
-        super(ColumnType.TIMESTAMP);
+    public ArgMaxTimestampUuidGroupByFunction(@NotNull Function valueArg, @NotNull Function keyArg, int timestampType) {
+        super(timestampType);
         this.valueArg = valueArg;
         this.keyArg = keyArg;
     }

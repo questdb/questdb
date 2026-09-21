@@ -64,7 +64,6 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.ObjectStreamField;
 import java.io.Serializable;
-import java.lang.ThreadLocal;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.AbstractMap;
@@ -609,7 +608,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             new ObjectStreamField("segmentShift", Integer.TYPE)
     };
     private static final long serialVersionUID = 7249069246763182397L;
-    private final java.lang.ThreadLocal<Traverser<V>> tlTraverser = ThreadLocal.withInitial(Traverser::new);
+    private final CarrierLocal<Traverser<V>> tlTraverser = CarrierLocal.withInitial(Traverser::new);
     /**
      * The array of bins. Lazily initialized upon first insertion.
      * Size is always a power of two. Accessed directly by iterators.
@@ -787,7 +786,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                     if (tabAt(tab, i) == f) {
                         Node<V> p = (fh >= 0 ? f :
                                 (f instanceof TreeBin) ?
-                                        ((TreeBin<V>) f).first : null);
+                                ((TreeBin<V>) f).first : null);
                         while (p != null) {
                             --delta;
                             p = p.next;
@@ -955,6 +954,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         for (Node<V>[] tab = table; ; ) {
             Node<V> f;
             int n, i, fh;
+            CharSequence fk;
+            V fv;
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
@@ -975,6 +976,10 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                     break;
             } else if ((fh = f.hash) == MOVED)
                 tab = helpTransfer(tab, f);
+            else if (fh == h    // check first node without acquiring lock
+                    && ((fk = f.key) == key || (fk != null && keyEquals(key, fk)))
+                    && (fv = f.val) != null)
+                return fv;
             else {
                 boolean added = false;
                 synchronized (f) {
@@ -1056,6 +1061,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         for (Node<V>[] tab = table; ; ) {
             Node<V> f;
             int n, i, fh;
+            CharSequence fk;
+            V fv;
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
@@ -1076,6 +1083,10 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                     break;
             } else if ((fh = f.hash) == MOVED)
                 tab = helpTransfer(tab, f);
+            else if (fh == h    // check first node without acquiring lock
+                    && ((fk = f.key) == key || (fk != null && keyEquals(key, fk)))
+                    && (fv = f.val) != null)
+                return fv;
             else {
                 boolean added = false;
                 synchronized (f) {
@@ -1538,7 +1549,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         long n = sumCount();
         return ((n < 0L) ? 0 :
                 (n > (long) Integer.MAX_VALUE) ? Integer.MAX_VALUE :
-                        (int) n);
+                (int) n);
     }
 
     /**
@@ -2552,6 +2563,50 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         }
     }
 
+    public static class EntryCursor<V> extends Traverser<V> implements Mutable {
+        private ConcurrentHashMap<V> map;
+
+        @Override
+        public final void clear() {
+            map = null;
+            reset(null);
+        }
+
+        public final CharSequence getKey() {
+            return next.key;
+        }
+
+        public final V getValue() {
+            return next.val;
+        }
+
+        public boolean hasNext() {
+            return advance() != null;
+        }
+
+        public final void of(ConcurrentHashMap<V> map) {
+            this.map = map;
+            reset(map.table);
+        }
+
+        public void toTop() {
+            reset(map != null ? map.table : null);
+        }
+
+        private void reset(Node<V>[] tab) {
+            // A partial traversal may retain resize frames belonging to the previous table.
+            while (stack != null) {
+                final TableStack<V> saved = stack;
+                stack = saved.next;
+                saved.tab = null;
+                saved.next = spare;
+                spare = saved;
+            }
+            final int size = tab != null ? tab.length : 0;
+            of(tab, size, size);
+        }
+    }
+
     static final class EntryIterator<V> extends BaseIterator<V>
             implements Iterator<Map.Entry<CharSequence, V>> {
 
@@ -2576,7 +2631,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             implements Set<Map.Entry<CharSequence, V>>, java.io.Serializable {
         private static final long serialVersionUID = 2249069246763182397L;
 
-        private final ThreadLocal<EntryIterator<V>> tlEntryIterator = ThreadLocal.withInitial(EntryIterator::new);
+        private final CarrierLocal<EntryIterator<V>> tlEntryIterator = CarrierLocal.withInitial(EntryIterator::new);
 
         EntrySetView(ConcurrentHashMap<V> map) {
             super(map);
@@ -2712,7 +2767,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     public static class KeySetView<V> extends CollectionView<V, CharSequence>
             implements Set<CharSequence>, java.io.Serializable {
         private static final long serialVersionUID = 7249069246763182397L;
-        private final ThreadLocal<KeyIterator<V>> tlKeyIterator = ThreadLocal.withInitial(KeyIterator::new);
+        private final CarrierLocal<KeyIterator<V>> tlKeyIterator = CarrierLocal.withInitial(KeyIterator::new);
         private final V value;
 
         KeySetView(ConcurrentHashMap<V> map, V value) {  // non-public
@@ -3161,21 +3216,32 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          * Possibly blocks awaiting root lock.
          */
         private void contendedLock() {
-            boolean waiting = false;
-            for (int s; ; ) {
-                if (((s = lockState) & ~WAITER) == 0) {
-                    if (Unsafe.cas(this, LOCKSTATE, s, WRITER)) {
-                        if (waiting)
-                            waiter = null;
-                        return;
+            boolean isInterrupted = false;
+            boolean isWaiting = false;
+            try {
+                for (int s; ; ) {
+                    if (((s = lockState) & ~WAITER) == 0) {
+                        if (Unsafe.cas(this, LOCKSTATE, s, WRITER)) {
+                            if (isWaiting)
+                                waiter = null;
+                            return;
+                        }
+                    } else if ((s & WAITER) == 0) {
+                        if (Unsafe.cas(this, LOCKSTATE, s, s | WAITER)) {
+                            isWaiting = true;
+                            waiter = Thread.currentThread();
+                        }
+                    } else if (isWaiting) {
+                        // The bin monitor admits one writer, so only this thread can own WAITER.
+                        LockSupport.park(this);
+                        // Consume interrupts so the next park can block; restore the flag on exit.
+                        isInterrupted |= Thread.interrupted();
                     }
-                } else if ((s & WAITER) == 0) {
-                    if (Unsafe.cas(this, LOCKSTATE, s, s | WAITER)) {
-                        waiting = true;
-                        waiter = Thread.currentThread();
-                    }
-                } else if (waiting)
-                    LockSupport.park(this);
+                }
+            } finally {
+                if (isInterrupted) {
+                    Thread.currentThread().interrupt();
+                }
             }
         }
 
@@ -3183,6 +3249,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          * Acquires write lock for tree restructuring.
          */
         private void lockRoot() {
+            assert Thread.holdsLock(this) : "TreeBin writer must hold the bin monitor";
             if (!Unsafe.cas(this, LOCKSTATE, 0, WRITER))
                 contendedLock(); // offload to separate method
         }
@@ -3714,7 +3781,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     static final class ValuesView<V> extends CollectionView<V, V>
             implements Collection<V>, java.io.Serializable {
         private static final long serialVersionUID = 2249069246763182397L;
-        private final ThreadLocal<ValueIterator<V>> tlValueIterator = ThreadLocal.withInitial(ValueIterator::new);
+        private final CarrierLocal<ValueIterator<V>> tlValueIterator = CarrierLocal.withInitial(ValueIterator::new);
 
         ValuesView(ConcurrentHashMap<V> map) {
             super(map);

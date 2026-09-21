@@ -198,6 +198,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
     }
 
     @Override
+    public boolean isQwpBrowserTlsTerminationEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isSettingsReadOnly() {
         return false;
     }
@@ -250,11 +255,6 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
 
         @Override
-        public int getQwpMaxSchemasPerConnection() {
-            return QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION;
-        }
-
-        @Override
         public int getQwpMaxRowsPerTable() {
             return QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE;
         }
@@ -262,6 +262,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         @Override
         public int getQwpMaxTablesPerConnection() {
             return QwpConstants.DEFAULT_MAX_TABLES_PER_CONNECTION;
+        }
+
+        @Override
+        public long getQwpMaxUncommittedRows() {
+            return QwpConstants.DEFAULT_MAX_UNCOMMITTED_ROWS;
         }
 
         @Override

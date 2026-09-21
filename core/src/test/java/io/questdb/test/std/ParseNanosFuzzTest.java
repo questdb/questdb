@@ -30,13 +30,9 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.util.ArrayList;
-import java.util.Collection;
 
-@RunWith(Parameterized.class)
 public class ParseNanosFuzzTest {
     private static final char[] INVALID_CHARS = "abcdefgijklopqrtwxyz#$%^&*()+={}[]|\\:;\"'<>,.?/".toCharArray();
     private static final String[] INVALID_UNITS = {"d", "y", "w", "mo", "yr", "sec", "min", "hour", "HMS", "MSC"};
@@ -56,42 +52,21 @@ public class ParseNanosFuzzTest {
             3_600_000_000_000L    // hours
     };
     private static final Rnd rnd = new Rnd();
-    private final boolean expectError;
-    private final long expected;
-    private final String input;
-
-    public ParseNanosFuzzTest(String input, long expected, boolean expectError) {
-        this.input = input;
-        this.expected = expected;
-        this.expectError = expectError;
-    }
-
-    // Define the test data
-    @Parameterized.Parameters(name = "{0}")  // {0} refers to the first parameter (testName)
-    public static Collection<Object[]> testData() {
-        ArrayList<Object[]> testData = new ArrayList<>();
-        runFuzzTests(testData);
-        return testData;
-    }
 
     @Test
-    public void test() {
-        try {
-            long result = parseMicros(input);
-
-            if (expectError) {
-                Assert.fail("Failed: Expected exception for input: " + input);
-            }
-
-            if (expected != result) {
-                Assert.fail("Failed: Input: " + input +
-                        " Expected: " + expected +
-                        " Got: " + result);
-            }
-        } catch (NumericException e) {
-            if (!expectError) {
-                Assert.fail("Failed: Unexpected exception for input: " + input);
-            }
+    public void testFuzz() {
+        // Build the full fuzz corpus once, then exercise every case in a single test method.
+        // This was previously a @Parameterized test expanding to ~15,000 cases; each case
+        // carried JUnit's per-invocation overhead (listener callbacks, a logged line, name
+        // formatting) for microseconds of parsing, which dominated the class runtime. Looping
+        // keeps identical input coverage at a fraction of the cost.
+        ArrayList<Object[]> testData = new ArrayList<>();
+        runFuzzTests(testData);
+        for (int i = 0, n = testData.size(); i < n; i++) {
+            Object[] testCase = testData.get(i);
+            // expected is boxed as Integer or Long depending on the generator; Number.longValue()
+            // mirrors the unbox-then-widen the @Parameterized constructor used to do via reflection.
+            verify((String) testCase[0], ((Number) testCase[1]).longValue(), (Boolean) testCase[2]);
         }
     }
 
@@ -605,6 +580,24 @@ public class ParseNanosFuzzTest {
     private static void testSimpleNumber(ArrayList<Object[]> testData) {
         final int value = rnd.nextInt(MAX_VALUE);
         testData.add(new Object[]{String.valueOf(value), value, false});
+    }
+
+    private static void verify(String input, long expected, boolean expectError) {
+        try {
+            long result = parseMicros(input);
+            if (expectError) {
+                Assert.fail("Failed: Expected exception for input: " + input);
+            }
+            if (expected != result) {
+                Assert.fail("Failed: Input: " + input +
+                        " Expected: " + expected +
+                        " Got: " + result);
+            }
+        } catch (NumericException e) {
+            if (!expectError) {
+                Assert.fail("Failed: Unexpected exception for input: " + input);
+            }
+        }
     }
 
     static String insertMultipleUnderscores(String number) {

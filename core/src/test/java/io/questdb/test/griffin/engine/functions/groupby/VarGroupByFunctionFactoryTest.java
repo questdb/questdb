@@ -31,18 +31,22 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testVarAllNull() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "variance\nnull\n", "select variance(x) from (select cast(null as double) x from long_sequence(100))"
-        ));
+        assertMemoryLeak(() -> assertQuery("select variance(x) from (select cast(null as double) x from long_sequence(100))")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("variance\nnull\n"));
     }
 
     @Test
     public void testVarAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select 17.2151921 x from long_sequence(100))");
-            assertSql(
-                    "variance\n0.0\n", "select variance(x) from tbl1"
-            );
+            assertQuery("select variance(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("variance\n0.0\n");
         });
     }
 
@@ -50,9 +54,11 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testVarDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as double) x from long_sequence(100))");
-            assertSql(
-                    "variance\n841.6666666666666\n", "select variance(x) from tbl1"
-            );
+            assertQuery("select variance(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("variance\n841.6666666666666\n");
         });
     }
 
@@ -62,9 +68,11 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tbl1(x double)");
             execute("insert into 'tbl1' VALUES (null)");
             execute("insert into 'tbl1' select x from long_sequence(100)");
-            assertSql(
-                    "variance\n841.6666666666666\n", "select variance(x) from tbl1"
-            );
+            assertQuery("select variance(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("variance\n841.6666666666666\n");
         });
     }
 
@@ -72,9 +80,11 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testVarFloatValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as float) x from long_sequence(100))");
-            assertSql(
-                    "variance\n841.6666666666666\n", "select variance(x) from tbl1"
-            );
+            assertQuery("select variance(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("variance\n841.6666666666666\n");
         });
     }
 
@@ -82,9 +92,11 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testVarIntValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as int) x from long_sequence(100))");
-            assertSql(
-                    "variance\n841.6666666666666\n", "select variance(x) from tbl1"
-            );
+            assertQuery("select variance(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("variance\n841.6666666666666\n");
         });
     }
 
@@ -92,9 +104,11 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testVarNoValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1(x int)");
-            assertSql(
-                    "variance\nnull\n", "select variance(x) from tbl1"
-            );
+            assertQuery("select variance(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("variance\nnull\n");
         });
     }
 
@@ -104,9 +118,11 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tbl1(x int)");
             execute("insert into 'tbl1' VALUES " +
                     "(17.2151920)");
-            assertSql(
-                    "variance\nnull\n", "select variance(x) from tbl1"
-            );
+            assertQuery("select variance(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("variance\nnull\n");
         });
     }
 
@@ -114,9 +130,11 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testVarOverflow() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select 100000000 x from long_sequence(1000000))");
-            assertSql(
-                    "variance\n0.0\n", "select variance(x) from tbl1"
-            );
+            assertQuery("select variance(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("variance\n0.0\n");
         });
     }
 
@@ -125,9 +143,11 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as double) x from long_sequence(100))");
             execute("insert into 'tbl1' VALUES (null)");
-            assertSql(
-                    "variance\n841.6666666666666\n", "select variance(x) from tbl1"
-            );
+            assertQuery("select variance(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("variance\n841.6666666666666\n");
         });
     }
 }

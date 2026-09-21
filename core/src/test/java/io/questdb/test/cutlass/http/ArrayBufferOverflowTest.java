@@ -74,6 +74,7 @@ public class ArrayBufferOverflowTest extends AbstractTest {
             var chunkSize = Math.max(31, rnd.nextInt(10000));
             var sinkInterrupted = new Utf16Sink() {
                 private boolean bufOut = true;
+                private int[] ryuE10;
 
                 @Override
                 public Utf16Sink put(char c) {
@@ -89,6 +90,14 @@ public class ArrayBufferOverflowTest extends AbstractTest {
                         }
                     }
                     return sinkActual.put(c);
+                }
+
+                @Override
+                public int[] ryuScratch() {
+                    if (ryuE10 == null) {
+                        ryuE10 = new int[1];
+                    }
+                    return ryuE10;
                 }
             };
 

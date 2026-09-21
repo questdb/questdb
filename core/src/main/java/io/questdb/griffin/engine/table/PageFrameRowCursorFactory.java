@@ -42,7 +42,7 @@ public class PageFrameRowCursorFactory implements RowCursorFactory {
 
     @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
-        if (baseOrder == PartitionFrameCursorFactory.ORDER_ASC || baseOrder == PartitionFrameCursorFactory.ORDER_ANY) {
+        if (isForwardScan()) {
             if (fwdCursor == null) {
                 fwdCursor = new PageFrameFwdRowCursor();
             }
@@ -57,6 +57,18 @@ public class PageFrameRowCursorFactory implements RowCursorFactory {
 
     @Override
     public boolean isEntity() {
+        return true;
+    }
+
+    @Override
+    public boolean isForwardScan() {
+        return baseOrder == PartitionFrameCursorFactory.ORDER_ASC || baseOrder == PartitionFrameCursorFactory.ORDER_ANY;
+    }
+
+    // A plain entity scan returns every frame row and evaluates no selecting value, so it introduces
+    // no per-open instability; frame-set stability is proven separately by the partition-frame factory.
+    @Override
+    public boolean isStableWithinExecution() {
         return true;
     }
 

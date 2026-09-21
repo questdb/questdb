@@ -31,68 +31,93 @@ public class VarcharEqualsTest extends AbstractCairoTest {
 
     @Test
     public void testColToCol() throws Exception {
-        assertQuery(
-                "name1\tname2\n" +
-                        "snthtneusd\tsnthtneusd\nšěčřž\tšěčřž\nšěčř\tšěčř\nsnthtneusd\tsnthtneusd\nšěčř\tšěčř\nšěčř\tšěčř\n" +
-                        "\t\nšěčř\tšěčř\nšěčřž\tšěčřž\nsntht\tsntht\nšěčř\tšěčř\n\t\nsntht\tsntht\nsnthtneusd\tsnthtneusd\n",
-                "x where name1 = name2",
-                "create table x as (select" +
+        assertQuery("x where name1 = name2")
+                .ddl("create table x as (select" +
                         " rnd_varchar(null, 'sntht', 'snthtneusd', 'šěčř', 'šěčřž') name1," +
                         " rnd_varchar(null, 'sntht', 'snthtneusd', 'šěčř', 'šěčřž') name2" +
-                        " from long_sequence(80))",
-                null
-        );
+                        " from long_sequence(80))")
+                .returns("""
+                        name1\tname2
+                        snthtneusd\tsnthtneusd
+                        šěčřž\tšěčřž
+                        šěčř\tšěčř
+                        snthtneusd\tsnthtneusd
+                        šěčř\tšěčř
+                        šěčř\tšěčř
+                        \t
+                        šěčř\tšěčř
+                        šěčřž\tšěčřž
+                        sntht\tsntht
+                        šěčř\tšěčř
+                        \t
+                        sntht\tsntht
+                        snthtneusd\tsnthtneusd
+                        """);
     }
 
     @Test
     public void testConstFullyInlinedAscii() throws Exception {
-        assertQuery(
-                "name\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\n",
-                "x where name = 'bac'::varchar",
-                "create table x as (select rnd_varchar(null, 'a', 'bac', 'sntht', 'šěčř', 'gcrlhtneu') name from long_sequence(100))",
-                null
-        );
+        assertQuery("x where name = 'bac'::varchar")
+                .ddl("create table x as (select rnd_varchar(null, 'a', 'bac', 'sntht', 'šěčř', 'gcrlhtneu') name from long_sequence(100))")
+                .returns("name\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\n");
     }
 
     @Test
     public void testConstFullyInlinedLength9() throws Exception {
-        assertQuery(
-                "name\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\n" +
-                        "gcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\n",
-                "x where name = 'gcrlhtneu'::varchar",
-                "create table x as (select rnd_varchar(null, 'a', 'bac', 'sntht', 'šěčř', 'gcrlhtneu') name from long_sequence(100))",
-                null
-        );
+        assertQuery("x where name = 'gcrlhtneu'::varchar")
+                .ddl("create table x as (select rnd_varchar(null, 'a', 'bac', 'sntht', 'šěčř', 'gcrlhtneu') name from long_sequence(100))")
+                .returns("""
+                        name
+                        gcrlhtneu
+                        gcrlhtneu
+                        gcrlhtneu
+                        gcrlhtneu
+                        gcrlhtneu
+                        gcrlhtneu
+                        gcrlhtneu
+                        gcrlhtneu
+                        gcrlhtneu
+                        gcrlhtneu
+                        gcrlhtneu
+                        gcrlhtneu
+                        gcrlhtneu
+                        gcrlhtneu
+                        gcrlhtneu
+                        gcrlhtneu
+                        gcrlhtneu
+                        gcrlhtneu
+                        gcrlhtneu
+                        """);
     }
 
     @Test
     public void testConstFullyInlinedNonAscii() throws Exception {
-        assertQuery(
-                "name\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\n",
-                "x where name = 'šěčř'::varchar",
-                "create table x as (select rnd_varchar(null, 'a', 'bac', 'sntht', 'šěčř', 'gcrlhtneu') name from long_sequence(100))",
-                null
-        );
+        assertQuery("x where name = 'šěčř'::varchar")
+                .ddl("create table x as (select rnd_varchar(null, 'a', 'bac', 'sntht', 'šěčř', 'gcrlhtneu') name from long_sequence(100))")
+                .returns("name\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\n");
     }
 
     @Test
     public void testConstSplitAscii() throws Exception {
-        assertQuery(
-                "name\nqwpgaslvbnsvslhf\nqwpgaslvbnsvslhf\nqwpgaslvbnsvslhf\nqwpgaslvbnsvslhf\nqwpgaslvbnsvslhf\n" +
-                        "qwpgaslvbnsvslhf\nqwpgaslvbnsvslhf\nqwpgaslvbnsvslhf\n",
-                "x where name = 'qwpgaslvbnsvslhf'::varchar",
-                "create table x as (select rnd_varchar(null, 'gcrlhtneuv', 'gcrlht', 'qwpgaslvbnsvslhf') name from long_sequence(30))",
-                null
-        );
+        assertQuery("x where name = 'qwpgaslvbnsvslhf'::varchar")
+                .ddl("create table x as (select rnd_varchar(null, 'gcrlhtneuv', 'gcrlht', 'qwpgaslvbnsvslhf') name from long_sequence(30))")
+                .returns("""
+                        name
+                        qwpgaslvbnsvslhf
+                        qwpgaslvbnsvslhf
+                        qwpgaslvbnsvslhf
+                        qwpgaslvbnsvslhf
+                        qwpgaslvbnsvslhf
+                        qwpgaslvbnsvslhf
+                        qwpgaslvbnsvslhf
+                        qwpgaslvbnsvslhf
+                        """);
     }
 
     @Test
     public void testConstSplitNonAscii() throws Exception {
-        assertQuery(
-                "name\něšščř\něšščř\něšščř\něšščř\něšščř\něšščř\n",
-                "x where name = 'ěšščř'::varchar",
-                "create table x as (select rnd_varchar(null, 'ěšščř', 'ěššč', 'ěšščřěšščř') name from long_sequence(30))",
-                null
-        );
+        assertQuery("x where name = 'ěšščř'::varchar")
+                .ddl("create table x as (select rnd_varchar(null, 'ěšščř', 'ěššč', 'ěšščřěšščř') name from long_sequence(30))")
+                .returns("name\něšščř\něšščř\něšščř\něšščř\něšščř\něšščř\n");
     }
 }

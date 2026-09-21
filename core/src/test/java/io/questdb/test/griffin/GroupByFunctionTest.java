@@ -36,8 +36,33 @@ public class GroupByFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testCaseInitsArgs() throws Exception {
-        assertQuery(
-                """
+        assertQuery("""
+                SELECT
+                    delivery_start_utc as y_utc_15m,
+                    sum(case
+                            when seller='sf' then -1.0*volume_mw
+                            when buyer='sf' then 1.0*volume_mw
+                            else 0.0
+                        end)
+                    as y_sf_position_mw
+                FROM (
+                    SELECT delivery_start_utc, seller, buyer, volume_mw FROM trades
+                    WHERE
+                        (seller = 'sf' OR buyer = 'sf')
+                    )
+                group by y_utc_15m \
+                order by y_utc_15m""")
+                .ddl("create table trades as (" +
+                        "select" +
+                        " timestamp_sequence(0, 15*60*1000000L) delivery_start_utc," +
+                        " rnd_symbol('sf', null) seller," +
+                        " rnd_symbol('sf', null) buyer," +
+                        " rnd_double() volume_mw" +
+                        " from long_sequence(100)" +
+                        "), index(seller), index(buyer) timestamp(delivery_start_utc)")
+                .timestamp("y_utc_15m")
+                .expectSize()
+                .returns("""
                         y_utc_15m\ty_sf_position_mw
                         1970-01-01T00:00:00.000000Z\t-0.2246301342497259
                         1970-01-01T00:30:00.000000Z\t-0.6508594025855301
@@ -119,35 +144,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                         1970-01-02T00:00:00.000000Z\t-0.7195457109208119
                         1970-01-02T00:15:00.000000Z\t-0.23493793601747937
                         1970-01-02T00:30:00.000000Z\t-0.6334964081687151
-                        """,
-                """
-                        SELECT
-                            delivery_start_utc as y_utc_15m,
-                            sum(case
-                                    when seller='sf' then -1.0*volume_mw
-                                    when buyer='sf' then 1.0*volume_mw
-                                    else 0.0
-                                end)
-                            as y_sf_position_mw
-                        FROM (
-                            SELECT delivery_start_utc, seller, buyer, volume_mw FROM trades
-                            WHERE
-                                (seller = 'sf' OR buyer = 'sf')
-                            )
-                        group by y_utc_15m \
-                        order by y_utc_15m""",
-                "create table trades as (" +
-                        "select" +
-                        " timestamp_sequence(0, 15*60*1000000L) delivery_start_utc," +
-                        " rnd_symbol('sf', null) seller," +
-                        " rnd_symbol('sf', null) buyer," +
-                        " rnd_double() volume_mw" +
-                        " from long_sequence(100)" +
-                        "), index(seller), index(buyer) timestamp(delivery_start_utc)",
-                "y_utc_15m",
-                true,
-                true
-        );
+                        """);
     }
 
     // https://github.com/questdb/questdb/issues/6549
@@ -168,766 +165,682 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                             ")"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sym, " +
+                    "CASE WHEN sym = 'a' THEN sum(val) ELSE avg(val) END as result " +
+                    "FROM test " +
+                    "GROUP BY sym " +
+                    "ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym\tresult
                             a\t60.0
                             b\t45.0
-                            """,
-                    "SELECT sym, " +
-                            "CASE WHEN sym = 'a' THEN sum(val) ELSE avg(val) END as result " +
-                            "FROM test " +
-                            "GROUP BY sym " +
-                            "ORDER BY sym",
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
             // Same query, but with additionally SELECTed aggregates
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sym, sum(val), avg(val), " +
+                    "CASE WHEN sym = 'a' THEN sum(val) ELSE avg(val) END as result " +
+                    "FROM test " +
+                    "GROUP BY sym " +
+                    "ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym\tsum\tavg\tresult
                             a\t60.0\t20.0\t60.0
                             b\t90.0\t45.0\t45.0
-                            """,
-                    "SELECT sym, sum(val), avg(val), " +
-                            "CASE WHEN sym = 'a' THEN sum(val) ELSE avg(val) END as result " +
-                            "FROM test " +
-                            "GROUP BY sym " +
-                            "ORDER BY sym",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
     @Test
     public void testKeyedAvgDoubleAllNaN() throws Exception {
-        assertQuery("""
-                        s\tsum
-                        aa\tnull
-                        bb\tnull
-                        """,
-                "select s, avg(d) sum from x order by s",
-                "create table x as " +
+        assertQuery("select s, avg(d) sum from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " null::double d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tsum
+                        aa\tnull
+                        bb\tnull
+                        """);
     }
 
     @Test
     public void testKeyedAvgIntSomeNaN() throws Exception {
-        assertQuery("""
-                        s\tavg\tavg1
-                        aa\t4765.307692307692\t4765.307692307692
-                        bb\t4421.6578947368425\t4421.6578947368425
-                        """,
-                "select s, avg(d) avg, avg(d) from x order by s",
-                "create table x as " +
+        assertQuery("select s, avg(d) avg, avg(d) from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " rnd_int(0, 10000, 1) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tavg\tavg1
+                        aa\t4765.307692307692\t4765.307692307692
+                        bb\t4421.6578947368425\t4421.6578947368425
+                        """);
     }
 
     @Test
     public void testKeyedAvgIntSomeNaNKeyLast() throws Exception {
-        assertQuery("""
-                        avg\tavg1\ts
-                        4765.307692307692\t4765.307692307692\taa
-                        4421.6578947368425\t4421.6578947368425\tbb
-                        """,
-                "select avg(d) avg, avg(d), s from x order by s",
-                "create table x as " +
+        assertQuery("select avg(d) avg, avg(d), s from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " rnd_int(0, 10000, 1) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        avg\tavg1\ts
+                        4765.307692307692\t4765.307692307692\taa
+                        4421.6578947368425\t4421.6578947368425\tbb
+                        """);
     }
 
     @Test
     public void testKeyedAvgIntSomeNaNRandomOrder() throws Exception {
-        assertQueryExpectSize("""
-                        avg\ts\tavg1
-                        4765.307692307692\taa\t4765.307692307692
-                        4421.6578947368425\tbb\t4421.6578947368425
-                        """,
-                "select avg(d) avg, s, avg(d) from x order by s",
-                "create table x as " +
+        assertQuery("select avg(d) avg, s, avg(d) from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " rnd_int(0, 10000, 1) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")"
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        avg\ts\tavg1
+                        4765.307692307692\taa\t4765.307692307692
+                        4421.6578947368425\tbb\t4421.6578947368425
+                        """);
     }
 
     @Test
     public void testKeyedAvgLongSomeNaN() throws Exception {
-        assertQuery("""
-                        s\tavg
-                        aa\t4952.725
-                        bb\t5429.6741573033705
-                        """,
-                "select s, avg(d) avg from x order by s",
-                "create table x as " +
+        assertQuery("select s, avg(d) avg from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " rnd_long(0, 10000, 2) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tavg
+                        aa\t4952.725
+                        bb\t5429.6741573033705
+                        """);
     }
 
     @Test
     public void testKeyedKSumDoubleAllNaN() throws Exception {
-        assertQuery("""
-                        s\tksum
-                        aa\tnull
-                        bb\tnull
-                        """,
-                "select s, ksum(d) ksum from x order by s",
-                "create table x as " +
+        assertQuery("select s, ksum(d) ksum from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " null::double d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tksum
+                        aa\tnull
+                        bb\tnull
+                        """);
     }
 
     @Test
     public void testKeyedKSumDoubleSomeNaN() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
-        assertQuery("""
-                        s\tksum
-                        aa\t416262.4729439181
-                        bb\t416933.3416598129
-                        """,
-                "select s, ksum(d) ksum from x order by s",
-                "create table x as " +
+        assertQuery("select s, ksum(d) ksum from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " rnd_double(2) d" +
                         " from" +
                         " long_sequence(2000000)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tksum
+                        aa\t416262.4729439181
+                        bb\t416933.3416598129
+                        """);
     }
 
     @Test
     public void testKeyedKSumKSumDoubleSomeNaN() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
-        assertQueryExpectSize("""
-                        s\tksum\tksum1
-                        aa\t416262.47294392\t416262.47294392
-                        bb\t416933.34165981\t416933.34165981
-                        """,
-                "select s, round(ksum(d), 8) ksum, round(ksum(d), 8) ksum1 from x order by s",
-                "create table x as " +
+        assertQuery("select s, round(ksum(d), 8) ksum, round(ksum(d), 8) ksum1 from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " rnd_double(2) d" +
                         " from" +
                         " long_sequence(2000000)" +
-                        ")"
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tksum\tksum1
+                        aa\t416262.47294392\t416262.47294392
+                        bb\t416933.34165981\t416933.34165981
+                        """);
     }
 
     @Test
     public void testKeyedKSumSumDoubleSomeNaN() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
-        assertQuery("""
-                        s\tksum\tsum
-                        aa\t416262.4729439\t416262.4729439
-                        bb\t416933.3416598\t416933.3416598
-                        """,
-                "select s, round(ksum(d),7) as ksum, round(sum(d),7) as sum from x order by s",
-                "create table x as " +
+        assertQuery("select s, round(ksum(d),7) as ksum, round(sum(d),7) as sum from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " rnd_double(2) d" +
                         " from" +
                         " long_sequence(2000000)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tksum\tsum
+                        aa\t416262.4729439\t416262.4729439
+                        bb\t416933.3416598\t416933.3416598
+                        """);
     }
 
     @Test
     public void testKeyedMaxDateAllNaN() throws Exception {
-        assertQuery("""
-                        s\tmin
-                        aa\t
-                        bb\t
-                        """,
-                "select s, max(d) min from x order by s",
-                "create table x as " +
+        assertQuery("select s, max(d) min from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " cast(NaN as date) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmin
+                        aa\t
+                        bb\t
+                        """);
     }
 
     @Test
     public void testKeyedMaxDateSomeNaN() throws Exception {
-        assertQuery("""
-                        s\tmax
-                        aa\t1970-01-01T00:00:09.800Z
-                        bb\t1970-01-01T00:00:09.897Z
-                        """,
-                "select s, max(d) max from x order by s",
-                "create table x as " +
+        assertQuery("select s, max(d) max from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " cast(rnd_long(0, 10000, 1) as date) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmax
+                        aa\t1970-01-01T00:00:09.800Z
+                        bb\t1970-01-01T00:00:09.897Z
+                        """);
     }
 
     @Test
     public void testKeyedMaxDoubleAllNaN() throws Exception {
-        assertQuery("""
-                        s\tmax
-                        aa\tnull
-                        bb\tnull
-                        """,
-                "select s, max(d) max from x order by s",
-                "create table x as " +
+        assertQuery("select s, max(d) max from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " null::double d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmax
+                        aa\tnull
+                        bb\tnull
+                        """);
     }
 
     @Test
     public void testKeyedMaxIntAllNaN() throws Exception {
-        assertQueryExpectSize("""
-                        s\tmax
-                        aa\tnull
-                        bb\tnull
-                        """,
-                "select s, max(d) max from x order by s",
-                "create table x as " +
+        assertQuery("select s, max(d) max from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " cast(NaN as int) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")"
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmax
+                        aa\tnull
+                        bb\tnull
+                        """);
     }
 
     @Test
     public void testKeyedMaxIntSomeNaN() throws Exception {
-        assertQueryExpectSize("""
-                        s\tmax
-                        aa\t9910
-                        bb\t9947
-                        """,
-                "select s, max(d) max from x order by s",
-                "create table x as " +
+        assertQuery("select s, max(d) max from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " rnd_int(0, 10000, 1) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")"
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmax
+                        aa\t9910
+                        bb\t9947
+                        """);
     }
 
     @Test
     public void testKeyedMaxLongAllNaN() throws Exception {
-        assertQueryExpectSize("""
-                        s\tmax
-                        aa\tnull
-                        bb\tnull
-                        """,
-                "select s, max(d) max from x order by s",
-                "create table x as " +
+        assertQuery("select s, max(d) max from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " cast(NaN as long) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")"
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmax
+                        aa\tnull
+                        bb\tnull
+                        """);
     }
 
     @Test
     public void testKeyedMaxLongSomeNaN() throws Exception {
-        assertQuery("""
-                        s\tmax
-                        aa\t9800
-                        bb\t9897
-                        """,
-                "select s, max(d) max from x order by s",
-                "create table x as " +
+        assertQuery("select s, max(d) max from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " rnd_long(0, 10000, 1) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmax
+                        aa\t9800
+                        bb\t9897
+                        """);
     }
 
     @Test
     public void testKeyedMaxTimestampAllNaN() throws Exception {
-        assertQuery("""
-                        s\tmax
-                        aa\t
-                        bb\t
-                        """,
-                "select s, max(d) max from x order by s",
-                "create table x as " +
+        assertQuery("select s, max(d) max from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " cast(NaN as timestamp) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmax
+                        aa\t
+                        bb\t
+                        """);
     }
 
     @Test
     public void testKeyedMaxTimestampSomeNaN() throws Exception {
-        assertQuery("""
-                        s\tmax
-                        aa\t1970-01-01T00:00:00.009800Z
-                        bb\t1970-01-01T00:00:00.009897Z
-                        """,
-                "select s, max(d) max from x order by s",
-                "create table x as " +
+        assertQuery("select s, max(d) max from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " cast(rnd_long(0, 10000, 1) as timestamp) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmax
+                        aa\t1970-01-01T00:00:00.009800Z
+                        bb\t1970-01-01T00:00:00.009897Z
+                        """);
     }
 
     @Test
     public void testKeyedMinDateAllNaN() throws Exception {
-        assertQuery("""
-                        s\tmin
-                        aa\t
-                        bb\t
-                        """,
-                "select s, min(d) min from x order by s",
-                "create table x as " +
+        assertQuery("select s, min(d) min from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " cast(NaN as date) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmin
+                        aa\t
+                        bb\t
+                        """);
     }
 
     @Test
     public void testKeyedMinDateSomeNaN() throws Exception {
-        assertQueryExpectSize("""
-                        s\tmin
-                        aa\t1970-01-01T00:00:00.320Z
-                        bb\t1970-01-01T00:00:00.085Z
-                        """,
-                "select s, min(d) min from x order by s",
-                "create table x as " +
+        assertQuery("select s, min(d) min from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " cast(rnd_long(0, 10000, 1) as date) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")"
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmin
+                        aa\t1970-01-01T00:00:00.320Z
+                        bb\t1970-01-01T00:00:00.085Z
+                        """);
     }
 
     @Test
     public void testKeyedMinDoubleAllNaN() throws Exception {
-        assertQuery("""
-                        s\tmin
-                        aa\tnull
-                        bb\tnull
-                        """,
-                "select s, min(d) min from x order by s",
-                "create table x as " +
+        assertQuery("select s, min(d) min from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " null::double d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmin
+                        aa\tnull
+                        bb\tnull
+                        """);
     }
 
     @Test
     public void testKeyedMinIntAllNaN() throws Exception {
-        assertQueryExpectSize("""
-                        s\tmin
-                        aa\tnull
-                        bb\tnull
-                        """,
-                "select s, min(d) min from x order by s",
-                "create table x as " +
+        assertQuery("select s, min(d) min from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " cast(NaN as int) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")"
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmin
+                        aa\tnull
+                        bb\tnull
+                        """);
     }
 
     @Test
     public void testKeyedMinIntSomeNaN() throws Exception {
-        assertQuery("""
-                        s\tmin
-                        aa\t13
-                        bb\t324
-                        """,
-                "select s, min(d) min from x order by s",
-                "create table x as " +
+        assertQuery("select s, min(d) min from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " rnd_int(0, 10000, 1) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmin
+                        aa\t13
+                        bb\t324
+                        """);
     }
 
     @Test
     public void testKeyedMinLongAllNaN() throws Exception {
-        assertQuery("""
-                        s\tmin
-                        aa\tnull
-                        bb\tnull
-                        """,
-                "select s, min(d) min from x order by s",
-                "create table x as " +
+        assertQuery("select s, min(d) min from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " cast(NaN as long) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmin
+                        aa\tnull
+                        bb\tnull
+                        """);
     }
 
     @Test
     public void testKeyedMinLongSomeNaN() throws Exception {
-        assertQuery("""
-                        s\tmin
-                        aa\t320
-                        bb\t85
-                        """,
-                "select s, min(d) min from x order by s",
-                "create table x as " +
+        assertQuery("select s, min(d) min from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " rnd_long(0, 10000, 1) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmin
+                        aa\t320
+                        bb\t85
+                        """);
     }
 
     @Test
     public void testKeyedMinTimestampSomeNaN() throws Exception {
-        assertQuery("""
-                        s\tmin
-                        aa\t1970-01-01T00:00:00.000320Z
-                        bb\t1970-01-01T00:00:00.000085Z
-                        """,
-                "select s, min(d) min from x order by s",
-                "create table x as " +
+        assertQuery("select s, min(d) min from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " cast(rnd_long(0, 10000, 1) as timestamp) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmin
+                        aa\t1970-01-01T00:00:00.000320Z
+                        bb\t1970-01-01T00:00:00.000085Z
+                        """);
     }
 
     @Test
     public void testKeyedNSumDoubleAllNaN() throws Exception {
-        assertQuery("""
-                        s\tnsum
-                        aa\tnull
-                        bb\tnull
-                        """,
-                "select s, nsum(d) nsum from x order by s",
-                "create table x as " +
+        assertQuery("select s, nsum(d) nsum from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " null::double d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tnsum
+                        aa\tnull
+                        bb\tnull
+                        """);
     }
 
     @Test
     public void testKeyedNSumDoubleSomeNaN() throws Exception {
-        assertQuery("""
-                        s\tnsum
-                        aa\t37.816973659638755
-                        bb\t50.90642211368272
-                        """,
-                "select s, nsum(d) nsum from x order by s",
-                "create table x as " +
+        assertQuery("select s, nsum(d) nsum from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " rnd_double(2) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tnsum
+                        aa\t37.816973659638755
+                        bb\t50.90642211368272
+                        """);
     }
 
     @Test
     public void testKeyedSumDoubleAllNaN() throws Exception {
-        assertQueryExpectSize("""
-                        s\tsum
-                        aa\tnull
-                        bb\tnull
-                        """,
-                "select s, sum(d) sum from x order by s",
-                "create table x as " +
+        assertQuery("select s, sum(d) sum from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " null::double d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")"
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tsum
+                        aa\tnull
+                        bb\tnull
+                        """);
     }
 
     @Test
     public void testKeyedSumDoubleSomeNaN() throws Exception {
-        assertQuery("""
-                        s\tksum
-                        aa\t37.81697365963876
-                        bb\t50.906422113682694
-                        """,
-                "select s, sum(d) ksum from x order by s",
-                "create table x as " +
+        assertQuery("select s, sum(d) ksum from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " rnd_double(2) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tksum
+                        aa\t37.81697365963876
+                        bb\t50.906422113682694
+                        """);
     }
 
     @Test
     public void testKeyedSumIntAllNaN() throws Exception {
-        assertQuery("""
-                        s\tsum
-                        aa\tnull
-                        bb\tnull
-                        """,
-                "select s, sum(d) sum from x order by s",
-                "create table x as " +
+        assertQuery("select s, sum(d) sum from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " cast(NaN as int) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tsum
+                        aa\tnull
+                        bb\tnull
+                        """);
     }
 
     @Test
     public void testKeyedSumIntSomeNaN() throws Exception {
-        assertQuery("""
-                        s\tsum
-                        aa\t371694
-                        bb\t336046
-                        """,
-                "select s, sum(d) sum from x order by s",
-                "create table x as " +
+        assertQuery("select s, sum(d) sum from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " rnd_int(0, 10000, 1) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tsum
+                        aa\t371694
+                        bb\t336046
+                        """);
     }
 
     @Test
     public void testKeyedSumLongAllNaN() throws Exception {
-        assertQuery("""
-                        s\tsum
-                        aa\tnull
-                        bb\tnull
-                        """,
-                "select s, sum(d) sum from x order by s",
-                "create table x as " +
+        assertQuery("select s, sum(d) sum from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " cast(NaN as long) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tsum
+                        aa\tnull
+                        bb\tnull
+                        """);
     }
 
     @Test
     public void testKeyedSumLongSomeNaN() throws Exception {
-        assertQuery("""
-                        s\tsum
-                        aa\t396218
-                        bb\t483241
-                        """,
-                "select s, sum(d) sum from x order by s",
-                "create table x as " +
+        assertQuery("select s, sum(d) sum from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " rnd_long(0, 10000, 2) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tsum
+                        aa\t396218
+                        bb\t483241
+                        """);
     }
 
     @Test
@@ -954,16 +867,12 @@ public class GroupByFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testSumOverCrossJoinSubQuery() throws Exception {
-        assertQuery("""
-                        sum
-                        -0.5260093253
-                        """,
-                "SELECT round(sum(lth*pcp), 10) as sum " +
-                        "from ( " +
-                        "  select (x.lth - avg_x.lth) as lth, (x.pcp - avg_x.pcp) as pcp " +
-                        "  from x cross join (select avg(lth) as lth, avg(pcp) as pcp from x) avg_x " +
-                        ")",
-                "create table x as " +
+        assertQuery("SELECT round(sum(lth*pcp), 10) as sum " +
+                "from ( " +
+                "  select (x.lth - avg_x.lth) as lth, (x.pcp - avg_x.pcp) as pcp " +
+                "  from x cross join (select avg(lth) as lth, avg(pcp) as pcp from x) avg_x " +
+                ")")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(42) lth," +
@@ -971,77 +880,83 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 10000000000) k" +
                         " from" +
                         " long_sequence(100)" +
-                        ") timestamp(k) partition by day",
-                null,
-                false,
-                true
-        );
+                        ") timestamp(k) partition by day")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        sum
+                        -0.5260093253
+                        """);
     }
 
     @Test
     public void testVectorCountFirstColumnIsVar() throws Exception {
-        assertQuery("""
-                        s\tc
-                        101.99359297570571\t200
-                        """,
-                "select sum(d) s, count() c from x",
-                "create table x as " +
+        assertQuery("select sum(d) s, count() c from x")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_str() s," +
                         " rnd_double() d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                false,
-                true
-        );
+                        ")")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        s\tc
+                        101.99359297570571\t200
+                        """);
     }
 
     @Test
     public void testVectorKSumDoubleAllNaN() throws Exception {
-        assertQuery("""
-                        sum
-                        null
-                        """,
-                "select ksum(d) sum from x",
-                "create table x as " +
+        assertQuery("select ksum(d) sum from x")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " null::double d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                false,
-                true
-        );
+                        ")")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        sum
+                        null
+                        """);
     }
 
     @Test
     public void testVectorKSumOneDouble() throws Exception {
-        assertQuery("""
-                        sum
-                        416711.27751251
-                        """,
-                "select round(ksum(d),8) sum from x",
-                "create table x as " +
+        assertQuery("select round(ksum(d),8) sum from x")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(2) d" +
                         " from" +
                         " long_sequence(1000000)" +
-                        ")",
-                null,
-                false,
-                true
-        );
+                        ")")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        sum
+                        416711.27751251
+                        """);
     }
 
     @Test
     public void testVectorKeySumResizeMap() throws Exception {
-        assertQuery("""
+        assertQuery("select s, sum(d) from x order by s")
+                .ddl("create table x as " +
+                        "(" +
+                        "select" +
+                        " abs(rnd_int())%2048 s," +
+                        " rnd_double(2)*100 d" +
+                        " from" +
+                        " long_sequence(1000000)" +
+                        ")")
+                .expectSize()
+                .returns("""
                         s\tsum
                         0\t21996.396421529873
                         1\t18430.213351902767
@@ -3091,135 +3006,110 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                         2045\t19064.134057687435
                         2046\t19945.052057072502
                         2047\t19419.954464361075
-                        """,
-                "select s, sum(d) from x order by s",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " abs(rnd_int())%2048 s," +
-                        " rnd_double(2)*100 d" +
-                        " from" +
-                        " long_sequence(1000000)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testVectorNSumDoubleAllNaN() throws Exception {
-        assertQuery("""
-                        sum
-                        null
-                        """,
-                "select nsum(d) sum from x",
-                "create table x as " +
+        assertQuery("select nsum(d) sum from x")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " null::double d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                false,
-                true
-        );
+                        ")")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        sum
+                        null
+                        """);
     }
 
     @Test
     public void testVectorNSumOneDouble() throws Exception {
-        assertQuery("""
-                        sum
-                        833539.8830410708
-                        """,
-                "select nsum(d) sum from x",
-                "create table x as " +
+        assertQuery("select nsum(d) sum from x")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(2) d" +
                         " from" +
                         " long_sequence(2000000)" +
-                        ")",
-                null,
-                false,
-                true
-        );
+                        ")")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        sum
+                        833539.8830410708
+                        """);
     }
 
     @Test
     public void testVectorSumDoubleAndIntWithNullsDanglingEdge() throws Exception {
-        assertQuery("""
+        assertQuery("select sum(a),sum(b) from x")
+                .ddl("create table x as (select rnd_int(0,100,2) a, rnd_double(2) b from long_sequence(42))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         sum\tsum1
                         1824\t20.7839974146286
-                        """,
-                "select sum(a),sum(b) from x",
-                "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b from long_sequence(42))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testVectorSumOneDouble() throws Exception {
-        assertQuery("""
-                        sum
-                        9278.190426
-                        """,
-                "select round(sum(d),6) sum from x",
-                "create table x as " +
+        assertQuery("select round(sum(d),6) sum from x")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(2)*100 d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                false,
-                true
-        );
+                        ")")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        sum
+                        9278.190426
+                        """);
     }
 
     @Test
     public void testVectorSumOneDoubleInPos2() throws Exception {
-        assertQuery("""
-                        sum
-                        83462.04211
-                        """,
-                "select round(sum(d),6) sum from x",
-                "create table x as " +
+        assertQuery("select round(sum(d),6) sum from x")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_int() i," +
                         " rnd_double(2) d" +
                         " from" +
                         " long_sequence(200921)" +
-                        ")",
-                null,
-                false,
-                true
-        );
+                        ")")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        sum
+                        83462.04211
+                        """);
     }
 
     @Test
     public void testVectorSumOneDoubleMultiplePartitions() throws Exception {
-        assertQuery("""
-                        sum
-                        9278.190426089
-                        """,
-                "select round(sum(d), 9) as sum from x",
-                "create table x as " +
+        assertQuery("select round(sum(d), 9) as sum from x")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(2)*100 d," +
                         " timestamp_sequence(0, 10000000000) k" +
                         " from" +
                         " long_sequence(200)" +
-                        ") timestamp(k) partition by DAY",
-                null,
-                false,
-                true
-        );
+                        ") timestamp(k) partition by DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        sum
+                        9278.190426089
+                        """);
     }
 }

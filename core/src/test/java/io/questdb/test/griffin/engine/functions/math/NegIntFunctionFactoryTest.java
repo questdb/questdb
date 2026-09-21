@@ -33,17 +33,17 @@ public class NegIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testNaN() throws Exception {
-        assertQuery("column\nnull\n", "SELECT -null");
+        assertQuery("SELECT -null").expectSize().returns("column\nnull\n");
     }
 
     @Test
     public void testNegative() throws Exception {
-        assertQuery("column\n123\n", "SELECT -(-123)");
+        assertQuery("SELECT -(-123)").expectSize().returns("column\n123\n");
     }
 
     @Test
     public void testPositive() throws Exception {
-        assertQuery("column\n-123\n", "SELECT -123");
+        assertQuery("SELECT -123").expectSize().returns("column\n-123\n");
     }
 
     @Override

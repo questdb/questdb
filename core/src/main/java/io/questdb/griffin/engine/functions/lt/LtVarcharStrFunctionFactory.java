@@ -32,7 +32,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
@@ -63,14 +62,16 @@ public class LtVarcharStrFunctionFactory implements FunctionFactory {
         if (a.isConstant() && !b.isConstant()) {
             CharSequence constValue = a.getStrA(null);
             if (constValue == null) {
-                return BooleanConstant.FALSE;
+                // a is the VARCHAR-side null, arg=b is STR
+                return new LtStrFunctionFactory.StrNullSideFunc(b, true);
             }
             return new LtStrFunctionFactory.ConstOnLeftFunc(constValue, b);
         }
         if (!a.isConstant() && b.isConstant()) {
             Utf8Sequence constValue = b.getVarcharA(null);
             if (constValue == null) {
-                return BooleanConstant.FALSE;
+                // b is the STR-side null, arg=a is VARCHAR
+                return new LtVarcharFunctionFactory.VarcharNullSideFunc(a, false);
             }
             return new ConstOnRightFunc(a, constValue);
         }

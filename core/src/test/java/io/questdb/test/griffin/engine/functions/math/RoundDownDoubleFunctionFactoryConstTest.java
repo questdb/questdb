@@ -31,121 +31,101 @@ public class RoundDownDoubleFunctionFactoryConstTest extends AbstractCairoTest {
 
     @Test
     public void testLargeNegScale() throws Exception {
-        assertQuery(
-                "round_down\n" +
-                        "null\n",
-                "select round_down(14.7778, -18) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round_down(14.7778, -18) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round_down
+                        null
+                        """);
     }
 
     @Test
     public void testLargePosScale() throws Exception {
-        assertQuery(
-                "round_down\n" +
-                        "null\n",
-                "select round_down(14.7778, 18) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round_down(14.7778, 18) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round_down
+                        null
+                        """);
     }
 
     @Test
     public void testNegScaleHigherThanNumber() throws Exception {
-        assertQuery(
-                "round_down\n" +
-                        "-0.0\n",
-                "select round_down(-14.778, -5) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round_down(-14.778, -5) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round_down
+                        -0.0
+                        """);
     }
 
     @Test
     public void testNegScaleNegValue() throws Exception {
-        assertQuery(
-                "round_down\n" +
-                        "-10.0\n",
-                "select round_down(-14.778, -1) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round_down(-14.778, -1) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round_down
+                        -10.0
+                        """);
     }
 
     @Test
     public void testNegScalePosValue() throws Exception {
-        assertQuery(
-                "round_down\n" +
-                        "10.0\n",
-                "select round_down(14.778, -1) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round_down(14.778, -1) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round_down
+                        10.0
+                        """);
     }
 
     @Test
     public void testOKNegScale() throws Exception {
-        assertQuery(
-                "round_down\n" +
-                        "0.0\n",
-                "select round_down(14.7778, -13) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round_down(14.7778, -13) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round_down
+                        0.0
+                        """);
     }
 
     @Test
     public void testOKPosScale() throws Exception {
-        assertQuery(
-                "round_down\n" +
-                        "14.777800000000001\n",
-                "select round_down(14.7778, 13) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round_down(14.7778, 13) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round_down
+                        14.777800000000001
+                        """);
     }
 
     @Test
     public void testPosScaleHigherThanNumber() throws Exception {
-        assertQuery(
-                "round_down\n" +
-                        "-14.777999999999999\n",
-                "select round_down(-14.778, 7) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round_down(-14.778, 7) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round_down
+                        -14.777999999999999
+                        """);
     }
 
     @Test
     public void testPosScaleNegValue() throws Exception {
-        assertQuery(
-                "round_down\n" +
-                        "-100.9\n",
-                "select round_down(-100.9999, 1) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round_down(-100.9999, 1) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round_down
+                        -100.9
+                        """);
     }
 
     @Test
     public void testPosScalePosValue() throws Exception {
-        assertQuery(
-                "round_down\n" +
-                        "100.0\n",
-                "select round_down(100.01, 1) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round_down(100.01, 1) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round_down
+                        100.0
+                        """);
     }
 }

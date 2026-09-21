@@ -30,9 +30,11 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -138,10 +140,10 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationBinaryColumn() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -165,8 +167,17 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                     engine.print(query, expected, sqlExecutionContext);
                     engine.print(query1, expected1, sqlExecutionContext);
                     engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query1, sink, expected1);
+                    assertQuery(query)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns(expected);
+                    assertQuery(query1)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .returnsOnce(expected1);
                 },
                 configuration,
                 LOG
@@ -175,10 +186,10 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationBooleanFilter() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -201,7 +212,12 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                     final StringSink expected = new StringSink();
                     engine.print("x where filter_col = true", expected, sqlExecutionContext);
                     engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
-                    TestUtils.assertSql(engine, sqlExecutionContext, "x where filter_col = true", sink, expected);
+                    assertQuery("x where filter_col = true")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns(expected);
                 },
                 configuration,
                 LOG
@@ -210,10 +226,10 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationColTops() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute("create table x (id long, filter_col int, ts timestamp) timestamp(ts) partition by day;", sqlExecutionContext);
                     engine.execute(
@@ -253,8 +269,17 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                     engine.print(query2, expected2, sqlExecutionContext);
 
                     engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected1);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query2, sink, expected2);
+                    assertQuery(query)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns(expected1);
+                    assertQuery(query2)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .returnsOnce(expected2);
                 },
                 configuration,
                 LOG
@@ -263,10 +288,10 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationDateColumn() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -287,7 +312,13 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                     CharSequence query = "select max(a_date), min(a_date) from x where filter_col%11 = 9";
                     engine.print(query, expected, sqlExecutionContext);
                     engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected);
+                    assertQuery(query)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(expected);
                 },
                 configuration,
                 LOG
@@ -296,10 +327,10 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationFuzzMixedPartitions() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -321,7 +352,12 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                     final CharSequence query = generateRndInListSql("filter_col");
                     engine.print(query, expected1, sqlExecutionContext);
                     engine.execute("alter table x convert partition to parquet where ts < '1970-01-01T12:00:00Z'", sqlExecutionContext);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected1);
+                    assertQuery(query)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns(expected1);
                 },
                 configuration,
                 LOG
@@ -330,10 +366,10 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationGeoHashColumns() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -356,7 +392,12 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                     final CharSequence query = generateRndInListSql("filter_col");
                     engine.print(query, expected, sqlExecutionContext);
                     engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected);
+                    assertQuery(query)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns(expected);
                 },
                 configuration,
                 LOG
@@ -365,10 +406,10 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationIpv4Column() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -389,7 +430,12 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                     final CharSequence query = generateRndInListSql("filter_col");
                     engine.print(query, expected, sqlExecutionContext);
                     engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected);
+                    assertQuery(query)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns(expected);
                 },
                 configuration,
                 LOG
@@ -398,10 +444,10 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationLong256Column() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -421,7 +467,12 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                     final CharSequence query = generateRndInListSql("filter_col");
                     engine.print(query, expected, sqlExecutionContext);
                     engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected);
+                    assertQuery(query)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns(expected);
                 },
                 configuration,
                 LOG
@@ -430,10 +481,10 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationMultiplePartitions() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -455,7 +506,12 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                     final CharSequence query = generateRndInListSql("filter_col");
                     engine.print(query, expected, sqlExecutionContext);
                     engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected);
+                    assertQuery(query)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns(expected);
                 },
                 configuration,
                 LOG
@@ -464,10 +520,10 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationSelectSpecificColumns() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -489,7 +545,11 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                     final StringSink expected = new StringSink();
                     engine.print("select id, a_double, a_symbol from x where filter_col%15 = 13", expected, sqlExecutionContext);
                     engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
-                    TestUtils.assertSql(engine, sqlExecutionContext, "select id, a_double, a_symbol from x where filter_col%15 = 13", sink, expected);
+                    assertQuery("select id, a_double, a_symbol from x where filter_col%15 = 13")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .returns(expected);
                 },
                 configuration,
                 LOG
@@ -498,10 +558,10 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationUuidColumn() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -522,7 +582,12 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                     CharSequence query = generateRndInListSql("filter_col");
                     engine.print(query, expected, sqlExecutionContext);
                     engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected);
+                    assertQuery(query)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns(expected);
                 },
                 configuration,
                 LOG
@@ -531,10 +596,10 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationVarcharFilter() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -555,7 +620,12 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                     final StringSink expected = new StringSink();
                     engine.print("x where filter_col = 'target'", expected, sqlExecutionContext);
                     engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
-                    TestUtils.assertSql(engine, sqlExecutionContext, "x where filter_col = 'target'", sink, expected);
+                    assertQuery("x where filter_col = 'target'")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns(expected);
                 },
                 configuration,
                 LOG
@@ -574,10 +644,10 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationWithLimit() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -604,8 +674,19 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                     engine.print(query, expected, sqlExecutionContext);
                     engine.print(query2, expected2, sqlExecutionContext);
                     engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query2, sink, expected2);
+                    assertQuery(query)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns(expected);
+                    assertQuery(query2)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns(expected2);
                 },
                 configuration,
                 LOG
@@ -614,10 +695,10 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLateMaterializationWithNulls() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -640,7 +721,12 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                     final StringSink query = generateRndInListSql("filter_col");
                     engine.print(query, expected, sqlExecutionContext);
                     engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected);
+                    assertQuery(query)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns(expected);
                 },
                 configuration,
                 LOG
@@ -736,10 +822,13 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
     }
 
     private void testLateMaterializationAllTypesLowSelectivity(CharSequence query, boolean checkStrLen, boolean checkVarcharLen) throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        // Smaller table on slow CI runners; expected is computed from the same data pre-conversion,
+        // so the assertion holds at any size.
+        final int rowCount = Os.isLinux() ? 2000 : 500;
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -773,8 +862,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                                         rnd_decimal(76, 10, 0) a_decimal256,
                                         cast(timestamp_sequence(0,1000000) as date) a_date,
                                         timestamp_sequence(0, 60000000) as ts
-                                      from long_sequence(2000)
-                                    ) timestamp(ts) partition by day;""",
+                                      from long_sequence(""" + rowCount + ")) timestamp(ts) partition by day;",
                             sqlExecutionContext
                     );
 
@@ -804,7 +892,11 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                     }
 
                     engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected);
+                    assertQuery(query)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .returnsOnce(expected);
 
                     if (checkStrLen) {
                         try (RecordCursorFactory factory = engine.select("select first(a_string) from x where id%12=4 group by a_symbol", sqlExecutionContext)) {
@@ -839,10 +931,10 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
     private void testLateMaterializationWithArrayColumn(boolean rawArrayEncoding) throws Exception {
         node1.setProperty(CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, rawArrayEncoding);
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             """
@@ -978,12 +1070,38 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
 
                     engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
 
-                    TestUtils.assertSql(engine, sqlExecutionContext, query0, sink, expected0);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query1, sink, expected1);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query2, sink, expected2);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query3, sink, expected3);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query4, sink, expected4);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query5, sink, expected5);
+                    assertQuery(query0)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .returnsOnce(expected0);
+                    assertQuery(query1)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns(expected1);
+                    assertQuery(query2)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .returnsOnce(expected2);
+                    assertQuery(query3)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .returnsOnce(expected3);
+                    assertQuery(query4)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .returns(expected4);
+                    assertQuery(query5)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns(expected5);
                 },
                 configuration,
                 LOG

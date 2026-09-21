@@ -134,6 +134,14 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         }
         size = 0;
         ff = null;
+        // Drop the append bounds of the mapping we no longer own. checkAndExtend() returns
+        // early for any address at or below lim, so a stale lim lets jumpTo()/appendAddressFor()
+        // hand out pointers into unmapped space instead of failing, and zero() -- which memsets
+        // lim - pageAddress bytes from pageAddress, already nulled above -- would memset lim
+        // bytes starting at address 0. Reset unconditionally: a close on an instance that never
+        // mapped anything must end in the same clean state, same as size and ff.
+        lim = 0;
+        appendAddress = 0;
     }
 
     @Override
@@ -254,6 +262,52 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     public void skip(long bytes) {
         checkAndExtend(appendAddress + bytes);
         appendAddress += bytes;
+    }
+
+    public void swapState(MemoryCMARWImpl other) {
+        long tFd = this.fd;
+        this.fd = other.fd;
+        other.fd = tFd;
+
+        long tPage = this.pageAddress;
+        this.pageAddress = other.pageAddress;
+        other.pageAddress = tPage;
+
+        long tLim = this.lim;
+        this.lim = other.lim;
+        other.lim = tLim;
+
+        long tSize = this.size;
+        this.size = other.size;
+        other.size = tSize;
+
+        long tApp = this.appendAddress;
+        this.appendAddress = other.appendAddress;
+        other.appendAddress = tApp;
+
+        FilesFacade tFf = this.ff;
+        this.ff = other.ff;
+        other.ff = tFf;
+
+        long tSeg = this.extendSegmentMsb;
+        this.extendSegmentMsb = other.extendSegmentMsb;
+        other.extendSegmentMsb = tSeg;
+
+        long tMin = this.minMappedMemorySize;
+        this.minMappedMemorySize = other.minMappedMemorySize;
+        other.minMappedMemorySize = tMin;
+
+        int tMad = this.madviseOpts;
+        this.madviseOpts = other.madviseOpts;
+        other.madviseOpts = tMad;
+
+        int tTag = this.memoryTag;
+        this.memoryTag = other.memoryTag;
+        other.memoryTag = tTag;
+
+        boolean tCof = this.closeFdOnClose;
+        this.closeFdOnClose = other.closeFdOnClose;
+        other.closeFdOnClose = tCof;
     }
 
     @Override

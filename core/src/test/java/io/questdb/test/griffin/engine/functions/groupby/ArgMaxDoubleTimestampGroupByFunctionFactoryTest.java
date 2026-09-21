@@ -24,9 +24,9 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -61,20 +61,21 @@ import org.junit.Test;
 public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testArgMaxAllNull() throws SqlException {
+    public void testArgMaxAllNull() throws Exception {
         execute("create table tab (value double, key timestamp)");
 
         execute("insert into tab values (null, null)");
         execute("insert into tab values (null, null)");
         execute("insert into tab values (null, null)");
 
-        assertSql(
-                """
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         arg_max
                         null
-                        """,
-                "select arg_max(value, key) from tab"
-        );
+                        """);
     }
 
     @Test
@@ -85,31 +86,30 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
                 "timestamp_sequence(0, 1000000) key " +
                 "from long_sequence(10000))");
 
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
 
                         // Verify the query plan shows parallel execution
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "explain " + sql,
-                                sink,
-                                """
-                                        QUERY PLAN
-                                        Encode sort light
-                                          keys: [sym]
-                                            Async Group By workers: 4
-                                              keys: [sym]
-                                              values: [arg_max(value,key)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tab
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .assertsPlan(
                                         """
-                        );
+                                                Encode sort light
+                                                  keys: [sym]
+                                                    Async Group By workers: 4
+                                                      keys: [sym]
+                                                      values: [arg_max(value,key)]
+                                                      filter: null
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: tab
+                                                """
+                                );
                     },
                     configuration,
                     LOG
@@ -126,26 +126,27 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
                 "  cast(null as timestamp) key " +
                 "from long_sequence(100000))");
 
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
 
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                sql,
-                                sink,
-                                """
-                                        sym\targ_max
-                                        A\tnull
-                                        B\tnull
-                                        C\tnull
-                                        D\tnull
-                                        E\tnull
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns(
                                         """
-                        );
+                                                sym\targ_max
+                                                A\tnull
+                                                B\tnull
+                                                C\tnull
+                                                D\tnull
+                                                E\tnull
+                                                """
+                                );
                     },
                     configuration,
                     LOG
@@ -162,10 +163,10 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
                 "  timestamp_sequence(0, 1000) key " +
                 "from long_sequence(2000000))");
 
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
 
                         TestUtils.assertSqlCursors(
@@ -191,10 +192,10 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
                 "  case when x <= 1000000 then cast(null as timestamp) else timestamp_sequence(0, 1000) end key " +
                 "from long_sequence(2000000))");
 
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
 
                         TestUtils.assertSqlCursors(
@@ -220,10 +221,10 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
                 "  case when x % 2 = 0 then cast(null as timestamp) else timestamp_sequence(0, 1000) end key " +
                 "from long_sequence(2000000))");
 
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
 
                         TestUtils.assertSqlCursors(
@@ -241,7 +242,7 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
     }
 
     @Test
-    public void testArgMaxSimple() throws SqlException {
+    public void testArgMaxSimple() throws Exception {
         execute("create table tab (value double, key timestamp)");
 
         execute("insert into tab values (10.0, '2023-01-01T00:00:00.000000Z')");
@@ -249,17 +250,18 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
         execute("insert into tab values (30.0, '2023-01-02T00:00:00.000000Z')");
 
         // key='2023-01-03' is max, so value should be 20.0
-        assertSql(
-                """
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         arg_max
                         20.0
-                        """,
-                "select arg_max(value, key) from tab"
-        );
+                        """);
     }
 
     @Test
-    public void testArgMaxWithGroupBy() throws SqlException {
+    public void testArgMaxWithGroupBy() throws Exception {
         execute("create table tab (sym symbol, value double, key timestamp)");
 
         execute("insert into tab values ('A', 10.0, '2023-01-01T00:00:00.000000Z')");
@@ -268,18 +270,18 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
         execute("insert into tab values ('B', 100.0, '2023-01-05T00:00:00.000000Z')");
         execute("insert into tab values ('B', 200.0, '2023-01-04T00:00:00.000000Z')");
 
-        assertSql(
-                """
+        assertQuery("select sym, arg_max(value, key) from tab order by sym")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         sym\targ_max
                         A\t20.0
                         B\t100.0
-                        """,
-                "select sym, arg_max(value, key) from tab order by sym"
-        );
+                        """);
     }
 
     @Test
-    public void testArgMaxWithNullKey() throws SqlException {
+    public void testArgMaxWithNullKey() throws Exception {
         execute("create table tab (value double, key timestamp)");
 
         execute("insert into tab values (10.0, null)");
@@ -287,17 +289,18 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
         execute("insert into tab values (30.0, '2023-01-02T00:00:00.000000Z')");
 
         // key='2023-01-03' is max (null is ignored), so value should be 20.0
-        assertSql(
-                """
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         arg_max
                         20.0
-                        """,
-                "select arg_max(value, key) from tab"
-        );
+                        """);
     }
 
     @Test
-    public void testArgMaxWithNullValue() throws SqlException {
+    public void testArgMaxWithNullValue() throws Exception {
         execute("create table tab (value double, key timestamp)");
 
         execute("insert into tab values (null, '2023-01-05T00:00:00.000000Z')");
@@ -305,12 +308,13 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
         execute("insert into tab values (30.0, '2023-01-02T00:00:00.000000Z')");
 
         // key='2023-01-05' is max, but value is null
-        assertSql(
-                """
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         arg_max
                         null
-                        """,
-                "select arg_max(value, key) from tab"
-        );
+                        """);
     }
 }

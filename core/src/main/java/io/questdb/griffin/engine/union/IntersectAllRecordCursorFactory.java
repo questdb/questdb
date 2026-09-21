@@ -53,7 +53,7 @@ public class IntersectAllRecordCursorFactory extends AbstractSetRecordCursorFact
         super(metadata, factoryA, factoryB, castFunctionsA, castFunctionsB);
         Map map = null;
         try {
-            map = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes);
+            map = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes, false);
             if (castFunctionsA == null && castFunctionsB == null) {
                 cursor = new IntersectAllRecordCursor(map, recordSink);
             } else {
@@ -74,8 +74,9 @@ public class IntersectAllRecordCursorFactory extends AbstractSetRecordCursorFact
 
     @Override
     protected void _close() {
-        Misc.free(cursor);
-        super._close();
+        final AbstractSetRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        closeSetOwnersBestEffort(cursor);
     }
 
     @Override

@@ -34,16 +34,13 @@ public class EqSymFunctionFactoryTest extends AbstractCairoTest {
     public void testLargeSymbolTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_symbol(4000,1,7,3) a, rnd_symbol(4000,1,7,3) b from long_sequence(5000))");
-            assertQuery(
-                    """
+            assertQuery("select count() from x where a = b")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count
                             288
-                            """,
-                    "select count() from x where a = b",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -51,8 +48,8 @@ public class EqSymFunctionFactoryTest extends AbstractCairoTest {
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_symbol('1','3','5',null) a, rnd_symbol('1','4','5',null) b from long_sequence(50))");
-            assertQuery(
-                    """
+            assertQuery("select * from x where a = b")
+                    .returns("""
                             a\tb
                             1\t1
                             \t
@@ -63,12 +60,7 @@ public class EqSymFunctionFactoryTest extends AbstractCairoTest {
                             5\t5
                             \t
                             1\t1
-                            """,
-                    "select * from x where a = b",
-                    null,
-                    true,
-                    false
-            );
+                            """);
         });
     }
 }

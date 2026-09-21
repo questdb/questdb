@@ -42,8 +42,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
+
     public static Function newInstance(Function arg, int targetType, int position) {
         return switch (ColumnType.tagOf(targetType)) {
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
@@ -61,8 +63,8 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
@@ -90,7 +92,7 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public void getDecimal128(Record rec, Decimal128 decimal) {
-            double d = this.arg.getDouble(rec);
+            double d = arg.getDouble(rec);
             if (!Numbers.isFinite(d)) {
                 decimal.ofRawNull();
                 return;
@@ -134,7 +136,7 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public void getDecimal256(Record rec, Decimal256 decimal) {
-            double d = this.arg.getDouble(rec);
+            double d = arg.getDouble(rec);
             if (!Numbers.isFinite(d)) {
                 decimal.ofRawNull();
                 return;
@@ -164,7 +166,7 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
         }
 
         protected boolean cast(Record rec) {
-            double d = this.arg.getDouble(rec);
+            double d = arg.getDouble(rec);
             if (!Numbers.isFinite(d)) {
                 return false;
             }

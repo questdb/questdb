@@ -258,139 +258,17 @@ public class VectFuzzTest {
     public void testDedupWithKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = TestUtils.generateRandom(null);
-            int indexLen = rnd.nextInt(100_000);
+            assertDedupWithKey(rnd, rnd.nextInt(100_000));
+        });
+    }
 
-            int keyCount = 1 + rnd.nextInt(3);
-            assert keyCount > 0 && keyCount < 5;
-
-            ObjList<DirectLongList> keys = new ObjList<>();
-            int keyMax = 1 + rnd.nextInt(4);
-
-            try (DirectLongList index = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
-                for (int i = 0; i < keyCount; i++) {
-                    keys.add(new DirectLongList(indexLen, MemoryTag.NATIVE_DEFAULT));
-                }
-
-                LongHashSet distinctKeys = new LongHashSet();
-                LongList tsAndKey = new LongList();
-
-                // Generate data
-                int tsVal = 1000;
-                for (int i = 0; i < indexLen; i++) {
-                    if (rnd.nextDouble() < 0.1) {
-                        tsVal += rnd.nextInt(50);
-                    }
-                    index.add(tsVal);
-                    index.add(i);
-
-                    // Encode keys in 4 byte integer
-                    int combinedKey = 0;
-                    for (int k = 0; k < keyCount; k++) {
-                        int keyVal = rnd.nextInt(keyMax);
-                        keys.get(k).add(keyVal);
-                        combinedKey = combinedKey << 8;
-                        combinedKey += keyVal;
-                    }
-                    distinctKeys.add(Numbers.encodeLowHighInts(tsVal, combinedKey));
-                    tsAndKey.add(Numbers.encodeLowHighInts(combinedKey, tsVal));
-                }
-
-                // Squash keys from longs to ints
-                for (int k = 0; k < keyCount; k++) {
-                    DirectLongList keyList = keys.get(k);
-                    for (int i = 0; i < indexLen / 2 + 1; i++) {
-                        int high = 2 * i + 1 < indexLen ? (int) getIndexChecked(keyList, 2L * i + 1) : 0;
-                        int low = 2 * i < indexLen ? (int) getIndexChecked(keyList, 2L * i) : 0;
-                        keyList.set(i, Numbers.encodeLowHighInts(low, high));
-                    }
-                }
-
-                try (DedupColumnCommitAddresses colBuffs = new DedupColumnCommitAddresses()) {
-                    try (DirectLongList copy = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
-                        colBuffs.setDedupColumnCount(keyCount);
-                        long dedupColBuffPtr = colBuffs.allocateBlock();
-                        for (int k = 0; k < keyCount; k++) {
-                            long addr = DedupColumnCommitAddresses.setColValues(
-                                    dedupColBuffPtr,
-                                    k,
-                                    ColumnType.SYMBOL,
-                                    4,
-                                    0
-                            );
-
-                            DedupColumnCommitAddresses.setColAddressValues(
-                                    addr,
-                                    keys.get(k).getAddress(),
-                                    0L,
-                                    0L
-                            );
-
-                            DedupColumnCommitAddresses.setO3DataAddressValues(
-                                    addr,
-                                    0L,
-                                    0L,
-                                    0L
-                            );
-
-                            DedupColumnCommitAddresses.setReservedValuesSet2(
-                                    addr,
-                                    0L,
-                                    0L
-                            );
-                        }
-                        copy.setPos(indexLen * 2L);
-
-                        long dedupCount = Vect.dedupSortedTimestampIndexIntKeysChecked(
-                                index.getAddress(),
-                                indexLen,
-                                index.getAddress(),
-                                copy.getAddress(),
-                                keyCount,
-                                DedupColumnCommitAddresses.getAddress(dedupColBuffPtr)
-                        );
-                        if (distinctKeys.size() == indexLen && dedupCount == -2) {
-                            // No duplicates detected and that's correct. Assert that index is not messed up.
-                            dedupCount = indexLen;
-                        } else {
-                            Assert.assertEquals(distinctKeys.size(), dedupCount);
-                        }
-
-                        // assert indexes of the rows are distinct and in correct range
-                        boolean[] indexFound = new boolean[(int) indexLen];
-                        tsAndKey.sort();
-                        int expectedValueIndex = -1;
-                        long expectedValue = -1;
-
-                        for (int i = 0; i < dedupCount; i++) {
-                            expectedValueIndex = getNextDistinctIndex(tsAndKey, expectedValueIndex, expectedValue);
-                            expectedValue = tsAndKey.get(expectedValueIndex);
-
-                            long rowIndex = getIndexChecked(index, i * 2L + 1L);
-                            Assert.assertTrue("row index not in expected range", rowIndex >= 0 && rowIndex < indexLen);
-                            Assert.assertFalse("row index is not distinct", indexFound[(int) rowIndex]);
-                            indexFound[(int) rowIndex] = true;
-
-                            Assert.assertEquals(Numbers.decodeHighInt(expectedValue), getIndexChecked(index, i * 2L));
-                            int expectedCombinedKey = Numbers.decodeLowInt(expectedValue);
-
-                            int combinedKey = 0;
-                            for (int k = 0; k < keyCount; k++) {
-                                DirectLongList keyList = keys.get(k);
-                                Assert.assertTrue("key index not in expected range", rowIndex / 2L < keyList.size());
-                                long keyLong = getIndexChecked(keyList, rowIndex / 2L);
-                                int key = rowIndex % 2 == 0 ? Numbers.decodeLowInt(keyLong) : Numbers.decodeHighInt(keyLong);
-                                Assert.assertTrue(key < 256);
-                                combinedKey = combinedKey << 8;
-                                combinedKey += key;
-                            }
-
-                            Assert.assertEquals(expectedCombinedKey, combinedKey);
-                        }
-                    }
-                }
-            } finally {
-                Misc.freeObjList(keys);
-            }
+    @Test
+    public void testDedupWithKeyBoundaries() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = new Rnd(1, 2);
+            assertDedupWithKey(rnd, 0);
+            assertDedupWithKey(rnd, 1);
+            assertDedupWithKey(rnd, 2);
         });
     }
 
@@ -700,6 +578,86 @@ public class VectFuzzTest {
                         }
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testMergeDedupStringKeyOffsetAbove2GiB() throws Exception {
+        // Regression test for the SIGSEGV in the native dedup merge with a STRING dedup key.
+        // MergeStrBinColumnComparer<int32_t, 2> reads the existing-column var-data offset into
+        // a 32-bit int, so an offset >= 2^31 is sign-flipped negative and
+        // (var_data_base + offset) lands ~2 GiB BELOW the mapped buffer.
+        //
+        // With the bug present this crashes the JVM inside merge_dedup_long_index_int_keys
+        // (hs_err_pid log, problematic frame "libquestdb.so ... MergeStrBinColumnComparer<int, 2>").
+        // In the rare case the wild address is mapped, the comparison goes wrong instead and the
+        // assertion below fails - either way the test is red on the buggy library. With the offset
+        // read as int64_t the comparer reads the real string and the merge returns the single row.
+        TestUtils.assertMemoryLeak(() -> {
+            final long bigOffset = 1L << 31;          // 2_147_483_648 -> INT_MIN when truncated to int32
+            final long colVarLen = bigOffset + 16;    // room for [int32 len][1 UTF-16 char] at bigOffset
+            // Sparse: only the page at bigOffset is touched, so RSS stays ~one page despite the 2 GiB span.
+            final long colVar = Unsafe.malloc(colVarLen, MemoryTag.NATIVE_DEFAULT);
+            try {
+                // Existing-column STRING value "A" parked at the >2 GiB offset: len=1 char, then 'A'.
+                Unsafe.putInt(colVar + bigOffset, 1);
+                Unsafe.putChar(colVar + bigOffset + 4, 'A');
+
+                try (DirectLongList src = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT);       // existing-column timestamps
+                     DirectLongList colAux = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT);    // STRING .i: int64 offsets
+                     DirectLongList index = new DirectLongList(2, MemoryTag.NATIVE_DEFAULT);     // O3 (ts, rowIndex) pairs
+                     DirectLongList o3Aux = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT);     // O3 STRING .i
+                     DirectLongList o3Var = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT);     // O3 STRING .d
+                     DirectLongList dest = new DirectLongList(4, MemoryTag.NATIVE_DEFAULT)) {
+
+                    // One existing row at ts=1000, its string sitting at the huge offset.
+                    src.add(1000);
+                    colAux.add(bigOffset);
+
+                    // One O3 row at the SAME ts=1000 -> forces the dedup conflict path -> invokes the comparer.
+                    index.add(1000);   // ts
+                    index.add(0);      // O3 row index -> comparer's index_index
+
+                    // O3 STRING value "A" at offset 0, so a correct comparison yields equal.
+                    Unsafe.putInt(o3Var.getAddress(), 1);
+                    Unsafe.putChar(o3Var.getAddress() + 4, 'A');
+                    o3Aux.add(0);
+
+                    dest.setPos(4);
+                    try (DedupColumnCommitAddresses colBuffs = new DedupColumnCommitAddresses()) {
+                        colBuffs.setDedupColumnCount(1);
+                        long block = colBuffs.allocateBlock();
+                        long addr = DedupColumnCommitAddresses.setColValues(
+                                block,
+                                0,
+                                ColumnType.STRING,
+                                -1, // var-len marker
+                                0   // column top
+                        );
+                        DedupColumnCommitAddresses.setColAddressValues(addr, colAux.getAddress(), colVar, colVarLen);
+                        DedupColumnCommitAddresses.setO3DataAddressValues(addr, o3Aux.getAddress(), o3Var.getAddress(), 6);
+
+                        long mergedCount = Vect.mergeDedupTimestampWithLongIndexIntKeys(
+                                src.getAddress(),
+                                0,
+                                src.size() - 1,
+                                index.getAddress(),
+                                0,
+                                index.size() / 2 - 1,
+                                dest.getAddress(),
+                                1,
+                                DedupColumnCommitAddresses.getAddress(block)
+                        );
+
+                        // Timestamps collide and the STRING keys are equal, so the O3 row (index 0)
+                        // wins -> exactly one merged row {ts=1000, i=0}.
+                        dest.setPos(mergedCount * 2);
+                        Assert.assertEquals("1000 0:i", printMergeIndex(dest));
+                    }
+                }
+            } finally {
+                Unsafe.free(colVar, colVarLen, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -1699,6 +1657,140 @@ public class VectFuzzTest {
             sink.put(getIndexChecked(dest, i)).put(' ').put(index).put(':').put(bit);
         }
         return sink.toString();
+    }
+
+    private void assertDedupWithKey(Rnd rnd, int indexLen) {
+        int keyCount = 1 + rnd.nextInt(3);
+        assert keyCount > 0 && keyCount < 5;
+
+        ObjList<DirectLongList> keys = new ObjList<>();
+        int keyMax = 1 + rnd.nextInt(4);
+
+        try (DirectLongList index = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
+            for (int i = 0; i < keyCount; i++) {
+                keys.add(new DirectLongList(indexLen, MemoryTag.NATIVE_DEFAULT));
+            }
+
+            LongHashSet distinctKeys = new LongHashSet();
+            LongList tsAndKey = new LongList();
+
+            // Generate data
+            int tsVal = 1000;
+            for (int i = 0; i < indexLen; i++) {
+                if (rnd.nextDouble() < 0.1) {
+                    tsVal += rnd.nextInt(50);
+                }
+                index.add(tsVal);
+                index.add(i);
+
+                // Encode keys in 4 byte integer
+                int combinedKey = 0;
+                for (int k = 0; k < keyCount; k++) {
+                    int keyVal = rnd.nextInt(keyMax);
+                    keys.get(k).add(keyVal);
+                    combinedKey = combinedKey << 8;
+                    combinedKey += keyVal;
+                }
+                distinctKeys.add(Numbers.encodeLowHighInts(tsVal, combinedKey));
+                tsAndKey.add(Numbers.encodeLowHighInts(combinedKey, tsVal));
+            }
+
+            // Squash keys from longs to ints
+            for (int k = 0; k < keyCount; k++) {
+                DirectLongList keyList = keys.get(k);
+                for (int i = 0; i < (indexLen + 1) / 2; i++) {
+                    int high = 2 * i + 1 < indexLen ? (int) getIndexChecked(keyList, 2L * i + 1) : 0;
+                    int low = 2 * i < indexLen ? (int) getIndexChecked(keyList, 2L * i) : 0;
+                    keyList.set(i, Numbers.encodeLowHighInts(low, high));
+                }
+            }
+
+            try (DedupColumnCommitAddresses colBuffs = new DedupColumnCommitAddresses()) {
+                try (DirectLongList copy = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
+                    colBuffs.setDedupColumnCount(keyCount);
+                    long dedupColBuffPtr = colBuffs.allocateBlock();
+                    for (int k = 0; k < keyCount; k++) {
+                        long addr = DedupColumnCommitAddresses.setColValues(
+                                dedupColBuffPtr,
+                                k,
+                                ColumnType.SYMBOL,
+                                4,
+                                0
+                        );
+
+                        DedupColumnCommitAddresses.setColAddressValues(
+                                addr,
+                                keys.get(k).getAddress(),
+                                0L,
+                                0L
+                        );
+
+                        DedupColumnCommitAddresses.setO3DataAddressValues(
+                                addr,
+                                0L,
+                                0L,
+                                0L
+                        );
+
+                        DedupColumnCommitAddresses.setReservedValuesSet2(
+                                addr,
+                                0L,
+                                0L
+                        );
+                    }
+                    copy.setPos(indexLen * 2L);
+
+                    long dedupCount = Vect.dedupSortedTimestampIndexIntKeysChecked(
+                            index.getAddress(),
+                            indexLen,
+                            index.getAddress(),
+                            copy.getAddress(),
+                            keyCount,
+                            DedupColumnCommitAddresses.getAddress(dedupColBuffPtr)
+                    );
+                    if (distinctKeys.size() == indexLen && dedupCount == -2) {
+                        // No duplicates detected and that's correct. Assert that index is not messed up.
+                        dedupCount = indexLen;
+                    } else {
+                        Assert.assertEquals(distinctKeys.size(), dedupCount);
+                    }
+
+                    // assert indexes of the rows are distinct and in correct range
+                    boolean[] indexFound = new boolean[(int) indexLen];
+                    tsAndKey.sort();
+                    int expectedValueIndex = -1;
+                    long expectedValue = -1;
+
+                    for (int i = 0; i < dedupCount; i++) {
+                        expectedValueIndex = getNextDistinctIndex(tsAndKey, expectedValueIndex, expectedValue);
+                        expectedValue = tsAndKey.get(expectedValueIndex);
+
+                        long rowIndex = getIndexChecked(index, i * 2L + 1L);
+                        Assert.assertTrue("row index not in expected range", rowIndex >= 0 && rowIndex < indexLen);
+                        Assert.assertFalse("row index is not distinct", indexFound[(int) rowIndex]);
+                        indexFound[(int) rowIndex] = true;
+
+                        Assert.assertEquals(Numbers.decodeHighInt(expectedValue), getIndexChecked(index, i * 2L));
+                        int expectedCombinedKey = Numbers.decodeLowInt(expectedValue);
+
+                        int combinedKey = 0;
+                        for (int k = 0; k < keyCount; k++) {
+                            DirectLongList keyList = keys.get(k);
+                            Assert.assertTrue("key index not in expected range", rowIndex / 2L < keyList.size());
+                            long keyLong = getIndexChecked(keyList, rowIndex / 2L);
+                            int key = rowIndex % 2 == 0 ? Numbers.decodeLowInt(keyLong) : Numbers.decodeHighInt(keyLong);
+                            Assert.assertTrue(key < 256);
+                            combinedKey = combinedKey << 8;
+                            combinedKey += key;
+                        }
+
+                        Assert.assertEquals(expectedCombinedKey, combinedKey);
+                    }
+                }
+            }
+        } finally {
+            Misc.freeObjList(keys);
+        }
     }
 
     private void assertEqualLongs(long expected, long actual, int longCount) {

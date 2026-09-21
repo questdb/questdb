@@ -34,70 +34,54 @@ public class SumIntVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testAddColumn() throws Exception {
         // fix page frame size, because it affects AVG accuracy
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
-        assertQuery(
-                """
+        assertQuery("select round(avg(f),9) avg from tab")
+                .ddl("create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))")
+                .mutateWith("alter table tab add column b int")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         avg
                         5261.376146789
-                        """,
-                "select round(avg(f),9) avg from tab",
-                "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))",
-                null,
-                "alter table tab add column b int",
-                """
+                        """, """
                         avg
                         5261.376146789
-                        """,
-                false,
-                true,
-                false
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select round(avg(f),6) avg, sum(b) sum from tab")
+                .ddl("insert into tab select rnd_int(2, 10, 2), rnd_int(93, 967, 4) from long_sequence(78057)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         avg\tsum
                         14.792007\t37172355
-                        """,
-                "select round(avg(f),6) avg, sum(b) sum from tab",
-                "insert into tab select rnd_int(2, 10, 2), rnd_int(93, 967, 4) from long_sequence(78057)",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select sum(f) from tab")
+                .ddl("create table tab as (select cast(null as int) f from long_sequence(33))")
+                .mutateWith("insert into tab select 4567866 from long_sequence(1)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         sum
                         null
-                        """,
-                "select sum(f) from tab",
-                "create table tab as (select cast(null as int) f from long_sequence(33))",
-                null,
-                "insert into tab select 4567866 from long_sequence(1)",
-                """
+                        """, """
                         sum
                         4567866
-                        """,
-                false,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
     public void testSimple() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select sum(f) from tab")
+                .ddl("create table tab as (select rnd_int(-78783, 123239980, 2) f from long_sequence(181))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         sum
                         8524012131
-                        """,
-                "select sum(f) from tab",
-                "create table tab as (select rnd_int(-78783, 123239980, 2) f from long_sequence(181))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 }

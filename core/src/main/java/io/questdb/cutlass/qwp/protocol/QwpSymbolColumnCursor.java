@@ -31,6 +31,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.MAX_SYMBOL_DICTIONARY_SIZE;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_SYMBOL;
@@ -53,9 +54,10 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_SYMBOL;
  */
 public final class QwpSymbolColumnCursor implements QwpColumnCursor {
 
+    private static final int INITIAL_CACHE_CAPACITY = 16;
     private final QwpVarint.DecodeResult decodeResult = new QwpVarint.DecodeResult();
     // Pre-allocated dictionary storage (flyweights pointing to wire memory)
-    private final ObjList<DirectUtf8String> dictionaryUtf8 = new ObjList<>();
+    private ObjList<DirectUtf8String> dictionaryUtf8 = new ObjList<>();
     private final StringSink utf16Sink = new StringSink();
     // External dictionary reference (for delta mode)
     private ObjList<String> connectionDict;
@@ -65,7 +67,7 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
     private int currentSymbolIndex;
     private int currentValueIndex;
     // Pre-decoded varint indices (reused across calls, grows to max batch size)
-    private final IntList decodedIndices = new IntList();
+    private IntList decodedIndices = new IntList();
     private boolean deltaMode;  // When true, use connectionDict instead of per-column dictionary
     private int dictionarySize;
     // Wire pointers
@@ -105,6 +107,21 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
             dictionaryUtf8.getQuick(i).clear();
         }
         resetRowPosition();
+    }
+
+    @TestOnly
+    public int getDecodedIndexCacheCapacity() {
+        return decodedIndices.capacity();
+    }
+
+    @TestOnly
+    public Object getDictionaryCacheIdentity() {
+        return dictionaryUtf8;
+    }
+
+    @TestOnly
+    public int getDictionaryCacheSize() {
+        return dictionaryUtf8.size();
     }
 
     /**
@@ -235,6 +252,7 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
             this.nullBitmapAddress = 0;
             nullCount = 0;
         }
+        this.valueCount = rowCount - nullCount;
 
         if (deltaMode) {
             // Delta mode: no per-column dictionary, indices reference connection dictionary
@@ -263,6 +281,15 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
                         QwpParseException.ErrorCode.INSUFFICIENT_DATA,
                         "symbol dictionary size exceeds limit: " + dictionarySize
                                 + " (max " + MAX_SYMBOL_DICTIONARY_SIZE + ')'
+                );
+            }
+
+            long minimumEncodedBytes = (long) dictionarySize + valueCount;
+            if (minimumEncodedBytes > dataLength - (long) offset) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "symbol column data truncated: dictionary entries and indices require at least "
+                                + minimumEncodedBytes + " bytes"
                 );
             }
 
@@ -301,9 +328,15 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
             );
         }
 
+        if (valueCount > dataLength - (long) offset) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "symbol column data truncated: " + valueCount + " indices require at least " + valueCount + " bytes"
+            );
+        }
+
         // Decode all varint indices in one pass. This avoids re-decoding
         // during advanceRow() and lets us return the total bytes consumed.
-        this.valueCount = rowCount - nullCount;
         decodedIndices.clear();
         decodedIndices.setPos(valueCount);
         int dictLimit = deltaMode ? (connectionDict != null ? connectionDict.size() : 0) : dictionarySize;
@@ -337,6 +370,17 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
         currentSymbolIndex = -1;
         currentIsNull = false;
         currentValueIndex = -1;
+    }
+
+    void releaseCachedResources() {
+        if (decodedIndices.capacity() > INITIAL_CACHE_CAPACITY) {
+            decodedIndices = new IntList();
+        }
+        if (dictionaryUtf8.size() > INITIAL_CACHE_CAPACITY) {
+            dictionaryUtf8 = new ObjList<>();
+        }
+        clear();
+        decodedIndices.clear();
     }
 
     private void ensureDictionaryCapacity(int capacity) {

@@ -69,13 +69,21 @@ public class FixedOffsetIntervalIterator extends SampleByIntervalIterator {
             long maxTs,
             long step
     ) {
-        super.of(sampler, intervals);
-
-        sampler.setOffset(offset);
-        minTimestamp = sampler.round(minTs);
-        maxTimestamp = sampler.nextTimestamp(sampler.round(maxTs));
-
+        ofCommon(sampler, offset, intervals, minTs, maxTs);
         toTop(step);
+        return this;
+    }
+
+    public FixedOffsetIntervalIterator of(
+            @NotNull TimestampSampler sampler,
+            long offset,
+            @NotNull LongList intervals,
+            long minTs,
+            long maxTs,
+            @NotNull LongList stepPerInterval
+    ) {
+        ofCommon(sampler, offset, intervals, minTs, maxTs);
+        toTop(stepPerInterval);
         return this;
     }
 
@@ -90,8 +98,32 @@ public class FixedOffsetIntervalIterator extends SampleByIntervalIterator {
     }
 
     @Override
+    protected void snapToCluster(long clusterLo) {
+        // Pull timestampHi back to the bucket-aligned floor of clusterLo. The
+        // next next0() call sets timestampLo = timestampHi, then advances
+        // timestampHi by `step` buckets, so the emitted step-group starts at
+        // the cluster boundary.
+        final long snapped = sampler.round(clusterLo);
+        // Defensive guard: never advance past maxTimestamp via the snap.
+        timestampHi = Math.min(snapped, maxTimestamp);
+    }
+
+    @Override
     protected void toTop0() {
         this.timestampLo = Numbers.LONG_NULL;
         this.timestampHi = minTimestamp;
+    }
+
+    private void ofCommon(
+            @NotNull TimestampSampler sampler,
+            long offset,
+            @Nullable LongList intervals,
+            long minTs,
+            long maxTs
+    ) {
+        super.of(sampler, intervals);
+        sampler.setOffset(offset);
+        minTimestamp = sampler.round(minTs);
+        maxTimestamp = sampler.nextTimestamp(sampler.round(maxTs));
     }
 }

@@ -34,8 +34,12 @@ public class NullEqualsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (a double, b double)");
             execute("insert into x values(null, null)");
-            assertSql("a\tb\n", "select * from x where a <> b");
-            assertSql("a\tb\nnull\tnull\n", "select * from x where a = b");
+            assertQuery("select * from x where a <> b")
+                    .noLeakCheck()
+                    .returns("a\tb\n");
+            assertQuery("select * from x where a = b")
+                    .noLeakCheck()
+                    .returns("a\tb\nnull\tnull\n");
         });
     }
 
@@ -45,10 +49,16 @@ public class NullEqualsTest extends AbstractCairoTest {
             execute("create table x (a float, b float)");
             execute("insert into x values(null, 1.0)");
             execute("insert into x values(3.14, 1.0)");
-            assertSql("a\tb\n" +
-                    "null\t1.0\n" +
-                    "3.14\t1.0\n", "select * from x where a <> b");
-            assertSql("a\tb\n", "select * from x where a = b");
+            assertQuery("select * from x where a <> b")
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb
+                            null\t1.0
+                            3.14\t1.0
+                            """);
+            assertQuery("select * from x where a = b")
+                    .noLeakCheck()
+                    .returns("a\tb\n");
         });
     }
 
@@ -57,8 +67,12 @@ public class NullEqualsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (a float, b float)");
             execute("insert into x values(null, null)");
-            assertSql("a\tb\n", "select * from x where a <> b");
-            assertSql("a\tb\nnull\tnull\n", "select * from x where a = b");
+            assertQuery("select * from x where a <> b")
+                    .noLeakCheck()
+                    .returns("a\tb\n");
+            assertQuery("select * from x where a = b")
+                    .noLeakCheck()
+                    .returns("a\tb\nnull\tnull\n");
         });
     }
 }

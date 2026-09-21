@@ -43,6 +43,9 @@ import org.jetbrains.annotations.NotNull;
 public class MinTimestampGroupByFunction extends TimestampFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private final int argColumnIndex;
+    // Set when arg is the designated timestamp column. Page frame data is sorted ASC by the designated
+    // timestamp, so the first row of any frame is its minimum and computeBatch can skip the column scan.
+    private boolean isDesignated;
     private int valueIndex;
 
     public MinTimestampGroupByFunction(@NotNull Function arg, int timestampType) {
@@ -56,7 +59,8 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     @Override
     public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
         if (rowCount > 0) {
-            final long batchMin = Vect.minLong(dataAddr, rowCount);
+            // Designated timestamp column has no nulls and is sorted ASC within a frame.
+            final long batchMin = isDesignated ? Unsafe.getLong(dataAddr) : Vect.minLong(dataAddr, rowCount);
             if (batchMin != Numbers.LONG_NULL) {
                 final long existing = mapValue.getTimestamp(valueIndex);
                 if (batchMin < existing || existing == Numbers.LONG_NULL) {
@@ -121,7 +125,7 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
 
     @Override
     public String getName() {
-        return "min";
+        return isDesignated ? "min_designated" : "min";
     }
 
     @Override
@@ -162,6 +166,10 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
         if (srcMin != Numbers.LONG_NULL && (srcMin < destMin || destMin == Numbers.LONG_NULL)) {
             destValue.putTimestamp(valueIndex, srcMin);
         }
+    }
+
+    public void setDesignated(boolean isDesignated) {
+        this.isDesignated = isDesignated;
     }
 
     @Override

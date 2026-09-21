@@ -71,6 +71,31 @@ impl Nullable for i32 {
     }
 }
 
+// SHORT, BYTE and CHAR have no in-band null sentinel in QuestDB — every bit
+// pattern is a valid value. They use the OPTIONAL parquet schema solely so
+// that rows in the column-top region can be marked as parquet-NULL via
+// def-level = 0; data values themselves never report null.
+impl Nullable for i8 {
+    #[inline(always)]
+    fn is_null(&self) -> bool {
+        false
+    }
+}
+
+impl Nullable for i16 {
+    #[inline(always)]
+    fn is_null(&self) -> bool {
+        false
+    }
+}
+
+impl Nullable for u16 {
+    #[inline(always)]
+    fn is_null(&self) -> bool {
+        false
+    }
+}
+
 impl Nullable for i64 {
     fn is_null(&self) -> bool {
         *self == nulls::LONG
@@ -181,6 +206,7 @@ mod tests {
     use parquet2::page::CompressedPage;
     use parquet2::types;
     use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+    use qdb_parquet_meta::SeqTxn;
     use std::env;
     use std::fs::File;
     use std::io::{Cursor, Write};
@@ -306,6 +332,36 @@ mod tests {
         }
 
         save_to_file(bytes);
+    }
+
+    #[test]
+    fn test_symbol_column_populates_dictionary_page_offset() {
+        // Regression guard: a dict-encoded (symbol) column must declare
+        // dictionary_page_offset, with data_page_offset pointing past it.
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1 = vec![0, 1, i32::MIN, 2, 4];
+        let (col_chars, offsets) =
+            serialize_as_symbols(vec!["foo", "bar", "baz", "notused", "plus"]);
+        serialize_to_parquet(&mut buf, col1, col_chars, offsets);
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+        let metadata = parquet2::read::read_metadata_with_size(
+            &mut std::io::Cursor::new(bytes.to_byte_slice()),
+            bytes.len() as u64,
+        )
+        .expect("read metadata");
+
+        let col_meta = metadata.row_groups[0].columns()[0].metadata();
+        let dict_offset = col_meta
+            .dictionary_page_offset
+            .expect("symbol column must declare dictionary_page_offset");
+        assert!(
+            col_meta.data_page_offset > dict_offset,
+            "data_page_offset {} must be past dictionary_page_offset {}",
+            col_meta.data_page_offset,
+            dict_offset
+        );
     }
 
     fn serialize_to_parquet(
@@ -605,6 +661,13 @@ mod tests {
             columns: vec![ts_col],
         };
 
+        // An unspecified designated timestamp defaults to delta_binary_packed
+        // regardless of sort direction.
+        assert_eq!(
+            crate::parquet_write::schema::to_encodings(&partition)[0],
+            parquet2::encoding::Encoding::DeltaBinaryPacked,
+        );
+
         let sorting_columns = Some(vec![SortingColumn::new(0, true, false)]); // descending=true
         ParquetWriter::new(&mut buf)
             .with_statistics(true)
@@ -664,6 +727,12 @@ mod tests {
             columns: vec![ts_col],
         };
 
+        // An unspecified designated timestamp defaults to delta_binary_packed.
+        assert_eq!(
+            crate::parquet_write::schema::to_encodings(&partition)[0],
+            parquet2::encoding::Encoding::DeltaBinaryPacked,
+        );
+
         let sorting_columns = Some(vec![SortingColumn::new(0, false, false)]); // descending=false
         ParquetWriter::new(&mut buf)
             .with_statistics(true)
@@ -690,6 +759,44 @@ mod tests {
             "Expected descending=false for ascending timestamp"
         );
         assert!(!sorting_cols[0].nulls_first);
+    }
+
+    #[test]
+    fn designated_timestamp_explicit_encoding_overrides_delta_default() {
+        use crate::parquet_write::schema::{to_encodings, ParquetEncodingConfig};
+
+        // ENCODING id 1 == PLAIN (matching the Java ParquetEncoding.ENCODING_*
+        // ids). An explicit user encoding must win over the delta_binary_packed
+        // default applied to an unencoded designated timestamp.
+        let explicit_plain = ParquetEncodingConfig::new(1, 0, -1).raw();
+        let timestamps: Vec<i64> = vec![1000, 2000, 3000];
+        let ts_col = Column::from_raw_data(
+            0,
+            "timestamp",
+            ColumnTypeTag::Timestamp.into_type().code(),
+            0,
+            timestamps.len(),
+            timestamps.as_ptr() as *const u8,
+            timestamps.len() * size_of::<i64>(),
+            null(),
+            0,
+            null(),
+            0,
+            true, // designated timestamp
+            true, // ascending
+            explicit_plain,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![ts_col],
+        };
+
+        assert_eq!(
+            to_encodings(&partition)[0],
+            parquet2::encoding::Encoding::Plain,
+        );
     }
 
     #[test]
@@ -781,7 +888,8 @@ mod tests {
             columns: vec![col3],
         };
 
-        let (schema, additional_meta) = to_parquet_schema(&partition1, false, -1).unwrap();
+        let (schema, additional_meta) =
+            to_parquet_schema(&partition1, false, -1, SeqTxn::UNSET).unwrap();
         let encodings = to_encodings(&partition1);
 
         let mut chunked = ParquetWriter::new(&mut buf)
@@ -2575,7 +2683,8 @@ mod tests {
             columns: vec![col1_b, col2_b],
         };
 
-        let (schema, additional_meta) = to_parquet_schema(&partition_a, false, -1).unwrap();
+        let (schema, additional_meta) =
+            to_parquet_schema(&partition_a, false, -1, SeqTxn::UNSET).unwrap();
         let encodings = to_encodings(&partition_a);
         let compressions = to_compressions(&partition_a);
 
@@ -4385,7 +4494,8 @@ mod tests {
         end: usize,
     ) -> Bytes {
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
-        let (schema, additional_meta) = schema::to_parquet_schema(p1, false, -1).expect("schema");
+        let (schema, additional_meta) =
+            schema::to_parquet_schema(p1, false, -1, SeqTxn::UNSET).expect("schema");
         let encodings = schema::to_encodings(p1);
         assert_eq!(encodings[0], parquet2::encoding::Encoding::RleDictionary);
         let mut chunked = ParquetWriter::new(&mut buf)
@@ -4567,7 +4677,7 @@ mod tests {
         let single_partition = Partition { table: "t".to_string(), columns: vec![single_col] };
         let mut single_buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         let (single_schema, single_meta) =
-            schema::to_parquet_schema(&single_partition, false, -1).expect("schema");
+            schema::to_parquet_schema(&single_partition, false, -1, SeqTxn::UNSET).expect("schema");
         let single_encodings = schema::to_encodings(&single_partition);
         let mut single_chunked = ParquetWriter::new(&mut single_buf)
             .with_statistics(true)
@@ -4594,7 +4704,7 @@ mod tests {
         let part_refs: Vec<&Partition> = part_objs.iter().collect();
         let mut multi_buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         let (multi_schema, multi_meta) =
-            schema::to_parquet_schema(&part_objs[0], false, -1).expect("schema");
+            schema::to_parquet_schema(&part_objs[0], false, -1, SeqTxn::UNSET).expect("schema");
         let multi_encodings = schema::to_encodings(&part_objs[0]);
         let mut multi_chunked = ParquetWriter::new(&mut multi_buf)
             .with_statistics(true)

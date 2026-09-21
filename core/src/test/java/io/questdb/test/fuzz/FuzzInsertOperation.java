@@ -37,7 +37,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rnd;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.cairo.TestRecord;
@@ -68,14 +68,14 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
             ColumnType.IPv4,
             ColumnType.ARRAY
     };
-    private static final ThreadLocal<DirectArray> tlArray = new ThreadLocal<>(() -> {
+    private static final CarrierLocal<DirectArray> tlArray = new CarrierLocal<>(() -> {
         DirectArray array = new DirectArray();
         AbstractTest.CLOSEABLE.add(array);
         return array;
     });
-    private static final ThreadLocal<TestRecord.ArrayBinarySequence> tlBinSeq = new ThreadLocal<>(TestRecord.ArrayBinarySequence::new);
-    private static final ThreadLocal<IntList> tlIntList = new ThreadLocal<>(IntList::new);
-    private static final ThreadLocal<Utf8StringSink> tlUtf8 = new ThreadLocal<>(Utf8StringSink::new);
+    private static final CarrierLocal<TestRecord.ArrayBinarySequence> tlBinSeq = new CarrierLocal<>(TestRecord.ArrayBinarySequence::new);
+    private static final CarrierLocal<IntList> tlIntList = new CarrierLocal<>(IntList::new);
+    private static final CarrierLocal<Utf8StringSink> tlUtf8 = new CarrierLocal<>(Utf8StringSink::new);
     private final double cancelRows;
     private final double notSet;
     private final double nullSet;

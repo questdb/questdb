@@ -53,7 +53,7 @@ public class UnionRecordCursorFactory extends AbstractSetRecordCursorFactory {
         super(metadata, factoryA, factoryB, castFunctionsA, castFunctionsB);
         Map map = null;
         try {
-            map = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes);
+            map = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes, false);
             cursor = new UnionRecordCursor(map, recordSink, castFunctionsA, castFunctionsB);
         } catch (Throwable th) {
             Misc.free(map);
@@ -64,8 +64,9 @@ public class UnionRecordCursorFactory extends AbstractSetRecordCursorFactory {
 
     @Override
     public void _close() {
-        Misc.free(cursor);
-        super._close();
+        final AbstractSetRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        closeSetOwnersBestEffort(cursor);
     }
 
     @Override

@@ -28,7 +28,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.lock.AdvisoryUnlockAll;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class PgAdvisoryLocksTest extends AbstractFunctionFactoryTest {
@@ -40,13 +39,11 @@ public class PgAdvisoryLocksTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testCallPgAdvisoryUnlockAllReturnsSingleNullRow() throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                engine,
-                sqlExecutionContext,
-                "select pg_advisory_unlock_all();",
-                sink,
-                "pg_advisory_unlock_all\n\n"
-        ));
+        assertMemoryLeak(() -> assertQuery("select pg_advisory_unlock_all();")
+                .withEngine(engine)
+                .withContext(sqlExecutionContext)
+                .noLeakCheck()
+                .returnsOnce("pg_advisory_unlock_all\n\n"));
     }
 
     @Override

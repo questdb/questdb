@@ -30,58 +30,48 @@ import org.junit.Test;
 public class MicrosOfMillsFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNull() throws Exception {
-        assertQuery(
-                "micros\n" +
-                        "null\n",
-                "select micros(null)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select micros(null)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        micros
+                        null
+                        """);
     }
 
     @Test
     public void testPreEpoch() throws Exception {
-        assertQuery(
-                "micros\n" +
-                        "998\n",
-                "select micros('1901-04-11T22:00:30.555998Z'::timestamp)",
-                null,
-                null,
-                true,
-                true
-        );
-        assertQuery(
-                "micros\n" +
-                        "998\n",
-                "select micros('1901-04-11T22:00:30.555998123Z'::timestamp_ns)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select micros('1901-04-11T22:00:30.555998Z'::timestamp)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        micros
+                        998
+                        """);
+        assertQuery("select micros('1901-04-11T22:00:30.555998123Z'::timestamp_ns)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        micros
+                        998
+                        """);
     }
 
     @Test
     public void testVanilla() throws Exception {
-        assertQuery(
-                "micros\n" +
-                        "555\n",
-                "select micros('1997-04-11T22:00:30.555555Z'::timestamp)",
-                null,
-                null,
-                true,
-                true
-        );
-        assertQuery(
-                "micros\n" +
-                        "555\n",
-                "select micros('1997-04-11T22:00:30.555555123Z'::timestamp_ns)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select micros('1997-04-11T22:00:30.555555Z'::timestamp)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        micros
+                        555
+                        """);
+        assertQuery("select micros('1997-04-11T22:00:30.555555123Z'::timestamp_ns)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        micros
+                        555
+                        """);
     }
 }

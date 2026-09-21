@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameCursor;
-import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.IntIntHashMap;
 
 public final class SymbolToSymbolJoinKeyMapping implements SymbolJoinKeyMapping, SymbolShortCircuit {
@@ -96,19 +95,8 @@ public final class SymbolToSymbolJoinKeyMapping implements SymbolJoinKeyMapping,
 
     @Override
     public void of(RecordCursor slaveCursor) {
-        this.slaveSymbolTable = getStaticSymbolTable(slaveCursor.getSymbolTable(slaveSymbolIndex));
+        this.slaveSymbolTable = SymbolJoinKeyMapping.toStaticSymbolTable(slaveCursor.getSymbolTable(slaveSymbolIndex));
         this.masterKeyToSlaveKey.clear();
         this.maxCacheSize = config.getSqlAsOfJoinShortCircuitCacheCapacity();
     }
-
-    private StaticSymbolTable getStaticSymbolTable(SymbolTable symbolTable) {
-        if (symbolTable instanceof StaticSymbolTable) {
-            return (StaticSymbolTable) symbolTable;
-        }
-        if (symbolTable instanceof SymbolFunction) {
-            return ((SymbolFunction) symbolTable).getStaticSymbolTable();
-        }
-        throw new AssertionError("Failed to get static symbol table from " + symbolTable);
-    }
-
 }

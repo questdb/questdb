@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
+import io.questdb.griffin.engine.functions.groupby.AvgLongGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.BitAndLongGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.BitOrLongGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.BitXorLongGroupByFunction;
@@ -60,6 +61,24 @@ public class LongGroupByFunctionKeyedBatchTest {
     private static final long[] ARG_VALUES = {
             100L, Numbers.LONG_NULL, -50L, 200L, 0L, Numbers.LONG_NULL, -1L, 7L
     };
+
+    @Test
+    public void testAvgLongFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new AvgLongGroupByFunction(LongColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testAvgLongIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new AvgLongGroupByFunction(new IndirectLongArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testAvgLongSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new AvgLongGroupByFunction(LongColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
 
     @Test
     public void testBitAndLongFastPath() throws Exception {

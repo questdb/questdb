@@ -96,9 +96,18 @@ public class ReplaceVarcharFunctionFactoryTest extends AbstractFunctionFactoryTe
         assertMemoryLeak(() -> {
             execute("create table tab as (select 'sym'::symbol sym from long_sequence(1))");
 
-            assertSql("replace\nSym\n", "select replace(sym, 's', 'S') from tab");
-            assertSql("replace\nS\n", "select replace(sym, sym, 'S') from tab");
-            assertSql("replace\nsym\n", "select replace(sym, sym, sym) from tab");
+            assertQuery("select replace(sym, 's', 'S') from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("replace\nSym\n");
+            assertQuery("select replace(sym, sym, 'S') from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("replace\nS\n");
+            assertQuery("select replace(sym, sym, sym) from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("replace\nsym\n");
         });
     }
 

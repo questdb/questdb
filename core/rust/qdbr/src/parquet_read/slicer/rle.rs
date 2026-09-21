@@ -139,7 +139,16 @@ impl<'a, T: VarDictDecoder> RleDictionarySlicer<'a, T> {
         row_count: usize,
         sliced_row_count: usize,
     ) -> ParquetResult<Self> {
-        let num_bits = buffer[0];
+        // A foreign or corrupt dictionary page can arrive with an empty values
+        // buffer (no leading bit-width byte). Indexing buffer[0] would panic and
+        // abort the JVM across the JNI boundary; surface a clean error instead.
+        // Mirrors the guard in RleDictionaryDecoder::try_new.
+        let num_bits = buffer.first().copied().ok_or_else(|| {
+            fmt_err!(
+                Layout,
+                "RLE dictionary page is missing the initial byte with bit width"
+            )
+        })?;
         if num_bits > 0 {
             buffer = &buffer[1..];
             let decoder = Decoder::new(buffer, num_bits as usize);

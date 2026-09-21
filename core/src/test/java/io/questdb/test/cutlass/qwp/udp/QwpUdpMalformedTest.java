@@ -114,7 +114,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (QwpUdpReceiver receiver = receiverFactory.create(NO_AUTO_CREATE_CONF, engine)) {
                 sendValidRow("nonexistent_table", 1L, 1_000_000L);
-                drainReceiver(receiver);
+                drainReceiver(receiver, 1);
 
                 // Datagram was received and processed, but no table was created
                 Assert.assertEquals(1, receiver.getProcessedCount());
@@ -189,17 +189,16 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (QwpUdpReceiver receiver = receiverFactory.create(rcvBufFail, engine)) {
                 sendValidRow("rcvbuf_test", 1L, 1_000_000L);
-                drainReceiver(receiver);
+                drainReceiver(receiver, 1);
 
                 Assert.assertEquals(1, receiver.getProcessedCount());
                 Assert.assertEquals(0, receiver.getTotalDroppedCount());
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM rcvbuf_test"
-            );
+            assertQuery("SELECT count() FROM rcvbuf_test")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -292,16 +291,15 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
                 // identical data sent twice
                 sendValidRow("dup_test", 1L, 1_000_000L);
                 sendValidRow("dup_test", 1L, 1_000_000L);
-                drainReceiver(receiver);
+                drainReceiver(receiver, 2);
 
                 Assert.assertEquals(0, receiver.getTotalDroppedCount());
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n2\n",
-                    "SELECT count() FROM dup_test"
-            );
+            assertQuery("SELECT count() FROM dup_test")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
         });
     }
 
@@ -316,17 +314,16 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
                 );
                 sendRawBytes(header);
                 sendValidRow("bad_flags", 1L, 1_000_000L);
-                drainReceiver(receiver);
+                drainReceiver(receiver, 2);
 
                 // header validator throws INVALID_MAGIC for conflicting flags
                 Assert.assertEquals(1, receiver.getDroppedBadMagicCount());
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM bad_flags"
-            );
+            assertQuery("SELECT count() FROM bad_flags")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -336,16 +333,15 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 sendRawBytes(new byte[12]);
                 sendValidRow("magic_zeros", 1L, 1_000_000L);
-                drainReceiver(receiver);
+                drainReceiver(receiver, 2);
 
                 Assert.assertEquals(1, receiver.getDroppedBadMagicCount());
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM magic_zeros"
-            );
+            assertQuery("SELECT count() FROM magic_zeros")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -359,47 +355,15 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
                 );
                 sendRawBytes(header);
                 sendValidRow("magic_ilp3", 1L, 1_000_000L);
-                drainReceiver(receiver);
+                drainReceiver(receiver, 2);
 
                 Assert.assertEquals(1, receiver.getDroppedBadMagicCount());
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM magic_ilp3"
-            );
-        });
-    }
-
-    @Test
-    public void testMultipleMalformedThenValid() throws Exception {
-        assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
-                // too short
-                sendRawBytes(new byte[]{0, 0, 0, 0});
-                // bad magic
-                sendRawBytes(new byte[12]);
-                // bad version
-                byte[] badVersion = createHeader(
-                        VALID_MAGIC,
-                        (byte) 2, (byte) 0, 0, 0L
-                );
-                sendRawBytes(badVersion);
-                // valid row
-                sendValidRow("multi_bad", 1L, 1_000_000L);
-                drainReceiver(receiver);
-
-                Assert.assertEquals(1, receiver.getDroppedTooShortCount());
-                Assert.assertEquals(1, receiver.getDroppedBadMagicCount());
-                Assert.assertEquals(1, receiver.getDroppedBadVersionCount());
-            }
-
-            drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM multi_bad"
-            );
+            assertQuery("SELECT count() FROM magic_ilp3")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -431,16 +395,50 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             try (QwpUdpReceiver receiver = receiverFactory.create(conf, engine)) {
                 sendRawBytes(new byte[12]);
                 sendValidRow("noise_then_valid", 1L, 1_000_000L);
-                drainReceiver(receiver);
+                drainReceiver(receiver, 2);
 
                 Assert.assertEquals(1, receiver.getDroppedBadMagicCount());
 
                 drainWalQueue();
-                assertSql("count\n0\n", "SELECT count() FROM noise_then_valid");
+                assertQuery("SELECT count() FROM noise_then_valid")
+                        .noLeakCheck()
+                        .returnsOnce("count\n0\n");
             }
 
             drainWalQueue();
-            assertSql("count\n1\n", "SELECT count() FROM noise_then_valid");
+            assertQuery("SELECT count() FROM noise_then_valid")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+        });
+    }
+
+    @Test
+    public void testMultipleMalformedThenValid() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                // too short
+                sendRawBytes(new byte[]{0, 0, 0, 0});
+                // bad magic
+                sendRawBytes(new byte[12]);
+                // bad version
+                byte[] badVersion = createHeader(
+                        VALID_MAGIC,
+                        (byte) 2, (byte) 0, 0, 0L
+                );
+                sendRawBytes(badVersion);
+                // valid row
+                sendValidRow("multi_bad", 1L, 1_000_000L);
+                drainReceiver(receiver, 4);
+
+                Assert.assertEquals(1, receiver.getDroppedTooShortCount());
+                Assert.assertEquals(1, receiver.getDroppedBadMagicCount());
+                Assert.assertEquals(1, receiver.getDroppedBadVersionCount());
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM multi_bad")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -450,16 +448,15 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 sendValidRow("ooo_test", 1L, 2_000_000L);
                 sendValidRow("ooo_test", 2L, 1_000_000L);
-                drainReceiver(receiver);
+                drainReceiver(receiver, 2);
 
                 Assert.assertEquals(0, receiver.getTotalDroppedCount());
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n2\n",
-                    "SELECT count() FROM ooo_test"
-            );
+            assertQuery("SELECT count() FROM ooo_test")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
         });
     }
 
@@ -473,16 +470,15 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
                 );
                 sendRawBytes(header);
                 sendValidRow("trunc_test", 1L, 1_000_000L);
-                drainReceiver(receiver);
+                drainReceiver(receiver, 2);
 
                 Assert.assertEquals(1, receiver.getDroppedTruncatedCount());
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM trunc_test"
-            );
+            assertQuery("SELECT count() FROM trunc_test")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -497,7 +493,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
                 );
                 sendRawBytes(header);
                 sendValidRow("too_large", 1L, 1_000_000L);
-                drainReceiver(receiver);
+                drainReceiver(receiver, 2);
 
                 // PAYLOAD_TOO_LARGE hits the default branch -> droppedParseErrorCount
                 Assert.assertEquals(1, receiver.getDroppedParseErrorCount());
@@ -505,10 +501,33 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM too_large"
-            );
+            assertQuery("SELECT count() FROM too_large")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+        });
+    }
+
+    @Test
+    public void testProcessedCountDoesNotIncludeDroppedDatagrams() throws Exception {
+        // Regression test: drainReceiver() uses processedCount + totalDroppedCount as a
+        // "datagrams seen so far" signal. If processedCount is incremented even when
+        // processDatagram() classifies the packet as dropped, a single bad datagram bumps
+        // both counters and silently doubles its contribution, letting callers proceed
+        // before subsequent valid datagrams have been read from the kernel buffer.
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                sendRawBytes(new byte[11]); // shorter than HEADER_SIZE -> droppedTooShort
+
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+                while (System.nanoTime() < deadline && receiver.getDroppedTooShortCount() == 0) {
+                    receiver.runSerially();
+                    Os.pause();
+                }
+
+                Assert.assertEquals(1, receiver.getDroppedTooShortCount());
+                Assert.assertEquals("processedCount must not include dropped datagrams",
+                        0, receiver.getProcessedCount());
+            }
         });
     }
 
@@ -521,16 +540,15 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
                 rnd.nextBytes(garbage);
                 sendRawBytes(garbage);
                 sendValidRow("random_test", 1L, 1_000_000L);
-                drainReceiver(receiver);
+                drainReceiver(receiver, 2);
 
                 Assert.assertEquals(1, receiver.getTotalDroppedCount());
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM random_test"
-            );
+            assertQuery("SELECT count() FROM random_test")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -540,16 +558,15 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 sendRawBytes(new byte[]{0, 0, 0, 0});
                 sendValidRow("short_test", 1L, 1_000_000L);
-                drainReceiver(receiver);
+                drainReceiver(receiver, 2);
 
                 Assert.assertEquals(1, receiver.getDroppedTooShortCount());
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM short_test"
-            );
+            assertQuery("SELECT count() FROM short_test")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -559,16 +576,15 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 sendRawBytes(new byte[11]);
                 sendValidRow("short11", 1L, 1_000_000L);
-                drainReceiver(receiver);
+                drainReceiver(receiver, 2);
 
                 Assert.assertEquals(1, receiver.getDroppedTooShortCount());
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM short11"
-            );
+            assertQuery("SELECT count() FROM short11")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -584,7 +600,6 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
                         1, 'x',             // table name: varint(1) + "x"
                         1,                   // row count = 1
                         1,                   // column count = 1
-                        0x00,                // schema mode FULL
                         1, 's',              // column name: varint(1) + "s"
                         0x09,                // TYPE_SYMBOL (not nullable)
                 };
@@ -604,16 +619,15 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
                 System.arraycopy(badData, 0, datagram, header.length + schema.length, badData.length);
                 sendRawBytes(datagram);
                 sendValidRow("trunc_col", 1L, 1_000_000L);
-                drainReceiver(receiver);
+                drainReceiver(receiver, 2);
 
                 Assert.assertEquals(1, receiver.getDroppedParseErrorCount());
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM trunc_col"
-            );
+            assertQuery("SELECT count() FROM trunc_col")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -631,16 +645,15 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
                 datagram[header.length + 1] = (byte) 0xFF;
                 sendRawBytes(datagram);
                 sendValidRow("trunc_name", 1L, 1_000_000L);
-                drainReceiver(receiver);
+                drainReceiver(receiver, 2);
 
                 Assert.assertEquals(1, receiver.getDroppedParseErrorCount());
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM trunc_name"
-            );
+            assertQuery("SELECT count() FROM trunc_name")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -654,16 +667,15 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
                 );
                 sendRawBytes(header);
                 sendValidRow("version_test", 1L, 1_000_000L);
-                drainReceiver(receiver);
+                drainReceiver(receiver, 2);
 
                 Assert.assertEquals(1, receiver.getDroppedBadVersionCount());
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM version_test"
-            );
+            assertQuery("SELECT count() FROM version_test")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -677,16 +689,15 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
                 );
                 sendRawBytes(header);
                 sendValidRow("zero_payload", 1L, 1_000_000L);
-                drainReceiver(receiver);
+                drainReceiver(receiver, 2);
 
                 Assert.assertEquals(1, receiver.getDroppedParseErrorCount());
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM zero_payload"
-            );
+            assertQuery("SELECT count() FROM zero_payload")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -712,19 +723,17 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
         return buf;
     }
 
-    private static void drainReceiver(QwpUdpReceiver receiver) {
+    private static void drainReceiver(QwpUdpReceiver receiver, int expectedDatagrams) {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
-        boolean everReceived = false;
         while (System.nanoTime() < deadline) {
-            boolean received = receiver.runSerially();
-            if (received) {
-                everReceived = true;
-            } else if (everReceived) {
-                break;
+            receiver.runSerially();
+            if (receiver.getProcessedCount() + receiver.getTotalDroppedCount() >= expectedDatagrams) {
+                return;
             }
             Os.pause();
         }
-        Assert.assertTrue("timeout: receiver did not process any datagrams", everReceived);
+        Assert.fail("timeout: expected " + expectedDatagrams + " datagrams but got "
+                + (receiver.getProcessedCount() + receiver.getTotalDroppedCount()));
     }
 
     private static QwpUdpSender newSender() {

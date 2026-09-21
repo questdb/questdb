@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.IntLongSortedList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 /**
@@ -40,6 +41,11 @@ class HeapRowCursor implements RowCursor {
 
     public HeapRowCursor() {
         this.list = new IntLongSortedList();
+    }
+
+    @Override
+    public void close() {
+        Misc.freeObjListAndClear(cursors);
     }
 
     @Override

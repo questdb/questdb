@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -50,6 +51,7 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
 
     @Override
     public boolean hasNext() {
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         if (!isFindPending) {
             findRecord();
             hasNext = isRecordFound;
@@ -72,7 +74,7 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
         isRecordFound = false;
         isFindPending = false;
         // prepare for page frame iteration
-        super.init();
+        super.init(executionContext.getMemoryTracker());
     }
 
     @Override
@@ -99,10 +101,14 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
     }
 
     private void findRecord() {
+        // The reserved NULL key does not imply that this snapshot contains a NULL.
+        if (symbolKey == SymbolTable.VALUE_IS_NULL && !frameCursor.getSymbolTable(columnIndex).containsNullValue()) {
+            return;
+        }
         PageFrame frame;
         OUT:
         while ((frame = frameCursor.next()) != null) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
 

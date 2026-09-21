@@ -35,14 +35,13 @@ public class LastNotNullArrayGroupByFunctionFactoryTest extends AbstractCairoTes
             execute("create table tab (arr double[])");
             execute("insert into tab values (ARRAY[1.0, 2.0])");
             execute("insert into tab values (null)");
-            assertQuery(
-                    "arr\n" +
-                            "[1.0,2.0]\n",
-                    "select last_not_null(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select last_not_null(arr) arr from tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            arr
+                            [1.0,2.0]
+                            """);
         });
     }
 
@@ -52,14 +51,13 @@ public class LastNotNullArrayGroupByFunctionFactoryTest extends AbstractCairoTes
             execute("create table tab (arr double[])");
             execute("insert into tab values (ARRAY[1.0, 2.0])");
             execute("insert into tab values (ARRAY[3.0, null, 5.0])");
-            assertQuery(
-                    "arr\n" +
-                            "[3.0,null,5.0]\n",
-                    "select last_not_null(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select last_not_null(arr) arr from tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            arr
+                            [3.0,null,5.0]
+                            """);
         });
     }
 
@@ -70,14 +68,13 @@ public class LastNotNullArrayGroupByFunctionFactoryTest extends AbstractCairoTes
             execute("insert into tab values (ARRAY[1.0, 2.0])");
             execute("insert into tab values (ARRAY[])");
             execute("insert into tab values (null)");
-            assertQuery(
-                    "arr\n" +
-                            "[]\n",
-                    "select last_not_null(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select last_not_null(arr) arr from tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            arr
+                            []
+                            """);
         });
     }
 
@@ -86,14 +83,13 @@ public class LastNotNullArrayGroupByFunctionFactoryTest extends AbstractCairoTes
         assertMemoryLeak(() -> {
             execute("create table tab (arr double[])");
             execute("insert into tab values (ARRAY[1.0, 2.0])");
-            assertQuery(
-                    "arr\n" +
-                            "[1.0,2.0]\n",
-                    "select last_not_null(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select last_not_null(arr) arr from tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            arr
+                            [1.0,2.0]
+                            """);
         });
     }
 
@@ -103,14 +99,13 @@ public class LastNotNullArrayGroupByFunctionFactoryTest extends AbstractCairoTes
             execute("create table tab (arr double[])");
             execute("insert into tab values (null)");
             execute("insert into tab values (null)");
-            assertQuery(
-                    "arr\n" +
-                            "null\n",
-                    "select last_not_null(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select last_not_null(arr) arr from tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            arr
+                            null
+                            """);
         });
     }
 
@@ -122,15 +117,13 @@ public class LastNotNullArrayGroupByFunctionFactoryTest extends AbstractCairoTes
             execute("insert into tab values (1, null)");
             execute("insert into tab values (2, null)");
             execute("insert into tab values (2, ARRAY[20.0, 21.0])");
-            assertQuery(
-                    "grp\tarr\n" +
-                            "1\t[10.0,11.0]\n" +
-                            "2\t[20.0,21.0]\n",
-                    "select grp, last_not_null(arr) arr from tab order by grp",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select grp, last_not_null(arr) arr from tab order by grp")
+                    .expectSize()
+                    .returns("""
+                            grp\tarr
+                            1\t[10.0,11.0]
+                            2\t[20.0,21.0]
+                            """);
         });
     }
 
@@ -142,14 +135,13 @@ public class LastNotNullArrayGroupByFunctionFactoryTest extends AbstractCairoTes
             execute("insert into tab values (ARRAY[3.0, 4.0])");
             execute("insert into tab values (null)");
             execute("insert into tab values (null)");
-            assertQuery(
-                    "arr\n" +
-                            "[3.0,4.0]\n",
-                    "select last_not_null(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select last_not_null(arr) arr from tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            arr
+                            [3.0,4.0]
+                            """);
         });
     }
 
@@ -160,15 +152,13 @@ public class LastNotNullArrayGroupByFunctionFactoryTest extends AbstractCairoTes
             execute("insert into tab values (1, null)");
             execute("insert into tab values (1, null)");
             execute("insert into tab values (2, ARRAY[20.0, 21.0])");
-            assertQuery(
-                    "grp\tarr\n" +
-                            "1\tnull\n" +
-                            "2\t[20.0,21.0]\n",
-                    "select grp, last_not_null(arr) arr from tab order by grp",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select grp, last_not_null(arr) arr from tab order by grp")
+                    .expectSize()
+                    .returns("""
+                            grp\tarr
+                            1\tnull
+                            2\t[20.0,21.0]
+                            """);
         });
     }
 }

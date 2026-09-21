@@ -441,32 +441,38 @@ public class DoubleArrayStdDevFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWithTablePop() throws SqlException {
+    public void testWithTablePop() throws Exception {
         execute(
                 "CREATE TABLE tango_pop as (SELECT ARRAY[" +
                         "rnd_double(0)*100, rnd_double(0)*100, rnd_double(0)*100" +
                         "] arr FROM long_sequence(5))");
 
         // Just verify that the function works with table data
-        assertSql(
-                "count\n5\n",
-                "SELECT count(*) FROM (SELECT array_stddev_pop(arr) FROM tango_pop WHERE array_stddev_pop(arr) IS NOT NULL)");
+        assertQuery("SELECT count(*) FROM (SELECT array_stddev_pop(arr) FROM tango_pop WHERE array_stddev_pop(arr) IS NOT NULL)")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n5\n");
     }
 
     @Test
-    public void testWithTableSamp() throws SqlException {
+    public void testWithTableSamp() throws Exception {
         execute(
                 "CREATE TABLE tango as (SELECT ARRAY[" +
                         "rnd_double(0)*100, rnd_double(0)*100, rnd_double(0)*100" +
                         "] arr FROM long_sequence(5))");
 
         // Just verify that the function works with table data
-        assertSql(
-                "count\n5\n",
-                "SELECT count(*) FROM (SELECT array_stddev(arr) FROM tango WHERE array_stddev(arr) IS NOT NULL)");
-        assertSql(
-                "count\n5\n",
-                "SELECT count(*) FROM (SELECT array_stddev_samp(arr) FROM tango WHERE array_stddev_samp(arr) IS NOT NULL)");
+        assertQuery("SELECT count(*) FROM (SELECT array_stddev(arr) FROM tango WHERE array_stddev(arr) IS NOT NULL)")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n5\n");
+        assertQuery("SELECT count(*) FROM (SELECT array_stddev_samp(arr) FROM tango WHERE array_stddev_samp(arr) IS NOT NULL)")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n5\n");
     }
 
     @Test

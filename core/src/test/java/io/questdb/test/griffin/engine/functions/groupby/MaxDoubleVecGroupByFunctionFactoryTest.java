@@ -34,50 +34,54 @@ public class MaxDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testAddColumn() throws Exception {
         // fix page frame size, because it affects AVG accuracy
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
-        assertQuery("""
-                avg
-                0.511848387
-                """, "select round(avg(f),9) avg from tab", "create table tab as (select rnd_double(2) f from long_sequence(131))", null, "alter table tab add column b double", """
-                avg
-                0.511848387
-                """, false, true, false);
+        assertQuery("select round(avg(f),9) avg from tab")
+                .ddl("create table tab as (select rnd_double(2) f from long_sequence(131))")
+                .mutateWith("alter table tab add column b double")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        avg
+                        0.511848387
+                        """, """
+                        avg
+                        0.511848387
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select round(avg(f),6) avg, max(b) max from tab")
+                .ddl("insert into tab select rnd_double(2), rnd_double(2) from long_sequence(469)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         avg\tmax
                         0.5008779999999999\t0.9997797234031688
-                        """,
-                "select round(avg(f),6) avg, max(b) max from tab",
-                "insert into tab select rnd_double(2), rnd_double(2) from long_sequence(469)",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery("""
-                max
-                null
-                """, "select max(f) from tab", "create table tab as (select cast(null as double) f from long_sequence(33))", null, "insert into tab select 99092.008234 from long_sequence(1)", """
-                max
-                99092.008234
-                """, false, true, false);
+        assertQuery("select max(f) from tab")
+                .ddl("create table tab as (select cast(null as double) f from long_sequence(33))")
+                .mutateWith("insert into tab select 99092.008234 from long_sequence(1)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        max
+                        null
+                        """, """
+                        max
+                        99092.008234
+                        """);
     }
 
     @Test
     public void testSimple() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select max(f) from tab")
+                .ddl("create table tab as (select rnd_double(2) f from long_sequence(131))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         max
                         0.9884011094887449
-                        """,
-                "select max(f) from tab",
-                "create table tab as (select rnd_double(2) f from long_sequence(131))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 }

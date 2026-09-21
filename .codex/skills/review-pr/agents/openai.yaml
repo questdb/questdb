@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review PR"
+  short_description: "Review QuestDB PRs or local Git ranges"
+  default_prompt: "Use $review-pr to review PR 1234 or --range=<base>..<head> at level 0."

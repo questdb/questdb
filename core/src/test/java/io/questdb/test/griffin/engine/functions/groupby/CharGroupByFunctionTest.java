@@ -39,29 +39,41 @@ public class CharGroupByFunctionTest extends AbstractCairoTest {
             sqlExecutionContext.setRandom(new Rnd());
             execute("create table tab as ( select rnd_char() ch from long_sequence(100) )");
 
-            assertSql("""
-                    min
-                    B
-                    """, "select min(ch) from tab"
-            );
+            assertQuery("select min(ch) from tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            min
+                            B
+                            """);
 
-            assertSql("""
-                    max
-                    Z
-                    """, "select max(ch) from tab"
-            );
+            assertQuery("select max(ch) from tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            max
+                            Z
+                            """);
 
-            assertSql("""
-                    first
-                    V
-                    """, "select first(ch) from tab"
-            );
+            assertQuery("select first(ch) from tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            first
+                            V
+                            """);
 
-            assertSql("""
-                    last
-                    J
-                    """, "select last(ch) from tab"
-            );
+            assertQuery("select last(ch) from tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            last
+                            J
+                            """);
         });
     }
 
@@ -77,18 +89,29 @@ public class CharGroupByFunctionTest extends AbstractCairoTest {
                     2020-01-01T00:28:47.990000Z\t\u0001\t3\t\u0001\t3\t51
                     2020-01-02T00:28:47.990000Z\t4\td\t4\td\t49
                     """;
-            assertSql(expected, "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to first observation");
-            assertSql("""
-                    ts\tmin\tmax\tfirst\tlast\tcount
-                    2020-01-01T00:00:00.000000Z\t\u0001\t2\t\u0001\t2\t50
-                    2020-01-02T00:00:00.000000Z\t3\td\t3\td\t50
-                    """, "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d");
-            assertSql("""
-                    ts\tmin\tmax\tfirst\tlast\tcount
-                    2020-01-01T00:00:00.000000Z\t\u0001\t2\t\u0001\t2\t50
-                    2020-01-02T00:00:00.000000Z\t3\td\t3\td\t50
-                    """, "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to calendar"
-            );
+            assertQuery("select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to first observation")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tmin\tmax\tfirst\tlast\tcount
+                            2020-01-01T00:00:00.000000Z\t\u0001\t2\t\u0001\t2\t50
+                            2020-01-02T00:00:00.000000Z\t3\td\t3\td\t50
+                            """);
+            assertQuery("select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to calendar")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tmin\tmax\tfirst\tlast\tcount
+                            2020-01-01T00:00:00.000000Z\t\u0001\t2\t\u0001\t2\t50
+                            2020-01-02T00:00:00.000000Z\t3\td\t3\td\t50
+                            """);
         });
     }
 }

@@ -184,7 +184,7 @@ public class AlterTableWalEnabledTest extends AbstractCairoTest {
         }
     }
 
-    private void checkWalEnabledBeforeAfterAlter(String alterSuffix) throws SqlException {
+    private void checkWalEnabledBeforeAfterAlter(String alterSuffix) throws Exception {
         createTableWrite("my_table_wal", "WAL", "DAY");
         assertWalEnabled("my_table_wal", true);
         execute("alter table my_table_wal " + alterSuffix, sqlExecutionContext);
@@ -195,13 +195,17 @@ public class AlterTableWalEnabledTest extends AbstractCairoTest {
         execute("alter table my_table_dir " + alterSuffix, sqlExecutionContext);
         assertWalEnabled("my_table_dir", false);
 
-        assertSql("table_name\twalEnabled\n" +
-                "my_table_dir\tfalse\n" +
-                "my_table_wal\ttrue\n", "select table_name, walEnabled from tables() order by table_name"
-        );
+        assertQuery("select table_name, walEnabled from tables() order by table_name")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        table_name\twalEnabled
+                        my_table_dir\tfalse
+                        my_table_wal\ttrue
+                        """);
     }
 
-    private void createTableWrite(String tableName, String walMode, String partitionBY) throws SqlException {
+    private void createTableWrite(String tableName, String walMode, String partitionBY) throws Exception {
         execute(
                 "create table " + tableName +
                         " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +

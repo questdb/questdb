@@ -49,6 +49,20 @@ use crate::parquet_write::util::{
     build_plain_page, transmute_slice, BinaryMaxMinStats, ExactSizedIter,
 };
 
+const BITS_PER_WORD: usize = u64::BITS as usize;
+
+/// Largest dictionary size (number of symbol keys) for which page statistics
+/// deduplicate via the per-page `seen` bitmap. The bitmap holds one bit per key
+/// and `build_symbol_page_stats` clears the whole thing once per page, so its
+/// cost grows with the dictionary size, not with the keys a page actually
+/// references. Below this many keys the clear is cheap (an 8 KiB, L1-resident
+/// bitmap) and the dedup turns a per-row min/max comparison into one per
+/// distinct key. Above it the per-page clear outweighs what the dedup saves, so
+/// the encoder updates statistics once per row instead (no bitmap). The
+/// serialized statistics are identical either way; only the work to compute
+/// them differs.
+const MAX_SYMBOL_STATS_BITMAP_KEYS: usize = 1 << 16;
+
 pub struct SymbolGlobalInfo {
     pub used_keys: HashSet<u32>,
     pub max_key: u32,
@@ -118,17 +132,45 @@ pub fn encode(
 
     let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type);
     let mut data_pages = Vec::with_capacity(total_rows.div_ceil(rows_per_page));
+    // Scratch "key already seen in this page" bitmap (1 bit per key), reused
+    // across pages so page statistics visit each distinct dictionary key once
+    // instead of once per row. Only build_symbol_page_stats consults it, and
+    // only for a small enough dictionary (see MAX_SYMBOL_STATS_BITMAP_KEYS);
+    // skip the allocation entirely otherwise.
+    let dedup_page_stats =
+        options.write_statistics && value_ranges.len() <= MAX_SYMBOL_STATS_BITMAP_KEYS;
+    let mut seen_in_page = if dedup_page_stats {
+        vec![0u64; value_ranges.len().div_ceil(BITS_PER_WORD)]
+    } else {
+        Vec::new()
+    };
+    // Reused across pages: reset() keeps the backing bitmap and only grows it,
+    // so each page refills the validity in place without a fresh allocation.
+    let mut validity = FlatValidity::new();
     for window in page_row_windows(total_rows, rows_per_page) {
         let page_values = &merged_keys[window.row_offset..window.row_offset + window.row_count];
-        let validity = build_symbol_validity(page_values, 0);
-        let null_count = page_values.iter().filter(|&&key| key < 0).count();
+        build_symbol_validity(&mut validity, page_values);
+        // build_symbol_validity counted the nulls while filling the bitmap, so
+        // read that count back instead of scanning the page keys a second time.
+        let null_count = validity.null_count();
+        debug_assert_eq!(
+            null_count,
+            page_values.iter().filter(|&&key| key < 0).count(),
+            "validity null count disagrees with a direct scan of the page keys"
+        );
         let page_stats = options.write_statistics.then(|| {
+            let seen = if dedup_page_stats {
+                Some(seen_in_page.as_mut_slice())
+            } else {
+                None
+            };
             build_symbol_page_stats(
                 page_values,
                 &dict_buffer,
                 &value_ranges,
                 primitive_type,
                 null_count,
+                seen,
             )
         });
         let data_page = symbol_to_data_page_with_validity(
@@ -200,7 +242,15 @@ fn symbol_to_data_page_with_validity(
     let total_null_count = def_levels.null_count;
 
     let bits_per_key = util::bit_width(max_key as u64);
-    let non_null_len = column_values.iter().filter(|&&value| value >= 0).count();
+    // encode_def_levels reported the page's null count from the validity
+    // bitmap. Every remaining row carries a key, so derive the non-null count
+    // by subtraction rather than scanning the keys a second time.
+    let non_null_len = column_values.len() - total_null_count;
+    debug_assert_eq!(
+        non_null_len,
+        column_values.iter().filter(|&&value| value >= 0).count(),
+        "derived non-null length disagrees with a direct scan; validity is out of sync with column_values"
+    );
     let local_keys =
         column_values
             .iter()
@@ -224,12 +274,11 @@ fn symbol_to_data_page_with_validity(
     Ok(Page::Data(data_page))
 }
 
-fn build_symbol_validity(column_values: &[i32], column_top: usize) -> FlatValidity {
-    let mut validity = FlatValidity::new();
-    validity.reset(column_top + column_values.len());
-    for _ in 0..column_top {
-        validity.push_null();
-    }
+/// Refill `validity` in place from a page's symbol keys, treating any negative
+/// key as null. Reuses the caller's bitmap across pages via
+/// [`FlatValidity::reset`], which keeps the backing storage allocated.
+fn build_symbol_validity(validity: &mut FlatValidity, column_values: &[i32]) {
+    validity.reset(column_values.len());
     for &value in column_values {
         if value >= 0 {
             validity.push_present();
@@ -237,7 +286,6 @@ fn build_symbol_validity(column_values: &[i32], column_top: usize) -> FlatValidi
             validity.push_null();
         }
     }
-    validity
 }
 
 const UTF16_LEN_SIZE: usize = 4;
@@ -332,12 +380,36 @@ fn build_symbol_page_stats(
     value_ranges: &[Range<usize>],
     primitive_type: &PrimitiveType,
     null_count: usize,
+    seen: Option<&mut [u64]>,
 ) -> ParquetStatistics {
     let mut stats = BinaryMaxMinStats::new(primitive_type);
-    for &key in page_values {
-        if key >= 0 {
-            let range = &value_ranges[key as usize];
-            stats.update(&dict_buffer[range.clone()]);
+    // A page's min/max is decided solely by the distinct dictionary keys it
+    // references. With a small dictionary, dedup via the `seen` bitmap (one bit
+    // per key) so each distinct key's bytes are compared once instead of on
+    // every row. With a large dictionary the caller passes None: clearing a
+    // key-sized bitmap each page would cost more than the dedup saves, so we
+    // compare on every row. Both modes yield identical min/max.
+    match seen {
+        Some(seen) => {
+            seen.fill(0);
+            for &key in page_values {
+                if key >= 0 {
+                    let key = key as usize;
+                    let word = key / BITS_PER_WORD;
+                    let bit = 1u64 << (key % BITS_PER_WORD);
+                    if seen[word] & bit == 0 {
+                        seen[word] |= bit;
+                        stats.update(&dict_buffer[value_ranges[key].clone()]);
+                    }
+                }
+            }
+        }
+        None => {
+            for &key in page_values {
+                if key >= 0 {
+                    stats.update(&dict_buffer[value_ranges[key as usize].clone()]);
+                }
+            }
         }
     }
     stats.into_parquet_stats(null_count)
@@ -390,6 +462,7 @@ mod tests {
     use parquet2::compression::CompressionOptions;
     use parquet2::page::DataPageHeader;
     use parquet2::schema::types::PhysicalType;
+    use parquet2::statistics::BinaryStatistics;
     use parquet2::write::Version;
     use qdb_core::col_type::ColumnTypeTag;
 
@@ -418,6 +491,34 @@ mod tests {
             },
             _ => panic!("expected data page"),
         }
+    }
+
+    fn page_v2_num_nulls(page: &Page) -> i32 {
+        match page {
+            Page::Data(data) => match &data.header {
+                DataPageHeader::V2(h) => h.num_nulls,
+                DataPageHeader::V1(_) => panic!("expected V2 header"),
+            },
+            _ => panic!("expected data page"),
+        }
+    }
+
+    /// Read back a data page's (min, max, null_count) statistics.
+    fn page_binary_stats(page: &Page) -> (Vec<u8>, Vec<u8>, i64) {
+        let data = match page {
+            Page::Data(data) => data,
+            _ => panic!("expected data page"),
+        };
+        let arc = data.statistics().expect("statistics present").expect("ok");
+        let stats = arc
+            .as_any()
+            .downcast_ref::<BinaryStatistics>()
+            .expect("BinaryStatistics");
+        (
+            stats.min_value.clone().expect("min"),
+            stats.max_value.clone().expect("max"),
+            stats.null_count.expect("null_count"),
+        )
     }
 
     /// Build a Symbol Column borrowing the supplied keys / chars / offsets.
@@ -613,5 +714,201 @@ mod tests {
             }
             _ => panic!("expected data page at index 1"),
         }
+    }
+
+    #[test]
+    fn symbol_multi_page_with_nulls_derives_counts_and_stats() {
+        // Spread distinct keys and interspersed nulls across several pages so
+        // the fused per-page null derivation (null_count from the validity
+        // bitmap, non_null_len = rows - null_count) is exercised on every
+        // page, and each page's statistics cover only the distinct keys it
+        // references. With data_page_size 64 the encoder packs 8 rows per
+        // page, giving pages of 8, 8 and 4 rows.
+        let (chars, offsets) = serialize_as_symbols(vec!["aaa", "bbb", "ccc", "ddd"]);
+        let keys: Vec<i32> = vec![
+            0, -1, 1, 0, -1, 1, 0, 1, // page 1: keys {0,1}, 2 nulls
+            2, 3, -1, 2, 3, 2, -1, 3, // page 2: keys {2,3}, 2 nulls
+            0, 3, -1, -1, // page 3: keys {0,3}, 2 nulls
+        ];
+        let col = make_symbol_column(&keys, &chars, &offsets, 0);
+        let opts = WriteOptions { data_page_size: Some(64), ..write_options() };
+        let pages = encode(&[col], 0, keys.len(), &primitive_type(), opts, None).expect("encode");
+
+        // 1 dict page + 3 data pages.
+        assert_eq!(pages.len(), 4);
+        assert!(matches!(pages[0], Page::Dict(_)));
+
+        // Row and null counts per page come straight from the validity bitmap.
+        assert_eq!(page_v2_num_values(&pages[1]), 8);
+        assert_eq!(page_v2_num_nulls(&pages[1]), 2);
+        assert_eq!(page_v2_num_values(&pages[2]), 8);
+        assert_eq!(page_v2_num_nulls(&pages[2]), 2);
+        assert_eq!(page_v2_num_values(&pages[3]), 4);
+        assert_eq!(page_v2_num_nulls(&pages[3]), 2);
+
+        // Statistics are scoped to each page's referenced keys; the reported
+        // null_count must match the derived per-page null count.
+        assert_eq!(
+            page_binary_stats(&pages[1]),
+            (b"aaa".to_vec(), b"bbb".to_vec(), 2)
+        );
+        assert_eq!(
+            page_binary_stats(&pages[2]),
+            (b"ccc".to_vec(), b"ddd".to_vec(), 2)
+        );
+        assert_eq!(
+            page_binary_stats(&pages[3]),
+            (b"aaa".to_vec(), b"ddd".to_vec(), 2)
+        );
+    }
+
+    #[test]
+    fn symbol_multi_word_bitmap_stats_reset_across_pages() {
+        // Dictionary keys spanning multiple 64-bit words of the `seen` bitmap
+        // (70 -> word 1, 130 -> word 2) exercise the word indexing beyond word
+        // 0. Page 2 references only keys already visited in page 1, so its
+        // statistics are correct only if `seen.fill(0)` cleared every touched
+        // word between pages; a stale bitmap would skip both keys and report an
+        // empty (None) min/max for page 2.
+        let names: Vec<String> = (0..=130).map(|i| format!("s{i:03}")).collect();
+        let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let (chars, offsets) = serialize_as_symbols(name_refs);
+        let keys: Vec<i32> = vec![
+            0, 70, 130, -1, 0, 70, 130, 0, // page 1: keys {0,70,130}, 1 null
+            70, 130, 70, 130, 70, 130, 70, 130, // page 2: keys {70,130}, 0 null
+        ];
+        let col = make_symbol_column(&keys, &chars, &offsets, 0);
+        let opts = WriteOptions { data_page_size: Some(64), ..write_options() };
+        let pages = encode(&[col], 0, keys.len(), &primitive_type(), opts, None).expect("encode");
+
+        // 1 dict page + 2 data pages of 8 rows each.
+        assert_eq!(pages.len(), 3);
+        assert_eq!(page_v2_num_values(&pages[1]), 8);
+        assert_eq!(page_v2_num_nulls(&pages[1]), 1);
+        assert_eq!(page_v2_num_values(&pages[2]), 8);
+        assert_eq!(page_v2_num_nulls(&pages[2]), 0);
+
+        // Page 1 spans words 0..=2; min/max are the extreme referenced symbols.
+        assert_eq!(
+            page_binary_stats(&pages[1]),
+            (b"s000".to_vec(), b"s130".to_vec(), 1)
+        );
+        // Page 2 re-references the high keys; correct stats require the bitmap
+        // words touched in page 1 to have been cleared.
+        assert_eq!(
+            page_binary_stats(&pages[2]),
+            (b"s070".to_vec(), b"s130".to_vec(), 0)
+        );
+    }
+
+    #[test]
+    fn symbol_all_null_page_has_absent_stats() {
+        // A page that references no dictionary key reports no min/max and counts
+        // every row as null.
+        let (chars, offsets) = serialize_as_symbols(vec!["x", "y"]);
+        let keys: Vec<i32> = vec![-1, -1, -1, -1];
+        let col = make_symbol_column(&keys, &chars, &offsets, 0);
+        let pages = encode(
+            &[col],
+            0,
+            keys.len(),
+            &primitive_type(),
+            write_options(),
+            None,
+        )
+        .expect("encode");
+
+        assert_eq!(pages.len(), 2); // 1 dict + 1 data
+        assert_eq!(page_v2_num_nulls(&pages[1]), 4);
+
+        let data = match &pages[1] {
+            Page::Data(data) => data,
+            _ => panic!("expected data page"),
+        };
+        let arc = data.statistics().expect("statistics present").expect("ok");
+        let stats = arc
+            .as_any()
+            .downcast_ref::<BinaryStatistics>()
+            .expect("BinaryStatistics");
+        assert!(stats.min_value.is_none(), "all-null page must have no min");
+        assert!(stats.max_value.is_none(), "all-null page must have no max");
+        assert_eq!(stats.null_count, Some(4));
+    }
+
+    #[test]
+    fn symbol_page_stats_dedup_and_per_row_agree() {
+        // build_symbol_page_stats must produce identical statistics whether it
+        // deduplicates via the `seen` bitmap (small dictionary) or compares
+        // every row (large dictionary, seen = None). Build the dictionary the
+        // way encode does, then run both modes over the same page of repeated,
+        // null-interspersed keys and assert the serialized stats are equal.
+        let (chars, offsets) = serialize_as_symbols(vec!["aaa", "bbb", "ccc", "ddd"]);
+        let used_keys: HashSet<u32> = [0, 1, 2, 3].into_iter().collect();
+        let global_info = SymbolGlobalInfo { used_keys, max_key: 3 };
+        let (dict_buffer, _entry_count, value_ranges) =
+            prepare_symbol_dictionary(&global_info, &offsets, &chars, None).expect("dict");
+
+        let page_values: Vec<i32> = vec![3, 0, -1, 1, 0, 2, 3, -1, 1, 0, 3];
+        let null_count = page_values.iter().filter(|&&k| k < 0).count();
+        let pt = primitive_type();
+
+        let mut seen = vec![0u64; value_ranges.len().div_ceil(BITS_PER_WORD)];
+        let deduped = build_symbol_page_stats(
+            &page_values,
+            &dict_buffer,
+            &value_ranges,
+            &pt,
+            null_count,
+            Some(&mut seen),
+        );
+        let per_row = build_symbol_page_stats(
+            &page_values,
+            &dict_buffer,
+            &value_ranges,
+            &pt,
+            null_count,
+            None,
+        );
+
+        assert_eq!(
+            deduped, per_row,
+            "dedup and per-row stats must be identical"
+        );
+        assert_eq!(deduped.null_count, Some(2));
+    }
+
+    #[test]
+    fn symbol_large_dictionary_uses_per_row_stats() {
+        // A dictionary larger than MAX_SYMBOL_STATS_BITMAP_KEYS routes
+        // build_symbol_page_stats through its per-row path (no `seen` bitmap).
+        // Only two keys are used, but the highest key value forces a dictionary
+        // bigger than the threshold; the page statistics must still be correct.
+        let (chars, base_offsets) = serialize_as_symbols(vec!["lo", "hi"]);
+        // "hi" (0x68,0x69) sorts before "lo" (0x6c,0x6f): min="hi", max="lo".
+        let high_key = MAX_SYMBOL_STATS_BITMAP_KEYS as i32; // dict size = high_key + 1 > threshold
+                                                            // Sparse offsets: build_dict_buffer reads offsets only for used keys, so
+                                                            // the gaps between 0 and high_key are never dereferenced.
+        let mut offsets = vec![0u64; high_key as usize + 1];
+        offsets[0] = base_offsets[0];
+        offsets[high_key as usize] = base_offsets[1];
+
+        let keys: Vec<i32> = vec![0, high_key, -1, high_key, 0, 0, high_key];
+        let col = make_symbol_column(&keys, &chars, &offsets, 0);
+        let pages = encode(
+            &[col],
+            0,
+            keys.len(),
+            &primitive_type(),
+            write_options(),
+            None,
+        )
+        .expect("encode");
+
+        assert_eq!(pages.len(), 2); // 1 dict + 1 data
+        assert_eq!(page_v2_num_nulls(&pages[1]), 1);
+        assert_eq!(
+            page_binary_stats(&pages[1]),
+            (b"hi".to_vec(), b"lo".to_vec(), 1)
+        );
     }
 }

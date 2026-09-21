@@ -72,44 +72,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     @Test
     public void testCheckpointEjectedWalApply() throws Exception {
         Rnd rnd = generateRandom(LOG);
-        fuzzer.setFuzzProbabilities(
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                1,
-                0.5,
-                0.0,
-                0,
-                0,
-                0.5,
-                0.01,
-                0
-        );
-
-        fuzzer.setFuzzCounts(
-                rnd.nextBoolean(),
-                rnd.nextInt(2_000_000),
-                rnd.nextInt(1000),
-                rnd.nextInt(3),
-                rnd.nextInt(5),
-                rnd.nextInt(1000),
-                rnd.nextInt(1_000_000),
-                5 + rnd.nextInt(10)
-        );
-
-        setFuzzProperties(
-                1,
-                getRndO3PartitionSplit(rnd),
-                getRndO3PartitionSplitMaxCount(rnd),
-                10 * Numbers.SIZE_1MB,
-                3
-        );
-        runFuzzWithCheckpoint(rnd);
+        runEjectedWalApplyBody(rnd);
     }
 
     @Test
@@ -333,6 +296,47 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    private void runEjectedWalApplyBody(Rnd rnd) throws Exception {
+        fuzzer.setFuzzProbabilities(
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0.5,
+                0.0,
+                0,
+                0,
+                0.5,
+                0.01,
+                0
+        );
+
+        fuzzer.setFuzzCounts(
+                rnd.nextBoolean(),
+                rnd.nextInt(2_000_000),
+                rnd.nextInt(1000),
+                rnd.nextInt(3),
+                rnd.nextInt(5),
+                rnd.nextInt(1000),
+                rnd.nextInt(1_000_000),
+                5 + rnd.nextInt(10)
+        );
+
+        setFuzzProperties(
+                1,
+                getRndO3PartitionSplit(rnd),
+                getRndO3PartitionSplitMaxCount(rnd),
+                10 * Numbers.SIZE_1MB,
+                3
+        );
+        runFuzzWithCheckpoint(rnd);
+    }
+
     protected void runFuzzWithCheckpoint(Rnd rnd) throws Exception {
         // Snapshot is not supported on Windows.
         Assume.assumeFalse(Os.isWindows());
@@ -354,7 +358,10 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
             }
 
             try {
-                int snapshotIndex = 1 + rnd.nextInt(transactions.size() - 1);
+                // The fuzzer can generate a single transaction; Rnd.nextInt(0) divides by
+                // zero, so a one-transaction run takes the checkpoint after its only
+                // transaction and leaves the (already optional) after-set empty.
+                int snapshotIndex = transactions.size() > 1 ? 1 + rnd.nextInt(transactions.size() - 1) : 1;
 
                 ObjList<FuzzTransaction> beforeSnapshot = new ObjList<>();
                 beforeSnapshot.addAll(transactions, 0, snapshotIndex);

@@ -27,19 +27,32 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriterMetadata;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.seq.TableSequencerImpl;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.cairo.wal.seq.TableTransactionLogV2;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 
+import static io.questdb.cairo.wal.WalTxnType.LIVE_VIEW_DATA;
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_DATA;
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 
@@ -52,11 +65,26 @@ public class WalUtils {
     public static final CharSequence INITIAL_META_FILE_NAME = "_meta.0";
     public static final int METADATA_WALID = -1;
     public static final int MIN_WAL_ID = DROP_TABLE_WAL_ID;
+    // Per-table marker file written on the freshly-created table of an ALTER TABLE ... REBASE WAL. Lives
+    // in the table dir and is permanent (survives restart, never removed). When the uploader first records
+    // the table in the replication index it stats this marker and, if present, skips the empty seed txn and
+    // records first_txn=2; a replica stalls instead of building the table from empty until a physical copy
+    // arrives. This is handled entirely via the marker + first_txn, not via a getReplicationStatus byte
+    // (that callback only ever returns ACTIVE/SUSPENDED/DISABLED).
+    public static final String REBASE_NEW_FILE_NAME = "_rebase_new";
+    // Per-table marker written on the OLD (source) dir of an ALTER TABLE ... REBASE WAL. The uploader
+    // stats it as the source dir winds down and records the table in the replication index with the
+    // rebase-source flag (high bit of last_txn) instead of a drop, so the object-store baseline is kept
+    // for the rebased table and replicas treat the table as replication-disabled (they keep what they
+    // have). The dir is purged locally by the normal WAL apply/purge jobs.
+    public static final String REBASE_SOURCE_FILE_NAME = "_rebase_source";
     public static final int SEG_MIN_ID = 0;
     public static final int SEG_NONE_ID = Integer.MAX_VALUE >> 2;
     public static final int SEG_MAX_ID = SEG_NONE_ID - 1;
     public static final String SEQ_DIR = "txn_seq";
     public static final String SEQ_DIR_DEPRECATED = "seq";
+    public static final long SEQ_META_COVERING_COLUMN_CHECKSUM_SALT = 0x434F5652; // COVR
+    public static final long SEQ_META_INDEX_TYPE_CHECKSUM_SALT = 0x494E4458; // INDX
     public static final long SEQ_META_OFFSET_WAL_LENGTH = 0;
     public static final long SEQ_META_OFFSET_WAL_VERSION = SEQ_META_OFFSET_WAL_LENGTH + Integer.BYTES;
     public static final long SEQ_META_OFFSET_STRUCTURE_VERSION = SEQ_META_OFFSET_WAL_VERSION + Integer.BYTES;
@@ -85,6 +113,7 @@ public class WalUtils {
     public static final int WAL_FORMAT_OFFSET_32 = Integer.BYTES;
     public static final short WAL_FORMAT_VERSION = 0;
     public static final short WALE_FORMAT_VERSION = WAL_FORMAT_VERSION;
+    public static final short WALE_LIVE_VIEW_FORMAT_VERSION = WALE_FORMAT_VERSION + 3;
     public static final short WALE_MAT_VIEW_FORMAT_VERSION = WALE_FORMAT_VERSION + 1;
     public static final short WALE_VIEW_FORMAT_VERSION = WALE_MAT_VIEW_FORMAT_VERSION + 1;
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
@@ -95,6 +124,108 @@ public class WalUtils {
     public static long WAL_DEFAULT_BASE_TABLE_TXN = Long.MIN_VALUE;
     public static long WAL_DEFAULT_LAST_PERIOD_HI = Long.MIN_VALUE;
     public static long WAL_DEFAULT_LAST_REFRESH_TIMESTAMP = Long.MIN_VALUE;
+    private static final Log LOG = LogFactory.getLog(WalUtils.class);
+    // Sentinel returned by liveViewMaxBaseSeqTxnFromRecord for a record that is not a
+    // LIVE_VIEW_DATA block, so the backward scan keeps looking. Distinct from a real
+    // maxBaseSeqTxn (>= 0) and from the not-found / unreadable result (-1).
+    private static final long LV_SCAN_CONTINUE = Long.MIN_VALUE;
+
+    /**
+     * Builds a complete rebased table in the staging directory {@code dstDir} for
+     * {@code ALTER TABLE ... REBASE WAL}: clones the source table's data (hard-links the immutable
+     * partition column files, copies the table-root files, excludes the sequencer {@code txn_seq} and
+     * WAL segment dirs {@code wal*} plus transient markers), resets {@code _txn}/{@code _meta} to a fresh
+     * table (seqTxn 0, new tableId, metadataVersion 0), and creates the sequencer files. The caller
+     * positions {@code srcDir}/{@code dstDir} at the respective table dirs and must have created
+     * {@code dstDir}; it then renames {@code dstDir} into place atomically. No in-memory sequencer is
+     * registered and the WAL listener is not notified - the live sequencer opens lazily on first access.
+     * When {@code markRebased} is set, the permanent {@code _rebase_new} marker is written too (see below).
+     */
+    public static void cloneTableDirForRebase(
+            CairoConfiguration configuration,
+            WalDirectoryPolicy walDirectoryPolicy,
+            Path srcDir,
+            Path dstDir,
+            TableToken newToken,
+            int newTableId,
+            boolean markRebased,
+            StringSink nameSink
+    ) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int dirMode = configuration.getMkDirMode();
+        final int srcLen = srcDir.size();
+        final int dstLen = dstDir.size();
+        final long pFind = ff.findFirst(srcDir.$());
+        if (pFind < 1) {
+            throw CairoException.critical(ff.errno()).put("could not list table dir for rebase [path=").put(srcDir).put(']');
+        }
+        try {
+            do {
+                final long pName = ff.findName(pFind);
+                if (!Files.notDots(pName)) {
+                    continue;
+                }
+                final int type = ff.findType(pFind);
+                nameSink.clear();
+                Utf8s.utf8ToUtf16Z(pName, nameSink);
+                if (type == Files.DT_FILE) {
+                    if (isRebaseClonedRootFile(nameSink)) {
+                        srcDir.trimTo(srcLen).concat(pName);
+                        dstDir.trimTo(dstLen).concat(pName);
+                        if (ff.copy(srcDir.$(), dstDir.$()) < 0) {
+                            throw CairoException.critical(ff.errno()).put("could not clone table file [from=").put(srcDir).put(", to=").put(dstDir).put(']');
+                        }
+                    }
+                } else if (!isRebaseExcludedDir(nameSink)) {
+                    // A data partition directory: hard-link the immutable column files inside it.
+                    srcDir.trimTo(srcLen).concat(pName);
+                    dstDir.trimTo(dstLen).concat(pName);
+                    ff.mkdir(dstDir.$(), dirMode);
+                    if (ff.hardLinkDirRecursive(srcDir, dstDir, dirMode) < 0) {
+                        throw CairoException.critical(ff.errno()).put("could not hard-link partition for rebase [from=").put(srcDir).put(", to=").put(dstDir).put(']');
+                    }
+                }
+                srcDir.trimTo(srcLen);
+                dstDir.trimTo(dstLen);
+            } while (ff.findNext(pFind) > 0);
+        } finally {
+            ff.findClose(pFind);
+            srcDir.trimTo(srcLen);
+            dstDir.trimTo(dstLen);
+        }
+
+        // Reset _txn (seqTxn=0, lag, structure version=0) and _meta (new tableId, metadataVersion=0) in
+        // the staging dir - exactly as WAL conversion does (TableConverter) - then create the sequencer
+        // files so the rename carries a complete table into place.
+        try (
+                TxWriter txWriter = new TxWriter(ff, configuration);
+                MemoryMARW metaMem = Vm.getCMARWInstance()
+        ) {
+            txWriter.ofRW(dstDir.concat(TableUtils.TXN_FILE_NAME).$());
+            txWriter.resetLagValuesUnsafe();
+            TableUtils.openSmallFile(ff, dstDir.trimTo(dstLen), dstLen, metaMem, TableUtils.META_FILE_NAME, MemoryTag.MMAP_TABLE_WRITER);
+            metaMem.putInt(TableUtils.META_OFFSET_TABLE_ID, newTableId);
+            metaMem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, 0);
+            txWriter.resetStructureVersionUnsafe();
+
+            TableUtils.openSmallFile(ff, dstDir.trimTo(dstLen), dstLen, metaMem, TableUtils.META_FILE_NAME, MemoryTag.MMAP_TABLE_WRITER);
+            try (TableWriterMetadata metadata = new TableWriterMetadata(newToken)) {
+                metadata.reload(dstDir.trimTo(dstLen), metaMem);
+                TableSequencerImpl.createSequencerFiles(configuration, walDirectoryPolicy, dstDir.trimTo(dstLen), metadata, newToken, newTableId);
+            }
+        }
+        dstDir.trimTo(dstLen);
+
+        // Mark the new table rebased while it is still invisible in the staging dir, so the permanent
+        // _rebase_new marker is in place before the rename makes the table observable to the uploader.
+        // The uploader's first poll stats this marker and, if present, skips the empty seed txn and records
+        // first_txn=2 (otherwise it would lock first_txn=0 and a replica would build the table from an
+        // incomplete baseline). The replica variant follows the primary's dir and must NOT mark rebased, so
+        // markRebased is false there. No-op effect in OSS, which has no uploader to consume the marker.
+        if (markRebased) {
+            writeRebaseNewMarker(ff, dstDir);
+        }
+    }
 
     public static void createTxnLogFile(FilesFacade ff, MemoryMARW mem, Path txnSeqDirPath, long tableCreateDate, int chunkSize, int mkDirMode) {
         int rootLen = txnSeqDirPath.size();
@@ -121,6 +252,20 @@ public class WalUtils {
             }
         } finally {
             txnSeqDirPath.trimTo(rootLen);
+        }
+    }
+
+    /**
+     * Whether the {@link #REBASE_NEW_FILE_NAME} marker exists in the table dir.
+     *
+     * @param tableDirPath path positioned at the table directory ({@code <dbRoot>/<dirName>}); restored on return.
+     */
+    public static boolean isRebaseNewMarkerPresent(FilesFacade ff, Path tableDirPath) {
+        final int len = tableDirPath.size();
+        try {
+            return ff.exists(tableDirPath.concat(REBASE_NEW_FILE_NAME).$());
+        } finally {
+            tableDirPath.trimTo(len);
         }
     }
 
@@ -213,6 +358,156 @@ public class WalUtils {
         return false;
     }
 
+    /**
+     * Recovers the in-band {@code maxBaseSeqTxn} of a live view's last <em>committed</em>
+     * {@code LIVE_VIEW_DATA} block by scanning its own sequencer transaction log
+     * backward and reading the first (latest) such block's WAL-e event. The log records
+     * commits, not applies, so a caller that also derives coordinates from the LV
+     * <em>table</em> - a row count, a materialization frontier - must first establish
+     * that nothing committed is still unapplied, or those coordinates and this one
+     * describe different states. This is the
+     * "forward-scan recovery from the LV WAL" that closes the durable-floor gap left
+     * when a crash lands between the inline apply and the trailing {@code _lv.s}
+     * persist: the block's {@code maxBaseSeqTxn} is the base seqTxn the LV table
+     * committed, which the stale {@code _lv.s} may not record. It equals what the
+     * view materialised only once that block has applied, which this scan does not
+     * check - {@code LiveViewRefreshJob.reconcileAppliedFloorAfterRestart} compares
+     * the LV table's applied seqTxn against its sequencer's committed one and defers
+     * rather than clamp when they differ. Committed is the right answer for a caller
+     * that only needs a resume floor, because the block's derived rows are already
+     * durable in the view's own WAL: {@code CairoEngine.buildViewGraphs} rebuilds a
+     * torn {@code _lv.s} from it, and clamping lower there would re-derive the range
+     * the pending block also carries.
+     * <p>
+     * The caller owns {@code txnLogMemory} and {@code walEventReader}. Returns the
+     * {@code maxBaseSeqTxn} of the latest {@code LIVE_VIEW_DATA} block, or {@code -1}
+     * when there is none or the backing WAL-e cannot be read (a missing/purged event
+     * yields {@code -1} so the caller safely no-ops rather than clamps to a guess).
+     */
+    public static long readLiveViewMaxBaseSeqTxn(
+            Path tablePath,
+            CairoConfiguration configuration,
+            MemoryCMR txnLogMemory,
+            WalEventReader walEventReader
+    ) {
+        final int tablePathLen = tablePath.size();
+        try {
+            return liveViewMaxBaseSeqTxn0(tablePath, tablePathLen, configuration, txnLogMemory, walEventReader);
+        } catch (Exception e) {
+            // Honour the -1 contract on every path, not just the per-record one. Three
+            // sites throw: the _txnlog open (a concurrent DROP loses the file between the
+            // caller's isDropped() check and here), a V2 part open (the part was purged),
+            // and the unsupported-format-version guard. Each means the same thing the
+            // contract already names - the log cannot be read - and each caller handles
+            // -1 far better than a throw: the restart reconcile no-ops instead of burning
+            // retry budget, and buildViewGraphs surfaces a droppable state_unreadable stub.
+            // Exception, not Throwable: an OOM or a linkage failure here is not an
+            // unreadable log, and folding it into a safe-abort return would hide it.
+            LOG.error().$("could not read live view max base seqTxn, reporting no floor [path=")
+                    .$(tablePath)
+                    .$(", error=").$(e).I$();
+            return -1;
+        }
+    }
+
+    /**
+     * Creates the {@link #REBASE_NEW_FILE_NAME} marker in the table dir. Idempotent.
+     *
+     * @param tableDirPath path positioned at the table directory; restored on return.
+     */
+    public static void writeRebaseNewMarker(FilesFacade ff, Path tableDirPath) {
+        final int len = tableDirPath.size();
+        try {
+            if (!ff.exists(tableDirPath.concat(REBASE_NEW_FILE_NAME).$()) && !ff.touch(tableDirPath.$())) {
+                throw CairoException.critical(ff.errno()).put("could not create rebase-new marker [path=").put(tableDirPath).put(']');
+            }
+        } finally {
+            tableDirPath.trimTo(len);
+        }
+    }
+
+    /**
+     * Creates the {@link #REBASE_SOURCE_FILE_NAME} marker in the table dir. Idempotent.
+     *
+     * @param tableDirPath path positioned at the table directory; restored on return.
+     */
+    public static void writeRebaseSourceMarker(FilesFacade ff, Path tableDirPath) {
+        final int len = tableDirPath.size();
+        try {
+            if (!ff.exists(tableDirPath.concat(REBASE_SOURCE_FILE_NAME).$()) && !ff.touch(tableDirPath.$())) {
+                throw CairoException.critical(ff.errno()).put("could not create rebase-source marker [path=").put(tableDirPath).put(']');
+            }
+        } finally {
+            tableDirPath.trimTo(len);
+        }
+    }
+
+    public static void writeSequencerMetadataOptionalSections(
+            MemoryMARW metaMem,
+            int columnCount,
+            long checkSum,
+            RecordMetadata metadata,
+            IntList readColumnOrder
+    ) {
+        metaMem.putLong(checkSum);
+        if (readColumnOrder != null && readColumnOrder.size() > 0) {
+            metaMem.putInt(readColumnOrder.size());
+            for (int i = 0, n = readColumnOrder.size(); i < n; i++) {
+                metaMem.putInt(readColumnOrder.getQuick(i));
+            }
+        } else {
+            metaMem.putInt(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                metaMem.putInt(i);
+            }
+        }
+
+        metaMem.putLong(checkSum * 31 + SEQ_META_INDEX_TYPE_CHECKSUM_SALT);
+        metaMem.putInt(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            metaMem.putByte(metadata.getColumnMetadata(i).getIndexType());
+        }
+
+        metaMem.putLong(checkSum * 31 + SEQ_META_COVERING_COLUMN_CHECKSUM_SALT);
+        int coveringColumnCount = 0;
+        for (int i = 0; i < columnCount; i++) {
+            IntList indices = metadata.getColumnMetadata(i).getCoveringColumnIndices();
+            if (indices != null && indices.size() > 0) {
+                coveringColumnCount++;
+            }
+        }
+        metaMem.putInt(coveringColumnCount);
+        for (int i = 0; i < columnCount; i++) {
+            IntList indices = metadata.getColumnMetadata(i).getCoveringColumnIndices();
+            if (indices != null && indices.size() > 0) {
+                metaMem.putInt(i);
+                metaMem.putInt(indices.size());
+                for (int j = 0, n = indices.size(); j < n; j++) {
+                    metaMem.putInt(indices.getQuick(j));
+                }
+            }
+        }
+    }
+
+    // Whether a top-level file should be COPIED into a rebase clone (everything except transient markers).
+    private static boolean isRebaseClonedRootFile(CharSequence name) {
+        if (Chars.equals(name, TableUtils.TODO_FILE_NAME)
+                || Chars.equals(name, CONVERT_FILE_NAME)
+                || Chars.equals(name, REBASE_NEW_FILE_NAME)
+                || Chars.equals(name, REBASE_SOURCE_FILE_NAME)
+                || Chars.equals(name, TableUtils.TXN_SCOREBOARD_FILE_NAME)) {
+            return false;
+        }
+        return !Chars.endsWith(name, WAL_PENDING_FS_MARKER);
+    }
+
+    // Whether a top-level directory entry should be EXCLUDED from a rebase clone (sequencer + WAL dirs).
+    private static boolean isRebaseExcludedDir(CharSequence name) {
+        return Chars.equals(name, SEQ_DIR)
+                || Chars.equals(name, SEQ_DIR_DEPRECATED)
+                || Chars.startsWith(name, WAL_NAME_BASE);
+    }
+
     private static boolean processTransaction(
             MemoryCMR mem,
             long offset,
@@ -255,5 +550,107 @@ public class WalUtils {
             }
         }
         return false;
+    }
+
+    /**
+     * Runs {@link #readLiveViewMaxBaseSeqTxn}'s backward scan. Split out so the caller
+     * can convert every failure into that method's documented {@code -1}; this one is
+     * free to let the sequencer-log reads throw.
+     */
+    private static long liveViewMaxBaseSeqTxn0(
+            Path tablePath,
+            int tablePathLen,
+            CairoConfiguration configuration,
+            MemoryCMR txnLogMemory,
+            WalEventReader walEventReader
+    ) {
+        txnLogMemory.smallFile(configuration.getFilesFacade(), tablePath.concat(SEQ_DIR).concat(TXNLOG_FILE_NAME).$(), MemoryTag.MMAP_TX_LOG);
+        if (txnLogMemory.size() < TableTransactionLogFile.HEADER_SIZE) {
+            return -1;
+        }
+        final int formatVersion = txnLogMemory.getInt(TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET);
+        if (formatVersion == WAL_SEQUENCER_FORMAT_VERSION_V1) {
+            final long txnCount = txnLogMemory.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
+            if (txnCount > 0 && txnLogMemory.size() >= TableTransactionLogFile.HEADER_SIZE + txnCount * TableTransactionLogV1.RECORD_SIZE) {
+                for (long txn = txnCount - 1; txn >= 0; txn--) {
+                    final long offset = TableTransactionLogFile.HEADER_SIZE + txn * TableTransactionLogV1.RECORD_SIZE;
+                    final long result = liveViewMaxBaseSeqTxnFromRecord(txnLogMemory, offset, tablePath, tablePathLen, walEventReader);
+                    if (result != LV_SCAN_CONTINUE) {
+                        return result;
+                    }
+                }
+            }
+        } else if (formatVersion == WAL_SEQUENCER_FORMAT_VERSION_V2) {
+            final long txnCount = txnLogMemory.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
+            final long partSize = txnLogMemory.getInt(TableTransactionLogFile.HEADER_SEQ_PART_SIZE_32);
+            if (txnCount > 0 && partSize > 0) {
+                final long partCount = (txnCount + partSize - 1) / partSize;
+                try (MemoryCMR partMem = Vm.getCMRInstance(configuration.getBypassWalFdCache())) {
+                    for (long part = partCount - 1; part >= 0; part--) {
+                        tablePath.trimTo(tablePathLen).concat(SEQ_DIR).concat(TXNLOG_PARTS_DIR).slash().put(part);
+                        partMem.smallFile(configuration.getFilesFacade(), tablePath.$(), MemoryTag.MMAP_TX_LOG);
+                        final long partTxnCount = Math.min(partSize, txnCount - part * partSize);
+                        // Mirror the V1 size guard: never read a record past the mapped
+                        // part file. A truncated or corrupt part means the log cannot be
+                        // trusted, so bail with "no info" rather than reading out of bounds.
+                        if (partMem.size() < partTxnCount * TableTransactionLogV2.RECORD_SIZE) {
+                            return -1;
+                        }
+                        for (long txn = partTxnCount - 1; txn >= 0; txn--) {
+                            final long offset = txn * TableTransactionLogV2.RECORD_SIZE;
+                            final long result = liveViewMaxBaseSeqTxnFromRecord(partMem, offset, tablePath, tablePathLen, walEventReader);
+                            if (result != LV_SCAN_CONTINUE) {
+                                return result;
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);
+        }
+        return -1;
+    }
+
+    /**
+     * Inspects one sequencer-log record for {@link #readLiveViewMaxBaseSeqTxn}. Returns
+     * the block's {@code maxBaseSeqTxn} when the record is a {@code LIVE_VIEW_DATA}
+     * block (the caller's backward scan stops at the first, i.e. latest, one),
+     * {@link #LV_SCAN_CONTINUE} for a structural / non-WAL record so the scan keeps
+     * looking, or {@code -1} to abort the reconciliation safely (an unreadable WAL-e
+     * or an unexpected block type: the caller then no-ops rather than clamp to a value
+     * older than the true applied point, which would itself re-emit rows).
+     */
+    private static long liveViewMaxBaseSeqTxnFromRecord(
+            MemoryCMR mem,
+            long offset,
+            Path tablePath,
+            int tablePathLen,
+            WalEventReader walEventReader
+    ) {
+        final int walId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_WAL_ID_OFFSET);
+        final int segmentId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_OFFSET);
+        final int segmentTxn = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_TXN_OFFSET);
+        // Structural / non-WAL records (walId <= 0) carry no data event; skip them and
+        // keep scanning back to the latest LIVE_VIEW_DATA block below.
+        if (walId <= 0) {
+            return LV_SCAN_CONTINUE;
+        }
+        tablePath.trimTo(tablePathLen).concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+        try {
+            final WalEventCursor walEventCursor = walEventReader.of(tablePath, segmentTxn);
+            if (walEventCursor.getType() == LIVE_VIEW_DATA) {
+                return walEventCursor.getLiveViewDataInfo().getMaxBaseSeqTxnInBlock();
+            }
+            // First data record scanning back is not a LIVE_VIEW_DATA block: an older
+            // block would under-clamp, so abort safely.
+            return -1;
+        } catch (Exception e) {
+            // WAL-e missing / purged / unreadable: cannot recover the in-band value.
+            // Exception rather than Throwable - an OOM or a linkage failure here is
+            // not a missing WAL-e file, and swallowing it into a safe-abort return
+            // would hide it from the caller.
+            return -1;
+        }
     }
 }

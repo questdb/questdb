@@ -92,3 +92,45 @@ fn test_encode_binary() {
         }
     }
 }
+
+// Regression coverage for an all-null BINARY partition, driven through QuestDB's
+// own writer and reader. The varlen writer always emits a value_count=0 DELTA
+// header, so this parses correctly both before and after the all-null delta fix;
+// it closes the gap where no 100%-null varlen page was round-tripped.
+#[test]
+fn all_null_binary_delta_round_trips_through_qdb_reader() {
+    let nulls = vec![true; COUNT];
+    let empty: &[u8] = &[];
+    let values = vec![empty; COUNT];
+    let (primary, offsets) = build_qdb_binary_data(&values, &nulls);
+    let offsets_bytes = unsafe {
+        std::slice::from_raw_parts(
+            offsets.as_ptr() as *const u8,
+            std::mem::size_of_val(&offsets[..]),
+        )
+    };
+
+    let column = make_string_column(
+        "b_top",
+        ColumnType::new(ColumnTypeTag::Binary, 0).code(),
+        primary.as_ptr(),
+        primary.len(),
+        offsets_bytes.as_ptr(),
+        offsets_bytes.len(),
+        COUNT,
+        Encoding::DeltaLengthByteArray.config(),
+    );
+    let partition = Partition {
+        table: "repro".to_string(),
+        columns: vec![column],
+    };
+    let parquet = write_parquet(partition);
+
+    let (data_out, _aux_out) = common::decode_file(&parquet);
+    // All-null binary: one i64(-1) length header per row, no value bytes.
+    assert_eq!(data_out.len(), COUNT * 8, "binary data size");
+    for i in 0..COUNT {
+        let len = i64::from_le_bytes(data_out[i * 8..i * 8 + 8].try_into().unwrap());
+        assert_eq!(len, -1, "row {i} should decode as a null binary");
+    }
+}

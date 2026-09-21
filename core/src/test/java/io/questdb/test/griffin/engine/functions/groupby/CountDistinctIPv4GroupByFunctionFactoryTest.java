@@ -35,14 +35,11 @@ public class CountDistinctIPv4GroupByFunctionFactoryTest extends AbstractCairoTe
                 count_distinct
                 20
                 """;
-        assertQuery(
-                expected,
-                "select count_distinct(a) from x",
-                "create table x as (select rnd_ipv4() a from long_sequence(20))",
-                null,
-                false,
-                true
-        );
+        assertQuery("select count_distinct(a) from x")
+                .ddl("create table x as (select rnd_ipv4() a from long_sequence(20))")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -55,13 +52,10 @@ public class CountDistinctIPv4GroupByFunctionFactoryTest extends AbstractCairoTe
                 2000-01-01T00:00:00.000000Z\t3
                 2000-01-03T00:00:00.000000Z\t1
                 """;
-        assertQuery(
-                expectedDefault,
-                "select ts, count_distinct(ip) from x sample by 1d",
-                "ts",
-                true,
-                true
-        );
+        assertQuery("select ts, count_distinct(ip) from x sample by 1d")
+                .timestamp("ts")
+                .expectSize()
+                .returns(expectedDefault);
 
         String expectedInterpolated = """
                 ts\tcount_distinct
@@ -69,13 +63,10 @@ public class CountDistinctIPv4GroupByFunctionFactoryTest extends AbstractCairoTe
                 2000-01-02T00:00:00.000000Z\t2
                 2000-01-03T00:00:00.000000Z\t1
                 """;
-        assertQuery(
-                expectedInterpolated,
-                "select ts, count_distinct(ip) from x sample by 1d fill(linear)",
-                "ts",
-                true,
-                true
-        );
+        assertQuery("select ts, count_distinct(ip) from x sample by 1d fill(linear)")
+                .timestamp("ts")
+                .expectSize()
+                .returns(expectedInterpolated);
     }
 
 }

@@ -32,21 +32,21 @@ public class SimulateWarningsFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testSimulateWarningsDisabled() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "simulate_warnings\n" +
-                        "false\n",
-                "select simulate_warnings('', '')"
-        ));
+        assertMemoryLeak(() -> assertQuery("select simulate_warnings('', '')")
+                .noLeakCheck()
+                .expectSize()
+                .returns("simulate_warnings\n" +
+                        "false\n"));
     }
 
     @Test
     public void testSimulateWarningsEnabled() throws Exception {
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
 
-        assertMemoryLeak(() -> assertSql(
-                "simulate_warnings\n" +
-                        "true\n",
-                "select simulate_warnings('DISK FULL', 'Test warning!')"
-        ));
+        assertMemoryLeak(() -> assertQuery("select simulate_warnings('DISK FULL', 'Test warning!')")
+                .noLeakCheck()
+                .expectSize()
+                .returns("simulate_warnings\n" +
+                        "true\n"));
     }
 }

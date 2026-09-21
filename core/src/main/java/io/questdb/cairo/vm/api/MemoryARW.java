@@ -24,7 +24,21 @@
 
 package io.questdb.cairo.vm.api;
 
+import io.questdb.std.MemoryTracker;
+import org.jetbrains.annotations.Nullable;
+
 // appendable readable writable
 public interface MemoryARW extends MemoryA, MemoryR, MemoryW, MemoryAR {
     long appendAddressFor(long bytes);
+
+    /**
+     * Bind a per-query native memory tracker. Implementations that hold their
+     * own native heap route all {@code Unsafe.{malloc,realloc,free}} calls
+     * through the tracker-aware overloads while the tracker is set; passing
+     * {@code null} (the default) restores global-only accounting. Default
+     * no-op for implementations whose backing memory is not workload-scoped
+     * (memory-mapped files, table writers, etc.).
+     */
+    default void setMemoryTracker(@Nullable MemoryTracker tracker) {
+    }
 }

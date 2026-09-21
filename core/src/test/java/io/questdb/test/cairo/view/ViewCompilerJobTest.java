@@ -86,7 +86,7 @@ public class ViewCompilerJobTest extends AbstractViewTest {
                 final Thread th = new Thread(() -> {
                     try {
                         while (!stop.get()) {
-                            compilerJob.run(finalI);
+                            compilerJob.run();
                             Os.sleep(1);
                         }
                     } catch (Throwable e) {
@@ -132,7 +132,7 @@ public class ViewCompilerJobTest extends AbstractViewTest {
 
             drainWalQueue(engine);
             for (int i = 0; i < compilerJobs.size(); i++) {
-                compilerJobs.getQuick(i).run(i);
+                compilerJobs.getQuick(i).run();
             }
             drainWalQueue(engine);
 

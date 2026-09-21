@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.std.str.StringSink;
@@ -60,6 +61,11 @@ public final class VarcharToSymbolJoinKeyMapping implements SymbolJoinKeyMapping
     @Override
     public boolean isShortCircuit(Record masterRecord) {
         return getSlaveKey(masterRecord) == StaticSymbolTable.VALUE_NOT_FOUND;
+    }
+
+    @Override
+    public void of(RecordCursor slaveCursor) {
+        this.slaveSymbolTable = SymbolJoinKeyMapping.toStaticSymbolTable(slaveCursor.getSymbolTable(slaveSymbolIndex));
     }
 
     @Override

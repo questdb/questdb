@@ -84,8 +84,27 @@ public class LastLongGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select b, last(a), k from x sample by 3h fill(linear)")
+                .ddl("create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_long() a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 360000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE")
+                .mutateWith("insert into x select * from (" +
+                        "select" +
+                        " rnd_long() a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(277200000000, 360000000) k" +
+                        " from" +
+                        " long_sequence(35)" +
+                        ") timestamp(k)")
+                .timestamp("k")
+                .expectSize()
+                .returns("""
                         b\tlast\tk
                         \t2968650253814730084\t1970-01-03T00:00:00.000000Z
                         VTJW\t-7723703968879725602\t1970-01-03T00:00:00.000000Z
@@ -111,27 +130,7 @@ public class LastLongGroupByFunctionFactoryTest extends AbstractCairoTest {
                         VTJW\t-8371487291073160693\t1970-01-03T09:00:00.000000Z
                         RXGZ\t2486874217850272768\t1970-01-03T09:00:00.000000Z
                         HYRX\t6959985021334530048\t1970-01-03T09:00:00.000000Z
-                        """,
-                "select b, last(a), k from x sample by 3h fill(linear)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_long() a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 360000000) k" +
-                        " from" +
-                        " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_long() a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(277200000000, 360000000) k" +
-                        " from" +
-                        " long_sequence(35)" +
-                        ") timestamp(k)",
-                """
+                        """, """
                         b\tlast\tk
                         \t2968650253814730084\t1970-01-03T00:00:00.000000Z
                         VTJW\t-7723703968879725602\t1970-01-03T00:00:00.000000Z
@@ -254,11 +253,7 @@ public class LastLongGroupByFunctionFactoryTest extends AbstractCairoTest {
                         CPSW\t9223372036854775807\t1970-01-04T06:00:00.000000Z
                         HYRX\t9223372036854775807\t1970-01-04T06:00:00.000000Z
                         ZMZV\tnull\t1970-01-04T06:00:00.000000Z
-                        """,
-                true,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test

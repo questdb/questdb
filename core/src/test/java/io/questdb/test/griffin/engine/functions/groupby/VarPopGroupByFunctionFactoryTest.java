@@ -31,18 +31,22 @@ public class VarPopGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testVarPopAllNull() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "var_pop\nnull\n", "select var_pop(x) from (select cast(null as double) x from long_sequence(100))"
-        ));
+        assertMemoryLeak(() -> assertQuery("select var_pop(x) from (select cast(null as double) x from long_sequence(100))")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("var_pop\nnull\n"));
     }
 
     @Test
     public void testVarPopAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select 17.2151921 x from long_sequence(100))");
-            assertSql(
-                    "var_pop\n0.0\n", "select var_pop(x) from tbl1"
-            );
+            assertQuery("select var_pop(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("var_pop\n0.0\n");
         });
     }
 
@@ -50,9 +54,11 @@ public class VarPopGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testVarPopDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as double) x from long_sequence(100))");
-            assertSql(
-                    "var_pop\n833.25\n", "select var_pop(x) from tbl1"
-            );
+            assertQuery("select var_pop(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("var_pop\n833.25\n");
         });
     }
 
@@ -62,9 +68,11 @@ public class VarPopGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tbl1(x double)");
             execute("insert into 'tbl1' VALUES (null)");
             execute("insert into 'tbl1' select x from long_sequence(100)");
-            assertSql(
-                    "var_pop\n833.25\n", "select var_pop(x) from tbl1"
-            );
+            assertQuery("select var_pop(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("var_pop\n833.25\n");
         });
     }
 
@@ -72,9 +80,11 @@ public class VarPopGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testVarPopFloatValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as float) x from long_sequence(100))");
-            assertSql(
-                    "var_pop\n833.25\n", "select var_pop(x) from tbl1"
-            );
+            assertQuery("select var_pop(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("var_pop\n833.25\n");
         });
     }
 
@@ -82,9 +92,11 @@ public class VarPopGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testVarPopIntValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as int) x from long_sequence(100))");
-            assertSql(
-                    "var_pop\n833.25\n", "select var_pop(x) from tbl1"
-            );
+            assertQuery("select var_pop(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("var_pop\n833.25\n");
         });
     }
 
@@ -92,9 +104,11 @@ public class VarPopGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testVarPopNoValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1(x int)");
-            assertSql(
-                    "var_pop\nnull\n", "select var_pop(x) from tbl1"
-            );
+            assertQuery("select var_pop(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("var_pop\nnull\n");
         });
     }
 
@@ -104,9 +118,11 @@ public class VarPopGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tbl1(x int)");
             execute("insert into 'tbl1' VALUES " +
                     "(17.2151920)");
-            assertSql(
-                    "var_pop\n0.0\n", "select var_pop(x) from tbl1"
-            );
+            assertQuery("select var_pop(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("var_pop\n0.0\n");
         });
     }
 
@@ -114,9 +130,11 @@ public class VarPopGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testVarPopOverflow() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select 100000000 x from long_sequence(1000000))");
-            assertSql(
-                    "var_pop\n0.0\n", "select var_pop(x) from tbl1"
-            );
+            assertQuery("select var_pop(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("var_pop\n0.0\n");
         });
     }
 
@@ -125,9 +143,11 @@ public class VarPopGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as double) x from long_sequence(100))");
             execute("insert into 'tbl1' VALUES (null)");
-            assertSql(
-                    "var_pop\n833.25\n", "select var_pop(x) from tbl1"
-            );
+            assertQuery("select var_pop(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("var_pop\n833.25\n");
         });
     }
 }

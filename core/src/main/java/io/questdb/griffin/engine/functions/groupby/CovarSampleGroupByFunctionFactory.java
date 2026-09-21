@@ -32,9 +32,11 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class CovarSampleGroupByFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "covar_samp(DD)";
@@ -46,7 +48,13 @@ public class CovarSampleGroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         return new CovarSampleGroupByFunction(args.getQuick(0), args.getQuick(1));
     }
 
@@ -74,15 +82,26 @@ public class CovarSampleGroupByFunctionFactory implements FunctionFactory {
         // Chan et al. [CGL82; CGL83]
         @Override
         public void merge(MapValue destValue, MapValue srcValue) {
+            long srcCount = srcValue.getLong(valueIndex + 3);
+            if (srcCount == 0) {
+                return;
+            }
+            long destCount = destValue.getLong(valueIndex + 3);
+            if (destCount == 0) {
+                destValue.putDouble(valueIndex, srcValue.getDouble(valueIndex));
+                destValue.putDouble(valueIndex + 1, srcValue.getDouble(valueIndex + 1));
+                destValue.putDouble(valueIndex + 2, srcValue.getDouble(valueIndex + 2));
+                destValue.putLong(valueIndex + 3, srcCount);
+                return;
+            }
+
             double srcMeanY = srcValue.getDouble(valueIndex);
             double srcMeanX = srcValue.getDouble(valueIndex + 1);
             double srcSumXY = srcValue.getDouble(valueIndex + 2);
-            long srcCount = srcValue.getLong(valueIndex + 3);
 
             double destMeanY = destValue.getDouble(valueIndex);
             double destMeanX = destValue.getDouble(valueIndex + 1);
             double destSumXY = destValue.getDouble(valueIndex + 2);
-            long destCount = destValue.getLong(valueIndex + 3);
 
             long mergedCount = srcCount + destCount;
             double deltaY = destMeanY - srcMeanY;
@@ -101,11 +120,6 @@ public class CovarSampleGroupByFunctionFactory implements FunctionFactory {
             destValue.putDouble(valueIndex + 1, mergedMeanX);
             destValue.putDouble(valueIndex + 2, mergedSumXY);
             destValue.putLong(valueIndex + 3, mergedCount);
-        }
-
-        @Override
-        public boolean supportsParallelism() {
-            return true;
         }
     }
 }

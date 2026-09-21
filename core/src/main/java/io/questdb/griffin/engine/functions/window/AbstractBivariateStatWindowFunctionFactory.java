@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -41,7 +42,9 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -51,15 +54,18 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractBivariateStatWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
-    private static final ArrayColumnTypes BIVAR_COLUMN_TYPES;
+    static final ArrayColumnTypes BIVAR_COLUMN_TYPES;
+    static final ArrayColumnTypes BIVAR_COLUMN_TYPES_LV;
     private static final ArrayColumnTypes BIVAR_OVER_PARTITION_RANGE_COLUMN_TYPES;
     private static final ArrayColumnTypes BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES;
 
@@ -77,8 +83,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         if (cYY < 0) {
             cYY = 0;
         }
-        double denom = Math.sqrt(cXX * cYY);
-        return denom == 0.0 ? Double.NaN : cXY / denom;
+        return Numbers.corrFromSums(cXY, cXX, cYY);
     }
 
     // Welford's online algorithm result for correlation.
@@ -92,8 +97,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         if (sumYY < 0) {
             sumYY = 0;
         }
-        double denom = Math.sqrt(sumXX * sumYY);
-        return denom == 0.0 ? Double.NaN : sumXY / denom;
+        return Numbers.corrFromSums(sumXY, sumXX, sumYY);
     }
 
     // Naive sum-of-products formula for covariance, used by sliding-window (removable) frames.
@@ -180,10 +184,11 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                     );
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            BIVAR_COLUMN_TYPES
+                            liveView ? BIVAR_COLUMN_TYPES_LV : BIVAR_COLUMN_TYPES
                     );
 
                     return new BivarStatOverUnboundedPartitionRowsFrameFunction(
@@ -194,7 +199,10 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                             argX,
                             isCorrelation,
                             isSample,
-                            name
+                            name,
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row]
                 else {
@@ -242,10 +250,11 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            BIVAR_COLUMN_TYPES
+                            liveView ? BIVAR_COLUMN_TYPES_LV : BIVAR_COLUMN_TYPES
                     );
 
                     return new BivarStatOverUnboundedPartitionRowsFrameFunction(
@@ -256,7 +265,10 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                             argX,
                             isCorrelation,
                             isSample,
-                            name
+                            name,
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
@@ -710,7 +722,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             if (count > 0) {
                                 double valX = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                                 double valY = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES + Double.BYTES);
@@ -751,7 +763,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                     for (long i = count; i < size; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
+                        long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                         if (diff <= maxDiff && diff >= minDiff) {
                             double valX = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
@@ -771,7 +783,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             double valX = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             double valY = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES + Double.BYTES);
                             sumX += valX;
@@ -837,6 +849,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             super.reset();
             memory.close();
             freeList.clear();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
         }
 
         @Override
@@ -1069,6 +1087,16 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            // Bind the tracker on BOTH native structures: super handles the unbounded
+            // per-partition map (and the compaction scratch), this handles the ring
+            // buffer. Omitting super left the map untracked, so a high-cardinality
+            // PARTITION BY grew it past the per-query limit unaccounted.
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(argY).val(',').val(argX).val(')');
@@ -1177,7 +1205,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             this.name = name;
 
             capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             count = 0;
             size = 0;
@@ -1209,7 +1237,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         if (count > 0) {
                             double valX = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             double valY = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES + Double.BYTES);
@@ -1259,7 +1287,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                 for (long i = count, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
+                    long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                     if (diff <= maxDiff && diff >= minDiff) {
                         double valX = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
@@ -1279,7 +1307,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         double valX = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         double valY = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES + Double.BYTES);
                         sumX += valX;
@@ -1340,6 +1368,11 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         @Override
@@ -1431,12 +1464,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
 
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -1589,8 +1616,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
     // Doesn't require value buffering.
     static class BivarStatOverUnboundedPartitionRowsFrameFunction extends BasePartitionedBivariateWindowFunction implements WindowDoubleFunction {
         private final Function argY;
+        private final CairoConfiguration configuration;
         private final boolean isCorrelation;
         private final boolean isSample;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final String name;
         private double result = Double.NaN;
 
@@ -1602,13 +1633,40 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                 Function argX,
                 boolean isCorrelation,
                 boolean isSample,
-                String name
+                String name,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, argY, argX);
             this.argY = argY;
             this.isCorrelation = isCorrelation;
             this.isSample = isSample;
             this.name = name;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = BIVAR_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(BIVAR_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 6;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -1627,6 +1685,9 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             long count;
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 meanX = 0.0;
                 sumXX = 0.0;
                 meanY = 0.0;
@@ -1685,9 +1746,92 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : BIVAR_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), result);
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putDouble(0, 0.0);
+                value.putDouble(1, 0.0);
+                value.putDouble(2, 0.0);
+                value.putDouble(3, 0.0);
+                value.putDouble(4, 0.0);
+                value.putLong(5, 0L);
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            for (int i = 0; i < 5; i++) {
+                value.putDouble(i, source.getDouble(offset));
+                offset += Double.BYTES;
+            }
+            value.putLong(5, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            for (int i = 0; i < 5; i++) {
+                sink.putDouble(value.getDouble(i));
+            }
+            sink.putLong(value.getLong(5));
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -1698,6 +1842,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            tombstoneCount = 0;
         }
     }
 
@@ -1906,6 +2056,15 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         BIVAR_COLUMN_TYPES.add(ColumnType.DOUBLE);  // sumYY
         BIVAR_COLUMN_TYPES.add(ColumnType.DOUBLE);  // sumXY
         BIVAR_COLUMN_TYPES.add(ColumnType.LONG);    // count
+
+        BIVAR_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        BIVAR_COLUMN_TYPES_LV.add(ColumnType.DOUBLE);  // sumX / meanX
+        BIVAR_COLUMN_TYPES_LV.add(ColumnType.DOUBLE);  // sumXX
+        BIVAR_COLUMN_TYPES_LV.add(ColumnType.DOUBLE);  // sumY / meanY
+        BIVAR_COLUMN_TYPES_LV.add(ColumnType.DOUBLE);  // sumYY
+        BIVAR_COLUMN_TYPES_LV.add(ColumnType.DOUBLE);  // sumXY
+        BIVAR_COLUMN_TYPES_LV.add(ColumnType.LONG);    // count
+        BIVAR_COLUMN_TYPES_LV.add(ColumnType.BYTE);    // tombstone (anchor-driven compaction)
 
         BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES = new ArrayColumnTypes();
         BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.DOUBLE);  // sumX

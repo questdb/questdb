@@ -140,6 +140,9 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         engine.getTableTokens(tableTokenBucket, false);
         for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
             TableToken tableToken = tableTokenBucket.get(i);
+            if (engine.isWalApplySuspended(tableToken)) {
+                continue;
+            }
             SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
             if (!tracker.isSuspended() && tracker.getWriterTxn() < tracker.getSeqTxn()) {
                 if (!engine.notifyWalTxnCommitted(tableToken)) {

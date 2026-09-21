@@ -24,13 +24,13 @@
 
 package io.questdb.std.str;
 
+import io.questdb.std.FiberLocal;
 import io.questdb.std.Files;
-import io.questdb.std.ThreadLocal;
 import org.jetbrains.annotations.NotNull;
 
 public class FileNameExtractorUtf8Sequence implements Utf8Sequence {
 
-    private final static ThreadLocal<FileNameExtractorUtf8Sequence> SINGLETON = new ThreadLocal<>(FileNameExtractorUtf8Sequence::new);
+    private final static FiberLocal<FileNameExtractorUtf8Sequence> SINGLETON = new FiberLocal<>(FileNameExtractorUtf8Sequence::new);
     private Utf8Sequence base;
     private int hi;
     private int lo;

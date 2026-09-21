@@ -37,7 +37,7 @@ public abstract class AbstractQueueConsumerJob<T> implements Job {
     }
 
     @Override
-    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+    public boolean run(@NotNull WorkerContext workerContext) {
         if (!canRun()) {
             return false;
         }
@@ -47,7 +47,10 @@ public abstract class AbstractQueueConsumerJob<T> implements Job {
                 return false;
             }
             if (cursor > -1) {
-                return doRun(workerId, cursor, runStatus);
+                // Hand the whole context to doRun: it pulls carrierId() only if it
+                // needs the pool-local slot, and reads isTerminating() off the same
+                // WorkerContext object.
+                return doRun(cursor, workerContext);
             }
             Os.pause();
         }
@@ -57,5 +60,5 @@ public abstract class AbstractQueueConsumerJob<T> implements Job {
         return true;
     }
 
-    protected abstract boolean doRun(int workerId, long cursor, RunStatus runStatus);
+    protected abstract boolean doRun(long cursor, WorkerContext workerContext);
 }

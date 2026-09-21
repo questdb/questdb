@@ -27,10 +27,12 @@ package io.questdb.griffin.engine.functions.date;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Interval;
 
-class OffsetTimestampFunction extends TimestampFunction implements UnaryFunction {
+class OffsetTimestampFunction extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
     private final long offset;
     private final Function timestamp;
 
@@ -48,6 +50,16 @@ class OffsetTimestampFunction extends TimestampFunction implements UnaryFunction
     @Override
     public long getTimestamp(Record rec) {
         return timestamp.getTimestamp(rec) + offset;
+    }
+
+    @Override
+    public Function getTimestampArg() {
+        return timestamp;
+    }
+
+    @Override
+    public int invertTimestampInterval(Interval io) {
+        return MonotonicTimestampFunction.invertConstantShift(io, offset, shiftInputCeiling(getType()));
     }
 
     @Override

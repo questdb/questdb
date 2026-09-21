@@ -47,6 +47,7 @@ import io.questdb.client.std.Decimal256;
 import io.questdb.client.std.Numbers;
 import io.questdb.client.std.NumericException;
 import io.questdb.client.std.str.DirectUtf8Sink;
+import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
@@ -55,6 +56,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
@@ -847,18 +849,55 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             // large batch's first row triggers newRow(), it rolls to a new segment,
             // opening new column files via ff.openRW(). We intercept that to know
             // the server has started processing and then trigger the rename.
+            //
+            // We also need to pause the batch on the first matching openRW until
+            // the rename has committed its structural change to the sequencer.
+            // Otherwise the batch's sequencer.nextTxn (commit) can win the race
+            // against the rename's sequencer.nextStructureTxn -- both serialize
+            // through the same sequencer WRITE lock, and the test depends on the
+            // rename arriving first so the batch commit sees a token mismatch and
+            // is rejected via TableReferenceOutOfDateException -> 503.
+            //
+            // The RENAME runs synchronously on the test thread and also opens
+            // matching wal*/0 column files (its own structural-change segment).
+            // If the intercept allowed the test thread in, the test thread could
+            // win the race for the first match and park itself in execute(),
+            // letting the batch commit unhindered. Exclude the test thread so
+            // only the batch's HTTP worker can be parked.
             CountDownLatch walSegmentRolled = new CountDownLatch(1);
+            CountDownLatch renameRegistered = new CountDownLatch(1);
             AtomicBoolean trackOpens = new AtomicBoolean(false);
+            AtomicBoolean batchPausedOnce = new AtomicBoolean(false);
+            final Thread testThread = Thread.currentThread();
+            AtomicBoolean renameRegisteredTimedOut = new AtomicBoolean(false);
 
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name, int opts) {
                     long fd = super.openRW(name, opts);
+                    // Skip the test thread entirely: it runs the RENAME, and we must never park
+                    // it. If allowed in, the test thread's own openRW for wal*/0 column files
+                    // could win the parker CAS and deadlock the rename for 60 seconds.
                     if (trackOpens.get()
+                            && Thread.currentThread() != testThread
                             && Utf8s.containsAscii(name, tableName)
                             && Utf8s.containsAscii(name, "wal")
                             && Utf8s.endsWithAscii(name, ".d")) {
+                        // Decide who parks BEFORE counting down walSegmentRolled. If we counted
+                        // down first and then got preempted, the main thread could wake, issue
+                        // the RENAME, and a second matching openRW could win the CAS before
+                        // this one reaches it -- letting the batch commit unhindered.
+                        boolean parker = batchPausedOnce.compareAndSet(false, true);
                         walSegmentRolled.countDown();
+                        if (parker) {
+                            try {
+                                if (!renameRegistered.await(60, TimeUnit.SECONDS)) {
+                                    renameRegisteredTimedOut.set(true);
+                                }
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                            }
+                        }
                     }
                     return fd;
                 }
@@ -947,8 +986,16 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 Assert.assertTrue("Timed out waiting for WAL segment roll",
                         walSegmentRolled.await(60, TimeUnit.SECONDS));
 
-                // Rename the table while the server is processing the large batch
+                // Rename the table while the server is processing the large batch.
+                // The batch's first column-file openRW is parked, so this RENAME
+                // is guaranteed to register its structural change on the sequencer
+                // before the batch can call sequencer.nextTxn at commit time.
                 serverMain.execute("RENAME TABLE " + tableName + " TO " + renamedTableName);
+
+                // Unblock the batch now that the rename's structural change is on
+                // the sequencer. The batch's commit will see the new table token
+                // and the sequencer will throw TableReferenceOutOfDateException.
+                renameRegistered.countDown();
 
                 // Create a new table with the original name
                 serverMain.execute("CREATE TABLE " + tableName + " (" +
@@ -960,6 +1007,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 // Wait for sender thread to complete
                 senderThread.join(60_000);
                 Assert.assertFalse("Sender thread timed out", senderThread.isAlive());
+                Assert.assertFalse("Batch timed out waiting for the rename to register", renameRegisteredTimedOut.get());
 
                 // Check for errors
                 Throwable error = senderError.get();
@@ -1142,6 +1190,50 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                                 dec8\tdec16\tdec32\tdec64\tdec128\tdec256\tvalue\tts
                                 \t\t\t\t\t\t1\t1970-01-02T03:46:40.000000Z
                                 """);
+            }
+        });
+    }
+
+    @Test
+    public void testDesignatedTimestampFieldWithoutUnitIsRejectedPerMessage() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("CREATE TABLE ts_no_unit (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        // an internal error is retryable, a per-message rejection is not;
+                        // disabling retries keeps the assertion on the first response
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    // longColumn() sends the designated timestamp as an integer field, so it carries no unit
+                    sender.table("ts_no_unit")
+                            .longColumn("x", 1)
+                            .longColumn("ts", MicrosTimestampDriver.floor("2024-01-03 00:00:00.000000"))
+                            .atNow();
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "http-status=400",
+                            "unsupported timestamp unit"
+                    );
+                    sender.reset();
+
+                    // the rejection is per message: the table writer survives it and the next row lands
+                    sender.table("ts_no_unit")
+                            .longColumn("x", 2)
+                            .timestampColumn("ts", MicrosTimestampDriver.floor("2024-01-01 00:00:00.000000"), ChronoUnit.MICROS)
+                            .atNow();
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ts_no_unit");
+                serverMain.assertSql("SELECT x, ts FROM ts_no_unit", """
+                        x\tts
+                        2\t2024-01-01T00:00:00.000000Z
+                        """);
             }
         });
     }
@@ -2654,6 +2746,69 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testMicroDesignatedTimestampOutOfRangeIsRejectedPerMessage() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.execute("CREATE TABLE tab (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        // an internal error is retryable, a per-message rejection is not;
+                        // disabling retries keeps the assertion on the first response
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    // 10000-01-01 is past the 9999-12-31 ceiling of a micros designated timestamp, yet far
+                    // below the nanos ceiling, so a guard keyed on CommonUtils.MAX_TIMESTAMP alone lets it
+                    // through to the writer
+                    long outOfRange = Micros.YEAR_10000;
+
+                    // the designated timestamp arrives as the line timestamp
+                    sender.table("tab")
+                            .longColumn("x", 1)
+                            .at(outOfRange, ChronoUnit.MICROS);
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "http-status=400",
+                            "designated timestamp beyond 9999-12-31 is not allowed"
+                    );
+                    sender.reset();
+
+                    // the designated timestamp arrives as a named field, not as the line timestamp
+                    sender.table("tab")
+                            .longColumn("x", 2)
+                            .timestampColumn("ts", outOfRange, ChronoUnit.MICROS)
+                            .atNow();
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "http-status=400",
+                            "designated timestamp beyond 9999-12-31 is not allowed"
+                    );
+                    sender.reset();
+
+                    // the rejection is per message: the table writer survives it and the next row lands
+                    long inRange = MicrosTimestampDriver.floor("2024-01-01 00:00:00.000000");
+                    sender.table("tab")
+                            .longColumn("x", 3)
+                            .at(inRange, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("tab");
+                serverMain.assertSql("SELECT ts, x FROM tab", """
+                        ts\tx
+                        2024-01-01T00:00:00.000000Z\t3
+                        """);
+            }
+        });
+    }
+
+    @Test
     public void testNegativeDesignatedTimestampDoesNotRetry() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -2909,6 +3064,58 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testTimestampFieldWithUnsupportedBinaryUnitIsRejectedPerMessage() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("CREATE TABLE ts_bad_unit (ts2 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .autoFlushRows(Integer.MAX_VALUE)
+                        // an internal error is retryable, a per-message rejection is not;
+                        // disabling retries keeps the assertion on the first response
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    // a binary timestamp entity carries its unit as a raw wire byte, so a non-conforming
+                    // producer can send a unit no timestamp driver knows. The pinned client never emits
+                    // one, hence the hand-built message.
+                    try (DirectUtf8Sink sink = new DirectUtf8Sink(64)) {
+                        sink.put("ts_bad_unit ts2==");
+                        sink.putAny(LineTcpParser.ENTITY_TYPE_TIMESTAMP);
+                        sink.putAny(CommonUtils.TIMESTAMP_UNIT_UNSET);
+                        for (int i = 0; i < Long.BYTES; i++) {
+                            sink.putAny((byte) 0);
+                        }
+                        sink.put(' ').put(MicrosTimestampDriver.floor("2024-01-03 00:00:00.000000")).put("t\n");
+                        ((AbstractLineHttpSender) sender).putRawMessage(sink);
+                    }
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "http-status=400",
+                            "unsupported timestamp unit"
+                    );
+                    sender.reset();
+
+                    // the rejection is per message: the table writer survives it and the next row lands
+                    sender.table("ts_bad_unit")
+                            .timestampColumn("ts2", MicrosTimestampDriver.floor("2024-01-02 00:00:00.000000"), ChronoUnit.MICROS)
+                            .at(MicrosTimestampDriver.floor("2024-01-01 00:00:00.000000"), ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ts_bad_unit");
+                serverMain.assertSql("SELECT ts2, ts FROM ts_bad_unit", """
+                        ts2\tts
+                        2024-01-02T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z
+                        """);
+            }
+        });
+    }
+
+    @Test
     public void testTimestampIngestMicrosV1() throws Exception {
         testTimestampIngest("TIMESTAMP", PROTOCOL_VERSION_V1, """
                         ts\tdts
@@ -3071,9 +3278,57 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     flushAndAssertError(
                             sender,
                             "Could not flush buffer",
-                            "designated timestamp overflow, max[9214646399999999999]"
+                            "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed"
                     );
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testTimestampNSOverflowInDesignatedTimestampField() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.execute("CREATE TABLE tab (ts TIMESTAMP_NS, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        // an internal error is retryable, a per-message rejection is not;
+                        // disabling retries keeps the assertion on the first response
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    // the designated timestamp arrives as a named field, not as the line timestamp
+                    long overflow = NanosTimestampDriver.floor("2262-01-31 23:59:59.999999999");
+                    sender.table("tab")
+                            .longColumn("x", 1)
+                            .timestampColumn("ts", overflow, ChronoUnit.NANOS)
+                            .atNow();
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "http-status=400",
+                            "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed"
+                    );
+                    sender.reset();
+
+                    // the rejection is per message: the table writer survives it and the next row lands
+                    long inRange = NanosTimestampDriver.floor("2024-01-01 00:00:00.000000000");
+                    sender.table("tab")
+                            .longColumn("x", 2)
+                            .timestampColumn("ts", inRange, ChronoUnit.NANOS)
+                            .atNow();
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("tab");
+                serverMain.assertSql("SELECT ts, x FROM tab", """
+                        ts\tx
+                        2024-01-01T00:00:00.000000000Z\t2
+                        """);
             }
         });
     }

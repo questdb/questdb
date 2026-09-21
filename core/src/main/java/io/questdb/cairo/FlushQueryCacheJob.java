@@ -44,7 +44,7 @@ public class FlushQueryCacheJob extends AbstractQueueConsumerJob<Object> {
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+    protected boolean doRun(long cursor, WorkerContext workerContext) {
         try {
             if (httpServer != null) {
                 LOG.info().$("flushing HTTP server select cache").$();

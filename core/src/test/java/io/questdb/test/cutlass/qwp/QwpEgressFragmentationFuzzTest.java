@@ -24,15 +24,10 @@
 
 package io.questdb.test.cutlass.qwp;
 
-import io.questdb.PropertyKey;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -59,29 +54,19 @@ import org.junit.Test;
  *       might have picked up residue from a fragmented prior query.</li>
  * </ul>
  */
-public class QwpEgressFragmentationFuzzTest extends AbstractBootstrapTest {
-
-    private static final Log LOG = LogFactory.getLog(QwpEgressFragmentationFuzzTest.class);
-    private Rnd random;
+public class QwpEgressFragmentationFuzzTest extends AbstractQwpBootstrapTest {
 
     @Before
     public void setUp() {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
-        // Seeds are pinned rather than derived from the clock so the fuzz
-        // runs are bit-for-bit reproducible. When a CI failure surfaces a
-        // different seed pair, update the constants here so the broken case
-        // becomes the new regression baseline.
-        random = TestUtils.generateRandom(LOG, 492919964565416L, 1776636105288L);
     }
 
     @Test
     public void testFragmentedBackToBackQueries() throws Exception {
-        int chunk = pickChunk();
-        LOG.info().$("=== fragmentation test: chunk=").$(chunk).$();
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startFragmented(chunk)) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE btb(id LONG, v DOUBLE, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute(
@@ -104,10 +89,8 @@ public class QwpEgressFragmentationFuzzTest extends AbstractBootstrapTest {
         // Every wire byte becomes its own socket-level event at chunk=1 -- the
         // handshake response, every WS frame header, every QWP prelude, every
         // CREDIT frame. Lands on the park-resume path at every boundary.
-        int chunk = pickChunk();
-        LOG.info().$("=== fragmented credit test: chunk=").$(chunk).$();
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startFragmented(chunk)) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute(
                         "CREATE TABLE cf AS (SELECT x AS id, x::TIMESTAMP AS ts FROM long_sequence(20000))"
                                 + " TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -149,10 +132,8 @@ public class QwpEgressFragmentationFuzzTest extends AbstractBootstrapTest {
 
     @Test
     public void testFragmentedStreamingBigResult() throws Exception {
-        int chunk = pickChunk();
-        LOG.info().$("=== fragmentation big result: chunk=").$(chunk).$();
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startFragmented(chunk)) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute(
                         "CREATE TABLE bigt AS (" +
                                 "SELECT x AS id, CAST(x * 1.5 AS DOUBLE) AS v, " +
@@ -179,7 +160,10 @@ public class QwpEgressFragmentationFuzzTest extends AbstractBootstrapTest {
         // response. Now onHeadersReady defers send() to onRequestComplete,
         // where PISR propagates cleanly into the park-resume path.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startFragmented(5)) {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    io.questdb.PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "5",
+                    io.questdb.PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "5"
+            )) {
                 serverMain.execute("CREATE TABLE tiny(id LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO tiny SELECT x, x::TIMESTAMP FROM long_sequence(3)");
@@ -191,13 +175,6 @@ public class QwpEgressFragmentationFuzzTest extends AbstractBootstrapTest {
                 }
             }
         });
-    }
-
-    private int pickChunk() {
-        // Aggressive fragmentation: every socket read/write carries ~this many
-        // bytes, so even a tiny WS frame spans many iterations and the state
-        // machine must survive being preempted / resumed at arbitrary points.
-        return 1 + random.nextInt(500);
     }
 
     private void runAndVerify(QwpQueryClient client, String table, int expectedRows) {
@@ -228,10 +205,4 @@ public class QwpEgressFragmentationFuzzTest extends AbstractBootstrapTest {
         Assert.assertEquals("idSum", (long) expectedRows * (expectedRows + 1) / 2, idSum[0]);
     }
 
-    private TestServerMain startFragmented(int chunk) {
-        return startWithEnvVariables(
-                PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), Integer.toString(chunk),
-                PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), Integer.toString(chunk)
-        );
-    }
 }

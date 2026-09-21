@@ -113,22 +113,23 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         func2.init(null, sqlExecutionContext);
 
         TestUtils.assertEquals(
-                "00000000 56 54 4a 57 43 50 53 57 48 59 52 58 50 45 48 4e\n" +
-                        "00000010 52 58 47 5a 53 58 55 58 49 42 42 54 47 50 47 57\n" +
-                        "00000020 46 46 59 55 44 45 59 59 51 45 48 42 48 46 4f 57\n" +
-                        "00000030 4c 50 44 58 59 53 42 45 4f 55 4f 4a 53 48 52 55\n" +
-                        "00000040 45 44 52 51 51 55 4c 4f 46 4a 47 45 54 4a 52 53\n" +
-                        "00000050 5a 53 52 59 52 46 42 56 54 4d 48 47 4f 4f 5a 5a\n" +
-                        "00000060 56 44 5a 4a 4d 59 49 43 43 58 5a 4f 55 49 43 57\n" +
-                        "00000070 45 4b 47 48 56 55 56 53 44 4f 54 53 45 44 59 59\n" +
-                        "00000080 43 54 47 51 4f 4c 59 58 57 43 4b 59 4c 53 55 57\n" +
-                        "00000090 44 53 57 55 47 53 48 4f 4c 4e 56 54 49 51 42 5a\n" +
-                        "000000a0 58 49 4f 56 49 4b 4a 53 4d 53 53 55 51 53 52 4c\n" +
-                        "000000b0 54 4b 56 56 53 4a 4f 4a 49 50 48 5a 45 50 49 48\n" +
-                        "000000c0 56 4c 54 4f 56 4c 4a 55 4d 4c 47 4c 48 4d 4c 4c\n" +
-                        "000000d0 45 4f 59 50 48 52 49 50 5a 49 4d 4e 5a 5a 52 4d\n" +
-                        "000000e0 46 4d 42 45 5a 47 48 57 56 44 4b 46 4c 4f 50 4a\n" +
-                        "000000f0 4f 58 50 4b 52 47 49 49 48 59 48 42 4f 51 4d 59",
+                """
+                        00000000 56 54 4a 57 43 50 53 57 48 59 52 58 50 45 48 4e
+                        00000010 52 58 47 5a 53 58 55 58 49 42 42 54 47 50 47 57
+                        00000020 46 46 59 55 44 45 59 59 51 45 48 42 48 46 4f 57
+                        00000030 4c 50 44 58 59 53 42 45 4f 55 4f 4a 53 48 52 55
+                        00000040 45 44 52 51 51 55 4c 4f 46 4a 47 45 54 4a 52 53
+                        00000050 5a 53 52 59 52 46 42 56 54 4d 48 47 4f 4f 5a 5a
+                        00000060 56 44 5a 4a 4d 59 49 43 43 58 5a 4f 55 49 43 57
+                        00000070 45 4b 47 48 56 55 56 53 44 4f 54 53 45 44 59 59
+                        00000080 43 54 47 51 4f 4c 59 58 57 43 4b 59 4c 53 55 57
+                        00000090 44 53 57 55 47 53 48 4f 4c 4e 56 54 49 51 42 5a
+                        000000a0 58 49 4f 56 49 4b 4a 53 4d 53 53 55 51 53 52 4c
+                        000000b0 54 4b 56 56 53 4a 4f 4a 49 50 48 5a 45 50 49 48
+                        000000c0 56 4c 54 4f 56 4c 4a 55 4d 4c 47 4c 48 4d 4c 4c
+                        000000d0 45 4f 59 50 48 52 49 50 5a 49 4d 4e 5a 5a 52 4d
+                        000000e0 46 4d 42 45 5a 47 48 57 56 44 4b 46 4c 4f 50 4a
+                        000000f0 4f 58 50 4b 52 47 49 49 48 59 48 42 4f 51 4d 59""",
                 func.getStrA(builder.getRecord())
         );
 
@@ -175,22 +176,23 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         func2.init(null, sqlExecutionContext);
 
         TestUtils.assertEquals(
-                "00000000 56 54 4a 57 43 50 53 57 48 59 52 58 50 45 48 4e\n" +
-                        "00000010 52 58 47 5a 53 58 55 58 49 42 42 54 47 50 47 57\n" +
-                        "00000020 46 46 59 55 44 45 59 59 51 45 48 42 48 46 4f 57\n" +
-                        "00000030 4c 50 44 58 59 53 42 45 4f 55 4f 4a 53 48 52 55\n" +
-                        "00000040 45 44 52 51 51 55 4c 4f 46 4a 47 45 54 4a 52 53\n" +
-                        "00000050 5a 53 52 59 52 46 42 56 54 4d 48 47 4f 4f 5a 5a\n" +
-                        "00000060 56 44 5a 4a 4d 59 49 43 43 58 5a 4f 55 49 43 57\n" +
-                        "00000070 45 4b 47 48 56 55 56 53 44 4f 54 53 45 44 59 59\n" +
-                        "00000080 43 54 47 51 4f 4c 59 58 57 43 4b 59 4c 53 55 57\n" +
-                        "00000090 44 53 57 55 47 53 48 4f 4c 4e 56 54 49 51 42 5a\n" +
-                        "000000a0 58 49 4f 56 49 4b 4a 53 4d 53 53 55 51 53 52 4c\n" +
-                        "000000b0 54 4b 56 56 53 4a 4f 4a 49 50 48 5a 45 50 49 48\n" +
-                        "000000c0 56 4c 54 4f 56 4c 4a 55 4d 4c 47 4c 48 4d 4c 4c\n" +
-                        "000000d0 45 4f 59 50 48 52 49 50 5a 49 4d 4e 5a 5a 52 4d\n" +
-                        "000000e0 46 4d 42 45 5a 47 48 57 56 44 4b 46 4c 4f 50 4a\n" +
-                        "000000f0 4f 58 50 4b 52 47 49 49 48 59 48 42 4f 51 4d 59",
+                """
+                        00000000 56 54 4a 57 43 50 53 57 48 59 52 58 50 45 48 4e
+                        00000010 52 58 47 5a 53 58 55 58 49 42 42 54 47 50 47 57
+                        00000020 46 46 59 55 44 45 59 59 51 45 48 42 48 46 4f 57
+                        00000030 4c 50 44 58 59 53 42 45 4f 55 4f 4a 53 48 52 55
+                        00000040 45 44 52 51 51 55 4c 4f 46 4a 47 45 54 4a 52 53
+                        00000050 5a 53 52 59 52 46 42 56 54 4d 48 47 4f 4f 5a 5a
+                        00000060 56 44 5a 4a 4d 59 49 43 43 58 5a 4f 55 49 43 57
+                        00000070 45 4b 47 48 56 55 56 53 44 4f 54 53 45 44 59 59
+                        00000080 43 54 47 51 4f 4c 59 58 57 43 4b 59 4c 53 55 57
+                        00000090 44 53 57 55 47 53 48 4f 4c 4e 56 54 49 51 42 5a
+                        000000a0 58 49 4f 56 49 4b 4a 53 4d 53 53 55 51 53 52 4c
+                        000000b0 54 4b 56 56 53 4a 4f 4a 49 50 48 5a 45 50 49 48
+                        000000c0 56 4c 54 4f 56 4c 4a 55 4d 4c 47 4c 48 4d 4c 4c
+                        000000d0 45 4f 59 50 48 52 49 50 5a 49 4d 4e 5a 5a 52 4d
+                        000000e0 46 4d 42 45 5a 47 48 57 56 44 4b 46 4c 4f 50 4a
+                        000000f0 4f 58 50 4b 52 47 49 49 48 59 48 42 4f 51 4d 59""",
                 func.getStrA(builder.getRecord())
         );
 
@@ -486,8 +488,14 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
             sqlExecutionContext.getBindVariableService().getFunction(0);
             sqlExecutionContext.getBindVariableService().setIPv4(0, "34.56.21.2");
             execute("insert into x(a) values($1)");
-            TestUtils.assertSql(engine, sqlExecutionContext, "x", sink, "a\n" +
-                    "34.56.21.2\n");
+            assertQuery("x")
+                    .withEngine(engine)
+                    .withContext(sqlExecutionContext)
+                    .noLeakCheck()
+                    .returnsOnce("""
+                            a
+                            34.56.21.2
+                            """);
         });
     }
 
@@ -529,22 +537,24 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testLeadWindowFunction() throws SqlException {
+    public void testLeadWindowFunction() throws Exception {
         bindVariableService.setTimestamp("ts", 123456);
 
         try (SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1)) {
             executionContext.with(bindVariableService);
-            TestUtils.assertSql(engine,
-                    executionContext,
-                    "SELECT LEAD(generate_series, 1, :ts) OVER (ORDER BY generate_series) FROM generate_series('1970-01-01T00:00:00Z', '1970-01-01T00:00:05Z', '1s');",
-                    sink,
-                    "LEAD\n" +
-                            "1970-01-01T00:00:01.000000Z\n" +
-                            "1970-01-01T00:00:02.000000Z\n" +
-                            "1970-01-01T00:00:03.000000Z\n" +
-                            "1970-01-01T00:00:04.000000Z\n" +
-                            "1970-01-01T00:00:05.000000Z\n" +
-                            "1970-01-01T00:00:00.123456Z\n");
+            assertQuery("SELECT LEAD(generate_series, 1, :ts) OVER (ORDER BY generate_series) FROM generate_series('1970-01-01T00:00:00Z', '1970-01-01T00:00:05Z', '1s');")
+                    .withEngine(engine)
+                    .withContext(executionContext)
+                    .noLeakCheck()
+                    .returnsOnce("""
+                            LEAD
+                            1970-01-01T00:00:01.000000Z
+                            1970-01-01T00:00:02.000000Z
+                            1970-01-01T00:00:03.000000Z
+                            1970-01-01T00:00:04.000000Z
+                            1970-01-01T00:00:05.000000Z
+                            1970-01-01T00:00:00.123456Z
+                            """);
         }
     }
 
@@ -902,10 +912,14 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
             sqlExecutionContext.getBindVariableService().getFunction(0);
             sqlExecutionContext.getBindVariableService().setUuid(0, uuid.getLo(), uuid.getHi());
             execute("insert into x(a) values($1)");
-            TestUtils.assertSql(engine, sqlExecutionContext, "x", sink, """
-                    a
-                    75b30bf9-e4cc-48b9-9658-97d4a2307622
-                    """);
+            assertQuery("x")
+                    .withEngine(engine)
+                    .withContext(sqlExecutionContext)
+                    .noLeakCheck()
+                    .returnsOnce("""
+                            a
+                            75b30bf9-e4cc-48b9-9658-97d4a2307622
+                            """);
         });
     }
 

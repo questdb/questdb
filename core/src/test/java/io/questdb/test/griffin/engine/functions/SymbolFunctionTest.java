@@ -222,9 +222,11 @@ public class SymbolFunctionTest {
         Assert.assertEquals("XYZ", function.getStrB(null));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetStrLen() {
-        function.getStrLen(null);
+        // SymbolFunction.getStrLen() delegates to getSymbol().length() so that StrFunction
+        // wrappers (upper, lower, length, ...) work transparently when given a symbol column.
+        Assert.assertEquals(3, function.getStrLen(null));
     }
 
     @Test

@@ -238,18 +238,36 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testGlobAbsolutePath() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("cnt\n7\n", "select count(*) cnt from glob('" + inputRoot + "/data/*.parquet')", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('" + inputRoot + "/data/*.parquet') where path like '%file1.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('" + inputRoot + "/data/*.parquet') where path like '%file2.parquet'", null, false, true);
+            assertQuery("select count(*) cnt from glob('" + inputRoot + "/data/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n7\n");
+            assertQuery("select count(*) cnt from glob('" + inputRoot + "/data/*.parquet') where path like '%file1.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('" + inputRoot + "/data/*.parquet') where path like '%file2.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
         });
     }
 
     @Test
     public void testGlobAllColumns() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file1.parquet')", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file1.parquet') where diskSize > 0", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file1.parquet') where modifiedTime > 0", null, false, true);
+            assertQuery("select count(*) cnt from glob('data/file1.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/file1.parquet') where diskSize > 0")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/file1.parquet') where modifiedTime > 0")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
         });
     }
 
@@ -265,28 +283,58 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
             // partitioned: 2 + 3 + 1 = 6
             // mixed: 10
             // Total: 12 + 12 + 6 + 1 + 5 + 6 + 10 = 52
-            assertQuery("cnt\n52\n", "select count(*) cnt from glob('**/*.parquet')", null, false, true);
+            assertQuery("select count(*) cnt from glob('**/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n52\n");
         });
     }
 
     @Test
     public void testGlobArchiveMultipleYears() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("cnt\n6\n", "select count(*) cnt from glob('archive/**/*.parquet')", null, false, true);
-            assertQuery("cnt\n2\n", "select count(*) cnt from glob('archive/2022/**/*.parquet')", null, false, true);
-            assertQuery("cnt\n4\n", "select count(*) cnt from glob('archive/2023/**/*.parquet')", null, false, true);
-            assertQuery("cnt\n2\n", "select count(*) cnt from glob('archive/2023/01/**/*.parquet')", null, false, true);
-            assertQuery("cnt\n2\n", "select count(*) cnt from glob('archive/2023/06/**/*.parquet')", null, false, true);
-            assertQuery("cnt\n0\n", "select count(*) cnt from glob('archive/2023/07/**/*.parquet')", null, false, true);
+            assertQuery("select count(*) cnt from glob('archive/**/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n6\n");
+            assertQuery("select count(*) cnt from glob('archive/2022/**/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n2\n");
+            assertQuery("select count(*) cnt from glob('archive/2023/**/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n4\n");
+            assertQuery("select count(*) cnt from glob('archive/2023/01/**/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n2\n");
+            assertQuery("select count(*) cnt from glob('archive/2023/06/**/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n2\n");
+            assertQuery("select count(*) cnt from glob('archive/2023/07/**/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n0\n");
         });
     }
 
     @Test
     public void testGlobAsteriskInMiddle() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/f*1.parquet')", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/f*1.parquet') where path like '%file1.parquet'", null, false, true);
-            assertQuery("cnt\n0\n", "select count(*) cnt from glob('data/f*1.parquet') where path like '%file2.parquet'", null, false, true);
+            assertQuery("select count(*) cnt from glob('data/f*1.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/f*1.parquet') where path like '%file1.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/f*1.parquet') where path like '%file2.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n0\n");
         });
     }
 
@@ -294,14 +342,35 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     public void testGlobAsteriskPattern() throws Exception {
         assertMemoryLeak(() -> {
             // Should match 7 parquet files: file1, file2, file3, fileA, fileB, test_2023, test_2024
-            assertQuery("cnt\n7\n", "select count(*) cnt from glob('data/*.parquet')", null, false, true);
+            assertQuery("select count(*) cnt from glob('data/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n7\n");
             // Verify each file is present
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/*.parquet') where path like '%file1.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/*.parquet') where path like '%file2.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/*.parquet') where path like '%file3.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/*.parquet') where path like '%fileA.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/*.parquet') where path like '%fileB.parquet'", null, false, true);
-            assertQuery("cnt\n0\n", "select count(*) cnt from glob('data/*.parquet') where path like '%readme.txt'", null, false, true);
+            assertQuery("select count(*) cnt from glob('data/*.parquet') where path like '%file1.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/*.parquet') where path like '%file2.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/*.parquet') where path like '%file3.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/*.parquet') where path like '%fileA.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/*.parquet') where path like '%fileB.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/*.parquet') where path like '%readme.txt'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n0\n");
         });
     }
 
@@ -309,12 +378,30 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     public void testGlobBracketNegation() throws Exception {
         assertMemoryLeak(() -> {
             // [!1] should match file2, file3, fileA, fileB (any single char except '1')
-            assertQuery("cnt\n4\n", "select count(*) cnt from glob('data/file[!1].parquet')", null, false, true);
-            assertQuery("cnt\n0\n", "select count(*) cnt from glob('data/file[!1].parquet') where path like '%file1.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file[!1].parquet') where path like '%file2.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file[!1].parquet') where path like '%file3.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file[!1].parquet') where path like '%fileA.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file[!1].parquet') where path like '%fileB.parquet'", null, false, true);
+            assertQuery("select count(*) cnt from glob('data/file[!1].parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n4\n");
+            assertQuery("select count(*) cnt from glob('data/file[!1].parquet') where path like '%file1.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n0\n");
+            assertQuery("select count(*) cnt from glob('data/file[!1].parquet') where path like '%file2.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/file[!1].parquet') where path like '%file3.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/file[!1].parquet') where path like '%fileA.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/file[!1].parquet') where path like '%fileB.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
         });
     }
 
@@ -322,10 +409,22 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     public void testGlobBracketPattern() throws Exception {
         assertMemoryLeak(() -> {
             // [12] should match file1 and file2, but not file3
-            assertQuery("cnt\n2\n", "select count(*) cnt from glob('data/file[12].parquet')", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file[12].parquet') where path like '%file1.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file[12].parquet') where path like '%file2.parquet'", null, false, true);
-            assertQuery("cnt\n0\n", "select count(*) cnt from glob('data/file[12].parquet') where path like '%file3.parquet'", null, false, true);
+            assertQuery("select count(*) cnt from glob('data/file[12].parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n2\n");
+            assertQuery("select count(*) cnt from glob('data/file[12].parquet') where path like '%file1.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/file[12].parquet') where path like '%file2.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/file[12].parquet') where path like '%file3.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n0\n");
         });
     }
 
@@ -333,10 +432,22 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     public void testGlobBracketRange() throws Exception {
         assertMemoryLeak(() -> {
             // [1-3] should match file1, file2, and file3
-            assertQuery("cnt\n3\n", "select count(*) cnt from glob('data/file[1-3].parquet')", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file[1-3].parquet') where path like '%file1.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file[1-3].parquet') where path like '%file2.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file[1-3].parquet') where path like '%file3.parquet'", null, false, true);
+            assertQuery("select count(*) cnt from glob('data/file[1-3].parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n3\n");
+            assertQuery("select count(*) cnt from glob('data/file[1-3].parquet') where path like '%file1.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/file[1-3].parquet') where path like '%file2.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/file[1-3].parquet') where path like '%file3.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
         });
     }
 
@@ -344,10 +455,22 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     public void testGlobCombinedPatterns() throws Exception {
         assertMemoryLeak(() -> {
             // Combine * and ?: file?.p* should match file1.parquet, file2.parquet, file3.parquet, fileA.parquet, fileB.parquet
-            assertQuery("cnt\n5\n", "select count(*) cnt from glob('data/file?.p*')", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file?.p*') where path like '%file1.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file?.p*') where path like '%file2.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file?.p*') where path like '%fileA.parquet'", null, false, true);
+            assertQuery("select count(*) cnt from glob('data/file?.p*')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n5\n");
+            assertQuery("select count(*) cnt from glob('data/file?.p*') where path like '%file1.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/file?.p*') where path like '%file2.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/file?.p*') where path like '%fileA.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
         });
     }
 
@@ -355,19 +478,40 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     public void testGlobDeepLevel4() throws Exception {
         assertMemoryLeak(() -> {
             // Test 4 levels deep: data/nested/level3/level4/deepest.parquet
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/nested/level3/level4/*.parquet')", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/**/level4/*.parquet')", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/nested/**/deepest.parquet')", null, false, true);
+            assertQuery("select count(*) cnt from glob('data/nested/level3/level4/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/**/level4/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/nested/**/deepest.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
         });
     }
 
     @Test
     public void testGlobDeepNesting() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("cnt\n2\n", "select count(*) cnt from glob('archive/2023/01/backup/*.parquet')", null, false, true);
-            assertQuery("cnt\n2\n", "select count(*) cnt from glob('archive/2023/01/**/*.parquet')", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('archive/2023/01/**/*.parquet') where path like '%data1.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('archive/2023/01/**/*.parquet') where path like '%data2.parquet'", null, false, true);
+            assertQuery("select count(*) cnt from glob('archive/2023/01/backup/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n2\n");
+            assertQuery("select count(*) cnt from glob('archive/2023/01/**/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n2\n");
+            assertQuery("select count(*) cnt from glob('archive/2023/01/**/*.parquet') where path like '%data1.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('archive/2023/01/**/*.parquet') where path like '%data2.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
         });
     }
 
@@ -377,11 +521,8 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
             String oldInputRoot = inputRoot;
             try {
                 inputRoot = null;
-                assertException(
-                        "select * from glob('*.parquet')",
-                        14,
-                        "'cairo.sql.copy.root' is not set"
-                );
+                assertQuery("select * from glob('*.parquet')")
+                        .fails(14, "'cairo.sql.copy.root' is not set");
             } finally {
                 inputRoot = oldInputRoot;
             }
@@ -393,11 +534,26 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // ** at end should find all files recursively under data/
             // data/ has 9 files, nested/ has 3 files, level3/ has 2 files, level4/ has 1 file = 15 total
-            assertQuery("cnt\n15\n", "select count(*) cnt from glob('data/**')", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/**') where path like '%file1.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/**') where path like '%deep.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/**') where path like '%level3.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/**') where path like '%deepest.parquet'", null, false, true);
+            assertQuery("select count(*) cnt from glob('data/**')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n15\n");
+            assertQuery("select count(*) cnt from glob('data/**') where path like '%file1.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/**') where path like '%deep.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/**') where path like '%level3.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/**') where path like '%deepest.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
         });
     }
 
@@ -406,12 +562,27 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // ** in middle finds parquet files recursively under reports/
             // reports/ has 2 parquet, 2022/ has 4, 2023/ has 4, 2024/ has 2 = 12 total parquet
-            assertQuery("cnt\n12\n", "select count(*) cnt from glob('reports/**/*.parquet')", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('reports/**/*.parquet') where path like '%summary.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('reports/**/*.parquet') where path like '%overview.parquet'", null, false, true);
+            assertQuery("select count(*) cnt from glob('reports/**/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n12\n");
+            assertQuery("select count(*) cnt from glob('reports/**/*.parquet') where path like '%summary.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('reports/**/*.parquet') where path like '%overview.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
             // q1.parquet appears in 2022, 2023, and 2024
-            assertQuery("cnt\n3\n", "select count(*) cnt from glob('reports/**/*.parquet') where path like '%q1.parquet'", null, false, true);
-            assertQuery("cnt\n3\n", "select count(*) cnt from glob('reports/**/*.parquet') where path like '%q2.parquet'", null, false, true);
+            assertQuery("select count(*) cnt from glob('reports/**/*.parquet') where path like '%q1.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n3\n");
+            assertQuery("select count(*) cnt from glob('reports/**/*.parquet') where path like '%q2.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n3\n");
         });
     }
 
@@ -420,46 +591,62 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // **/*.csv should find all csv files recursively from root
             // data/data.csv, data/nested/nested.csv, reports/metrics.csv, reports/2023/annual.csv, logs/app.csv = 5 total
-            assertQuery("cnt\n5\n", "select count(*) cnt from glob('**/*.csv')", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('**/*.csv') where path like '%data.csv'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('**/*.csv') where path like '%metrics.csv'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('**/*.csv') where path like '%annual.csv'", null, false, true);
+            assertQuery("select count(*) cnt from glob('**/*.csv')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n5\n");
+            assertQuery("select count(*) cnt from glob('**/*.csv') where path like '%data.csv'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('**/*.csv') where path like '%metrics.csv'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('**/*.csv') where path like '%annual.csv'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
         });
     }
 
     @Test
     public void testGlobEmptyDirectory() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
-                "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n",
-                "select * from glob('empty/*.parquet')",
-                null, false, true
-        ));
+        assertMemoryLeak(() -> assertQuery("select * from glob('empty/*.parquet')")
+                .noRandomAccess()
+                .expectSize()
+                .returns("path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n"));
     }
 
     @Test
     public void testGlobEmptyPattern() throws Exception {
-        assertMemoryLeak(() -> assertException(
-                "select * from glob('')",
-                19,
-                "glob pattern cannot be null or empty"
-        ));
+        assertMemoryLeak(() -> assertQuery("select * from glob('')")
+                .fails(19, "glob pattern cannot be null or empty"));
     }
 
     @Test
     public void testGlobEmptyResult() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
-                "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n",
-                "select * from glob('nonexistent/*.xyz')",
-                null, false, true
-        ));
+        assertMemoryLeak(() -> assertQuery("select * from glob('nonexistent/*.xyz')")
+                .noRandomAccess()
+                .expectSize()
+                .returns("path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n"));
     }
 
     @Test
     public void testGlobExactMatch() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file1.parquet')", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file1.parquet') where path like '%file1.parquet'", null, false, true);
-            assertQuery("cnt\n0\n", "select count(*) cnt from glob('data/file1.parquet') where path like '%file2.parquet'", null, false, true);
+            assertQuery("select count(*) cnt from glob('data/file1.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/file1.parquet') where path like '%file1.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/file1.parquet') where path like '%file2.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n0\n");
         });
     }
 
@@ -575,9 +762,18 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testGlobLogsDaily() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("cnt\n3\n", "select count(*) cnt from glob('logs/daily/*.log')", null, false, true);
-            assertQuery("cnt\n3\n", "select count(*) cnt from glob('logs/daily/2023-01-0?.log')", null, false, true);
-            assertQuery("cnt\n2\n", "select count(*) cnt from glob('logs/daily/2023-01-0[12].log')", null, false, true);
+            assertQuery("select count(*) cnt from glob('logs/daily/*.log')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n3\n");
+            assertQuery("select count(*) cnt from glob('logs/daily/2023-01-0?.log')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n3\n");
+            assertQuery("select count(*) cnt from glob('logs/daily/2023-01-0[12].log')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n2\n");
         });
     }
 
@@ -726,110 +922,182 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testGlobMixedBracketPatterns() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("cnt\n3\n", "select count(*) cnt from glob('mixed/[abc].parquet')", null, false, true);
-            assertQuery("cnt\n2\n", "select count(*) cnt from glob('mixed/a[ab].parquet')", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('mixed/[x-z][x-z][x-z].parquet')", null, false, true);
+            assertQuery("select count(*) cnt from glob('mixed/[abc].parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n3\n");
+            assertQuery("select count(*) cnt from glob('mixed/a[ab].parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n2\n");
+            assertQuery("select count(*) cnt from glob('mixed/[x-z][x-z][x-z].parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
         });
     }
 
     @Test
     public void testGlobMixedDirectory() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("cnt\n10\n", "select count(*) cnt from glob('mixed/*.parquet')", null, false, true);
+            assertQuery("select count(*) cnt from glob('mixed/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n10\n");
             // Single character names
-            assertQuery("cnt\n3\n", "select count(*) cnt from glob('mixed/?.parquet')", null, false, true);
+            assertQuery("select count(*) cnt from glob('mixed/?.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n3\n");
             // Two character names
-            assertQuery("cnt\n2\n", "select count(*) cnt from glob('mixed/??.parquet')", null, false, true);
+            assertQuery("select count(*) cnt from glob('mixed/??.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n2\n");
             // Three character names
-            assertQuery("cnt\n2\n", "select count(*) cnt from glob('mixed/???.parquet')", null, false, true);
+            assertQuery("select count(*) cnt from glob('mixed/???.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n2\n");
         });
     }
 
     @Test
     public void testGlobMultipleDoubleStarError() throws Exception {
-        assertMemoryLeak(() -> assertException(
-                "select * from glob('data/**/*.parquet/**/*.csv')",
-                19,
-                "cannot use multiple '**' in one path"
-        ));
+        assertMemoryLeak(() -> assertQuery("select * from glob('data/**/*.parquet/**/*.csv')")
+                .fails(19, "cannot use multiple '**' in one path"));
     }
 
     @Test
     public void testGlobMultipleExtensions() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('logs/*.parquet')", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('logs/*.parquet') where path like '%app.parquet'", null, false, true);
-            assertQuery("cnt\n0\n", "select count(*) cnt from glob('logs/*.parquet') where path like '%app.csv'", null, false, true);
+            assertQuery("select count(*) cnt from glob('logs/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('logs/*.parquet') where path like '%app.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('logs/*.parquet') where path like '%app.csv'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n0\n");
 
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('logs/*.csv')", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('logs/*.csv') where path like '%app.csv'", null, false, true);
-            assertQuery("cnt\n0\n", "select count(*) cnt from glob('logs/*.csv') where path like '%app.parquet'", null, false, true);
+            assertQuery("select count(*) cnt from glob('logs/*.csv')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('logs/*.csv') where path like '%app.csv'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('logs/*.csv') where path like '%app.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n0\n");
         });
     }
 
     @Test
     public void testGlobNestedDirectories() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("cnt\n2\n", "select count(*) cnt from glob('data/nested/*.parquet')", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/nested/*.parquet') where path like '%deep.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/nested/*.parquet') where path like '%extra.parquet'", null, false, true);
+            assertQuery("select count(*) cnt from glob('data/nested/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n2\n");
+            assertQuery("select count(*) cnt from glob('data/nested/*.parquet') where path like '%deep.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/nested/*.parquet') where path like '%extra.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
         });
     }
 
     @Test
     public void testGlobPartitionedDirectory() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("cnt\n6\n", "select count(*) cnt from glob('partitioned/**/*.parquet')", null, false, true);
-            assertQuery("cnt\n2\n", "select count(*) cnt from glob('partitioned/year=2022/*.parquet')", null, false, true);
-            assertQuery("cnt\n3\n", "select count(*) cnt from glob('partitioned/year=2023/*.parquet')", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('partitioned/year=2024/*.parquet')", null, false, true);
+            assertQuery("select count(*) cnt from glob('partitioned/**/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n6\n");
+            assertQuery("select count(*) cnt from glob('partitioned/year=2022/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n2\n");
+            assertQuery("select count(*) cnt from glob('partitioned/year=2023/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n3\n");
+            assertQuery("select count(*) cnt from glob('partitioned/year=2024/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
         });
     }
 
     @Test
     public void testGlobPartitionedWithWildcard() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("cnt\n6\n", "select count(*) cnt from glob('partitioned/year=*/*.parquet')", null, false, true);
-            assertQuery("cnt\n6\n", "select count(*) cnt from glob('partitioned/year=202?/*.parquet')", null, false, true);
-            assertQuery("cnt\n3\n", "select count(*) cnt from glob('partitioned/year=202[3]/*.parquet')", null, false, true);
+            assertQuery("select count(*) cnt from glob('partitioned/year=*/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n6\n");
+            assertQuery("select count(*) cnt from glob('partitioned/year=202?/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n6\n");
+            assertQuery("select count(*) cnt from glob('partitioned/year=202[3]/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n3\n");
         });
     }
 
     @Test
     public void testGlobPathTraversalNotAllowed() throws Exception {
         assertMemoryLeak(() -> {
-            assertException(
-                    "select * from glob('../etc/passwd')",
-                    19,
-                    "path traversal '..' is not allowed in glob pattern"
-            );
-            assertException(
-                    "select * from glob('data/../secret.txt')",
-                    19,
-                    "path traversal '..' is not allowed in glob pattern"
-            );
-            assertException(
-                    "select * from glob('../**/*.parquet')",
-                    19,
-                    "path traversal '..' is not allowed in glob pattern"
-            );
-            assertException(
-                    "select * from glob('" + inputRoot + "/../secret.txt')",
-                    19,
-                    "path traversal '..' is not allowed in glob pattern"
-            );
+            assertQuery("select * from glob('../etc/passwd')")
+                    .fails(19, "path traversal '..' is not allowed in glob pattern");
+            assertQuery("select * from glob('data/../secret.txt')")
+                    .fails(19, "path traversal '..' is not allowed in glob pattern");
+            assertQuery("select * from glob('../**/*.parquet')")
+                    .fails(19, "path traversal '..' is not allowed in glob pattern");
+            assertQuery("select * from glob('" + inputRoot + "/../secret.txt')")
+                    .fails(19, "path traversal '..' is not allowed in glob pattern");
         });
     }
 
     @Test
     public void testGlobQuestionMark() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("cnt\n5\n", "select count(*) cnt from glob('data/file?.parquet')", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file?.parquet') where path like '%file1.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file?.parquet') where path like '%file2.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file?.parquet') where path like '%file3.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file?.parquet') where path like '%fileA.parquet'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('data/file?.parquet') where path like '%fileB.parquet'", null, false, true);
+            assertQuery("select count(*) cnt from glob('data/file?.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n5\n");
+            assertQuery("select count(*) cnt from glob('data/file?.parquet') where path like '%file1.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/file?.parquet') where path like '%file2.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/file?.parquet') where path like '%file3.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/file?.parquet') where path like '%fileA.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('data/file?.parquet') where path like '%fileB.parquet'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
         });
     }
 
@@ -837,20 +1105,44 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     public void testGlobQuestionMarkMultiple() throws Exception {
         assertMemoryLeak(() -> {
             // app_??.log should match app_01.log and app_02.log, but not app_1.log (single digit)
-            assertQuery("cnt\n2\n", "select count(*) cnt from glob('logs/app_??.log')", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('logs/app_??.log') where path like '%app_01.log'", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('logs/app_??.log') where path like '%app_02.log'", null, false, true);
-            assertQuery("cnt\n0\n", "select count(*) cnt from glob('logs/app_??.log') where path like '%app_1.log'", null, false, true);
+            assertQuery("select count(*) cnt from glob('logs/app_??.log')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n2\n");
+            assertQuery("select count(*) cnt from glob('logs/app_??.log') where path like '%app_01.log'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('logs/app_??.log') where path like '%app_02.log'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('logs/app_??.log') where path like '%app_1.log'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n0\n");
         });
     }
 
     @Test
     public void testGlobReportsYearPattern() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("cnt\n4\n", "select count(*) cnt from glob('reports/2022/*.parquet')", null, false, true);
-            assertQuery("cnt\n4\n", "select count(*) cnt from glob('reports/2023/*.parquet')", null, false, true);
-            assertQuery("cnt\n2\n", "select count(*) cnt from glob('reports/2024/*.parquet')", null, false, true);
-            assertQuery("cnt\n3\n", "select count(*) cnt from glob('reports/*/q1.parquet')", null, false, true);
+            assertQuery("select count(*) cnt from glob('reports/2022/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n4\n");
+            assertQuery("select count(*) cnt from glob('reports/2023/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n4\n");
+            assertQuery("select count(*) cnt from glob('reports/2024/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n2\n");
+            assertQuery("select count(*) cnt from glob('reports/*/q1.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n3\n");
         });
     }
 
@@ -858,18 +1150,36 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     public void testGlobTempDirectory() throws Exception {
         assertMemoryLeak(() -> {
             // temp/ has 5 files, staging/ has 2 files
-            assertQuery("cnt\n7\n", "select count(*) cnt from glob('temp/**')", null, false, true);
-            assertQuery("cnt\n3\n", "select count(*) cnt from glob('temp/data_*.parquet')", null, false, true);
-            assertQuery("cnt\n2\n", "select count(*) cnt from glob('temp/staging/*.parquet')", null, false, true);
+            assertQuery("select count(*) cnt from glob('temp/**')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n7\n");
+            assertQuery("select count(*) cnt from glob('temp/data_*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n3\n");
+            assertQuery("select count(*) cnt from glob('temp/staging/*.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n2\n");
         });
     }
 
     @Test
     public void testGlobTempNumberedFiles() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("cnt\n3\n", "select count(*) cnt from glob('temp/data_???.parquet')", null, false, true);
-            assertQuery("cnt\n1\n", "select count(*) cnt from glob('temp/data_001.parquet')", null, false, true);
-            assertQuery("cnt\n2\n", "select count(*) cnt from glob('temp/data_00[12].parquet')", null, false, true);
+            assertQuery("select count(*) cnt from glob('temp/data_???.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n3\n");
+            assertQuery("select count(*) cnt from glob('temp/data_001.parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n1\n");
+            assertQuery("select count(*) cnt from glob('temp/data_00[12].parquet')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("cnt\n2\n");
         });
     }
 

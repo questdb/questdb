@@ -107,16 +107,23 @@ you wish to understand how our maintainers work together, you can refer to
 
 ## Requirements
 
-- Operating system - **x86-64 or ARM64**: Windows, Linux, FreeBSD, and macOS
-- Java 17 64-bit (strict requirement — no earlier, no later)
+- Operating system - **x86-64 or ARM64**: Windows, Linux, FreeBSD, and macOS.
+  macOS is **ARM64 only**: QuestDB neither builds, tests nor ships native
+  libraries for x86-64 (Intel) macOS, and the jar contains no `darwin-x86-64`
+  binary. On an Intel Mac you have to build both native libraries from source
+  yourself — see [Compiling the native libraries](#compiling-the-native-libraries).
+- Java 25 64-bit (strict requirement — no earlier, no later)
 - Maven 3 (latest version recommended; from your package manager on Linux/macOS
   ([Homebrew](https://github.com/Homebrew/brew)) or
   [from the jar](https://maven.apache.org/install.html) for any OS)
 - C compiler, CMake — to contribute to C libraries — _OPTIONAL_
 
-**Note for Apple Silicon (ARM64) users:** Most tests will run normally. However,
-JIT-related tests are x86-64 only and will be skipped on ARM. If you are contributing
-to JIT functionality, use an x86-64 machine or run an x86-64 JDK under Rosetta emulation.
+**Note for Apple Silicon (ARM64) users:** Tests run normally, JIT tests included —
+QuestDB compiles filters with the JIT on ARM64 as well as on x86-64, so nothing is
+skipped on this architecture. Avoid reaching for an x86-64 JDK under Rosetta: the jar
+bundles no `darwin-x86-64` native libraries, so that route additionally requires
+building both native libraries from source in the same x86-64 environment — see
+[Compiling the native libraries](#compiling-the-native-libraries).
 
 ## Local environment
 
@@ -152,8 +159,18 @@ mvn clean package -DskipTests -P build-web-console
 You can then run QuestDB with:
 
 ```bash
-java -p core/target/questdb-<version>-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_dir>
+java --add-exports=java.base/jdk.internal.vm=io.questdb \
+  -p core/target/questdb-<version>-SNAPSHOT.jar \
+  -m io.questdb/io.questdb.ServerMain -d <root_dir>
 ```
+
+The `--add-exports=java.base/jdk.internal.vm=io.questdb` flag is required when
+launching the module jar with `-m`. QuestDB's worker threads use the
+JDK-internal `jdk.internal.vm.Continuation` API, and without the export the JVM
+fails at startup with an `IllegalAccessError` on
+`jdk.internal.vm.ContinuationScope` (the workers die and the server shuts down
+right after the "listening on ..." lines). Pass the flag once; a second
+`--add-exports` for the same package keeps only one target module.
 
 The web console will be available at [localhost:9000](http://localhost:9000).
 
@@ -177,11 +194,16 @@ We recommend using IntelliJ IDEA for development and debugging. The repository
 includes run configurations in the `.idea` directory that you can use to start
 QuestDB with a debugger attached.
 
-### Compiling C libraries
+### Compiling the native libraries
 
-C libraries will have to be compiled for each platform separately. CMake will
-also need `JAVA_HOME` to be set. The following commands will compile on
-Linux/macOS.
+QuestDB loads two native libraries: `libquestdb` (C/C++) and `libquestdbr`
+(Rust). The repository commits a prebuilt pair for every platform CI builds and
+tests, so you need this section only when you change native code, or when you
+run on a platform the repository ships no binary for, such as x86-64 (Intel)
+macOS.
+
+Compile the C/C++ library with CMake, which also needs `JAVA_HOME`. These
+commands work on Linux/macOS:
 
 ```text
 cd core
@@ -189,22 +211,29 @@ cmake -B build/release -DCMAKE_BUILD_TYPE=Release .
 cmake --build build/release --config Release
 ```
 
+CMake writes `libquestdb` to `core/target/classes/io/questdb/bin-local/`.
+
+Maven builds `libquestdbr` only under the `build-rust-library` profile, which
+copies it to `core/target/classes/io/questdb/rust/`; add the `qdbr-release`
+profile for a release build. A bare `cargo build` in `core/rust/qdbr` leaves the
+library in `core/rust/qdbr/target/`, which is on no classpath.
+
+`io.questdb.std.Os` reads both of those paths before it falls back to the
+committed platform directory. `mvn clean` deletes them.
+
 For more details, see [CMake build instructions](core/CMAKE_README.md).
 
 For C/C++ development we use CLion. This IDE understands CMake files and makes
 compilation easier.
 
-The build will copy artifacts as follows:
-
-```
-core/src/main/c -> core/src/main/resources/io/questdb/bin
-```
-
 ## Developing with the Java ILP client
 
 The QuestDB server tests use the [Java ILP client](https://github.com/questdb/java-questdb-client)
-for integration testing. By default, the client is resolved from Maven Central. If you need to
-modify both the client and server simultaneously, you can use the local development workflow.
+for integration testing. `core/pom.xml` names the client version. When that version is a
+released one, Maven resolves it from Maven Central; between releases it is a `-SNAPSHOT`
+that no configured repository serves, so you have to build with `-P local-client` (see
+below). CI detects the `-SNAPSHOT` and adds the profile itself. Use the same profile when
+you need to modify both the client and the server simultaneously.
 
 ### Setup
 
@@ -224,7 +253,8 @@ mvn test -P local-client
 
 This will:
 1. Build the client from `java-questdb-client/` first
-2. Use the locally built client (version `1.0.1-SNAPSHOT`) for server tests
+2. Use the locally built client (the `-SNAPSHOT` version declared by the
+   submodule) for server tests
 
 ### IntelliJ IDEA setup
 
@@ -361,6 +391,80 @@ Before opening a PR, please ensure:
 
   Reviewers should not have to reverse-engineer algorithms from code to understand
   what the PR does.
+
+## Secret scanning
+
+The `Gitleaks` check scans your branch's own commits for credentials. If it
+fails on a real secret, rotate it before doing anything else.
+
+For a false positive, the failing job's summary carries ready-to-paste
+`.gitleaksignore` lines under "What to do with these findings", in the
+commit-independent three-part `<file>:<rule-id>:<start-line>` form. Do not paste
+the four-part `Fingerprint:` line that gitleaks prints in the job log: PRs here
+are squash-merged, so the commit it names never reaches `master`, and the entry
+silences your PR and then fails the push scan of `master`.
+
+An ignore entry still pins a path and a line number, so anything that moves the
+finding before the squash lands — a later commit, an unrelated pull request
+shifting that line on `master`, a rename — stops it matching, leaving the PR
+green and `master` red with nothing warning you. It is also blind to the secret
+itself, silencing whatever that rule reports at that file and line from then on,
+a real credential later written there included. Use one only for a settled file
+and a value that will not change; `.gitleaksignore` has the full detail.
+
+For a false positive that recurs, or one in a file anyone is still changing, add
+an allowlist to `.gitleaks.toml` instead. It matches content rather than
+position, so none of those cases can shift the finding out from under it. Match
+the placeholder value itself, not the line it sits on: the default target is the
+secret gitleaks extracted, so a substituted value stops matching and the finding
+comes back. Wrap the value in `^\Q...\E$`, as below: `regexes` holds a Go RE2
+regexp matched as an unanchored substring, so `\Q...\E` takes the placeholder
+literally (an unescaped `.` would otherwise match any character) and `^...$`
+keeps it from suppressing a longer, real secret that merely contains it.
+
+```toml
+[[rules]]
+id = "generic-api-key"
+  [[rules.allowlists]]
+  description = "why this is not a secret"
+  regexes = ['''^\QdGhlIHNhbXBsZSBub25jZQ==\E$''']
+```
+
+Reach for `regexTarget = "line"` only where there is no stable value to match —
+the rule fires on a different string each time, or the placeholder itself keeps
+changing. It trades a line number for a piece of content, but keeps the blind
+spot above, silencing whatever that rule reports on any matching line.
+
+```toml
+[[rules]]
+id = "generic-api-key"
+  [[rules.allowlists]]
+  description = "why this is not a secret"
+  regexTarget = "line"
+  regexes = ['''Sec-WebSocket-Key''']
+```
+
+Two ways a hand-written allowlist fails quietly. The `id` must name an existing
+default rule exactly — `[extend]` disables rule validation, so a misspelled id
+is accepted in silence, allowlists nothing, and leaves the job red on the
+byte-identical finding. And add the `[[rules.allowlists]]` to the `[[rules]]`
+block already present for that id, as there usually is one, because
+`generic-api-key` raises nearly every finding here: a second block with the same
+id replaces the first, discarding its allowlist with no warning.
+
+The check reads each commit separately rather than the squashed diff, so a
+secret-shaped line added in one commit and removed in a later one still fails.
+
+Three limits are worth knowing, because in all three the push scan of `master`
+is the first thing that reads the code:
+
+- Fork pull requests do not receive the license secret, so the job skips the
+  scan and reports success without reading anything.
+- The action reads only a pull request's first 30 commits.
+- The scan walks only your branch's first-parent line and skips merge commits,
+  so nothing reachable only through a merge's second parent is read — neither a
+  conflict resolution written into a merge commit nor a side branch you merged
+  in.
 
 ## Branching
 

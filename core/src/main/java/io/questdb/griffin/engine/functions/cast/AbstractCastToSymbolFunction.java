@@ -33,9 +33,9 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-
 import io.questdb.std.Chars;
 import io.questdb.std.IntIntHashMap;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
@@ -44,34 +44,26 @@ import org.jetbrains.annotations.Nullable;
  * Abstract base class for functions that cast values to symbol.
  */
 public abstract class AbstractCastToSymbolFunction extends SymbolFunction implements CastFunction {
-    /**
-     * The function argument to cast.
-     */
     protected final Function arg;
-    /**
-     * Sink for building symbol strings.
-     */
     protected final StringSink sink = new StringSink();
     /**
-     * Map for symbol table shortcuts.
+     * Map for symbol table shortcuts. The default sentinel is {@link Numbers#INT_NULL}
+     * (not {@code -1}) so {@code -1}, which {@code length()} returns for a null, can be a
+     * key; INT_NULL never reaches the map for INT/BYTE/SHORT/CHAR casts (filtered upstream).
+     * The FLOAT cast supplies its own NaN-based sentinel since
+     * {@code Float.floatToIntBits(-0.0f) == INT_NULL}.
      */
-    protected final IntIntHashMap symbolTableShortcut = new IntIntHashMap();
-    /**
-     * List of symbol values.
-     */
+    protected final IntIntHashMap symbolTableShortcut;
     protected final ObjList<String> symbols = new ObjList<>();
-    /**
-     * Next symbol index.
-     */
     protected int next = 1;
 
-    /**
-     * Constructs a new cast to symbol function.
-     *
-     * @param arg the function argument to cast
-     */
     public AbstractCastToSymbolFunction(Function arg) {
+        this(arg, Numbers.INT_NULL);
+    }
+
+    protected AbstractCastToSymbolFunction(Function arg, int noKeyValue) {
         this.arg = arg;
+        this.symbolTableShortcut = new IntIntHashMap(16, 0.5, noKeyValue);
         symbols.add(null);
     }
 
@@ -100,13 +92,23 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
     }
 
     @Override
+    public boolean isThreadSafe() {
+        return false;
+    }
+
+    @Override
     public @Nullable SymbolTable newSymbolTable() {
-        AbstractCastToSymbolFunction copy = newFunc();
-        copy.symbolTableShortcut.putAll(this.symbolTableShortcut);
-        copy.symbols.clear();
-        copy.symbols.addAll(this.symbols);
-        copy.next = this.next;
-        return copy;
+        return new CastToSymbolTable(symbols);
+    }
+
+    @Override
+    public boolean supportsKeyValueAccess() {
+        // getInt() mints a key with one probe on the already-decoded scalar (see getInt0), never by
+        // hashing the row's text, and valueOf() resolves it by indexing symbols. A key consumer such
+        // as QWP egress should therefore take the key path and encode each distinct value once
+        // rather than re-encoding it per row. Contrast CastStrToSymbolFunctionFactory.Func, whose
+        // getInt() has to hash the row's text to produce a key at all: there the key buys nothing.
+        return true;
     }
 
     @Override
@@ -126,9 +128,6 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
 
     /**
      * Returns the symbol key for the given int value.
-     *
-     * @param value the int value
-     * @return the symbol key
      */
     protected int getInt0(int value) {
         final int keyIndex = symbolTableShortcut.keyIndex(value);
@@ -137,17 +136,12 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
         }
 
         symbolTableShortcut.putAt(keyIndex, value, next);
-        sink.clear();
-        sink.put(value);
-        symbols.add(Chars.toString(sink));
+        symbols.add(symbolOf(value));
         return next++ - 1;
     }
 
     /**
      * Returns the symbol string for the given int value.
-     *
-     * @param value the int value
-     * @return the symbol string
      */
     @Nullable
     protected String getSymbol0(int value) {
@@ -157,17 +151,20 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
         }
 
         symbolTableShortcut.putAt(keyIndex, value, next++);
-        sink.clear();
-        sink.put(value);
-        final String str = Chars.toString(sink);
+        final String str = symbolOf(value);
         symbols.add(str);
         return str;
     }
 
     /**
-     * Creates a new instance of this function for symbol table copying.
-     *
-     * @return a new function instance
+     * Renders the dictionary text for a shortcut key. The key is the value itself only for the
+     * integral casts; CHAR keys on the code point and FLOAT on the raw bits, so a subclass whose
+     * key is an encoding must decode it here. Both getInt0() and getSymbol0() mint through this,
+     * so the key a row hands out always resolves to the same text the row reads directly.
      */
-    protected abstract AbstractCastToSymbolFunction newFunc();
+    protected String symbolOf(int key) {
+        sink.clear();
+        sink.put(key);
+        return Chars.toString(sink);
+    }
 }

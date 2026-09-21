@@ -67,20 +67,20 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testEmptyLike() throws Exception {
         assertMemoryLeak(() -> {
             execute(
-                    "create table x as (\n" +
-                            "select cast('ABCGE' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('SBDHDJ' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('BDGDGGG' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('AAAAVVV' as varchar) as name from long_sequence(1)\n" +
-                            ")"
+                    """
+                            create table x as (
+                            select cast('ABCGE' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('SBDHDJ' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('BDGDGGG' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('AAAAVVV' as varchar) as name from long_sequence(1)
+                            )"""
             );
-            assertSql(
-                    "name\n",
-                    "select * from x where name ilike ''"
-            );
+            assertQuery("select * from x where name ilike ''")
+                    .noLeakCheck()
+                    .returns("name\n");
         });
     }
 
@@ -88,20 +88,20 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testInvalidRegex() throws Exception {
         assertMemoryLeak(() -> {
             execute(
-                    "create table x as (\n" +
-                            "select cast('ABCGE' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('SBDHDJ' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('BDGDGGG' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('AAAAVVV' as varchar) as name from long_sequence(1)\n" +
-                            ")"
+                    """
+                            create table x as (
+                            select cast('ABCGE' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('SBDHDJ' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('BDGDGGG' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('AAAAVVV' as varchar) as name from long_sequence(1)
+                            )"""
             );
-            assertSql(
-                    "name\n",
-                    "select * from x where name ilike '[][n'"
-            );
+            assertQuery("select * from x where name ilike '[][n'")
+                    .noLeakCheck()
+                    .returns("name\n");
         });
     }
 
@@ -109,21 +109,23 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testLikeCaseInsensitive() throws Exception {
         assertMemoryLeak(() -> {
             execute(
-                    "create table x as (\n" +
-                            "select cast('ABCGE' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('SBDHDJ' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('BDGDGGG' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('AAAAVVV' as varchar) as name from long_sequence(1)\n" +
-                            ")"
+                    """
+                            create table x as (
+                            select cast('ABCGE' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('SBDHDJ' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('BDGDGGG' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('AAAAVVV' as varchar) as name from long_sequence(1)
+                            )"""
             );
-            assertSql(
-                    "name\n" +
-                            "ABCGE\n",
-                    "select * from x where name ilike 'aBcGe'"
-            );
+            assertQuery("select * from x where name ilike 'aBcGe'")
+                    .noLeakCheck()
+                    .returns("""
+                            name
+                            ABCGE
+                            """);
         });
     }
 
@@ -131,19 +133,21 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testLikeCaseInsensitiveNonAscii() throws Exception {
         assertMemoryLeak(() -> {
             execute(
-                    "create table x as (\n" +
-                            "select cast('фу' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('бар' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('баз' as varchar) as name from long_sequence(1)\n" +
-                            ")"
+                    """
+                            create table x as (
+                            select cast('фу' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('бар' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('баз' as varchar) as name from long_sequence(1)
+                            )"""
             );
-            assertSql(
-                    "name\n" +
-                            "бар\n",
-                    "select * from x where name ilike 'БаР'"
-            );
+            assertQuery("select * from x where name ilike 'БаР'")
+                    .noLeakCheck()
+                    .returns("""
+                            name
+                            бар
+                            """);
         });
     }
 
@@ -164,7 +168,8 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testNonConstantExpression() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_varchar() name from long_sequence(10))");
-            assertException("select * from x where name ilike rnd_str('foo','bar')", 33, "use constant or bind variable");
+            assertQuery("select * from x where name ilike rnd_str('foo','bar')")
+                    .fails(33, "use constant or bind variable");
         });
     }
 
@@ -172,22 +177,23 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testNotLikeCharacterMatch() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_varchar('a', 'BC', 'h', 'H', 'k') name from long_sequence(20))");
-            assertSql(
-                    "name\n" +
-                            "a\n" +
-                            "BC\n" +
-                            "BC\n" +
-                            "k\n" +
-                            "BC\n" +
-                            "BC\n" +
-                            "BC\n" +
-                            "k\n" +
-                            "BC\n" +
-                            "BC\n" +
-                            "a\n" +
-                            "k\n",
-                    "select * from x where not name ilike 'H'"
-            );
+            assertQuery("select * from x where not name ilike 'H'")
+                    .noLeakCheck()
+                    .returns("""
+                            name
+                            a
+                            BC
+                            BC
+                            k
+                            BC
+                            BC
+                            BC
+                            k
+                            BC
+                            BC
+                            a
+                            k
+                            """);
         });
     }
 
@@ -195,16 +201,17 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testNotLikeStringMatch() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_varchar('kk', 'xJ', 'Xj', 'GU', 'XJ') name from long_sequence(20))");
-            assertSql(
-                    "name\n" +
-                            "kk\n" +
-                            "GU\n" +
-                            "GU\n" +
-                            "GU\n" +
-                            "GU\n" +
-                            "kk\n",
-                    "select * from x where not name ilike 'XJ'"
-            );
+            assertQuery("select * from x where not name ilike 'XJ'")
+                    .noLeakCheck()
+                    .returns("""
+                            name
+                            kk
+                            GU
+                            GU
+                            GU
+                            GU
+                            kk
+                            """);
         });
     }
 
@@ -247,6 +254,8 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     }
 
     private void assertLike(String expected, String query) throws Exception {
-        assertQueryNoLeakCheck(expected, query, null, true, false);
+        assertQuery(query)
+                .noLeakCheck()
+                .returns(expected);
     }
 }

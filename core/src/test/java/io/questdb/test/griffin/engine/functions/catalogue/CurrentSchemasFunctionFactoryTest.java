@@ -31,40 +31,34 @@ public class CurrentSchemasFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCurrentSchemasFunc() throws Exception {
-        assertQuery(
-                "x\n" +
-                        "1\n",
-                "select x from x where current_schemas(true)[1] = 'public'",
-                "create table x as (select x from long_sequence(1))",
-                null,
-                true,
-                true
-        );
+        assertQuery("select x from x where current_schemas(true)[1] = 'public'")
+                .ddl("create table x as (select x from long_sequence(1))")
+                .expectSize()
+                .returns("""
+                        x
+                        1
+                        """);
     }
 
     @Test
     public void testCurrentSchemasFuncInSelect() throws Exception {
-        assertQuery(
-                "s\n" +
-                        "{public}\n",
-                "select current_schemas(true) s from long_sequence(1)",
-                "create table x as (select x from long_sequence(1))",
-                null,
-                true,
-                true
-        );
+        assertQuery("select current_schemas(true) s from long_sequence(1)")
+                .ddl("create table x as (select x from long_sequence(1))")
+                .expectSize()
+                .returns("""
+                        s
+                        {public}
+                        """);
     }
 
     @Test
     public void testPrefixedCurrentSchemasFunc() throws Exception {
-        assertQuery(
-                "x\n" +
-                        "1\n",
-                "select x from x where pg_catalog.current_schemas(true)[1] = 'public'",
-                "create table x as (select x from long_sequence(1))",
-                null,
-                true,
-                true
-        );
+        assertQuery("select x from x where pg_catalog.current_schemas(true)[1] = 'public'")
+                .ddl("create table x as (select x from long_sequence(1))")
+                .expectSize()
+                .returns("""
+                        x
+                        1
+                        """);
     }
 }

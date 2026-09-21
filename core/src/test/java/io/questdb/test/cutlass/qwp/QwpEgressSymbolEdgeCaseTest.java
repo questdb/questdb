@@ -24,12 +24,22 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.client.std.str.DirectUtf8Sequence;
+import io.questdb.cutlass.qwp.codec.QwpEgressColumnDef;
+import io.questdb.cutlass.qwp.codec.QwpEgressConnSymbolDict;
+import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
-import io.questdb.test.AbstractBootstrapTest;
+import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.ObjList;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -47,11 +57,12 @@ import org.junit.Test;
  *   <li>4-byte UTF-8 via surrogate pairs (emoji / supplementary plane);</li>
  *   <li>long symbol values (dict heap growth);</li>
  *   <li>all-NULL / single-value columns (bitmap edge cases + tiny dict);</li>
+ *   <li>native-key and dynamic-text symbol-table paths;</li>
  *   <li>multi-batch streaming: schema reference + delta section coexistence;</li>
  *   <li>fresh connection gets a fresh dict (server state isolation).</li>
  * </ul>
  */
-public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
+public class QwpEgressSymbolEdgeCaseTest extends AbstractQwpBootstrapTest {
 
     /**
      * Row count sized off the live server cap so the test reliably spans
@@ -75,7 +86,7 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
         // Catches off-by-one errors in the "SYMBOL column with empty dict"
         // path and any accidental attempt to index into an empty dict.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE allnull(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO allnull VALUES (NULL, 1::TIMESTAMP), (NULL, 2::TIMESTAMP), "
@@ -114,13 +125,66 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testDynamicSymbolUsesTextWithoutMaterializingKeys() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ObjList<QwpEgressColumnDef> cols = new ObjList<>();
+            QwpEgressColumnDef def = new QwpEgressColumnDef();
+            def.of("s", ColumnType.SYMBOL);
+            cols.add(def);
+
+            final SymbolTable dynamicSymbolTable = new SymbolTable() {
+                @Override
+                public CharSequence valueBOf(int key) {
+                    throw new AssertionError("dynamic symbol table key path must not be used");
+                }
+
+                @Override
+                public CharSequence valueOf(int key) {
+                    throw new AssertionError("dynamic symbol table key path must not be used");
+                }
+            };
+            final SymbolTableSource symbolTableSource = new SymbolTableSource() {
+                @Override
+                public SymbolTable getSymbolTable(int columnIndex) {
+                    return dynamicSymbolTable;
+                }
+
+                @Override
+                public SymbolTable newSymbolTable(int columnIndex) {
+                    return dynamicSymbolTable;
+                }
+            };
+            final Record record = new Record() {
+                @Override
+                public int getInt(int col) {
+                    throw new AssertionError("dynamic symbol must be read through getSymA");
+                }
+
+                @Override
+                public CharSequence getSymA(int col) {
+                    return "dynamic_value";
+                }
+            };
+
+            try (QwpResultBatchBuffer batch = new QwpResultBatchBuffer();
+                 QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict()) {
+                batch.beginBatch(cols, symbolTableSource, dict);
+                batch.appendRow(record);
+                batch.appendRow(record);
+                Assert.assertEquals(2, batch.getRowCount());
+                Assert.assertEquals("the connection dictionary still deduplicates text values", 1, dict.size());
+            }
+        });
+    }
+
+    @Test
     public void testEmoji4ByteUtf8() throws Exception {
         // 4-byte UTF-8 sequences (supplementary plane / surrogate pairs). The
         // server's encodeUtf8 helper emits them as 0xF0-prefixed 4-byte runs;
         // the client memcpys the same bytes into its connection dict heap.
         // Catches bugs in the surrogate-pair branch of either encoder.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE emojis(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // Rocket: U+1F680 (0xF0 0x9F 0x9A 0x80), thumbs up: U+1F44D.
@@ -183,7 +247,7 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
         // previous client's state was tied to the previous socket. Catches
         // leaks of connection dict state across connections.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE shared(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO shared VALUES ('red', 1::TIMESTAMP), ('green', 2::TIMESTAMP), "
@@ -260,7 +324,7 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
         // 200-char ASCII value fits in the initial 4 KiB heap but verifies
         // length varints can be > 1 byte when emitted.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE longsym(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // 200 chars 'x' repeated -- distinct from any tiny test value.
@@ -313,14 +377,14 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testMultiBatchSchemaReferenceWithDelta() throws Exception {
+    public void testMultiBatchWithDelta() throws Exception {
         // MULTI_BATCH_ROWS rows span 3 batches (4096 rows/batch max). Batch 1
-        // ships the full schema + dict delta; batches 2 and 3 must use schema
-        // reference mode AND a (possibly empty) delta section. Catches bugs
-        // where the schema-reference branch accidentally skips or corrupts
-        // the delta section read.
+        // ships the full schema + dict delta; batches 2 and 3 carry rows only
+        // (schema known from batch 1) AND a (possibly empty) delta section.
+        // Catches bugs where a continuation batch skips or corrupts the delta
+        // section read.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE multi(s SYMBOL, x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // 4 unique symbols cycling; all unique values appear in batch 1,
@@ -382,13 +446,34 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testNullableFixedDictionaryFunctionsRoundTrip() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startFragmented();
+                 QwpQueryClient client = QwpQueryClient.fromConfig(
+                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                client.connect();
+                assertSymbolFunctionRoundTrip(
+                        client,
+                        "SELECT list('a', NULL, 'b') s FROM long_sequence(6)",
+                        new String[]{"a", null, "b", "a", null, "b"}
+                );
+                assertSymbolFunctionRoundTrip(
+                        client,
+                        "SELECT rnd_symbol(NULL) s FROM long_sequence(3)",
+                        new String[]{null, null, null}
+                );
+            }
+        });
+    }
+
+    @Test
     public void testNullAndNonNullInterleavedMultiBatch() throws Exception {
         // Alternating NULL and non-null across multiple batches. The server
         // bitmap grows batch-by-batch; each batch's non-null count drives how
         // many varint ids get emitted. Off-by-one in the null bitmap OR in the
         // nonNullCount-based emit loop would produce garbage here.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE mix(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute(String.format("""
@@ -452,7 +537,7 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
         // one entry. Per-row payload is 1000 varint ids all encoding 0 (one
         // byte each). Verifies the tiniest-dict case still works end-to-end.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE uniq(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO uniq SELECT 'only', x::TIMESTAMP FROM long_sequence(1000)");
@@ -493,13 +578,229 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testStaticSymbolTableWrappedInFunctionUsesNativeKeyPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ObjList<QwpEgressColumnDef> cols = new ObjList<>();
+            QwpEgressColumnDef def = new QwpEgressColumnDef();
+            def.of("s", ColumnType.SYMBOL);
+            cols.add(def);
+
+            final int[] valueOfCalls = {0};
+            final StaticSymbolTable staticTable = new StaticSymbolTable() {
+                @Override
+                public boolean containsNullValue() {
+                    return false;
+                }
+
+                @Override
+                public int getSymbolCount() {
+                    return 1;
+                }
+
+                @Override
+                public int keyOf(CharSequence value) {
+                    return "wrapped_static".contentEquals(value) ? 0 : VALUE_NOT_FOUND;
+                }
+
+                @Override
+                public CharSequence valueBOf(int key) {
+                    return valueOf(key);
+                }
+
+                @Override
+                public CharSequence valueOf(int key) {
+                    valueOfCalls[0]++;
+                    return key == 0 ? "wrapped_static" : null;
+                }
+            };
+            final SymbolFunction wrapper = new SymbolFunction() {
+                @Override
+                public int getInt(Record rec) {
+                    return rec.getInt(0);
+                }
+
+                @Override
+                public StaticSymbolTable getStaticSymbolTable() {
+                    return staticTable;
+                }
+
+                @Override
+                public CharSequence getSymbol(Record rec) {
+                    return rec.getSymA(0);
+                }
+
+                @Override
+                public CharSequence getSymbolB(Record rec) {
+                    return rec.getSymB(0);
+                }
+
+                @Override
+                public boolean isSymbolTableStatic() {
+                    return true;
+                }
+
+                @Override
+                public CharSequence valueBOf(int key) {
+                    return staticTable.valueBOf(key);
+                }
+
+                @Override
+                public CharSequence valueOf(int key) {
+                    return staticTable.valueOf(key);
+                }
+            };
+            final SymbolTableSource symbolTableSource = new SymbolTableSource() {
+                @Override
+                public SymbolTable getSymbolTable(int columnIndex) {
+                    return wrapper;
+                }
+
+                @Override
+                public SymbolTable newSymbolTable(int columnIndex) {
+                    return wrapper;
+                }
+            };
+            final Record record = new Record() {
+                @Override
+                public int getInt(int col) {
+                    return 0;
+                }
+
+                @Override
+                public CharSequence getSymA(int col) {
+                    throw new AssertionError("wrapped static symbol must use the native-key path");
+                }
+            };
+
+            try (QwpResultBatchBuffer batch = new QwpResultBatchBuffer();
+                 QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict()) {
+                batch.beginBatch(cols, symbolTableSource, dict);
+                batch.appendRow(record);
+                batch.appendRow(record);
+                Assert.assertEquals(2, batch.getRowCount());
+                Assert.assertEquals(1, dict.size());
+                Assert.assertEquals("native key must resolve only on first sight", 1, valueOfCalls[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolUnionRoundTrip() throws Exception {
+        // Exercise the actual SYMBOL UNION ALL cursor through QWP. This covers the
+        // union's dynamic dictionary together with egress type metadata, symbol ids,
+        // NULL bitmap, client-side decoding, and a warm connection dictionary.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startFragmented()) {
+                serverMain.execute("CREATE TABLE union_a(s SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("CREATE TABLE union_b(s SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO union_a VALUES "
+                        + "('alpha', 1::TIMESTAMP), ('', 2::TIMESTAMP), "
+                        + "(NULL, 3::TIMESTAMP), ('alpha', 4::TIMESTAMP)");
+                serverMain.execute("INSERT INTO union_b VALUES "
+                        + "('beta', 5::TIMESTAMP), ('', 6::TIMESTAMP), "
+                        + "(NULL, 7::TIMESTAMP), ('alpha', 8::TIMESTAMP)");
+                serverMain.awaitTable("union_a");
+                serverMain.awaitTable("union_b");
+
+                final String query = "SELECT s FROM union_a UNION ALL SELECT s FROM union_b";
+                final String[] expected = {"alpha", "", null, "alpha", "beta", "", null, "alpha"};
+                final String[] actual = new String[expected.length];
+                final int[] symbolIds = new int[expected.length];
+                final int[] firstRowIndex = {0};
+                final int[] secondRowIndex = {0};
+                final long[] firstPayloadBytes = {0};
+                final long[] secondPayloadBytes = {0};
+
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute(query, new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            Assert.assertEquals(QwpConstants.TYPE_SYMBOL, batch.getColumnWireType(0));
+                            Assert.assertEquals(3, batch.getSymbolDictSize(0));
+                            firstPayloadBytes[0] += batch.payloadLimit() - batch.payloadAddr();
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                final int row = firstRowIndex[0]++;
+                                actual[row] = batch.getSymbol(0, r);
+                                symbolIds[row] = batch.getSymbolId(0, r);
+                                Assert.assertEquals(expected[row] == null, batch.isNull(0, r));
+                                if (symbolIds[row] < 0) {
+                                    Assert.assertNull(actual[row]);
+                                } else {
+                                    Assert.assertSame(actual[row], batch.getSymbolForId(0, symbolIds[row]));
+                                }
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                            Assert.assertEquals(expected.length, totalRows);
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("egress error on first union query: " + message);
+                        }
+                    });
+
+                    // The second execution uses the same connection and result shape. All
+                    // three symbol entries are already known, so its dictionary delta is empty.
+                    client.execute(query, new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            Assert.assertEquals(QwpConstants.TYPE_SYMBOL, batch.getColumnWireType(0));
+                            Assert.assertEquals(3, batch.getSymbolDictSize(0));
+                            secondPayloadBytes[0] += batch.payloadLimit() - batch.payloadAddr();
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                final int row = secondRowIndex[0]++;
+                                Assert.assertEquals(expected[row], batch.getSymbol(0, r));
+                                Assert.assertEquals(expected[row] == null, batch.isNull(0, r));
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                            Assert.assertEquals(expected.length, totalRows);
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("egress error on second union query: " + message);
+                        }
+                    });
+                }
+
+                Assert.assertArrayEquals(expected, actual);
+                Assert.assertEquals(expected.length, firstRowIndex[0]);
+                Assert.assertEquals(expected.length, secondRowIndex[0]);
+                Assert.assertEquals(-1, symbolIds[2]);
+                Assert.assertEquals(-1, symbolIds[6]);
+                Assert.assertEquals(symbolIds[0], symbolIds[3]);
+                Assert.assertEquals(symbolIds[0], symbolIds[7]);
+                Assert.assertEquals(symbolIds[1], symbolIds[5]);
+                Assert.assertNotEquals(symbolIds[0], symbolIds[1]);
+                Assert.assertNotEquals(symbolIds[0], symbolIds[4]);
+                Assert.assertNotEquals(symbolIds[1], symbolIds[4]);
+                Assert.assertTrue(
+                        "warm union dictionary should emit a smaller payload [first="
+                                + firstPayloadBytes[0] + ", second=" + secondPayloadBytes[0] + ']',
+                        secondPayloadBytes[0] < firstPayloadBytes[0]
+                );
+            }
+        });
+    }
+
+    @Test
     public void testUnicode2ByteAnd3Byte() throws Exception {
         // Mixed 2-byte (Latin-1 Supplement: é = 0xC3 0xA9) and 3-byte
         // (CJK Unified Ideograph U+4E2D = 0xE4 0xB8 0xAD). Both go through
         // encodeUtf8's continuation-byte branches on the server and
         // stringFromUtf8 on the client.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE uni(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // café (5 bytes: c a f 0xC3 0xA9), 中文 (6 bytes).
@@ -542,4 +843,41 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
             }
         });
     }
+
+    private static void assertSymbolFunctionRoundTrip(
+            QwpQueryClient client,
+            String query,
+            String[] expected
+    ) throws Exception {
+        final int[] rowIndex = {0};
+        client.execute(query, new QwpColumnBatchHandler() {
+            @Override
+            public void onBatch(QwpColumnBatch batch) {
+                Assert.assertEquals(QwpConstants.TYPE_SYMBOL, batch.getColumnWireType(0));
+                for (int r = 0; r < batch.getRowCount(); r++) {
+                    final int row = rowIndex[0]++;
+                    final String expectedValue = expected[row];
+                    Assert.assertEquals(expectedValue == null, batch.isNull(0, r));
+                    Assert.assertEquals(expectedValue, batch.getSymbol(0, r));
+                    if (expectedValue == null) {
+                        Assert.assertEquals(-1, batch.getSymbolId(0, r));
+                    } else {
+                        Assert.assertTrue(batch.getSymbolId(0, r) >= 0);
+                    }
+                }
+            }
+
+            @Override
+            public void onEnd(long totalRows) {
+                Assert.assertEquals(expected.length, totalRows);
+            }
+
+            @Override
+            public void onError(byte status, String message) {
+                Assert.fail("egress error for nullable symbol function: " + message);
+            }
+        });
+        Assert.assertEquals(expected.length, rowIndex[0]);
+    }
+
 }

@@ -32,33 +32,31 @@ public class CursorDereferenceFunctionFactoryTest extends AbstractCairoTest {
     public void testCatalogue() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table pg_test(a int)");
-            assertQuery(
-                    "x\tpg_class\n" +
-                            "11\t\n" +
-                            "2200\t\n" +
-                            "11\t\n" +
-                            "2200\t\n" +
-                            "11\t\n" +
-                            "2200\t\n" +
-                            "11\t\n" +
-                            "2200\t\n" +
-                            "11\t\n" +
-                            "2200\t\n" +
-                            "11\t\n" +
-                            "2200\t\n" +
-                            "11\t\n" +
-                            "2200\t\n" +
-                            "11\t\n" +
-                            "2200\t\n" +
-                            "11\t\n" +
-                            "2200\t\n" +
-                            "11\t\n" +
-                            "2200\t\n",
-                    "select (pg_catalog.pg_class()).relnamespace x, pg_catalog.pg_class() from long_sequence(10);",
-                    null,
-                    false,
-                    false
-            );
+            assertQuery("select (pg_catalog.pg_class()).relnamespace x, pg_catalog.pg_class() from long_sequence(10);")
+                    .noRandomAccess()
+                    .returns("""
+                            x\tpg_class
+                            11\t
+                            2200\t
+                            11\t
+                            2200\t
+                            11\t
+                            2200\t
+                            11\t
+                            2200\t
+                            11\t
+                            2200\t
+                            11\t
+                            2200\t
+                            11\t
+                            2200\t
+                            11\t
+                            2200\t
+                            11\t
+                            2200\t
+                            11\t
+                            2200\t
+                            """);
         });
     }
 }

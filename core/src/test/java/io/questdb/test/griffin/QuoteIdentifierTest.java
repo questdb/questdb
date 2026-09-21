@@ -31,13 +31,9 @@ public class QuoteIdentifierTest extends AbstractCairoTest {
 
     @Test
     public void testCreteTableWithQuotedNameAndColumns() throws Exception {
-        assertQuery(
-                "id\tname\n",
-                "quoted_table",
-                "create table \"quoted_table\"(\"id\" long,\"name\" string)",
-                null,
-                true,
-                true
-        );
+        assertQuery("quoted_table")
+                .ddl("create table \"quoted_table\"(\"id\" long,\"name\" string)")
+                .expectSize()
+                .returns("id\tname\n");
     }
 }

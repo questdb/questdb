@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -39,6 +40,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
@@ -63,6 +65,8 @@ import io.questdb.std.str.Utf8StringSink;
 import java.io.Closeable;
 import java.io.File;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 public class SQLSerialParquetExporter extends BaseParquetExporter implements Closeable {
@@ -74,6 +78,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
     private final Path fromParquet;
     private final IntList identityColumnMap = new IntList();
     private final Utf8StringSink nameSink = new Utf8StringSink();
+    private final SqlExecutionContextImpl sqlExecutionContext;
     private final HybridColumnMaterializer streamBuffers = new HybridColumnMaterializer();
     private final DirectLongList streamColumnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
     private final Path tempPath;
@@ -84,11 +89,30 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
 
     public SQLSerialParquetExporter(CairoEngine engine) {
         super(engine);
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1) {
+            @Override
+            public boolean isPartitionFormatChangeTolerated() {
+                return true;
+            }
+
+            @Override
+            public synchronized void setCancelledFlag(AtomicBoolean cancelled, long generation) {
+                super.setCancelledFlag(cancelled, generation);
+                final CopyExportRequestTask currentTask = task;
+                if (currentTask != null && currentTask.getEntry().isCancellationRequested()) {
+                    getCircuitBreaker().cancel();
+                }
+            }
+        };
         this.configuration = engine.getConfiguration();
         this.ff = this.configuration.getFilesFacade();
         this.toParquet = new Path();
         this.fromParquet = new Path();
         this.tempPath = new Path();
+    }
+
+    public void clearMemoryTracker() {
+        sqlExecutionContext.setMemoryTracker(null);
     }
 
     @Override
@@ -104,6 +128,8 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
     @Override
     public void of(CopyExportRequestTask task) {
         super.of(task);
+        sqlExecutionContext.with(task.getSecurityContext(), task.getBindVariableService(), null, -1, circuitBreaker);
+        sqlExecutionContext.setMemoryTracker(task.getMemoryTracker());
         this.copyExportRoot = configuration.getSqlCopyExportRoot();
         this.exportPath.clear();
         numOfFiles = 0;
@@ -166,15 +192,18 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                 sqlExecutionContext.getSecurityContext().authorizeSelectOnAnyColumn(tableToken);
             }
 
-            if (circuitBreaker.checkIfTripped()) {
+            if (circuitBreaker.checkIfTrippedOrYield()) {
                 LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
             }
 
             try (TableReader reader = cairoEngine.getReader(tableToken)) {
-                // Enable streaming mode to use MADV_SEQUENTIAL/DONTNEED hints,
-                // releasing page cache after each partition is processed
-                reader.setStreamingMode(true);
+                // SEQUENTIAL_EVICT: MADV_SEQUENTIAL/DONTNEED hints to release
+                // page cache after each partition, plus a hard cleanup
+                // backstop -- closeExcessPartitions(keepOpen=0) on pool
+                // return ensures the pooled reader doesn't accumulate
+                // mappings across exports.
+                reader.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
                 final int timestampType = reader.getMetadata().getTimestampType();
                 final int partitionCount = reader.getPartitionCount();
                 final int partitionBy = reader.getPartitionedBy();
@@ -203,7 +232,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
 
                     try (PartitionDescriptor partitionDescriptor = new PartitionDescriptor()) {
                         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-                            if (circuitBreaker.checkIfTripped()) {
+                            if (circuitBreaker.checkIfTrippedOrYield()) {
                                 LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
                                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
                             }
@@ -274,6 +303,8 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                                     bloomFilterCount,
                                     bloomFilterFpp,
                                     0.0,
+                                    -1,
+                                    -1L,
                                     -1L
                             );
                             long parquetFileSize = ff.length(tempPath.$());
@@ -432,7 +463,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             if (isPageFrameBacked) {
                 VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) factory;
                 pfc = vf.getBaseFactory().getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
-                pfc.setStreamingMode(true);
+                pfc.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
                 streamBuffers.setUpPageFrameBacked(vf, pfc, sqlExecutionContext);
                 exporter.setUp(streamBuffers.getAdjustedMetadata(), pfc, streamBuffers.getBaseColumnMap());
             } else {
@@ -499,7 +530,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             switch (mode) {
                 case DIRECT_PAGE_FRAME -> {
                     try (PageFrameCursor pfc = baseFactory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
-                        pfc.setStreamingMode(true);
+                        pfc.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
                         RecordMetadata meta = baseFactory.getMetadata();
                         int colCount = meta.getColumnCount();
                         if (identityColumnMap.size() != colCount) {
@@ -513,7 +544,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                         PageFrame frame;
                         long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
                         while ((frame = pfc.next()) != null) {
-                            if (circuitBreaker.checkIfTripped()) {
+                            if (circuitBreaker.checkIfTrippedOrYield()) {
                                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
                             }
                             exporter.writePageFrame(pfc, frame);
@@ -579,6 +610,10 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
 
     int getNumOfFiles() {
         return numOfFiles;
+    }
+
+    SqlExecutionContextImpl getSqlExecutionContext() {
+        return sqlExecutionContext;
     }
 
     private static class FileWriteCallback implements CopyExportRequestTask.StreamWriteParquetCallBack {
