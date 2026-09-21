@@ -33,7 +33,6 @@ import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -132,17 +131,7 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean checkIfTripped(long millis, long fd) {
-                return false;
-            }
-
-            @Override
             public AtomicBoolean getCancelledFlag() {
-                return null;
-            }
-
-            @Override
-            public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
                 return null;
             }
 
@@ -184,10 +173,6 @@ public class SecurityTest extends AbstractCairoTest {
             @Override
             public void setCancelledFlag(AtomicBoolean cancelledFlag) {
 
-            }
-
-            @Override
-            public void setFd(long fd) {
             }
 
             @Override
