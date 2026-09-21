@@ -4834,6 +4834,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 && committedMaxTimestamp <= lagMinTimestamp
                 && txWriter.getPartitionTimestampByTimestamp(lagMinTimestamp) == lastPartitionTimestamp
                 && lagMaxTimestamp <= Math.min(commitToTimestamp, partitionTimestampHi)
+                // A sealed active partition is frozen. This fast path appends straight into the last
+                // partition's columns and has no read-only gate of its own, so defer to O3, which is
+                // where the read-only decision lives. Mirrors the block-apply gate.
+                && !isLastPartitionReadOnly()
                 // Never fast-lag-extend a LEGACY (format-0) covering head in place
                 // (that writes the aliased footer and re-exposes the concurrent
                 // covered-read OOB): fall back to the full commit, whose reseal
@@ -8293,6 +8297,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean isLastPartitionParquet() {
         int partitionCount = txWriter.getPartitionCount();
         return partitionCount > 0 && txWriter.isPartitionParquet(partitionCount - 1);
+    }
+
+    /**
+     * Whether the last (active) partition is frozen read-only. Storage policies can seal the active
+     * logical partition, so this is reachable on the in-order append paths, which otherwise have no
+     * read-only gate. Callers use it to fall back to the O3 path, whose partition loop is the single
+     * place that decides what happens to a write aimed at a frozen partition.
+     * <p>
+     * Read from {@code txWriter} rather than the cached {@code lastOpenPartitionIsReadOnly}: the
+     * latter is computed in {@link #openPartition} only, and applying a seal does not reopen the
+     * partition, so the cached value goes stale the moment the freeze lands.
+     */
+    private boolean isLastPartitionReadOnly() {
+        int partitionCount = txWriter.getPartitionCount();
+        return partitionCount > 0 && txWriter.isPartitionReadOnly(partitionCount - 1);
     }
 
     /**
@@ -13518,7 +13537,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Guards (fall back to the unchanged O3 path on any). Only a PURE APPEND
         // into the last NATIVE partition qualifies:
         //  - no pre-existing lag (block-apply never carries lag, but be defensive);
-        //  - a native (non-parquet) last partition that can accept lag;
+        //  - a native (non-parquet), non-read-only last partition that can accept lag;
         //  - a PLAIN insert: exclude both UPSERT/DEFAULT dedup AND replace-range
         //    (isCommitPlainInsert() covers both; isCommitDedupMode() alone misses
         //    replace-range) -- those need the merge/replace semantics of O3.
@@ -13537,6 +13556,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 || txWriter.getLagRowCount() != 0
                 || lastPartitionTimestamp == Long.MIN_VALUE
                 || isLastPartitionParquet()
+                // A sealed active partition is frozen; only the O3 path decides what a write aimed at
+                // a read-only partition does, so never append into one here.
+                || isLastPartitionReadOnly()
                 || !isCommitPlainInsert()
                 || txWriter.getMaxTimestamp() > blockMin
                 || txWriter.getPartitionTimestampByTimestamp(blockMin) != lastPartitionTimestamp
