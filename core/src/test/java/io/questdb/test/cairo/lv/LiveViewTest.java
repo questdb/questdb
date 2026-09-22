@@ -1645,10 +1645,11 @@ public class LiveViewTest extends AbstractLiveViewTest {
 
     @Test
     public void testRefreshWithSymbolColumnComparisonHandlesNullOnlyColumn() throws Exception {
-        // Edge of the containsNullValue fix: the right column b carries a committed null but zero
-        // distinct non-null symbols (count 0, null flag set) before the view exists, and the
-        // incremental txn then writes only nulls into b. The per-txn SymbolMapDiff must still report
-        // hasNullValue so the (NULL, NULL) row matches under '=' on the raw-WAL path.
+        // Edge-case coverage for raw-WAL SYMBOL equality: the right column b carries a
+        // committed NULL but zero distinct non-NULL symbols before the view exists, and the
+        // incremental transaction then writes only NULLs into b. The frame must still expose
+        // VALUE_IS_NULL so the (NULL, NULL) row matches under '='. EqSymFunctionFactory compares
+        // the keys directly; this test does not exercise containsNullValue().
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (a SYMBOL, b SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             // Applied before the view exists: b's committed dictionary carries a null with no
@@ -1680,14 +1681,11 @@ public class LiveViewTest extends AbstractLiveViewTest {
 
     @Test
     public void testRefreshWithSymbolColumnComparisonHandlesNulls() throws Exception {
-        // Regression for the raw-WAL live view symbol table's NULL handling. A residual filter that
-        // compares two SYMBOL columns (a = b / a != b) runs through EqSymFunctionFactory.Func during
-        // incremental refresh. When the left value is NULL, that function asks the right column's
-        // symbol table containsNullValue() to decide whether a NULL left can match a NULL right.
-        // WalSegmentPageFrameCursor.WalSymbolTable used to hard-code containsNullValue() = false, so
-        // (NULL, NULL) rows were dropped by '=' and admitted by '!=', diverging from the base SELECT.
-        // Only (NULL, NULL) rows are affected: for a non-null-vs-NULL row the right key is never
-        // VALUE_IS_NULL, so the containsNullValue() answer never changes the outcome.
+        // Regression coverage for raw-WAL SYMBOL-column equality during incremental refresh.
+        // EqSymFunctionFactory translates non-NULL values between the two symbol domains and
+        // compares NULL through the VALUE_IS_NULL key directly. It does not consult
+        // containsNullValue(). These equality assertions therefore pin NULL key semantics, not
+        // consumption of WalSegmentPageFrameCursor.WalSymbolTable's NULL-domain metadata.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (a SYMBOL, b SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             // Applied before the views exist, seeding the clean dictionaries for a and b.
@@ -1710,8 +1708,8 @@ public class LiveViewTest extends AbstractLiveViewTest {
 
                 // These commits arrive after the seed, so incremental refresh reads them straight
                 // from the WAL segment through WalSymbolTable rather than a recompute of the applied
-                // base. The right column b carries NULLs (val=3, val=4), so its symbol table must
-                // report containsNullValue() = true for the (NULL, NULL) row to match under '='.
+                // base. The right column b carries NULLs (val=3, val=4), so the raw frame must
+                // expose VALUE_IS_NULL for the (NULL, NULL) row to match under '='.
                 execute("INSERT INTO base (a, b, val, ts) VALUES " +
                         "(NULL, NULL, 3, '2026-01-01T00:02:00.000000Z'), " +
                         "('x', NULL, 4, '2026-01-01T00:03:00.000000Z')");
@@ -1725,8 +1723,8 @@ public class LiveViewTest extends AbstractLiveViewTest {
             }
             drainWalQueue();
 
-            // Ground truth: the base SELECT itself. QuestDB treats NULL = NULL as true for symbols
-            // when the column contains a null, so a = b keeps (NULL, NULL) and a != b drops it.
+            // Ground truth: the base SELECT itself. QuestDB SYMBOL equality treats NULL = NULL as
+            // true, so a = b keeps (NULL, NULL) and a != b drops it.
             assertQuery("SELECT a, b, val FROM base WHERE a = b ORDER BY ts").noLeakCheck().returns("a\tb\tval\n" +
                     "x\tx\t1\n" +
                     "\t\t3\n" +

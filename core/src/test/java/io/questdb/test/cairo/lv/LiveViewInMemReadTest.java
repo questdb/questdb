@@ -1499,16 +1499,13 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
 
     @Test
     public void testLeadNullSymbolEqualityAcrossOverlayColumns() throws Exception {
-        // A SYMBOL value that is NULL only in the un-flushed lead - the committed disk
-        // symbol table has never seen a NULL, so its containsNullValue() is false. The
-        // interpreted symbol comparator (EqSymFunctionFactory) short-circuits a NULL left
-        // key on the RIGHT table's containsNullValue(): if the overlay reports the disk
-        // table's false, a RAM-only (NULL,NULL) row is wrongly rejected by g = h and
-        // wrongly admitted by g != h. The overlay must OR the pinned slot's lead-NULL
-        // flag into containsNullValue() so the RAM-only NULL is visible to the comparator.
-        //
-        // JIT compares raw int keys (-1 == -1 matches) and so hides the defect; force the
-        // interpreted path the finding targets.
+        // A SYMBOL value is NULL only in the un-flushed lead; the committed disk symbol
+        // table has never seen a NULL. This test pins interpreted equality semantics across
+        // two overlay columns: EqSymFunctionFactory compares their translated int keys, so
+        // VALUE_IS_NULL must equal VALUE_IS_NULL and must not compare unequal. It does not
+        // consume StaticSymbolTable.containsNullValue(); the keyed linear ASOF test below
+        // separately covers that NULL-domain flag through SymbolToSymbolJoinKeyMapping.
+        // Disable JIT to keep the interpreted equality path covered as its own behavior.
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(SqlJitMode.JIT_MODE_DISABLED));
         assertMemoryLeak(() -> {
             buildTwoSymbolFlushedPlusNullLead();
@@ -3831,6 +3828,36 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAsOfJoinLinearKeyedRhsMatchesLeadNullSymbol() throws Exception {
+        // This is public SQL coverage of LiveViewSymbolTable.containsNullValue():
+        // SymbolToSymbolJoinKeyMapping asks the RHS symbol table whether its key domain
+        // contains NULL before it maps a NULL probe key. Here only the live view's
+        // un-flushed lead contains NULL, while its committed disk symbol table reports
+        // false. The cc row is a preservation/translation control: it proves ordinary
+        // cross-table symbol translation still reaches the non-NULL lead row.
+        assertMemoryLeak(() -> {
+            buildTwoSymbolFlushedPlusNullLead();
+
+            execute("CREATE TABLE probe (ts TIMESTAMP, id INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO probe (ts, id, g) VALUES " +
+                    "('2026-05-12T00:00:04.500000Z', 1, NULL), " +
+                    "('2026-05-12T00:00:05.500000Z', 2, 'cc')");
+            drainWalQueue();
+
+            final String sql = "SELECT /*+ asof_linear(p lv) */ p.id, p.g AS probe_g, lv.rn AS rhs_rn " +
+                    "FROM probe p ASOF JOIN lv ON (p.g = lv.g)";
+            // noLeakCheck must preserve the un-flushed lead while the combined result and
+            // plan assertion pins the record-cursor light join and its in-memory live-view RHS.
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("AsOf Join Light", "LiveView", "inMemory: true")
+                    .returns("id\tprobe_g\trhs_rn\n1\t\t4\n2\tcc\t5\n");
+        });
+    }
+
+    @Test
     public void testProjectionSortKeyMaterializationOverTierRowZero() throws Exception {
         // The third consumer of an in-mem rowId, and the one that fails hardest:
         // SortKeyMaterializingRecordCursor keys its rowId -> ordinal map with
@@ -5135,8 +5162,8 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     // Two-SYMBOL variant: 3 flushed rows (all g != h, no NULLs, so both committed symbol
     // tables report containsNullValue() == false) on disk, then a 2-row un-flushed lead
     // whose first row is (NULL, NULL) - a value that exists as a symbol NULL only in RAM -
-    // and whose second row is a non-NULL g != h pair. Exercises the interpreted symbol
-    // comparator against a lead-only NULL that the disk table cannot know about.
+    // and whose second row is a non-NULL g != h pair. Supplies the lead-only NULL for both
+    // interpreted SYMBOL equality semantics and keyed ASOF NULL-domain mapping coverage.
     private void buildTwoSymbolFlushedPlusNullLead() throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL, h SYMBOL, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
         setCurrentMicros(0L);
