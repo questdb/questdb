@@ -791,6 +791,234 @@ public class NotNullAlterTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpdateRuntimeNullRejectedString() throws Exception {
+        assertMemoryLeak(() -> {
+            // Runtime-derived NULL: nullif() evaluates to NULL at execution time, so the
+            // syntactic compile-time check cannot see it. The writer-side check must
+            // reject it, because a stored STRING null is the very encoding IS NULL
+            // matches, and IS NULL on a NOT NULL column folds to FALSE -- the row would
+            // become unreachable by any null predicate.
+            execute("CREATE TABLE t (id INT, s STRING NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 'a', '2024-01-01')");
+
+            try {
+                execute("UPDATE t SET s = nullif(s, 'a') WHERE id = 1");
+                fail("Expected NOT NULL violation when UPDATE derives NULL at runtime");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=s");
+            }
+
+            // The row must remain unmodified.
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            id\ts\tts
+                            1\ta\t2024-01-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testUpdateRuntimeNullRejectedStringWal() throws Exception {
+        assertMemoryLeak(() -> {
+            // On a WAL table the UPDATE is acknowledged at sequencing; the runtime NULL
+            // is only seen when UpdateOperatorImpl runs at apply time. ApplyWal2TableJob
+            // treats no UPDATE error as WAL-tolerable (skipping one would lose
+            // acknowledged DML), so the violation must surface as a suspended table.
+            execute("CREATE TABLE t (id INT, s STRING NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES (1, 'a', '2024-01-01')");
+            drainWalQueue();
+
+            execute("UPDATE t SET s = nullif(s, 'a') WHERE id = 1");
+            drainWalQueue();
+
+            assertTrue(
+                    "WAL apply must suspend the table rather than store the NULL",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t"))
+            );
+
+            // The row must remain unmodified.
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            id\ts\tts
+                            1\ta\t2024-01-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testUpdateRuntimeNullRejectedVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, v VARCHAR NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 'a', '2024-01-01')");
+
+            try {
+                execute("UPDATE t SET v = nullif(v, 'a') WHERE id = 1");
+                fail("Expected NOT NULL violation when UPDATE derives VARCHAR NULL at runtime");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=v");
+            }
+
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            id\tv\tts
+                            1\ta\t2024-01-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testUpdateRuntimeNullRejectedSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            // SYMBOL stores -1 for null, the exact IS NULL encoding; a stored null here
+            // is invisible to IS NULL once the constraint folds it to FALSE.
+            execute("CREATE TABLE t (id INT, s SYMBOL NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 'a', '2024-01-01')");
+
+            try {
+                execute("UPDATE t SET s = nullif(s, 'a') WHERE id = 1");
+                fail("Expected NOT NULL violation when UPDATE derives SYMBOL NULL at runtime");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=s");
+            }
+
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            id\ts\tts
+                            1\ta\t2024-01-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testUpdateRuntimeNullRejectedBinary() throws Exception {
+        assertMemoryLeak(() -> {
+            // A nullable BINARY column holding NULL is the runtime producer here; the
+            // SET expression is a plain column read, so no syntactic check can fire.
+            execute("CREATE TABLE t (id INT, b BINARY NOT NULL, b2 BINARY, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t (id, b, ts) VALUES (1, rnd_bin(4,4,0), '2024-01-01')");
+
+            try {
+                execute("UPDATE t SET b = b2 WHERE id = 1");
+                fail("Expected NOT NULL violation when UPDATE derives BINARY NULL at runtime");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=b");
+            }
+
+            // The original 4-byte value must survive; a stored NULL would render length null.
+            assertQuery("SELECT id, length(b) len FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tlen
+                            1\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testUpdateRuntimeNullRejectedArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, a DOUBLE[] NOT NULL, a2 DOUBLE[], ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t (id, a, ts) VALUES (1, ARRAY[1.0, 2.0], '2024-01-01')");
+
+            try {
+                execute("UPDATE t SET a = a2 WHERE id = 1");
+                fail("Expected NOT NULL violation when UPDATE derives ARRAY NULL at runtime");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=a");
+            }
+
+            assertQuery("SELECT id, a FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ta
+                            1\t[1.0,2.0]
+                            """);
+        });
+    }
+
+    @Test
+    public void testUpdateRuntimeNullRejectedBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            // A NULL bind variable reaches the writer as a value; the compile-time
+            // literal check cannot see it.
+            execute("CREATE TABLE t (id INT, s STRING NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 'a', '2024-01-01')");
+
+            bindVariableService.clear();
+            bindVariableService.setStr(0, null);
+            try {
+                execute("UPDATE t SET s = $1 WHERE id = 1");
+                fail("Expected NOT NULL violation when UPDATE binds NULL");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=s");
+            }
+
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            id\ts\tts
+                            1\ta\t2024-01-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testUpdateRuntimeNullNumericSentinelIsData() throws Exception {
+        assertMemoryLeak(() -> {
+            // Deliberate asymmetry with the reference types above: a numeric NOT NULL
+            // column treats its legacy sentinel bit pattern as DATA, so a runtime-derived
+            // NULL stores the sentinel and the UPDATE must succeed. Only reference types
+            // (STRING/VARCHAR/SYMBOL/BINARY/ARRAY), whose stored null IS the IS NULL
+            // encoding, are rejected. Do not "unify" the two.
+            execute("CREATE TABLE t (id INT, n LONG NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 10, '2024-01-01')");
+
+            execute("UPDATE t SET n = nullif(n, n) WHERE id = 1");
+
+            // The sentinel renders numerically because the column is NOT NULL...
+            assertQuery("SELECT id, n FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tn
+                            1\t-9223372036854775808
+                            """);
+
+            // ...and IS NULL folds to FALSE on a NOT NULL column, so no row matches.
+            assertQuery("SELECT count() FROM t WHERE n IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            0
+                            """);
+        });
+    }
+
+    @Test
     public void testUpdateOnNullableColumnAllowsNull() throws Exception {
         assertMemoryLeak(() -> {
             // Regression guard: nullable columns still accept NULL via UPDATE.

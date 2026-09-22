@@ -1989,13 +1989,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * because its NOT NULL semantic ("sentinels are valid values") isn't honored by the
      * native kernels. Every kernel in Vect.* and Rosti::keyed* still treats the type's
      * sentinel as null, so they would under-count / skip-in-sum values that the NOT NULL
-     * feature declares to be real data. Until native NOT NULL kernels land, codegen
-     * refuses the vec path for these columns and falls back to the non-vectorized
-     * GroupByFunction pipeline. The non-vec pipeline has the same sentinel-skip issue
-     * today (see GroupByFunction implementations such as CountLongGroupByFunction), but
-     * keeping the vec path out of the picture (a) prevents the keyed/non-keyed
-     * inconsistency a Java-only vec override would introduce and (b) leaves a single
-     * place to upgrade when NOT NULL-aware aggregation ships. See the null-bitmaps plan.
+     * feature declares to be real data. The non-vectorized GroupByFunction pipeline, by
+     * contrast, is NOT-NULL-aware: its implementations branch on isArgNotNull (see
+     * CountLongGroupByFunction and the rest of the accumulator family) and count the
+     * sentinel as data. That asymmetry is why codegen refuses the vec path for these
+     * columns and routes them to the Java pipeline: it is the only pipeline that
+     * computes the correct answer today, and keeping the decision here leaves a single
+     * place to upgrade when NOT NULL-aware native kernels land. See the null-bitmaps
+     * plan.
      */
     private static boolean isVectorAggregateUnsafeForNotNull(RecordMetadata metadata, int columnIndex) {
         // Designated timestamps are validated to exclude the sentinel, so native aggregation is

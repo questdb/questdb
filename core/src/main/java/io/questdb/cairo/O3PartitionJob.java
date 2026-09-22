@@ -2960,7 +2960,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 int encodeColumnType = columnType;
                 if (metadata.isNotNull(columnIndex)) {
-                    encodeColumnType |= ParquetColumnTypeConverter.PARQUET_SYMBOL_NOT_NULL_HINT;
+                    encodeColumnType |= PartitionDescriptor.NOT_NULL_HINT_BIT;
                 }
                 descriptor.addColumn(
                         columnName,

@@ -2829,6 +2829,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         @Override
         public void putArray(int columnIndex, @NotNull ArrayView arrayView) {
+            if (arrayView.isNull()) {
+                // A null array arrives as a non-null ArrayView with isNull()==true,
+                // so the Object null check in checkNotNullValue never sees it. Pass
+                // an explicit null to run the same NOT NULL enforcement as the other
+                // reference types.
+                checkNotNullValue(columnIndex, null);
+            }
             ArrayTypeDriver.appendValue(
                     getSecondaryColumn(columnIndex),
                     getPrimaryColumn(columnIndex),

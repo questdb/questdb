@@ -1269,6 +1269,68 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertAsSelectRuntimeNullArrayRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            // A null array arrives at the writer as a non-null ArrayView with
+            // isNull()==true, so an Object null check never fires and
+            // setRowValueNotNull() defeats the required-column check in rowAppend.
+            // The writer must reject it explicitly: a stored ARRAY null is the very
+            // encoding IS NULL matches, and IS NULL on a NOT NULL column folds to
+            // FALSE, making the row unreachable by any null predicate.
+            execute("CREATE TABLE src (a DOUBLE[], ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO src (ts) VALUES ('2024-01-01')");
+            execute("CREATE TABLE dst (a DOUBLE[] NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+
+            try {
+                execute("INSERT INTO dst SELECT a, ts FROM src");
+                fail("Expected NOT NULL violation when INSERT derives ARRAY NULL at runtime");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=a");
+            }
+
+            // Nothing may have been committed.
+            assertQuery("SELECT count() FROM dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            0
+                            """);
+        });
+    }
+
+    @Test
+    public void testInsertAsSelectRuntimeNullArrayRejectedWal() throws Exception {
+        assertMemoryLeak(() -> {
+            // WAL INSERT writes rows into the segment at execute() time, so the
+            // writer-side rejection surfaces synchronously, unlike WAL UPDATE.
+            execute("CREATE TABLE src (a DOUBLE[], ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO src (ts) VALUES ('2024-01-01')");
+            execute("CREATE TABLE dst (a DOUBLE[] NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try {
+                execute("INSERT INTO dst SELECT a, ts FROM src");
+                fail("Expected NOT NULL violation when WAL INSERT derives ARRAY NULL at runtime");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=a");
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            0
+                            """);
+        });
+    }
+
+    @Test
     public void testVarcharNotNullEmptyStringAccepted() throws Exception {
         assertMemoryLeak(() -> {
             // Empty string '' is not NULL — it's a valid value for a NOT NULL column.
