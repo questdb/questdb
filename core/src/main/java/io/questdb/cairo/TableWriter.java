@@ -14365,6 +14365,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void setRowValueNotNull(int columnIndex) {
+        // Double-put detection: writing the same column twice within one row appends
+        // twice and desynchronizes the aux vector for var-size types. The designated
+        // timestamp is exempt because newRow/newRowO3 mark it proactively (the value
+        // arrives via newRow(timestamp), not a put), so it may legitimately be marked
+        // again on the same masterRef.
+        assert columnIndex == metadata.getTimestampIndex() || rowValueIsNotNull.getQuick(columnIndex) != masterRef;
         rowValueIsNotNull.setQuick(columnIndex, masterRef);
     }
 
