@@ -25,14 +25,13 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.engine.CompressedOffsets;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.Hash;
-import io.questdb.std.IntList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
@@ -53,11 +52,11 @@ import java.io.Closeable;
  * match each other. Widening a slot head only scales its unsigned value; duplicate
  * advances need no offset decoding.
  * <p>
- * The rows themselves, their links and their payload records live in
+ * The rows themselves, their links and the ids of their build rows live in
  * {@link HashJoinRowHeap}, which {@link MapHashJoinBuild} shares; see there for the
- * row layout, the heap bound and how SYMBOL payloads resolve. A SYMBOL join key is stored
- * as the build's own symbol key; the probe translates its key into that domain through
- * {@link SymbolKeyTranslator}.
+ * row layout and the heap bound. Probes read payload columns through the build's
+ * {@link HashJoinPayloadSource}. A SYMBOL join key is stored as the build's own symbol key;
+ * the probe translates its key into that domain through {@link SymbolKeyTranslator}.
  * <p>
  * Hash tables and rows use tracked native buffers. Growth accounts for both old and
  * new allocations and is cancellable. Frozen views borrow these buffers until close;
@@ -85,10 +84,10 @@ public final class IntHashJoinBuild implements Closeable {
     private int keySlotCount;
     private boolean open;
 
-    /** Payload types/indexes are in the same order; indexes address the source record. */
+    /** A build with payload columns stores row ids for probes to read them through; see the class docs. */
     @TestOnly
-    public IntHashJoinBuild(ColumnTypes payloadTypes, IntList sourceColumns, int initialSlots, long initialRowCapacity) {
-        this(payloadTypes, sourceColumns, initialSlots, initialRowCapacity, false);
+    public IntHashJoinBuild(boolean hasPayload, int initialSlots, long initialRowCapacity) {
+        this(hasPayload, initialSlots, initialRowCapacity, false);
     }
 
     /**
@@ -96,58 +95,84 @@ public final class IntHashJoinBuild implements Closeable {
      * Its snapshot is a flyweight; retained probes must explicitly reopen for each
      * execution. The ordinary constructor keeps execution-specific snapshots.
      */
-    public IntHashJoinBuild(ColumnTypes payloadTypes, IntList sourceColumns, int initialSlots, long initialRowCapacity, boolean reusable) {
+    public IntHashJoinBuild(boolean hasPayload, int initialSlots, long initialRowCapacity, boolean reusable) {
         if (initialSlots < 2 || initialSlots > MAX_SLOTS || Integer.bitCount(initialSlots) != 1) {
-            throw new IllegalArgumentException("invalid hash join build capacity or payload mapping");
+            throw new IllegalArgumentException("invalid hash join build capacity");
         }
         this.initialSlots = initialSlots;
-        heap = new HashJoinRowHeap(payloadTypes, sourceColumns, initialRowCapacity);
+        heap = new HashJoinRowHeap(hasPayload, initialRowCapacity);
         reusableFrozen = reusable ? new Frozen() : null;
     }
 
-    /** Copies one row. On failure all execution allocations are released. */
-    public void append(int key, Record record) {
+    /** Appends one row. On failure all execution allocations are released. */
+    public void append(int key, long rowId) {
         requireBuilding();
         try {
-            appendRow(key, record);
+            appendRow(key, rowId);
         } catch (Throwable th) {
             close();
             throw th;
         }
-    }
-
-    /** Consumes a borrowed INT-keyed cursor once. The caller retains ownership of the cursor. */
-    public FrozenHashJoinBuild.IntKeyed build(RecordCursor cursor, int keyColumn) {
-        return build(cursor, keyColumn, -1, -1);
     }
 
     /**
-     * Consumes a borrowed cursor once and resolves SYMBOL payloads through it until close,
-     * so the caller keeps the cursor open until then. A positive row hint is the remaining
-     * row count of a freshly acquired cursor and presizes the row heap. A positive key hint
-     * bounds the distinct keys the cursor holds and presizes the key table for that many, so
-     * that no rehash runs below it; -1 leaves the table to grow. A SYMBOL key column keeps its
-     * own key, which is the domain the probe translates into.
+     * Appends every row of the page frame the record is bound to, keyed by the INT key column.
+     * The caller checks cancellation at frame boundaries. On failure all execution allocations
+     * are released.
      */
-    public FrozenHashJoinBuild.IntKeyed build(RecordCursor cursor, int keyColumn, long rowCountHint, long keyCountHint) {
+    public void appendFrame(PageFrameMemoryRecord record, int keyColumn, long rowCount) {
         requireBuilding();
         try {
-            if (rowCountHint > 0) {
-                heap.reserve(rowCountHint);
+            for (long r = 0; r < rowCount; r++) {
+                record.setRowIndex(r);
+                appendRow(record.getInt(keyColumn), record.getRowId());
             }
-            if (keyCountHint > 0) {
-                reserveKeys(keyCountHint);
-            }
-            final Record record = cursor.getRecord();
-            // The source cursor checks the breaker at its frame boundaries.
-            while (cursor.hasNext()) {
-                appendRow(record.getInt(keyColumn), record);
-            }
-            return freeze(cursor);
         } catch (Throwable th) {
             close();
             throw th;
         }
+    }
+
+    /** The filtered twin of {@link #appendFrame(PageFrameMemoryRecord, int, long)}: appends the listed rows only. */
+    public void appendFrame(PageFrameMemoryRecord record, int keyColumn, DirectLongList rows) {
+        requireBuilding();
+        try {
+            for (long p = 0, n = rows.size(); p < n; p++) {
+                record.setRowIndex(rows.get(p));
+                appendRow(record.getInt(keyColumn), record.getRowId());
+            }
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
+    /**
+     * Consumes a borrowed cursor once, keeping the id of each row, and freezes. Probes read payload
+     * columns through the source, so the caller keeps whatever the source reads open until close.
+     * The hints are those of {@link #reserve(long, long)}. A SYMBOL key column keeps its own key,
+     * which is the domain the probe translates into.
+     */
+    public FrozenHashJoinBuild.IntKeyed build(
+            RecordCursor cursor,
+            int keyColumn,
+            long rowCountHint,
+            long keyCountHint,
+            @Nullable HashJoinPayloadSource payloads
+    ) {
+        reserve(rowCountHint, keyCountHint);
+        try {
+            final Record record = cursor.getRecord();
+            final boolean hasRowId = heap.hasRowId();
+            // The source cursor checks the breaker at its frame boundaries.
+            while (cursor.hasNext()) {
+                appendRow(record.getInt(keyColumn), hasRowId ? record.getRowId() : 0);
+            }
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+        return freeze(payloads);
     }
 
     /** Only call after every probe is drained and aggregate output is finished. */
@@ -155,7 +180,7 @@ public final class IntHashJoinBuild implements Closeable {
     public void close() {
         if (frozen != null) {
             // Do not retain the borrowed source past its execution.
-            frozen.symbols = null;
+            frozen.payloads = null;
             frozen = null;
         }
         open = false;
@@ -165,24 +190,24 @@ public final class IntHashJoinBuild implements Closeable {
         circuitBreaker = null;
     }
 
-    /** Ends mutation of a build without SYMBOL payloads. */
+    /** Ends mutation of a build without payload columns. */
     public FrozenHashJoinBuild.IntKeyed freeze() {
         return freeze(null);
     }
 
     /**
-     * Ends mutation. Views resolve SYMBOL payloads through the borrowed source until close.
+     * Ends mutation. Probes read payload columns through the borrowed source until close.
      * Publication to probe workers is the caller's responsibility.
      */
-    public FrozenHashJoinBuild.IntKeyed freeze(@Nullable SymbolTableSource symbolSource) {
+    public FrozenHashJoinBuild.IntKeyed freeze(@Nullable HashJoinPayloadSource payloads) {
         requireBuilding();
         try {
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
-            if (symbolSource == null && heap.hasSymbolPayload()) {
-                throw new IllegalArgumentException("hash join build with SYMBOL payload requires a symbol source");
+            if (payloads == null && heap.hasRowId()) {
+                throw new IllegalArgumentException("hash join build with payload columns requires a payload source");
             }
             frozen = reusableFrozen != null ? reusableFrozen : new Frozen();
-            frozen.of(symbolSource);
+            frozen.of(payloads);
             return frozen;
         } catch (Throwable th) {
             close();
@@ -213,6 +238,27 @@ public final class IntHashJoinBuild implements Closeable {
         }
     }
 
+    /**
+     * Presizes the execution's storage. A positive row hint is the number of rows the build will
+     * append and presizes the row heap. A positive key hint bounds the distinct keys among them and
+     * presizes the key table for that many, so that no rehash runs below it; -1 leaves the table to
+     * grow. On failure all execution allocations are released.
+     */
+    public void reserve(long rowCountHint, long keyCountHint) {
+        requireBuilding();
+        try {
+            if (rowCountHint > 0) {
+                heap.reserve(rowCountHint);
+            }
+            if (keyCountHint > 0) {
+                reserveKeys(keyCountHint);
+            }
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
     private static long findKeySlot(long base, int slots, int key) {
         int index = (int) Hash.hashInt64(key) & (slots - 1);
         long address = base + (long) index * SLOT_SIZE;
@@ -228,7 +274,7 @@ public final class IntHashJoinBuild implements Closeable {
     }
 
     // The caller owns failure cleanup. Growth checks the breaker per MiB of rehashed or copied memory.
-    private void appendRow(int key, Record record) {
+    private void appendRow(int key, long rowId) {
         long slot = findKeySlot(keys.address, keySlotCount, key);
         int previous = Unsafe.getInt(slot + 4);
         if (previous == 0 && keyCount == keySlotCount / 2) {
@@ -238,7 +284,7 @@ public final class IntHashJoinBuild implements Closeable {
             growKeyTable(keySlotCount * 2);
             slot = findKeySlot(keys.address, keySlotCount, key);
         }
-        final long offset = heap.append(record, toRowLink(previous));
+        final long offset = heap.append(rowId, toRowLink(previous));
         Unsafe.putInt(slot, key);
         Unsafe.putInt(slot + 4, CompressedOffsets.compressBiased8(offset));
         if (previous == 0) {
@@ -299,9 +345,9 @@ public final class IntHashJoinBuild implements Closeable {
         private int keysCount;
         private long rowsAddress;
         private long rowsCount;
+        private HashJoinPayloadSource payloads;
         private long size;
         private int slots;
-        private SymbolTableSource symbols;
 
         @Override
         public long getKeyCount() {
@@ -326,7 +372,7 @@ public final class IntHashJoinBuild implements Closeable {
             return new View();
         }
 
-        private void of(SymbolTableSource symbolSource) {
+        private void of(HashJoinPayloadSource payloads) {
             handleBase = heap.nextHandleBase();
             keysAddress = keys.address;
             keysCount = keyCount;
@@ -334,7 +380,7 @@ public final class IntHashJoinBuild implements Closeable {
             rowsAddress = heap.getAddress();
             rowsCount = heap.getRowCount();
             size = IntHashJoinBuild.this.getSizeInBytes();
-            symbols = symbolSource;
+            this.payloads = payloads;
             generation = heap.freeze();
         }
 
@@ -344,7 +390,12 @@ public final class IntHashJoinBuild implements Closeable {
 
             private View() {
                 super(heap);
-                reopen();
+                try {
+                    reopen();
+                } catch (Throwable th) {
+                    close();
+                    throw th;
+                }
             }
 
             @Override
@@ -352,7 +403,6 @@ public final class IntHashJoinBuild implements Closeable {
                 assert isCurrent();
                 long slot = findKeySlot(keysAddress, slots, key);
                 next = toRowLink(Unsafe.getInt(slot + 4));
-                record.address = 0;
             }
 
             @Override
@@ -368,7 +418,7 @@ public final class IntHashJoinBuild implements Closeable {
                 if (head == 0) {
                     return false;
                 }
-                record.address = payloadRowsAddress + CompressedOffsets.uncompressBiased8(head);
+                positionAt(CompressedOffsets.uncompressBiased8(head));
                 return true;
             }
 
@@ -386,7 +436,7 @@ public final class IntHashJoinBuild implements Closeable {
                 // immutable native lookup metadata for its entire acquired lifetime.
                 lookupMask = slots - 1;
                 lookupKeysAddress = keysAddress;
-                ofSnapshot(symbols, handleBase, rowsAddress, rowsCount, generation);
+                ofSnapshot(payloads, handleBase, rowsAddress, rowsCount, generation);
             }
 
             private int findCollision(int key, long address) {

@@ -689,9 +689,10 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                         }
                     }
                 }
-                // Child compilation applies LATEST ON to a join input, so that shape keeps the fused plan.
+                // Child compilation applies LATEST ON to a join input, which then exposes no page
+                // frames for the build to keep row ids of, so that shape keeps the ordinary plan too.
                 assertOutcome("SELECT count(*) n, sum(p.d) d FROM a r JOIN ((SELECT id, d, t FROM b) LATEST ON t PARTITION BY id) p"
-                        + " ON r.id = p.id", context, true);
+                        + " ON r.id = p.id", context, false);
             }
         });
     }

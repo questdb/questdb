@@ -57,6 +57,7 @@ import io.questdb.griffin.model.IQueryModel;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
@@ -64,11 +65,12 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 /**
  * Keyed and scalar shared-build execution the planner selects for eligible join aggregations.
- * Takes ownership of both child factories, functions and the probe filter context
- * on entry, including construction failure. The context may carry a JIT-compiled
- * probe filter alongside the interpreted one. Borrows metadata only during
- * construction. Callers must compile functions for the same worker count.
- * The atom borrows the build factory and the frame sequence closes the atom first.
+ * Takes ownership of both child factories, functions, both filter contexts and the build ON
+ * filter on entry, including construction failure. Either context may carry a JIT-compiled
+ * filter alongside the interpreted one. Both children are page frame scans: the planner steals
+ * their filters into the contexts. Borrows metadata only during construction. Callers must
+ * compile functions for the same worker count. The atom borrows the build factory, its filters
+ * and its context, and the frame sequence closes the atom first.
  */
 public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final UnorderedPageFrameReducer AGGREGATE = AsyncHashJoinGroupByRecordCursorFactory::aggregate;
@@ -82,6 +84,8 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
     private final boolean outer;
     private final int workerCount;
     private RecordCursorFactory buildFactory;
+    private AsyncFilterContext buildFilterContext;
+    private Function buildOnFilter;
     private AsyncHashJoinGroupByRecordCursor cursor;
     private AsyncFilterContext filterContext;
     private UnorderedPageFrameSequence<AsyncHashJoinGroupByAtom> frameSequence;
@@ -93,20 +97,24 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             CairoEngine engine,
             RecordCursorFactory probeFactory,
             RecordCursorFactory buildFactory,
+            AsyncFilterContext buildFilterContext,
+            @Nullable Function buildOnFilter,
             HashJoinGroupByMetadata metadata,
             HashJoinGroupByFunctions functions,
             AsyncFilterContext filterContext,
             boolean outer,
             int workerCount
     ) {
-        this(engine, probeFactory, buildFactory, metadata, functions, filterContext, outer, workerCount,
-                outer ? IQueryModel.JOIN_LEFT_OUTER : IQueryModel.JOIN_INNER, false);
+        this(engine, probeFactory, buildFactory, buildFilterContext, buildOnFilter, metadata, functions, filterContext,
+                outer, workerCount, outer ? IQueryModel.JOIN_LEFT_OUTER : IQueryModel.JOIN_INNER, false);
     }
 
     public AsyncHashJoinGroupByRecordCursorFactory(
             CairoEngine engine,
             RecordCursorFactory probeFactory,
             RecordCursorFactory buildFactory,
+            AsyncFilterContext buildFilterContext,
+            @Nullable Function buildOnFilter,
             HashJoinGroupByMetadata metadata,
             HashJoinGroupByFunctions functions,
             AsyncFilterContext filterContext,
@@ -118,6 +126,8 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         super(functions.getOutputMetadata());
         this.probeFactory = probeFactory;
         this.buildFactory = buildFactory;
+        this.buildFilterContext = buildFilterContext;
+        this.buildOnFilter = buildOnFilter;
         this.functions = functions;
         this.filterContext = filterContext;
         this.outer = outer;
@@ -129,11 +139,11 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             this.joinedMetadata = GenericRecordMetadata.copyOf(metadata.getJoinedMetadata());
             this.condition = metadata.getCondition();
             if (workerCount < 1 || functions.getWorkerCount() != workerCount
-                    || !probeFactory.supportsPageFrameCursor()) {
+                    || !probeFactory.supportsPageFrameCursor() || !buildFactory.supportsPageFrameCursor()) {
                 throw new IllegalArgumentException("unsupported fused hash join execution inputs");
             }
-            AsyncHashJoinGroupByAtom atom = new AsyncHashJoinGroupByAtom(engine, buildFactory, metadata,
-                    functions, filterContext, outer, workerCount);
+            AsyncHashJoinGroupByAtom atom = new AsyncHashJoinGroupByAtom(engine, buildFactory, buildFilterContext,
+                    buildOnFilter, metadata, functions, filterContext, outer, workerCount);
             // A probe filter belongs to the query, not to a frame, so the reducer is fixed here:
             // queries without one keep the dense loops that never test a filter per row.
             final UnorderedPageFrameReducer reducer = filterContext.getFilter(-1) != null
@@ -228,6 +238,16 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         } finally {
             sink.setMetadata(null);
         }
+        sink.setMetadata(buildFactory.getMetadata());
+        try {
+            // A compiled build filter runs as JIT code, so its attribute says so; the operator's own
+            // name speaks for the probe filter only.
+            sink.optAttr(buildFilterContext.getCompiledFilter() != null ? "buildJitFilter" : "buildFilter",
+                    buildFilterContext.getFilter(-1));
+            sink.optAttr("buildOnFilter", buildOnFilter);
+        } finally {
+            sink.setMetadata(null);
+        }
         sink.child("Probe", probeFactory);
         sink.child("Build", buildFactory);
     }
@@ -235,6 +255,11 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
     @Override
     public boolean usesCompiledFilter() {
         return filterContext.getCompiledFilter() != null;
+    }
+
+    /** True when the build scan's WHERE filter runs as JIT code. */
+    public boolean usesCompiledBuildFilter() {
+        return buildFilterContext.getCompiledFilter() != null;
     }
 
     private static void aggregate(
@@ -914,6 +939,10 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         frameSequence = null;
         failure = Misc.freeBestEffort(failure, filterContext);
         filterContext = null;
+        failure = Misc.freeBestEffort(failure, buildFilterContext);
+        buildFilterContext = null;
+        failure = Misc.freeBestEffort(failure, buildOnFilter);
+        buildOnFilter = null;
         failure = Misc.freeBestEffort(failure, functions);
         functions = null;
         failure = Misc.freeBestEffort(failure, probeFactory);

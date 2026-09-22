@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
@@ -163,7 +162,7 @@ public final class HashJoinGroupByCandidate {
     }
 
     /** The fused scan reads page frames directly and does not support covering-index frame descriptors or their decode caches. */
-    public static boolean supportsInputFactory(RecordCursorFactory factory) {
+    private static boolean supportsInputFactory(RecordCursorFactory factory) {
         for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
             if (current instanceof CoveringIndexRecordCursorFactory) {
                 return false;
@@ -173,11 +172,13 @@ public final class HashJoinGroupByCandidate {
     }
 
     /**
-     * Compile-time frame capability only: the probe must expose page frames, either directly or under a
-     * stealable, parallel-safe filter. Execution reads typed logical frame values, including Parquet columns.
+     * Compile-time frame capability only: an input must expose page frames, either directly or under a
+     * stealable, parallel-safe filter. Both inputs take this shape: the probe scans its frames on the
+     * workers, and the build walks its frames and keeps row ids that the probe's payload reads resolve
+     * against those frames. Execution reads typed logical frame values, including Parquet columns.
      * This check borrows the filter. Transfer follows all capability checks and worker compilation.
      */
-    public static boolean supportsProbeFactory(RecordCursorFactory factory) {
+    public static boolean supportsFramedInput(RecordCursorFactory factory) {
         if (!supportsInputFactory(factory)) {
             return false;
         }
@@ -339,12 +340,13 @@ public final class HashJoinGroupByCandidate {
             if (analyzer.hasUndefinedBindVariable) {
                 return null;
             }
-            // A RIGHT join builds the table before it whatever its size, and the owner copies every
+            // A RIGHT join builds the table before it whatever its size, and the owner keeps every
             // row of it before the workers start probing. The ordinary plan hashes the preserved
             // table instead and streams this one, and it overtook the fused plan between a 31 MiB
-            // and a 61 MiB row heap. The unfiltered row count bounds the heap for every bind value,
-            // as it bounds the INNER build in selectBuildIndex(). LEFT joins take no bound: their
-            // ordinary plan chains every row of the same table, and the fused plan stayed faster.
+            // and a 61 MiB row heap of copied payloads. The unfiltered row count bounds the heap for
+            // every bind value, as it bounds the INNER build in selectBuildIndex(). LEFT joins take
+            // no bound: their ordinary plan chains every row of the same table, and the fused plan
+            // stayed faster.
             final long buildRows = buildIndex == 0 ? leftReader.size() : rightReader.size();
             if (joinType == IQueryModel.JOIN_RIGHT_OUTER) {
                 final long maxBuildSize = executionContext.getCairoEngine().getConfiguration()
@@ -646,14 +648,9 @@ public final class HashJoinGroupByCandidate {
             return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, metadata.getColumnName(index), 0, position);
         }
 
-        /** Row heap bytes of one build row: the heap copies exactly the required build columns. */
+        /** Row heap bytes of one build row: a link, plus a row id when any build column is required. */
         private long getBuildRowSize() {
-            final ArrayColumnTypes types = new ArrayColumnTypes();
-            final RecordMetadata build = sources[buildIndex];
-            for (int i = 0, n = requiredBuildColumns.size(); i < n; i++) {
-                types.add(build.getColumnType(requiredBuildColumns.getQuick(i)));
-            }
-            return FrozenHashJoinBuild.getRowSize(types);
+            return FrozenHashJoinBuild.getRowSize(requiredBuildColumns.size() > 0);
         }
 
         private boolean isBindVariableTypeDefined(CharSequence token) {

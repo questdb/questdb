@@ -35,12 +35,12 @@ import io.questdb.cairo.map.MapProbeView;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.map.Unordered8Map;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.engine.CompressedOffsets;
-import io.questdb.std.IntList;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -55,7 +55,8 @@ import java.io.Closeable;
 /**
  * Owner-built general-key lookup for fused hash join aggregation: a {@link Map} from the join
  * key to the head of a chain, plus the {@link HashJoinRowHeap} that {@link IntHashJoinBuild}
- * also uses. A key of any width and column count that a {@link RecordSink} can stage takes
+ * also uses. Rows keep the ids of their build rows, and probes read payload columns through the
+ * build's {@link HashJoinPayloadSource}. A key of any width and column count that a {@link RecordSink} can stage takes
  * this route; a single INT key, and a SYMBOL key translated into the build's domain, stay on
  * the narrower INT layout.
  * <p>
@@ -77,7 +78,7 @@ import java.io.Closeable;
  * the row heap stays under {@code NATIVE_JOIN_MAP}: an assertion about one build's bytes has to
  * sum the tags, and so does {@link #getSizeInBytes()}.
  * <p>
- * Cancellation: the build loop checks the circuit breaker once per
+ * Cancellation: the build loops check the circuit breaker once per
  * {@value #ROWS_PER_BREAKER_CHECK} rows, and the row heap checks once per MiB it copies. The
  * maps never check it, so with a key count hint the build presizes the map and no rehash runs
  * below it; without one, a single rehash and a single {@code OrderedMap.resize()} stay
@@ -105,18 +106,17 @@ public final class MapHashJoinBuild implements Closeable {
     private MemoryTracker memoryTracker;
     private boolean open;
 
-    /** Payload types/indexes are in the same order; indexes address the source record. */
+    /** A build with payload columns stores row ids for probes to read them through; see the class docs. */
     @TestOnly
     public MapHashJoinBuild(
             CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes,
-            ColumnTypes payloadTypes,
-            IntList payloadColumns,
+            boolean hasPayload,
             int initialKeyCapacity,
             long initialMapHeapSize,
             long initialRowCapacity
     ) {
-        this(configuration, keyTypes, payloadTypes, payloadColumns, initialKeyCapacity, initialMapHeapSize, initialRowCapacity, false);
+        this(configuration, keyTypes, hasPayload, initialKeyCapacity, initialMapHeapSize, initialRowCapacity, false);
     }
 
     /**
@@ -127,8 +127,7 @@ public final class MapHashJoinBuild implements Closeable {
     public MapHashJoinBuild(
             CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes,
-            ColumnTypes payloadTypes,
-            IntList payloadColumns,
+            boolean hasPayload,
             int initialKeyCapacity,
             long initialMapHeapSize,
             long initialRowCapacity,
@@ -137,7 +136,7 @@ public final class MapHashJoinBuild implements Closeable {
         if (keyTypes.getColumnCount() < 1) {
             throw new IllegalArgumentException("hash join build needs at least one key column");
         }
-        heap = new HashJoinRowHeap(payloadTypes, payloadColumns, initialRowCapacity);
+        heap = new HashJoinRowHeap(hasPayload, initialRowCapacity);
         final double loadFactor = configuration.getSqlFastMapLoadFactor();
         maxPresizedKeys = (int) Math.min(Integer.MAX_VALUE, (long) (Numbers.MAX_SAFE_INT_POW_2 * loadFactor));
         try {
@@ -172,7 +171,10 @@ public final class MapHashJoinBuild implements Closeable {
         reusableFrozen = reusable ? new Frozen() : null;
     }
 
-    /** Copies one row, keyed by what the sink stages. On failure all execution allocations are released. */
+    /**
+     * Appends one row, keyed by what the sink stages and identified by the record's row id. On
+     * failure all execution allocations are released.
+     */
     public void append(Record record, RecordSink keySink) {
         requireBuilding();
         try {
@@ -184,25 +186,59 @@ public final class MapHashJoinBuild implements Closeable {
     }
 
     /**
-     * Consumes a borrowed cursor once and resolves SYMBOL payloads through it until close, so
-     * the caller keeps the cursor open until then. The sink stages the build key from each row;
-     * it is the owner's own, since sinks must not be shared across workers. A positive row hint
-     * is the remaining row count of a freshly acquired cursor and presizes the row heap. A
-     * positive key hint bounds the distinct keys the cursor holds and presizes the map for that
-     * many; -1 leaves the map to grow.
+     * Appends every row of the page frame the record is bound to. The sink stages the build key
+     * from each row; it is the owner's own, since sinks must not be shared across workers. The
+     * caller checks cancellation at frame boundaries, and the loop checks too, because the map's
+     * own growth does not. On failure all execution allocations are released.
      */
-    public FrozenHashJoinBuild.RecordKeyed build(RecordCursor cursor, RecordSink keySink, long rowCountHint, long keyCountHint) {
+    public void appendFrame(PageFrameMemoryRecord record, RecordSink keySink, long rowCount) {
         requireBuilding();
         try {
-            if (rowCountHint > 0) {
-                heap.reserve(rowCountHint);
+            for (long r = 0; r < rowCount; r++) {
+                if (((r + 1) & (ROWS_PER_BREAKER_CHECK - 1)) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                }
+                record.setRowIndex(r);
+                appendRow(record, keySink);
             }
-            if (keyCountHint > 0) {
-                // A rehash is uninterruptible, so buy the whole table up front. A hint past what
-                // the map can hold is not an error here: the build may still fit, since the hint
-                // only bounds the distinct keys, so leave those rehashes to the map.
-                map.setKeyCapacity((int) Math.min(keyCountHint, maxPresizedKeys));
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
+    /** The filtered twin of {@link #appendFrame(PageFrameMemoryRecord, RecordSink, long)}: appends the listed rows only. */
+    public void appendFrame(PageFrameMemoryRecord record, RecordSink keySink, DirectLongList rows) {
+        requireBuilding();
+        try {
+            for (long p = 0, n = rows.size(); p < n; p++) {
+                if (((p + 1) & (ROWS_PER_BREAKER_CHECK - 1)) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                }
+                record.setRowIndex(rows.get(p));
+                appendRow(record, keySink);
             }
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
+    /**
+     * Consumes a borrowed cursor once, keeping the id of each row, and freezes. Probes read payload
+     * columns through the source, so the caller keeps whatever the source reads open until close.
+     * The sink stages the build key from each row; it is the owner's own, since sinks must not be
+     * shared across workers. The hints are those of {@link #reserve(long, long)}.
+     */
+    public FrozenHashJoinBuild.RecordKeyed build(
+            RecordCursor cursor,
+            RecordSink keySink,
+            long rowCountHint,
+            long keyCountHint,
+            @Nullable HashJoinPayloadSource payloads
+    ) {
+        reserve(rowCountHint, keyCountHint);
+        try {
             final Record record = cursor.getRecord();
             // The source cursor checks the breaker at its frame boundaries; the map's own
             // growth does not, so the loop checks too.
@@ -213,11 +249,11 @@ public final class MapHashJoinBuild implements Closeable {
                 }
                 appendRow(record, keySink);
             }
-            return freeze(cursor);
         } catch (Throwable th) {
             close();
             throw th;
         }
+        return freeze(payloads);
     }
 
     /** Only call after every probe is drained and aggregate output is finished. */
@@ -225,7 +261,7 @@ public final class MapHashJoinBuild implements Closeable {
     public void close() {
         if (frozen != null) {
             // Do not retain the borrowed source past its execution.
-            frozen.symbols = null;
+            frozen.payloads = null;
             frozen = null;
         }
         open = false;
@@ -235,24 +271,24 @@ public final class MapHashJoinBuild implements Closeable {
         circuitBreaker = null;
     }
 
-    /** Ends mutation of a build without SYMBOL payloads. */
+    /** Ends mutation of a build without payload columns. */
     public FrozenHashJoinBuild.RecordKeyed freeze() {
         return freeze(null);
     }
 
     /**
-     * Ends mutation. Views resolve SYMBOL payloads through the borrowed source until close.
+     * Ends mutation. Probes read payload columns through the borrowed source until close.
      * Publication to probe workers is the caller's responsibility.
      */
-    public FrozenHashJoinBuild.RecordKeyed freeze(@Nullable SymbolTableSource symbolSource) {
+    public FrozenHashJoinBuild.RecordKeyed freeze(@Nullable HashJoinPayloadSource payloads) {
         requireBuilding();
         try {
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
-            if (symbolSource == null && heap.hasSymbolPayload()) {
-                throw new IllegalArgumentException("hash join build with SYMBOL payload requires a symbol source");
+            if (payloads == null && heap.hasRowId()) {
+                throw new IllegalArgumentException("hash join build with payload columns requires a payload source");
             }
             frozen = reusableFrozen != null ? reusableFrozen : new Frozen();
-            frozen.of(symbolSource);
+            frozen.of(payloads);
             return frozen;
         } catch (Throwable th) {
             close();
@@ -286,6 +322,30 @@ public final class MapHashJoinBuild implements Closeable {
         }
     }
 
+    /**
+     * Presizes the execution's storage. A positive row hint is the number of rows the build will
+     * append and presizes the row heap. A positive key hint bounds the distinct keys among them and
+     * presizes the map for that many; -1 leaves the map to grow. On failure all execution
+     * allocations are released.
+     */
+    public void reserve(long rowCountHint, long keyCountHint) {
+        requireBuilding();
+        try {
+            if (rowCountHint > 0) {
+                heap.reserve(rowCountHint);
+            }
+            if (keyCountHint > 0) {
+                // A rehash is uninterruptible, so buy the whole table up front. A hint past what
+                // the map can hold is not an error here: the build may still fit, since the hint
+                // only bounds the distinct keys, so leave those rehashes to the map.
+                map.setKeyCapacity((int) Math.min(keyCountHint, maxPresizedKeys));
+            }
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
     private static long toRowLink(int head) {
         return CompressedOffsets.uncompressAligned8(head);
     }
@@ -297,7 +357,7 @@ public final class MapHashJoinBuild implements Closeable {
         final MapValue value = key.createValue();
         // A new key ends its chain here; an existing one links to the row it displaces.
         final int previous = value.isNew() ? 0 : value.getInt(0);
-        final long offset = heap.append(record, toRowLink(previous));
+        final long offset = heap.append(heap.hasRowId() ? record.getRowId() : 0, toRowLink(previous));
         value.putInt(0, CompressedOffsets.compressBiased8(offset));
     }
 
@@ -328,8 +388,8 @@ public final class MapHashJoinBuild implements Closeable {
         private long keysCount;
         private long rowsAddress;
         private long rowsCount;
+        private HashJoinPayloadSource payloads;
         private long size;
-        private SymbolTableSource symbols;
 
         @Override
         public long getKeyCount() {
@@ -354,13 +414,13 @@ public final class MapHashJoinBuild implements Closeable {
             return new View(probeKeySink);
         }
 
-        private void of(SymbolTableSource symbolSource) {
+        private void of(HashJoinPayloadSource payloads) {
             handleBase = heap.nextHandleBase();
             keysCount = map.size();
             rowsAddress = heap.getAddress();
             rowsCount = heap.getRowCount();
             size = MapHashJoinBuild.this.getSizeInBytes();
-            symbols = symbolSource;
+            this.payloads = payloads;
             generation = heap.freeze();
         }
 
@@ -390,7 +450,6 @@ public final class MapHashJoinBuild implements Closeable {
             public void find(Record probeRecord) {
                 assert isCurrent();
                 next = toRowLink(findHead(probeRecord));
-                record.address = 0;
             }
 
             @Override
@@ -406,7 +465,7 @@ public final class MapHashJoinBuild implements Closeable {
                 if (head == 0) {
                     return false;
                 }
-                record.address = payloadRowsAddress + CompressedOffsets.uncompressBiased8(head);
+                positionAt(CompressedOffsets.uncompressBiased8(head));
                 return true;
             }
 
@@ -428,7 +487,7 @@ public final class MapHashJoinBuild implements Closeable {
                 } else {
                     ((Unordered8Map.ProbeView) view).of(unordered8Map);
                 }
-                ofSnapshot(symbols, handleBase, rowsAddress, rowsCount, generation);
+                ofSnapshot(payloads, handleBase, rowsAddress, rowsCount, generation);
             }
 
             private int findHead(Record probeRecord) {

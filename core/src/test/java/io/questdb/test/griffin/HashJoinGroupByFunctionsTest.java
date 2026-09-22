@@ -34,6 +34,8 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -57,6 +59,7 @@ import io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunction;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.join.HashJoinGroupByRecord;
 import io.questdb.griffin.engine.join.IntHashJoinBuild;
+import io.questdb.griffin.engine.table.HashJoinBuildFrames;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
@@ -343,15 +346,14 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             try (Fixture fixture = new Fixture(AGGREGATES + OUTER);
-                 IntHashJoinBuild build = new IntHashJoinBuild(fixture.metadata.getPayloadMetadata(), fixture.metadata.getBuildColumns(), 4, 2);
-                 // Build symbols resolve through the build cursor, so it stays open while probing.
-                 RecordCursor buildCursor = fixture.buildFactory.getCursor(sqlExecutionContext)) {
-                build.open(sqlExecutionContext.getMemoryTracker(), sqlExecutionContext.getCircuitBreaker());
-                FrozenHashJoinBuild.IntKeyed frozen = build.build(buildCursor, fixture.metadata.getBuildKeyColumn());
-                try (RecordCursor cursor = fixture.probeFactory.getCursor(sqlExecutionContext)) {
+                 // Probes read build payloads and symbols through the build frames, so they stay open while probing.
+                 HashJoinBuildFrames frames = new HashJoinBuildFrames(configuration, fixture.metadata.getBuildColumns(), fixture.buildFactory.getMetadata());
+                 IntHashJoinBuild build = new IntHashJoinBuild(true, 4, 2)) {
+                FrozenHashJoinBuild.IntKeyed frozen = buildFromFrames(build, frames, fixture.buildFactory, fixture.metadata.getBuildKeyColumn());
+                try (RecordCursor cursor = fixture.probeFactory.getCursor(sqlExecutionContext);
+                     FrozenHashJoinBuild.IntProbe a = frozen.newProbe();
+                     FrozenHashJoinBuild.IntProbe b = frozen.newProbe()) {
                     Assert.assertTrue(cursor.hasNext());
-                    FrozenHashJoinBuild.IntProbe a = frozen.newProbe();
-                    FrozenHashJoinBuild.IntProbe b = frozen.newProbe();
                     HashJoinGroupByRecord left = fixture.metadata.newRecord();
                     HashJoinGroupByRecord right = fixture.metadata.newRecord();
                     left.of(cursor.getRecord(), cursor, a);
@@ -403,6 +405,50 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
                 fixture.assertResults(sql);
             }
         });
+    }
+
+    /**
+     * Builds from the build input's page frames, as the fused operator's owner does, and freezes over
+     * them, so that probes read payload columns at the kept row ids. A filtered input walks its base
+     * scan's frames and applies the input's filter to each row, as the stolen build filter does.
+     */
+    private static FrozenHashJoinBuild.IntKeyed buildFromFrames(
+            IntHashJoinBuild build,
+            HashJoinBuildFrames frames,
+            RecordCursorFactory buildFactory,
+            int keyColumn
+    ) throws SqlException {
+        // Wrappers such as the query progress tracker neither expose frames nor filter.
+        RecordCursorFactory input = buildFactory;
+        while (!input.supportsPageFrameCursor() && !input.supportsFilterStealing()) {
+            input = input.getBaseFactory();
+        }
+        final RecordCursorFactory frameFactory = input.supportsPageFrameCursor() ? input : input.getBaseFactory();
+        final Function filter = frameFactory == input ? null : input.getFilter();
+        frames.of(frameFactory, sqlExecutionContext);
+        build.open(sqlExecutionContext.getMemoryTracker(), sqlExecutionContext.getCircuitBreaker());
+        try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration);
+             PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER)) {
+            if (filter != null) {
+                filter.init(frames.getSymbolTableSource(), sqlExecutionContext);
+            }
+            pool.of(frames.getAddressCache());
+            record.of(frames.getSymbolTableSource());
+            for (int frameIndex = 0; frameIndex < frames.getFrameCount(); frameIndex++) {
+                record.init(pool.navigateTo(frameIndex));
+                for (long row = 0, n = frames.getFrameRowCount(frameIndex); row < n; row++) {
+                    record.setRowIndex(row);
+                    if (filter == null || filter.getBool(record)) {
+                        build.append(record.getInt(keyColumn), record.getRowId());
+                    }
+                }
+            }
+        } finally {
+            if (filter != null) {
+                filter.cursorClosed();
+            }
+        }
+        return build.freeze(frames);
     }
 
     private static void appendRow(List<String> rows, Record record, RecordMetadata metadata) {
@@ -641,14 +687,13 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
             Collections.sort(expected);
             // Each acquired slot, including the owner, evaluates the same pairs using
             // its own functions and build view. Scheduling and merging are later tasks.
-            try (IntHashJoinBuild build = new IntHashJoinBuild(metadata.getPayloadMetadata(), metadata.getBuildColumns(), 4, 2);
-                 // Build symbols resolve through the build cursor, so it stays open while probing.
-                 RecordCursor buildCursor = buildFactory.getCursor(sqlExecutionContext)) {
-                build.open(sqlExecutionContext.getMemoryTracker(), sqlExecutionContext.getCircuitBreaker());
-                FrozenHashJoinBuild.IntKeyed frozen = build.build(buildCursor, metadata.getBuildKeyColumn());
+            // Probes read build payloads and symbols through the build frames, so they stay open while probing.
+            try (HashJoinBuildFrames frames = new HashJoinBuildFrames(configuration, metadata.getBuildColumns(), buildFactory.getMetadata());
+                 IntHashJoinBuild build = new IntHashJoinBuild(metadata.getBuildColumns().size() > 0, 4, 2)) {
+                FrozenHashJoinBuild.IntKeyed frozen = buildFromFrames(build, frames, buildFactory, metadata.getBuildKeyColumn());
+                ObjList<FrozenHashJoinBuild.IntProbe> probes = new ObjList<>();
                 try (RecordCursor cursor = probeFactory.getCursor(sqlExecutionContext)) {
                     ObjList<HashJoinGroupByRecord> records = new ObjList<>();
-                    ObjList<FrozenHashJoinBuild.IntProbe> probes = new ObjList<>();
                     for (int i = 0; i <= workers; i++) {
                         FrozenHashJoinBuild.IntProbe probe = frozen.newProbe();
                         HashJoinGroupByRecord record = metadata.newRecord();
@@ -726,6 +771,9 @@ public class HashJoinGroupByFunctionsTest extends AbstractCairoTest {
                             records.getQuick(i).clear();
                         }
                     }
+                } finally {
+                    // Probes own the readers that hold their frame pools.
+                    Misc.freeObjList(probes);
                 }
             }
         }

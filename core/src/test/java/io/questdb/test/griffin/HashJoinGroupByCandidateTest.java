@@ -315,11 +315,11 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             for (String sql : new String[]{"r", "select energy_kwh, plant_id from r", "r where energy_kwh > 0", "r where reading_ts >= '2020-01-01'"}) {
                 try (RecordCursorFactory factory = select(sql)) {
                     // QueryProgress is the public compiler wrapper; it owns the tested factory.
-                    Assert.assertTrue(sql, HashJoinGroupByCandidate.supportsProbeFactory(factory.getBaseFactory()));
+                    Assert.assertTrue(sql, HashJoinGroupByCandidate.supportsFramedInput(factory.getBaseFactory()));
                 }
             }
             try (RecordCursorFactory factory = select("select * from long_sequence(5)")) {
-                Assert.assertFalse(HashJoinGroupByCandidate.supportsProbeFactory(factory.getBaseFactory()));
+                Assert.assertFalse(HashJoinGroupByCandidate.supportsFramedInput(factory.getBaseFactory()));
             }
         });
     }
@@ -331,7 +331,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             execute("insert into r values (1, '2020-01-01', 10, 100, 1, 'a')");
             try (RecordCursorFactory factory = select("select energy_kwh from r")) {
                 for (int pass = 0; pass < 2; pass++) {
-                    Assert.assertTrue(HashJoinGroupByCandidate.supportsProbeFactory(factory.getBaseFactory()));
+                    Assert.assertTrue(HashJoinGroupByCandidate.supportsFramedInput(factory.getBaseFactory()));
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         Assert.assertTrue(cursor.hasNext());
                         Assert.assertEquals(10.0, cursor.getRecord().getDouble(0), 0);

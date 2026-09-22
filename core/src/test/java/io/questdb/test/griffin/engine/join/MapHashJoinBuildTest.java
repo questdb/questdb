@@ -33,10 +33,10 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.RecordSinkSPI;
 import io.questdb.cairo.SingleColumnType;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
@@ -44,6 +44,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.join.IntHashJoinBuild;
 import io.questdb.griffin.engine.join.MapHashJoinBuild;
+import io.questdb.griffin.engine.table.HashJoinBuildFrames;
 import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
@@ -53,7 +54,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.LimitedMemoryTracker;
 import io.questdb.test.tools.TestUtils;
@@ -72,6 +72,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class MapHashJoinBuildTest extends AbstractCairoTest {
     private static final SqlExecutionCircuitBreaker NOOP = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+    // Every payload column reads the row id, which the rows below set to their payload value.
+    private static final RowIdPayloadSource PAYLOADS = new RowIdPayloadSource();
 
     @Test
     public void testAgreesWithTheIntKeyedBuild() throws Exception {
@@ -83,19 +85,17 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
                 // A narrow key range makes most rows collide into duplicate chains.
                 keys[i] = rnd.nextInt(64) - 32;
             }
-            try (IntHashJoinBuild intBuild = new IntHashJoinBuild(new SingleColumnType(ColumnType.INT), indexes(1), 4, 64);
-                 MapHashJoinBuild mapBuild = new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.LONG),
-                         new SingleColumnType(ColumnType.INT), indexes(1), 4, 1024, 64)) {
+            try (IntHashJoinBuild intBuild = new IntHashJoinBuild(true, 4, 64);
+                 MapHashJoinBuild mapBuild = new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.LONG), true, 4, 1024, 64)) {
                 intBuild.open(null, NOOP);
                 mapBuild.open(null, NOOP);
                 final LongKeySink sink = new LongKeySink();
                 for (int i = 0; i < rows; i++) {
-                    final Source row = source(keys[i], i);
-                    intBuild.append(keys[i], row);
-                    mapBuild.append(row, sink);
+                    intBuild.append(keys[i], i);
+                    mapBuild.append(source(keys[i], i), sink);
                 }
-                FrozenHashJoinBuild.IntKeyed intFrozen = intBuild.freeze();
-                FrozenHashJoinBuild.RecordKeyed mapFrozen = mapBuild.freeze();
+                FrozenHashJoinBuild.IntKeyed intFrozen = intBuild.freeze(PAYLOADS);
+                FrozenHashJoinBuild.RecordKeyed mapFrozen = mapBuild.freeze(PAYLOADS);
                 Assert.assertEquals(intFrozen.getRowCount(), mapFrozen.getRowCount());
                 Assert.assertEquals(intFrozen.getKeyCount(), mapFrozen.getKeyCount());
                 FrozenHashJoinBuild.IntProbe intProbe = intFrozen.newProbe();
@@ -124,11 +124,10 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
     @Test
     public void testExpiredBuildRejectsProbes() throws Exception {
         assertMemoryLeak(() -> {
-            try (MapHashJoinBuild build = new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.LONG),
-                    new SingleColumnType(ColumnType.INT), indexes(1), 4, 1024, 64, true)) {
+            try (MapHashJoinBuild build = new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.LONG), true, 4, 1024, 64, true)) {
                 build.open(null, NOOP);
                 build.append(source(1, 10), new LongKeySink());
-                FrozenHashJoinBuild.RecordKeyed frozen = build.freeze();
+                FrozenHashJoinBuild.RecordKeyed frozen = build.freeze(PAYLOADS);
                 FrozenHashJoinBuild.RecordProbe probe = frozen.newProbe(new LongKeySink());
                 try {
                     build.close();
@@ -139,7 +138,7 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
                     build.open(null, NOOP);
                     Assert.assertThrows(IllegalStateException.class, probe::reopen);
                     build.append(source(1, 11), new LongKeySink());
-                    build.freeze();
+                    build.freeze(PAYLOADS);
                     probe.reopen();
                     TestUtils.assertEquals("11", chainOf(probe, 1));
                 } finally {
@@ -152,12 +151,12 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
     @Test
     public void testBuildIsNotMutableAfterFreeze() throws Exception {
         assertMemoryLeak(() -> {
-            try (MapHashJoinBuild build = newLongKeyBuild(ColumnType.INT)) {
+            try (MapHashJoinBuild build = newLongKeyBuild()) {
                 Assert.assertThrows(IllegalStateException.class, () -> build.append(new Source(), new LongKeySink()));
                 build.open(null, NOOP);
                 Assert.assertThrows(IllegalStateException.class, () -> build.open(null, NOOP));
                 build.append(source(1, 10), new LongKeySink());
-                build.freeze();
+                build.freeze(PAYLOADS);
                 Assert.assertThrows(IllegalStateException.class, () -> build.append(new Source(), new LongKeySink()));
                 Assert.assertThrows(IllegalStateException.class, build::freeze);
             }
@@ -169,10 +168,10 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final int rows = 4_096;
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(64 * 1024 * 1024);
-                 MapHashJoinBuild build = newLongKeyBuild(ColumnType.INT)) {
+                 MapHashJoinBuild build = newLongKeyBuild()) {
                 final CountingSqlExecutionCircuitBreaker counting = new CountingSqlExecutionCircuitBreaker(NOOP);
                 build.open(tracker, counting);
-                build.build(new SourceCursor(rows), new LongKeySink(), rows, rows);
+                build.build(new SourceCursor(rows), new LongKeySink(), rows, rows, PAYLOADS);
                 final long checks = counting.getCheckCount();
                 build.close();
                 Assert.assertEquals(0, tracker.getUsed());
@@ -208,7 +207,7 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
                         // open() checks the breaker before its first allocation, so the whole
                         // execution, not only the build loop, has to be cancellable here.
                         build.open(tracker, breaker);
-                        build.build(new SourceCursor(rows), new LongKeySink(), rows, rows);
+                        build.build(new SourceCursor(rows), new LongKeySink(), rows, rows, PAYLOADS);
                         Assert.fail("expected cancellation at check " + failAt);
                     } catch (CairoException e) {
                         Assert.assertTrue(e.isCancellation());
@@ -217,7 +216,7 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
                     Assert.assertEquals(0, build.getSizeInBytes());
                 }
                 build.open(tracker, NOOP);
-                build.build(new SourceCursor(rows), new LongKeySink(), rows, rows);
+                build.build(new SourceCursor(rows), new LongKeySink(), rows, rows, PAYLOADS);
                 Assert.assertTrue(tracker.getUsed() > 0);
                 build.close();
                 Assert.assertEquals(0, tracker.getUsed());
@@ -240,11 +239,13 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
                     .add(ColumnType.STRING)
                     .add(ColumnType.INT)
                     .add(ColumnType.VARCHAR);
-            try (TableReader reader = newOffPoolReader(configuration, "t");
-                 TestTableReaderRecordCursor buildCursor = new TestTableReaderRecordCursor().of(reader);
-                 TestTableReaderRecordCursor probeCursor = new TestTableReaderRecordCursor().of(reader);
-                 MapHashJoinBuild build = new MapHashJoinBuild(configuration, keyTypes,
-                         new SingleColumnType(ColumnType.TIMESTAMP), indexes(3), 4, 1024, 64)) {
+            // A factory keeps one cursor, so the probe scans t through a factory of its own.
+            try (RecordCursorFactory factory = select("t");
+                 RecordCursorFactory probeFactory = select("t");
+                 RecordCursor probeCursor = probeFactory.getCursor(sqlExecutionContext);
+                 // Probes read the TIMESTAMP payload through the build frames, so they stay open while probing.
+                 HashJoinBuildFrames frames = new HashJoinBuildFrames(configuration, indexes(3), factory.getMetadata());
+                 MapHashJoinBuild build = new MapHashJoinBuild(configuration, keyTypes, true, 4, 1024, 64)) {
                 final ListColumnFilter keyFilter = new ListColumnFilter();
                 keyFilter.add(1);
                 keyFilter.add(2);
@@ -254,10 +255,9 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
                 final BytecodeAssembler asm = new BytecodeAssembler();
                 // The build and the probe stage the same key layout through their own sinks,
                 // as the two sides of a join do.
-                final RecordSink buildSink = RecordSinkFactory.getInstance(configuration, asm, reader.getMetadata(), keyFilter, symbolAsString);
-                final RecordSink probeSink = RecordSinkFactory.getInstance(configuration, asm, reader.getMetadata(), keyFilter, symbolAsString);
-                build.open(sqlExecutionContext.getMemoryTracker(), NOOP);
-                FrozenHashJoinBuild.RecordKeyed frozen = build.build(buildCursor, buildSink, 5, 5);
+                final RecordSink buildSink = RecordSinkFactory.getInstance(configuration, asm, factory.getMetadata(), keyFilter, symbolAsString);
+                final RecordSink probeSink = RecordSinkFactory.getInstance(configuration, asm, factory.getMetadata(), keyFilter, symbolAsString);
+                FrozenHashJoinBuild.RecordKeyed frozen = FrameBuilds.buildMap(configuration, build, frames, factory, buildSink, sqlExecutionContext);
                 Assert.assertEquals(5, frozen.getRowCount());
                 Assert.assertEquals(3, frozen.getKeyCount());
                 FrozenHashJoinBuild.RecordProbe probe = frozen.newProbe(probeSink);
@@ -287,9 +287,9 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final int rows = 10_000;
             final int workers = 4;
-            try (MapHashJoinBuild build = newLongKeyBuild(ColumnType.INT)) {
+            try (MapHashJoinBuild build = newLongKeyBuild()) {
                 build.open(sqlExecutionContext.getMemoryTracker(), NOOP);
-                final FrozenHashJoinBuild.RecordKeyed frozen = build.build(new SourceCursor(rows), new LongKeySink(), rows, rows);
+                final FrozenHashJoinBuild.RecordKeyed frozen = build.build(new SourceCursor(rows), new LongKeySink(), rows, rows, PAYLOADS);
                 final ExecutorService pool = Executors.newFixedThreadPool(workers);
                 final CountDownLatch start = new CountDownLatch(1);
                 final AtomicInteger errors = new AtomicInteger();
@@ -340,14 +340,14 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
     @Test
     public void testDuplicateChainIteratesInReverseInputOrder() throws Exception {
         assertMemoryLeak(() -> {
-            try (MapHashJoinBuild build = newLongKeyBuild(ColumnType.INT)) {
+            try (MapHashJoinBuild build = newLongKeyBuild()) {
                 build.open(null, NOOP);
                 final LongKeySink sink = new LongKeySink();
                 build.append(source(7, 1), sink);
                 build.append(source(8, 2), sink);
                 build.append(source(7, 3), sink);
                 build.append(source(7, 4), sink);
-                FrozenHashJoinBuild.RecordKeyed frozen = build.freeze();
+                FrozenHashJoinBuild.RecordKeyed frozen = build.freeze(PAYLOADS);
                 Assert.assertEquals(4, frozen.getRowCount());
                 Assert.assertEquals(2, frozen.getKeyCount());
                 FrozenHashJoinBuild.RecordProbe probe = frozen.newProbe(new LongKeySink());
@@ -368,13 +368,13 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
     @Test
     public void testFindSingleUncheckedOnUniqueBuild() throws Exception {
         assertMemoryLeak(() -> {
-            try (MapHashJoinBuild build = newLongKeyBuild(ColumnType.INT)) {
+            try (MapHashJoinBuild build = newLongKeyBuild()) {
                 build.open(null, NOOP);
                 final LongKeySink sink = new LongKeySink();
                 build.append(source(0, 10), sink);
                 build.append(source(Numbers.LONG_NULL, 20), sink);
                 build.append(source(-3, 30), sink);
-                FrozenHashJoinBuild.RecordKeyed frozen = build.freeze();
+                FrozenHashJoinBuild.RecordKeyed frozen = build.freeze(PAYLOADS);
                 Assert.assertEquals(frozen.getRowCount(), frozen.getKeyCount());
                 FrozenHashJoinBuild.RecordProbe probe = frozen.newProbe(new LongKeySink());
                 try {
@@ -393,9 +393,9 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
                 }
             }
             // An empty build answers every lookup without touching the payload.
-            try (MapHashJoinBuild build = newLongKeyBuild(ColumnType.INT)) {
+            try (MapHashJoinBuild build = newLongKeyBuild()) {
                 build.open(null, NOOP);
-                FrozenHashJoinBuild.RecordKeyed frozen = build.freeze();
+                FrozenHashJoinBuild.RecordKeyed frozen = build.freeze(PAYLOADS);
                 FrozenHashJoinBuild.RecordProbe probe = frozen.newProbe(new LongKeySink());
                 try {
                     Assert.assertFalse(probe.findSingleUnchecked(source(1, 1)));
@@ -410,8 +410,7 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
     @Test
     public void testHandlesRoundTripAndStayUniqueAcrossExecutions() throws Exception {
         assertMemoryLeak(() -> {
-            try (MapHashJoinBuild build = new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.LONG),
-                    new SingleColumnType(ColumnType.INT), indexes(1), 4, 1024, 64, true)) {
+            try (MapHashJoinBuild build = new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.LONG), true, 4, 1024, 64, true)) {
                 final LongList handles = new LongList();
                 for (int execution = 0; execution < 2; execution++) {
                     build.open(null, NOOP);
@@ -419,7 +418,7 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
                     build.append(source(1, 10), sink);
                     build.append(source(1, 11), sink);
                     build.append(source(2, 20), sink);
-                    FrozenHashJoinBuild.RecordKeyed frozen = build.freeze();
+                    FrozenHashJoinBuild.RecordKeyed frozen = build.freeze(PAYLOADS);
                     FrozenHashJoinBuild.RecordProbe probe = frozen.newProbe(new LongKeySink());
                     try {
                         probe.findUnchecked(source(1, 0));
@@ -470,11 +469,11 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
             // for and 2_048 entries for 1_000 keys, at a 0.7 load factor.
             final long[][] hints = {{-1, -1}, {rows, -1}, {rows, rows}, {-1, rows}};
             final long[] sizes = {17 * 16, 17 * 16 + rows * 16, 2_049 * 16 + rows * 16, 2_049 * 16};
-            try (MapHashJoinBuild build = newLongKeyBuild(ColumnType.INT)) {
+            try (MapHashJoinBuild build = newLongKeyBuild()) {
                 for (int i = 0; i < hints.length; i++) {
                     // An empty cursor leaves exactly what the hints bought.
                     build.open(sqlExecutionContext.getMemoryTracker(), NOOP);
-                    build.build(new SourceCursor(0), new LongKeySink(), hints[i][0], hints[i][1]);
+                    build.build(new SourceCursor(0), new LongKeySink(), hints[i][0], hints[i][1], PAYLOADS);
                     Assert.assertEquals(sizes[i], build.getSizeInBytes());
                     build.close();
                 }
@@ -486,10 +485,10 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
     public void testMemoryLimitDuringBuildReleasesEverything() throws Exception {
         assertMemoryLeak(() -> {
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(1024);
-                 MapHashJoinBuild build = newLongKeyBuild(ColumnType.INT)) {
+                 MapHashJoinBuild build = newLongKeyBuild()) {
                 build.open(tracker, NOOP);
                 try {
-                    build.build(new SourceCursor(100_000), new LongKeySink(), -1, -1);
+                    build.build(new SourceCursor(100_000), new LongKeySink(), -1, -1, PAYLOADS);
                     Assert.fail("expected the tracker to reject an allocation");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
@@ -506,13 +505,13 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
             // Zero marks an empty slot in the unordered map, so its entry lives past the table;
             // NULL is an ordinary entry. Both have to match themselves and nothing else.
             for (long key : new long[]{0, Numbers.LONG_NULL}) {
-                try (MapHashJoinBuild build = newLongKeyBuild(ColumnType.INT)) {
+                try (MapHashJoinBuild build = newLongKeyBuild()) {
                     build.open(null, NOOP);
                     final LongKeySink sink = new LongKeySink();
                     build.append(source(key, 1), sink);
                     build.append(source(key, 2), sink);
                     build.append(source(key == 0 ? 5 : 0, 3), sink);
-                    FrozenHashJoinBuild.RecordKeyed frozen = build.freeze();
+                    FrozenHashJoinBuild.RecordKeyed frozen = build.freeze(PAYLOADS);
                     Assert.assertEquals(2, frozen.getKeyCount());
                     FrozenHashJoinBuild.RecordProbe probe = frozen.newProbe(new LongKeySink());
                     try {
@@ -524,14 +523,13 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
                 }
             }
             // The same on the ordered map, where a NULL string key is a length-prefixed entry.
-            try (MapHashJoinBuild build = new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.STRING),
-                    new SingleColumnType(ColumnType.INT), indexes(1), 4, 1024, 64)) {
+            try (MapHashJoinBuild build = new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.STRING), true, 4, 1024, 64)) {
                 build.open(null, NOOP);
                 final StrKeySink sink = new StrKeySink();
                 build.append(source(null, 1), sink);
                 build.append(source(null, 2), sink);
                 build.append(source("a", 3), sink);
-                FrozenHashJoinBuild.RecordKeyed frozen = build.freeze();
+                FrozenHashJoinBuild.RecordKeyed frozen = build.freeze(PAYLOADS);
                 Assert.assertEquals(2, frozen.getKeyCount());
                 FrozenHashJoinBuild.RecordProbe probe = frozen.newProbe(new StrKeySink());
                 try {
@@ -546,51 +544,13 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPayloadColumnsRoundTrip() throws Exception {
-        assertMemoryLeak(() -> {
-            final ArrayColumnTypes payload = new ArrayColumnTypes()
-                    .add(ColumnType.BOOLEAN).add(ColumnType.BYTE).add(ColumnType.SHORT).add(ColumnType.CHAR)
-                    .add(ColumnType.INT).add(ColumnType.FLOAT).add(ColumnType.LONG).add(ColumnType.DATE)
-                    .add(ColumnType.TIMESTAMP).add(ColumnType.DOUBLE);
-            final IntList columns = new IntList();
-            for (int i = 0; i < payload.getColumnCount(); i++) {
-                columns.add(1);
-            }
-            try (MapHashJoinBuild build = new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.LONG),
-                    payload, columns, 4, 1024, 64)) {
-                build.open(null, NOOP);
-                build.append(source(3, 42), new LongKeySink());
-                FrozenHashJoinBuild.RecordKeyed frozen = build.freeze();
-                FrozenHashJoinBuild.RecordProbe probe = frozen.newProbe(new LongKeySink());
-                try {
-                    Assert.assertTrue(probe.findSingleUnchecked(source(3, 0)));
-                    final Record record = probe.getRecord();
-                    Assert.assertTrue(record.getBool(0));
-                    Assert.assertEquals(42, record.getByte(1));
-                    Assert.assertEquals(42, record.getShort(2));
-                    Assert.assertEquals('*', record.getChar(3));
-                    Assert.assertEquals(42, record.getInt(4));
-                    Assert.assertEquals(42f, record.getFloat(5), 0.0001);
-                    Assert.assertEquals(42, record.getLong(6));
-                    Assert.assertEquals(42, record.getDate(7));
-                    Assert.assertEquals(42, record.getTimestamp(8));
-                    Assert.assertEquals(42, record.getDouble(9), 0.0001);
-                } finally {
-                    Misc.free(probe);
-                }
-            }
-        });
-    }
-
-    @Test
     public void testProbeReleasesStagingBufferAndReopens() throws Exception {
         assertMemoryLeak(() -> {
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(64 * 1024 * 1024);
-                 MapHashJoinBuild build = new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.STRING),
-                         new SingleColumnType(ColumnType.INT), indexes(1), 4, 1024, 64, true)) {
+                 MapHashJoinBuild build = new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.STRING), true, 4, 1024, 64, true)) {
                 build.open(tracker, NOOP);
                 build.append(source("a", 1), new StrKeySink());
-                FrozenHashJoinBuild.RecordKeyed frozen = build.freeze();
+                FrozenHashJoinBuild.RecordKeyed frozen = build.freeze(PAYLOADS);
                 final long buildBytes = tracker.getUsed();
                 FrozenHashJoinBuild.RecordProbe probe = frozen.newProbe(new StrKeySink());
                 try {
@@ -604,7 +564,7 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
                     build.open(tracker, NOOP);
                     build.append(source("a", 2), new StrKeySink());
                     build.append(source("b", 3), new StrKeySink());
-                    build.freeze();
+                    build.freeze(PAYLOADS);
                     probe.reopen();
                     TestUtils.assertEquals("2", chainOfStr(probe, "a"));
                     TestUtils.assertEquals("3", chainOfStr(probe, "b"));
@@ -621,17 +581,17 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
     public void testRowCountHintPresizesTheBuild() throws Exception {
         assertMemoryLeak(() -> {
             final int rows = 20_000;
-            try (MapHashJoinBuild build = newLongKeyBuild(ColumnType.INT)) {
+            try (MapHashJoinBuild build = newLongKeyBuild()) {
                 build.open(sqlExecutionContext.getMemoryTracker(), NOOP);
-                final FrozenHashJoinBuild.RecordKeyed frozen = build.build(new SourceCursor(rows), new LongKeySink(), rows, rows);
+                final FrozenHashJoinBuild.RecordKeyed frozen = build.build(new SourceCursor(rows), new LongKeySink(), rows, rows, PAYLOADS);
                 Assert.assertEquals(rows, frozen.getRowCount());
                 Assert.assertEquals(rows, frozen.getKeyCount());
             }
             // A hint the row heap cannot hold is an error before the map ever sees it.
-            try (MapHashJoinBuild build = newLongKeyBuild(ColumnType.INT)) {
+            try (MapHashJoinBuild build = newLongKeyBuild()) {
                 build.open(sqlExecutionContext.getMemoryTracker(), NOOP);
                 try {
-                    build.build(new SourceCursor(8), new LongKeySink(), Long.MAX_VALUE / 64, Long.MAX_VALUE / 64);
+                    build.build(new SourceCursor(8), new LongKeySink(), Long.MAX_VALUE / 64, Long.MAX_VALUE / 64, PAYLOADS);
                     Assert.fail("expected the row heap to reject the hint");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "buffer overflow");
@@ -644,10 +604,10 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
     public void testSizeInBytesSumsMapAndRowHeap() throws Exception {
         assertMemoryLeak(() -> {
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(64 * 1024 * 1024);
-                 MapHashJoinBuild build = newLongKeyBuild(ColumnType.INT)) {
+                 MapHashJoinBuild build = newLongKeyBuild()) {
                 Assert.assertEquals(0, build.getSizeInBytes());
                 build.open(tracker, NOOP);
-                build.build(new SourceCursor(1_000), new LongKeySink(), 1_000, 1_000);
+                build.build(new SourceCursor(1_000), new LongKeySink(), 1_000, 1_000, PAYLOADS);
                 // The map and the row heap carry different memory tags, so the build's own
                 // figure has to sum them; it can only undercount by unused map capacity.
                 Assert.assertEquals(tracker.getUsed(), build.getSizeInBytes());
@@ -658,14 +618,13 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
             }
             // The same for the ordered map, whose bytes are a key heap plus an offset table.
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(64 * 1024 * 1024);
-                 MapHashJoinBuild build = new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.STRING),
-                         new SingleColumnType(ColumnType.INT), indexes(1), 4, 1024, 64)) {
+                 MapHashJoinBuild build = new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.STRING), true, 4, 1024, 64)) {
                 build.open(tracker, NOOP);
                 final StrKeySink sink = new StrKeySink();
                 for (int i = 0; i < 1_000; i++) {
                     build.append(source("key-" + i, i), sink);
                 }
-                build.freeze();
+                build.freeze(PAYLOADS);
                 Assert.assertEquals(tracker.getUsed(), build.getSizeInBytes());
                 build.close();
                 Assert.assertEquals(0, build.getSizeInBytes());
@@ -678,18 +637,18 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
     public void testSymbolPayloadResolvesThroughTheSource() throws Exception {
         assertMemoryLeak(() -> {
             final Symbols symbols = new Symbols("zero", "one", "two");
-            try (MapHashJoinBuild build = new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.LONG),
-                    new SingleColumnType(ColumnType.SYMBOL), indexes(1), 4, 1024, 64)) {
+            try (MapHashJoinBuild build = new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.LONG), true, 4, 1024, 64)) {
                 build.open(null, NOOP);
                 build.append(source(1, 2), new LongKeySink());
-                Assert.assertThrows(IllegalArgumentException.class, build::freeze);
+                // Payload columns cannot be read without a source.
+                Assert.assertThrows(IllegalArgumentException.class, () -> build.freeze());
             }
-            try (MapHashJoinBuild build = new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.LONG),
-                    new SingleColumnType(ColumnType.SYMBOL), indexes(1), 4, 1024, 64)) {
+            try (MapHashJoinBuild build = new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.LONG), true, 4, 1024, 64)) {
                 build.open(null, NOOP);
+                // The rows' ids are the SYMBOL keys their payload column reads.
                 build.append(source(1, 2), new LongKeySink());
                 build.append(source(1, 0), new LongKeySink());
-                FrozenHashJoinBuild.RecordKeyed frozen = build.freeze(symbols);
+                FrozenHashJoinBuild.RecordKeyed frozen = build.freeze(new RowIdPayloadSource(symbols, 0));
                 FrozenHashJoinBuild.RecordProbe probe = frozen.newProbe(new LongKeySink());
                 try {
                     probe.findUnchecked(source(1, 0));
@@ -715,13 +674,12 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
             for (int i = 0; i < 4_096; i++) {
                 longKey.append((char) ('a' + (i % 26)));
             }
-            try (MapHashJoinBuild build = new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.STRING),
-                    new SingleColumnType(ColumnType.INT), indexes(1), 4, 64, 64)) {
+            try (MapHashJoinBuild build = new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.STRING), true, 4, 64, 64)) {
                 build.open(sqlExecutionContext.getMemoryTracker(), NOOP);
                 final StrKeySink sink = new StrKeySink();
                 build.append(source(longKey.toString(), 1), sink);
                 build.append(source(longKey.substring(0, 4_095), 2), sink);
-                FrozenHashJoinBuild.RecordKeyed frozen = build.freeze();
+                FrozenHashJoinBuild.RecordKeyed frozen = build.freeze(PAYLOADS);
                 FrozenHashJoinBuild.RecordProbe probe = frozen.newProbe(new StrKeySink());
                 try {
                     // The staging buffer starts at 64 bytes and has to grow for each of these.
@@ -736,8 +694,7 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
     }
 
     private static void assertMapChoice(ColumnTypes keyTypes, boolean expectOrdered) throws Exception {
-        try (MapHashJoinBuild build = new MapHashJoinBuild(configuration, keyTypes,
-                new SingleColumnType(ColumnType.INT), indexes(1), 4, 1024, 64)) {
+        try (MapHashJoinBuild build = new MapHashJoinBuild(configuration, keyTypes, true, 4, 1024, 64)) {
             Assert.assertEquals(keyTypes.getColumnType(0) + " ordered", expectOrdered, mapOf(build, "orderedMap") != null);
             Assert.assertEquals(keyTypes.getColumnType(0) + " unordered8", !expectOrdered, mapOf(build, "unordered8Map") != null);
         }
@@ -782,14 +739,8 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
         return field.get(build);
     }
 
-    private static MapHashJoinBuild newLongKeyBuild(int... payloadTypes) {
-        final ArrayColumnTypes types = new ArrayColumnTypes();
-        final IntList columns = new IntList();
-        for (int payloadType : payloadTypes) {
-            types.add(payloadType);
-            columns.add(1);
-        }
-        return new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.LONG), types, columns, 4, 1024, 64);
+    private static MapHashJoinBuild newLongKeyBuild() {
+        return new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.LONG), true, 4, 1024, 64);
     }
 
     private static Source source(long key, int payload) {
@@ -818,7 +769,7 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
         }
     }
 
-    /** Column 0 carries every key flavour, column 1 the payload value. */
+    /** Column 0 carries every key flavour, column 1 the payload value, which is also the row id. */
     private static class Source implements Record {
         private long longKey;
         private int payload;
@@ -862,6 +813,11 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
         @Override
         public long getLong(int col) {
             return col == 0 ? longKey : payload;
+        }
+
+        @Override
+        public long getRowId() {
+            return payload;
         }
 
         @Override

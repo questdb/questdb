@@ -34,16 +34,19 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReduceJob;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.cairo.vm.Vm;
@@ -70,21 +73,16 @@ import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilterContext;
-import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
-import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
-import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.jit.CompiledCountOnlyFilter;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.Job;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -529,12 +527,11 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             final long cacheSize = 800_000;
             final long buildLimit = 8 * 1024;
             final long cacheLimit = 512 * 1024;
-            final int buildRows = 1_005;
             MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(0)) {
                 for (boolean keyed : new boolean[]{true, false}) {
-                    // A filtered build cursor has no size, so the build reads rows before it
-                    // outgrows the limit. Otherwise the build sizes its rows up front.
+                    // A filtered build has no row count, so the build reads rows before it outgrows
+                    // the limit. Otherwise the build sizes its rows up front, from its frames.
                     for (boolean isBuildFiltered : new boolean[]{false, true}) {
                         Hook hook = new Hook();
                         hook.instrumentBuild = true;
@@ -558,25 +555,27 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                 } catch (CairoException ex) {
                                     Assert.assertTrue(ex.isOutOfMemory());
                                     boolean isInTranslator = false;
-                                    boolean isInBuild = false;
+                                    boolean isInReserve = false;
+                                    boolean isInAppend = false;
                                     for (StackTraceElement frame : ex.getStackTrace()) {
                                         isInTranslator |= frame.getClassName().endsWith("SymbolKeyTranslator");
-                                        isInBuild |= frame.getClassName().endsWith("IntHashJoinBuild")
-                                                && frame.getMethodName().equals("build");
+                                        if (frame.getClassName().endsWith("IntHashJoinBuild")) {
+                                            isInReserve |= frame.getMethodName().equals("reserve");
+                                            isInAppend |= frame.getMethodName().equals("appendFrame");
+                                        }
                                     }
                                     Assert.assertEquals(isCacheFailure, isInTranslator);
-                                    Assert.assertEquals(!isCacheFailure, isInBuild);
+                                    // The unfiltered build knows its row count from its frames and
+                                    // sizes its rows before it reads one; the filtered one grows.
+                                    Assert.assertEquals(!isCacheFailure && !isBuildFiltered, isInReserve);
+                                    Assert.assertEquals(!isCacheFailure && isBuildFiltered, isInAppend);
                                 } finally {
                                     sqlExecutionContext.setMemoryTracker(previous);
                                 }
                                 Assert.assertEquals(opens + 1, hook.buildOpens);
                                 Assert.assertEquals(hook.buildOpens, hook.buildCloses);
-                                if (isCacheFailure) {
-                                    // The build finished before the cache asked for its bytes.
-                                    Assert.assertEquals(buildRows + 1, hook.buildReads);
-                                } else {
-                                    Assert.assertEquals(isBuildFiltered, hook.buildReads > 0);
-                                }
+                                // The build walks every frame before it reads a row, whichever allocation fails.
+                                Assert.assertEquals(2, hook.buildReads);
                                 if (isBuildFiltered) {
                                     // The cache is charged after the build, never while it reads.
                                     Assert.assertTrue(usedWhileReading.get() > 0);
@@ -678,8 +677,6 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             final int keyCount = 300_000;
             execute("insert into p select " + key("x::int") + ", ('c'||(x%64))::symbol, x*0.5 from long_sequence(" + keyCount + ")");
             execute("insert into r select " + key("x::int") + ", timestamp_sequence('2021-03-01', 1_000_000), 1.0, 2.0 from long_sequence(" + keyCount + ")");
-            // createTables() inserted five build rows.
-            final int buildRows = keyCount + 5;
             frameRows = 65_536;
             SqlExecutionCircuitBreaker previousBreaker = sqlExecutionContext.getCircuitBreaker();
             MemoryTracker previousTracker = sqlExecutionContext.getMemoryTracker();
@@ -694,7 +691,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 ((SqlExecutionContextImpl) sqlExecutionContext).with(counting);
                 sqlExecutionContext.setMemoryTracker(tracker);
                 try (RecordCursor ignored = f.getRawCursor()) {
-                    Assert.assertEquals(buildRows + 1, hook.buildReads);
+                    // The build spans several frames of 65,536 rows.
+                    Assert.assertTrue("build frames: " + hook.buildReads, hook.buildReads > 3);
                 } finally {
                     ((SqlExecutionContextImpl) sqlExecutionContext).with(previousBreaker);
                     sqlExecutionContext.setMemoryTracker(previousTracker);
@@ -704,7 +702,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 Assert.assertTrue("build checks must not scale with " + keyCount + " keys: " + counting.checks,
                         counting.checks > 0 && counting.checks < 128);
                 int cacheCancellations = 0;
-                int rowCancellations = 0;
+                int buildCancellations = 0;
                 for (long failAt = 1; failAt <= counting.checks; failAt++) {
                     BuildCheckBreaker breaker = new BuildCheckBreaker(previousBreaker, failAt);
                     ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
@@ -713,18 +711,21 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                         Assert.fail("expected cancellation during build at " + failAt);
                     } catch (CairoException ex) {
                         Assert.assertTrue(ex.isCancellation());
+                        boolean isInTranslator = false;
+                        boolean isInBuildLoop = false;
                         for (StackTraceElement frame : ex.getStackTrace()) {
-                            if (frame.getClassName().endsWith("SymbolKeyTranslator")) {
-                                cacheCancellations++;
-                                break;
-                            }
+                            isInTranslator |= frame.getClassName().endsWith("SymbolKeyTranslator");
+                            isInBuildLoop |= frame.getClassName().endsWith("AsyncHashJoinGroupByAtom")
+                                    && frame.getMethodName().equals("build");
+                        }
+                        if (isInTranslator) {
+                            cacheCancellations++;
+                        } else if (isInBuildLoop) {
+                            buildCancellations++;
                         }
                     } finally {
                         ((SqlExecutionContextImpl) sqlExecutionContext).with(previousBreaker);
                         sqlExecutionContext.setMemoryTracker(previousTracker);
-                    }
-                    if (hook.buildReads > 0 && hook.buildReads <= buildRows) {
-                        rowCancellations++;
                     }
                     // The cache clears after the build, so its cancellations are not row ones.
                     Assert.assertEquals(hook.buildOpens, hook.buildCloses);
@@ -732,8 +733,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                 }
                 Assert.assertEquals(isSymbolKey ? 2 : 0, cacheCancellations);
-                // Frame boundaries and key table growth cancel while the build reads and translates rows.
-                Assert.assertTrue("expected cancellations between build rows: " + rowCancellations, rowCancellations > 1);
+                // Frame boundaries and key table growth cancel while the build reads its rows.
+                Assert.assertTrue("expected cancellations between build rows: " + buildCancellations, buildCancellations > 1);
                 f.assertResults(sql);
             } finally {
                 ((SqlExecutionContextImpl) sqlExecutionContext).with(previousBreaker);
@@ -746,6 +747,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     public void testBuildSourceFailureDoesNotReplayAndReusesKeyedAndScalar() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            // The build reads its input a page frame at a time, so one-row frames let the injected
+            // failure land after one, three or five of the build's five rows.
+            frameRows = 1;
             MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(100_000_000)) {
                 for (boolean keyed : new boolean[]{true, false}) {
@@ -1912,9 +1916,15 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     }
 
 
-    // Ordinary planner children share the enclosing query registration. Compile
-    // the two inputs without top-level QueryProgress wrappers, then wrap the fused root.
-    private RecordCursorFactory filterBuild(RecordCursorFactory buildFactory, Hook hook) {
+    /**
+     * The build scan's filter, as the planner would steal it into the build filter context: an
+     * interpreted filter that calls the hook, plus, in mode 2, a compiled filter that must never
+     * run, because the build's column tops send every frame to the interpreted one.
+     */
+    private AsyncFilterContext buildFilterContext(Hook hook) {
+        if (hook == null || !hook.isBuildFiltered) {
+            return new AsyncFilterContext(configuration, null, null, null, null, null, null, 0, 0, 0, 0);
+        }
         Function filter = new BooleanFunction() {
             @Override
             public boolean getBool(Record record) {
@@ -1928,35 +1938,21 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             }
         };
         if (hook.buildFilterMode == 2) {
-            IntHashSet columns = new IntHashSet();
-            columns.add(4);
-            buildFactory = new AsyncJitFilteredRecordCursorFactory(engine, configuration, engine.getMessageBus(),
-                    buildFactory, new ObjList<>(), new CompiledFilter() {
-                        @Override
-                        public long call(long dataAddress, long dataSize, long auxAddress, long varsAddress,
-                                         long varsSize, long rowsAddress, long rowCount) {
-                            throw new AssertionError("expected interpreted column-top filter");
-                        }
-                    }, new CompiledCountOnlyFilter() {
-                        @Override
-                        public long call(long dataAddress, long dataSize, long auxAddress, long varsAddress,
-                                         long varsSize, long rowCount) {
-                            throw new AssertionError("expected interpreted column-top count filter");
-                        }
-                    }, filter, columns,
-                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD), null,
-                    ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "true", 0, 0),
-                    null, 0, WORKERS, false);
-        } else if (hook.buildFilterMode == 1) {
-            buildFactory = new AsyncFilteredRecordCursorFactory(engine, configuration, engine.getMessageBus(),
-                    buildFactory, filter, new IntHashSet(),
-                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD), null,
-                    ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "true", 0, 0),
-                    null, 0, WORKERS, false);
-        } else {
-            buildFactory = new FilteredRecordCursorFactory(buildFactory, filter);
+            CompiledFilter compiledFilter = new CompiledFilter() {
+                @Override
+                public long call(long dataAddress, long dataSize, long auxAddress, long varsAddress,
+                                 long varsSize, long rowsAddress, long rowCount) {
+                    throw new AssertionError("expected interpreted column-top filter");
+                }
+            };
+            // The context requires both handles whenever it carries a compiled filter; an empty
+            // function list keeps prepareBindVarMemory() a no-op.
+            MemoryCARW bindVarMemory = Vm.getCARWInstance(configuration.getSqlJitBindVarsMemoryPageSize(),
+                    configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_JIT);
+            return new AsyncFilterContext(configuration, compiledFilter, bindVarMemory, new ObjList<>(), filter,
+                    null, null, 0, 0, 0, 0);
         }
-        return buildFactory;
+        return new AsyncFilterContext(configuration, null, null, null, filter, null, null, 0, 0, 0, 0);
     }
 
     private RecordCursorFactory childFactory(String sql) throws Exception {
@@ -2029,6 +2025,10 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Counts the build scan's frame cursor opens, closes and frames, and fails the frame walk at
+     * {@link Hook#buildFailAt}. The fused build reads its input through page frames only.
+     */
     private static class FaultyBuildFactory extends AbstractRecordCursorFactory {
         private final RecordCursorFactory base;
         private final Hook hook;
@@ -2040,11 +2040,21 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         }
 
         @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-            RecordCursor cursor = base.getCursor(executionContext);
+        public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            throw new AssertionError("the fused build reads page frames");
+        }
+
+        @Override
+        public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+            PageFrameCursor cursor = base.getPageFrameCursor(executionContext, order);
             hook.buildOpens++;
             hook.buildReads = 0;
-            return new RecordCursor() {
+            return new PageFrameCursor() {
+                @Override
+                public void calculateSize(RecordCursor.Counter counter) {
+                    cursor.calculateSize(counter);
+                }
+
                 @Override
                 public void close() {
                     hook.buildCloses++;
@@ -2052,18 +2062,23 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public Record getRecord() {
-                    return cursor.getRecord();
+                public ColumnMapping getColumnMapping() {
+                    return cursor.getColumnMapping();
                 }
 
                 @Override
-                public Record getRecordB() {
-                    return cursor.getRecordB();
+                public long getRemainingRowsInInterval() {
+                    return cursor.getRemainingRowsInInterval();
                 }
 
                 @Override
-                public SymbolTable getSymbolTable(int columnIndex) {
+                public StaticSymbolTable getSymbolTable(int columnIndex) {
                     return cursor.getSymbolTable(columnIndex);
+                }
+
+                @Override
+                public boolean isExternal() {
+                    return cursor.isExternal();
                 }
 
                 @Override
@@ -2072,26 +2087,21 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public boolean hasNext() {
+                public PageFrame next(long skipTarget) {
                     if (++hook.buildReads == hook.buildFailAt) {
                         throw CairoException.nonCritical().put("injected build source failure");
                     }
-                    return cursor.hasNext();
-                }
-
-                @Override
-                public long preComputedStateSize() {
-                    return cursor.preComputedStateSize();
-                }
-
-                @Override
-                public void recordAt(Record record, long atRowId) {
-                    cursor.recordAt(record, atRowId);
+                    return cursor.next(skipTarget);
                 }
 
                 @Override
                 public long size() {
                     return cursor.size();
+                }
+
+                @Override
+                public boolean supportsSizeCalculation() {
+                    return cursor.supportsSizeCalculation();
                 }
 
                 @Override
@@ -2104,6 +2114,11 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         @Override
         public boolean recordCursorSupportsRandomAccess() {
             return base.recordCursorSupportsRandomAccess();
+        }
+
+        @Override
+        public boolean supportsPageFrameCursor() {
+            return base.supportsPageFrameCursor();
         }
 
         @Override
@@ -2252,14 +2267,26 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             RecordCursorFactory buildFactory = null;
             HashJoinGroupByFunctions functions = null;
             AsyncFilterContext filterContext = null;
+            AsyncFilterContext buildFilterContext = null;
             try {
                 probeFactory = childFactory(probeSql);
                 buildFactory = childFactory(buildSql);
+                if (!buildFactory.supportsPageFrameCursor()) {
+                    // The build walks page frames, so the fixture steals the build filter as the planner does.
+                    RecordCursorFactory filterFactory = buildFactory;
+                    Function filter = filterFactory.getFilter();
+                    CompiledFilter compiledFilter = filterFactory.getCompiledFilter();
+                    MemoryCARW bindVarMemory = filterFactory.getBindVarMemory();
+                    ObjList<Function> bindVarFunctions = filterFactory.getBindVarFunctions();
+                    filterFactory.halfClose();
+                    buildFactory = filterFactory.getBaseFactory();
+                    buildFilterContext = new AsyncFilterContext(configuration, compiledFilter, bindVarMemory,
+                            bindVarFunctions, filter, null, null, 0, 0, 0, 0);
+                } else {
+                    buildFilterContext = buildFilterContext(hook);
+                }
                 if (hook != null && hook.instrumentBuild) {
                     buildFactory = new FaultyBuildFactory(buildFactory, hook);
-                }
-                if (hook != null && hook.isBuildFiltered) {
-                    buildFactory = filterBuild(buildFactory, hook);
                 }
                 FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache()) {
                     @Override
@@ -2337,14 +2364,17 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                 bindVarFunctions, probeFilter, null, workerFilters, WORKERS, 0, 0, 0);
                         RecordCursorFactory probeOwned = probeFactory;
                         RecordCursorFactory buildOwned = buildFactory;
+                        AsyncFilterContext buildFiltersOwned = buildFilterContext;
                         HashJoinGroupByFunctions functionsOwned = functions;
                         AsyncFilterContext filtersOwned = filterContext;
                         probeFactory = null;
                         buildFactory = null;
+                        buildFilterContext = null;
                         functions = null;
                         filterContext = null;
-                        factory = new AsyncHashJoinGroupByRecordCursorFactory(engine, probeOwned, buildOwned, metadata,
-                                functionsOwned, filtersOwned, candidate.getPhysicalJoinType() == IQueryModel.JOIN_LEFT_OUTER, factoryWorkerCount);
+                        factory = new AsyncHashJoinGroupByRecordCursorFactory(engine, probeOwned, buildOwned, buildFiltersOwned,
+                                null, metadata, functionsOwned, filtersOwned,
+                                candidate.getPhysicalJoinType() == IQueryModel.JOIN_LEFT_OUTER, factoryWorkerCount);
                     }
                     queryFactory = new QueryProgress(engine.getQueryRegistry(), sql, factory);
                 }
@@ -2353,6 +2383,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 Misc.free(buildFactory);
                 Misc.free(functions);
                 Misc.free(filterContext);
+                Misc.free(buildFilterContext);
             }
         }
 

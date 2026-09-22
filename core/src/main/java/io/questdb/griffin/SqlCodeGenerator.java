@@ -5206,6 +5206,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         CompiledFilter compiledFilter = null;
         MemoryCARW bindVarMemory = null;
         ObjList<Function> bindVarFunctions = null;
+        AsyncFilterContext buildFilterContext = null;
+        Function buildFilter = null;
+        CompiledFilter buildCompiledFilter = null;
+        MemoryCARW buildBindVarMemory = null;
+        ObjList<Function> buildBindVarFunctions = null;
+        Function buildOnFilter = null;
         ObjList<IQueryModel> inputModels = new ObjList<>();
         ObjList<ExpressionNode> whereClauses = new ObjList<>();
         ObjList<ExpressionNode> backups = new ObjList<>();
@@ -5219,38 +5225,50 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             probe = generateQuery(candidate.getProbeModel(), executionContext, false);
             // Peel pure projections above a filter before checking its frame boundary.
             // Remap model-output -> base-table indexes into the eventual frame coordinates.
-            RecordCursorFactory probeInput = probe;
-            IntList probeColumns = candidate.getInputColumns(probe.getMetadata(), false);
-            while (!probeInput.supportsPageFrameCursor() && probeInput instanceof SelectedRecordCursorFactory selected) {
-                RecordCursorFactory base = selected.getBaseFactory();
-                IntList baseColumns = new IntList(base.getMetadata().getColumnCount());
-                baseColumns.setAll(base.getMetadata().getColumnCount(), -1);
-                IntList crossIndex = selected.getColumnCrossIndex();
-                for (int i = 0; i < crossIndex.size(); i++) {
-                    baseColumns.setQuick(crossIndex.getQuick(i), probeColumns.getQuick(i));
-                }
-                probeColumns = baseColumns;
-                probeInput = base;
-            }
-            if (!HashJoinGroupByCandidate.supportsProbeFactory(probeInput)) {
+            final IntList probeColumns = hashJoinGroupByFrameColumns(probe, candidate, false);
+            final RecordCursorFactory probeInput = hashJoinGroupByFrameInput(probe);
+            if (!HashJoinGroupByCandidate.supportsFramedInput(probeInput)) {
                 return null;
             }
             build = generateQuery(candidate.getBuildModel(), executionContext, false);
-            if (!HashJoinGroupByCandidate.supportsInputFactory(build)) {
+            // The build walks page frames too: it keeps row ids, and probes read payload columns at
+            // those rows of the same frames.
+            final IntList buildColumns = hashJoinGroupByFrameColumns(build, candidate, true);
+            final RecordCursorFactory buildInput = hashJoinGroupByFrameInput(build);
+            if (!HashJoinGroupByCandidate.supportsFramedInput(buildInput)) {
                 return null;
             }
             final int workerCount = executionContext.getSharedQueryWorkerCount();
             try (HashJoinGroupByMetadata metadata = new HashJoinGroupByMetadata(configuration, asm, candidate,
-                    probeInput.getMetadata(), probeColumns,
-                    build.getMetadata(), candidate.getInputColumns(build.getMetadata(), true))) {
+                    probeInput.getMetadata(), probeColumns, buildInput.getMetadata(), buildColumns)) {
                 if (!metadata.hasStaticSymbolTables()) {
                     return null;
                 }
                 functions = compileHashJoinGroupByFunctions(model, metadata, workerCount, executionContext);
                 if (metadata.getBuildOnFilter() != null) {
-                    build = new FilteredRecordCursorFactory(build,
-                            compileBooleanFilter(metadata.getBuildOnFilter(), build.getMetadata(), executionContext));
+                    // The owner applies it per build frame, next to the build scan's own filter.
+                    buildOnFilter = compileBooleanFilter(metadata.getBuildOnFilter(), buildInput.getMetadata(), executionContext);
                 }
+                if (!buildInput.supportsPageFrameCursor()) {
+                    // The owner runs the stolen build filter over each frame it walks.
+                    RecordCursorFactory filterFactory = buildInput;
+                    Function borrowedFilter = filterFactory.getFilter();
+                    // Until halfClose succeeds the original factory owns every stolen handle.
+                    filterFactory.halfClose();
+                    build = filterFactory.getBaseFactory();
+                    buildFilter = borrowedFilter;
+                    buildCompiledFilter = filterFactory.getCompiledFilter();
+                    buildBindVarMemory = filterFactory.getBindVarMemory();
+                    buildBindVarFunctions = filterFactory.getBindVarFunctions();
+                } else {
+                    build = buildInput;
+                }
+                buildFilterContext = new AsyncFilterContext(configuration, buildCompiledFilter, buildBindVarMemory,
+                        buildBindVarFunctions, buildFilter, null, null, 0, 0, 0, 0);
+                buildFilter = null;
+                buildCompiledFilter = null;
+                buildBindVarMemory = null;
+                buildBindVarFunctions = null;
                 if (!probeInput.supportsPageFrameCursor()) {
                     RecordCursorFactory filterFactory = probeInput;
                     Function borrowedFilter = filterFactory.getFilter();
@@ -5282,14 +5300,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         bindVarFunctionsOwned, filterOwned, null, workerFiltersOwned, workerCount, 0, 0, 0);
                 RecordCursorFactory probeOwned = probe;
                 RecordCursorFactory buildOwned = build;
+                AsyncFilterContext buildFiltersOwned = buildFilterContext;
+                Function buildOnFilterOwned = buildOnFilter;
                 HashJoinGroupByFunctions functionsOwned = functions;
                 AsyncFilterContext filtersOwned = filterContext;
                 probe = null;
                 build = null;
+                buildFilterContext = null;
+                buildOnFilter = null;
                 functions = null;
                 filterContext = null;
                 return new AsyncHashJoinGroupByRecordCursorFactory(executionContext.getCairoEngine(),
-                        probeOwned, buildOwned, metadata, functionsOwned, filtersOwned,
+                        probeOwned, buildOwned, buildFiltersOwned, buildOnFilterOwned, metadata, functionsOwned, filtersOwned,
                         candidate.getPhysicalJoinType() == IQueryModel.JOIN_LEFT_OUTER, workerCount,
                         candidate.getLogicalJoinType(), candidate.isInputSwapped());
             }
@@ -5305,11 +5327,48 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             failure = Misc.freeBestEffort(failure, compiledFilter);
             failure = Misc.freeBestEffort(failure, bindVarMemory);
             failure = Misc.freeObjListBestEffort(failure, bindVarFunctions);
+            failure = Misc.freeBestEffort(failure, buildFilterContext);
+            failure = Misc.freeBestEffort(failure, buildFilter);
+            failure = Misc.freeBestEffort(failure, buildCompiledFilter);
+            failure = Misc.freeBestEffort(failure, buildBindVarMemory);
+            failure = Misc.freeObjListBestEffort(failure, buildBindVarFunctions);
+            failure = Misc.freeBestEffort(failure, buildOnFilter);
             failure = Misc.freeBestEffort(failure, functions);
             failure = Misc.freeBestEffort(failure, probe);
             failure = Misc.freeBestEffort(failure, build);
             CairoException.rethrowCleanupFailure(failure);
         }
+    }
+
+    /**
+     * The fused hash join reads an input's page frames: this maps the input's compiled columns onto
+     * the columns of the factory {@link #hashJoinGroupByFrameInput(RecordCursorFactory)} returns.
+     * Model output indexes become base-table indexes, and pure projections above a filter peel off.
+     */
+    private static IntList hashJoinGroupByFrameColumns(RecordCursorFactory factory, HashJoinGroupByCandidate candidate, boolean build) {
+        RecordCursorFactory input = factory;
+        IntList columns = candidate.getInputColumns(factory.getMetadata(), build);
+        while (!input.supportsPageFrameCursor() && input instanceof SelectedRecordCursorFactory selected) {
+            RecordCursorFactory base = selected.getBaseFactory();
+            IntList baseColumns = new IntList(base.getMetadata().getColumnCount());
+            baseColumns.setAll(base.getMetadata().getColumnCount(), -1);
+            IntList crossIndex = selected.getColumnCrossIndex();
+            for (int i = 0; i < crossIndex.size(); i++) {
+                baseColumns.setQuick(crossIndex.getQuick(i), columns.getQuick(i));
+            }
+            columns = baseColumns;
+            input = base;
+        }
+        return columns;
+    }
+
+    /** Peels pure projections above a filter, so that the frame boundary check sees the filter. */
+    private static RecordCursorFactory hashJoinGroupByFrameInput(RecordCursorFactory factory) {
+        RecordCursorFactory input = factory;
+        while (!input.supportsPageFrameCursor() && input instanceof SelectedRecordCursorFactory selected) {
+            input = selected.getBaseFactory();
+        }
+        return input;
     }
 
     /**

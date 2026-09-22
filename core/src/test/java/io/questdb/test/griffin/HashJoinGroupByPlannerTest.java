@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -180,16 +181,18 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     public void testInnerJoinOrientationDecidesEligibility() throws Exception {
         assertMemoryLeak(() -> {
             // A predicate on the indexed r.s turns the scan of r into an index scan, which
-            // exposes no page frames: r qualifies as the build, never as the probe.
+            // exposes no page frames. The build keeps row ids that probes read back through the
+            // build's frames, so r qualifies as neither input.
             execute("CREATE TABLE r (id INT, d DOUBLE, s SYMBOL INDEX, t TIMESTAMP) TIMESTAMP(t) PARTITION BY DAY");
             execute("CREATE TABLE p (id INT, d DOUBLE, s SYMBOL, t TIMESTAMP) TIMESTAMP(t) PARTITION BY DAY");
             execute("INSERT INTO r VALUES (1, 1, 'a', '2020-01-01'), (2, 2, 'b', '2020-01-02')");
             execute("INSERT INTO p VALUES (1, 4, 'a', '2020-01-01'), (2, 8, 'b', '2020-01-02'), (1, 16, 'a', '2020-01-03')");
             String select = "SELECT sum(r.d) rd, sum(p.d) pd, count(*) n";
             try (SqlExecutionContextImpl context = enabledContext()) {
-                // r is the smaller table, so INNER builds it in either order and the index scan qualifies.
-                assertDifferential(select + " FROM r JOIN p ON r.id = p.id WHERE r.s = 'a'", context, true);
-                assertDifferential(select + " FROM p JOIN r ON r.id = p.id WHERE r.s = 'a'", context, true);
+                // r is the smaller table, so INNER builds it in either order, and the index scan
+                // keeps the ordinary plan.
+                assertDifferential(select + " FROM r JOIN p ON r.id = p.id WHERE r.s = 'a'", context, false);
+                assertDifferential(select + " FROM p JOIN r ON r.id = p.id WHERE r.s = 'a'", context, false);
                 // LEFT preserves r, so r is the probe and the query keeps the ordinary plan.
                 assertDifferential(select + " FROM r LEFT JOIN p ON r.id = p.id WHERE r.s = 'a'", context, false);
                 execute("INSERT INTO r VALUES (1, 32, 'a', '2020-01-04'), (3, 64, 'c', '2020-01-05')");
@@ -384,7 +387,87 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSerialProbeFilterKeepsOrdinaryPlan() throws Exception {
+    public void testBuildFiltersRunInTheOperator() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                for (int jit : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                    context.setJitMode(jit);
+                    // The build walks the scan's page frames and runs the scan's stolen filter
+                    // itself, so the Build child is the bare scan and the filter an attribute. The
+                    // attribute's name tells a compiled filter from an interpreted one.
+                    final String buildFilter = jit == SqlJitMode.JIT_MODE_ENABLED ? "buildJitFilter" : "buildFilter";
+                    assertQuery("SELECT count(*) pairs, sum(r.energy_kwh) energy, sum(p.installed_kwp) capacity"
+                            + " FROM r JOIN p ON r.plant_id = p.plant_id WHERE p.installed_kwp > 5")
+                            .withContext(context)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlan("""
+                                    Async Hash Join Group By workers: 4
+                                      logicalJoinType: inner
+                                      physicalJoinType: inner
+                                      inputSwapped: false
+                                      condition: r.plant_id=p.plant_id
+                                      buildStrategy: shared
+                                      aggregation: scalar
+                                      values: [count(*),sum(r.energy_kwh),sum(p.installed_kwp)]
+                                      %s: 5<installed_kwp
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: r
+                                        Build
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: p
+                                    """.formatted(buildFilter))
+                            .returns("""
+                                    pairs\tenergy\tcapacity
+                                    3\t80.0\t25.0
+                                    """);
+                    // An outer join's ON conditions on the build alone drop build rows, next to
+                    // whatever filter the scan carries.
+                    assertQuery("SELECT count(*) pairs, sum(r.energy_kwh) energy, sum(p.installed_kwp) capacity"
+                            + " FROM r LEFT JOIN p ON r.plant_id = p.plant_id AND p.installed_kwp > 5")
+                            .withContext(context)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlan("""
+                                    Async Hash Join Group By workers: 4
+                                      logicalJoinType: left outer
+                                      physicalJoinType: left outer
+                                      inputSwapped: false
+                                      condition: r.plant_id=p.plant_id
+                                      buildStrategy: shared
+                                      aggregation: scalar
+                                      values: [count(*),sum(r.energy_kwh),sum(p.installed_kwp)]
+                                      buildOnFilter: 5<installed_kwp
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: r
+                                        Build
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: p
+                                    """)
+                            .returns("""
+                                    pairs\tenergy\tcapacity
+                                    5\t150.0\t25.0
+                                    """);
+                    // Both filters at once, and a projection above the filtered scan.
+                    assertDifferential("SELECT count(*) pairs, sum(r.energy_kwh) energy, sum(p.cap) capacity FROM r"
+                            + " LEFT JOIN (SELECT installed_kwp cap, plant_id FROM p WHERE country = 'ES') p"
+                            + " ON r.plant_id = p.plant_id AND p.cap > 5", context, true);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSerialInputFilterKeepsOrdinaryPlan() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             try (SqlExecutionContextImpl context = enabledContext()) {
@@ -393,7 +476,8 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     assertDifferential(SELECT + join + " where r.reading_ts >= '2020-02-01' and r.energy_kwh > 10"
                             + " order by country,yr,mo", context, false);
                 }
-                assertDifferential(SELECT + JOINS[0] + " where p.installed_kwp > 5 order by country,yr,mo", context, true);
+                // The build walks page frames too, so a serial build filter keeps the ordinary plan as well.
+                assertDifferential(SELECT + JOINS[0] + " where p.installed_kwp > 5 order by country,yr,mo", context, false);
             }
         });
     }
@@ -551,27 +635,32 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             Assert.assertEquals(32 * Numbers.SIZE_1MB, new DefaultCairoConfiguration(root).getSqlParallelHashJoinGroupByRightJoinMaxBuildSize());
             Assert.assertEquals(32 * Numbers.SIZE_1MB, configuration.getSqlParallelHashJoinGroupByRightJoinMaxBuildSize());
             createTables();
-            // r and p have 5 rows each. A build row is an 8-byte link plus the payload, rounded up
-            // to 8 bytes: 16 bytes with one DOUBLE payload column, 24 with two. The key column is
-            // not a payload column.
+            // r and p have 5 rows each. A build row is an 8-byte link plus, when the build has payload
+            // columns, the 8-byte id of its row: 16 bytes whatever the number and width of the payload
+            // columns, 8 without any. The key column is not a payload column.
             final String narrow = "SELECT count(*) n, sum(r.energy_kwh) energy, sum(p.installed_kwp) capacity FROM ";
             final String wide = "SELECT count(*) n, sum(r.energy_kwh) energy, sum(r.irradiance_wm2) irradiance,"
                     + " sum(p.installed_kwp) capacity FROM ";
+            final String keysOnly = "SELECT count(*) n, sum(p.installed_kwp) capacity FROM ";
             final String on = " ON r.plant_id = p.plant_id";
             final String[] joins = {"r RIGHT JOIN p", "p RIGHT JOIN r", "r LEFT JOIN p", "p LEFT JOIN r"};
             try (SqlExecutionContextImpl context = enabledContext()) {
-                // Every narrow build takes 80 bytes, so a bound of 80 fuses every spelling.
+                // Every build with payload columns takes 80 bytes, narrow or wide, so a bound of 80
+                // fuses every spelling.
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 80);
                 for (String join : joins) {
                     assertDifferential(narrow + join + on, context, true);
+                    assertDifferential(wide + join + on, context, true);
                 }
-                // The wide payload makes a build of r take 120 bytes. The RIGHT join that builds r
-                // keeps the ordinary plan; the one that builds p takes 80 bytes and fuses, and so do
-                // the LEFT joins, which take no bound.
-                assertDifferential(wide + joins[0] + on, context, false);
-                for (int i = 1; i < joins.length; i++) {
-                    assertDifferential(wide + joins[i] + on, context, true);
-                }
+                // A build of r without payload columns stores links alone: 40 bytes. One byte less
+                // keeps the RIGHT join that builds r on the ordinary plan, and the LEFT joins, which
+                // take no bound, still fuse.
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 39);
+                assertDifferential(keysOnly + joins[0] + on, context, false);
+                assertDifferential(keysOnly + joins[3] + on, context, true);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 40);
+                assertDifferential(keysOnly + joins[0] + on, context, true);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 80);
                 // A factory compiled under the bound keeps the fused plan after the table outgrows it.
                 try (RecordCursorFactory factory = engine.select(narrow + joins[0] + on, context)) {
                     Assert.assertTrue(plan(factory, context).contains("Async Hash Join Group By"));
@@ -619,8 +708,8 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     FROM long_sequence(1_000)
                     """);
             execute("INSERT INTO pb SELECT (x % 10)::INT, x % 10, 'S' || (x % 10), x FROM long_sequence(2_000)");
-            // A build row is an eight-byte link plus its payload: 8 bytes with no payload, 16 with
-            // one DOUBLE. The INT layout's key table takes eight bytes a slot and starts at 64
+            // A build row is an eight-byte link plus, when the build has payload columns, the eight-byte
+            // id of its row: 8 bytes with no payload, 16 with any. The INT layout's key table takes eight bytes a slot and starts at 64
             // slots; a table presized for N keys takes the next power of two of 2N slots. The row
             // heap grows by doubling from 64 bytes unless an exact row count presizes it.
             try (SqlExecutionContextImpl context = enabledContext()) {
@@ -640,11 +729,18 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     assertBuildSize("SELECT count(*) n, sum(pb.v) v FROM pa JOIN pb ON pa.k = pb.k"
                             + " WHERE pa.ts IN '2020-01-02'", 250, 10, 512 * 8 + 250 * 8, context);
                     // A filter hides the build's row count: the heap doubles to 8_192 bytes for
-                    // 8_000, and the key table grows to the ten keys.
-                    assertBuildSize("SELECT count(*) n, sum(pb.v) v FROM pa JOIN pb ON pa.k = pb.k"
-                            + " WHERE pa.v > 0", 1_000, 10, 64 * 8 + 8_192, context);
-                    assertBuildSize("SELECT count(*) n, sum(pb.v) v FROM pa JOIN pb ON pa.k = pb.k"
-                            + " WHERE pa.ts IN '2020-01-02' AND pa.v > 0", 250, 10, 64 * 8 + 2_048, context);
+                    // 8_000, and the key table grows to the ten keys. The build walks page frames
+                    // and runs the filter it steals, so a serial filter keeps the ordinary plan.
+                    final String filtered = "SELECT count(*) n, sum(pb.v) v FROM pa JOIN pb ON pa.k = pb.k WHERE pa.v > 0";
+                    final String filteredInterval = "SELECT count(*) n, sum(pb.v) v FROM pa JOIN pb ON pa.k = pb.k"
+                            + " WHERE pa.ts IN '2020-01-02' AND pa.v > 0";
+                    if (isParallelFilter) {
+                        assertBuildSize(filtered, 1_000, 10, 64 * 8 + 8_192, context);
+                        assertBuildSize(filteredInterval, 250, 10, 64 * 8 + 2_048, context);
+                    } else {
+                        assertDifferential(filtered, context, false);
+                        assertDifferential(filteredInterval, context, false);
+                    }
                     // A SYMBOL key holds at most the build dictionary's ten keys and the null key:
                     // 22 slots round up to 32, below the initial 64.
                     assertBuildSize("SELECT count(*) n, sum(pb.v) v FROM pa JOIN pb ON pa.s = pb.s",

@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -34,10 +33,10 @@ import io.questdb.std.QuietCloseable;
  * Immutable lookup backing, borrowed from its builder for one execution. Publish
  * this object through the frame-task publication barrier before probing. The owner
  * must drain all probes and finish reading output symbols before closing the build.
- * Handles and records expire at close. Symbol tables come from the build's source,
- * so they stay valid only while that source stays open, and the owner closes the
- * source after the build. A later partitioned implementation can route keys without
- * changing this contract.
+ * Handles expire at close. Payload columns and their symbol tables come from the build's
+ * input through its {@link HashJoinPayloadSource}, so they stay valid only while that input
+ * stays open, and the owner closes the input after the build. A later partitioned
+ * implementation can route keys without changing this contract.
  * <p>
  * A build hands out probes through the keyed sub-interface that matches its lookup:
  * {@link IntKeyed} for a single INT key and {@link RecordKeyed} for a key that a
@@ -54,12 +53,12 @@ public interface FrozenHashJoinBuild {
     long getSizeInBytes();
 
     /**
-     * Row heap bytes that one build row with these payload types takes. Every implementation
-     * copies its rows into the same layout, so a build of N rows fills N times this, whatever
-     * its key table adds on top.
+     * Row heap bytes that one build row takes. Every implementation stores its rows in the same
+     * layout, a link plus the build row's id when the build has payload columns, so a build of N
+     * rows fills N times this whatever its payload width, and whatever its key table adds on top.
      */
-    static long getRowSize(ColumnTypes payloadTypes) {
-        return HashJoinRowHeap.getRowSize(payloadTypes);
+    static long getRowSize(boolean hasPayload) {
+        return HashJoinRowHeap.getRowSize(hasPayload);
     }
 
     /** A build whose probes look up a single INT key. */
@@ -76,7 +75,7 @@ public interface FrozenHashJoinBuild {
      * domain, so they take this shape too.
      */
     interface IntProbe extends Probe {
-        /** Replaces the current duplicate iterator, including on a miss, and clears the payload record. */
+        /** Replaces the current duplicate iterator, including on a miss. */
         void find(int key);
 
         /**
@@ -103,6 +102,10 @@ public interface FrozenHashJoinBuild {
      * {@link #reopen()} brings a closed probe back for the next execution.
      */
     interface Probe extends SymbolTableSource, QuietCloseable {
+        /**
+         * The payload columns of the last row that {@link #next()}, a unique lookup or
+         * {@link #recordAt(long)} positioned; null for a build without payload columns.
+         */
         Record getRecord();
 
         boolean hasNext();
@@ -115,7 +118,7 @@ public interface FrozenHashJoinBuild {
 
         /**
          * Explicitly bind this slot-owned view to a refreshed snapshot, after consumer drain.
-         * This also takes fresh symbol tables from the build's source, so call it on the owner.
+         * This also takes fresh symbol tables from the build's input, so call it on the owner.
          */
         void reopen();
     }
@@ -135,7 +138,7 @@ public interface FrozenHashJoinBuild {
      * columns of the probe record must match the build key's column order and types.
      */
     interface RecordProbe extends Probe {
-        /** Replaces the current duplicate iterator, including on a miss, and clears the payload record. */
+        /** Replaces the current duplicate iterator, including on a miss. */
         void find(Record probeRecord);
 
         /**
