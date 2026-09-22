@@ -86,7 +86,7 @@ public class QwpSchemaRowBufferE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("select id, n, only_b, extra from schema_rows order by n")
                     .noLeakCheck()
-                    .returnsOnce("id\tn\tonly_b\textra\n"
+                    .expectSize().returns("id\tn\tonly_b\textra\n"
                             + "01234567-89ab-cdef-fedc-ba9876543210\t11\tnull\tfalse\n"
                             + "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\t33\tnull\tfalse\n");
         });
@@ -112,7 +112,7 @@ public class QwpSchemaRowBufferE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("select id, n from schema_duplicate")
                     .noLeakCheck()
-                    .returnsOnce("id\tn\n01234567-89ab-cdef-fedc-ba9876543210\t1\n");
+                    .expectSize().returns("id\tn\n01234567-89ab-cdef-fedc-ba9876543210\t1\n");
         });
     }
 
@@ -151,10 +151,10 @@ public class QwpSchemaRowBufferE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("select id, n, unsupported from schema_sparse where n = 7")
                     .noLeakCheck()
-                    .returnsOnce("id\tn\tunsupported\n\t7\t\n");
+                    .returns("id\tn\tunsupported\n\t7\t\n");
             assertQuery("select id, n, unsupported from schema_sparse where n is null")
                     .noLeakCheck()
-                    .returnsOnce("id\tn\tunsupported\n\tnull\t\n");
+                    .returns("id\tn\tunsupported\n\tnull\t\n");
         });
     }
 
@@ -190,7 +190,7 @@ public class QwpSchemaRowBufferE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("select value from schema_uuid_vectors order by case_id")
                     .noLeakCheck()
-                    .returnsOnce(expectedValidValues(vectors));
+                    .expectSize().returns(expectedValidValues(vectors));
 
             execute("create table legacy_uuid_vectors (case_id long, value uuid, ts timestamp) timestamp(ts) partition by day wal");
             try (WebSocketClient client = connect(port);
@@ -217,7 +217,7 @@ public class QwpSchemaRowBufferE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("select value from legacy_uuid_vectors order by case_id")
                     .noLeakCheck()
-                    .returnsOnce(expectedValidValues(vectors));
+                    .expectSize().returns(expectedValidValues(vectors));
 
             // The production server converter must reject the same invalid corpus. Each
             // NACK gets its own stream because an ingress error terminates that sequence.

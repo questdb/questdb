@@ -110,7 +110,7 @@ public class QwpSchemaTextE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("select s, v, y, s is null sn, v is null vn, y is null yn, bad, only_b "
                     + "from schema_text_rows")
-                    .noLeakCheck().returnsOnce("s\tv\ty\tsn\tvn\tyn\tbad\tonly_b\n"
+                    .noLeakCheck().expectSize().returns("s\tv\ty\tsn\tvn\tyn\tbad\tonly_b\n"
                             + "A-string\tA-varchar\tA-symbol\tfalse\tfalse\tfalse\tnull\tnull\n"
                             + "\t\t\ttrue\ttrue\ttrue\tnull\tnull\n"
                             + "\t\t\ttrue\ttrue\ttrue\tnull\tnull\n"
@@ -156,7 +156,7 @@ public class QwpSchemaTextE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select text_value, symbol_value from schema_text_replay")
-                    .noLeakCheck().returnsOnce("text_value\tsymbol_value\nreplay-\uD83D\uDE80\tsymbol-\u20AC\n");
+                    .noLeakCheck().expectSize().returns("text_value\tsymbol_value\nreplay-\uD83D\uDE80\tsymbol-\u20AC\n");
         });
     }
 

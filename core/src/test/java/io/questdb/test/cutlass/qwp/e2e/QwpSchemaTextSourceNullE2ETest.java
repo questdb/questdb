@@ -108,7 +108,7 @@ public class QwpSchemaTextSourceNullE2ETest extends AbstractQwpWebSocketTest {
                   + "3\t-9223372036854775807\tfalse\n4\t9223372036854775807\tfalse\n5\t\ttrue\n";
         assertQuery("select case_id, v, v is null n from " + tableName + " order by case_id")
                 .noLeakCheck()
-                .returnsOnce(expected);
+                .expectSize().returns(expected);
     }
 
     private void assertLegacyLong256(int port, String target, boolean bitmap) throws Exception {
@@ -144,7 +144,7 @@ public class QwpSchemaTextSourceNullE2ETest extends AbstractQwpWebSocketTest {
                 : "case_id\tv\tn\n0\t\ttrue\n";
         assertQuery("select case_id, v, v is null n from " + tableName + " order by case_id")
                 .noLeakCheck()
-                .returnsOnce(expected);
+                .expectSize().returns(expected);
     }
 
     private void assertLegacyUuid(int port, String target, boolean bitmap) throws Exception {
@@ -194,7 +194,7 @@ public class QwpSchemaTextSourceNullE2ETest extends AbstractQwpWebSocketTest {
                   + "3\t\ttrue\n";
         assertQuery("select case_id, v, v is null n from " + tableName + " order by case_id")
                 .noLeakCheck()
-                .returnsOnce(expected);
+                .expectSize().returns(expected);
     }
 
     private void assertPublicUuidSymbolUnsupported(
@@ -228,7 +228,7 @@ public class QwpSchemaTextSourceNullE2ETest extends AbstractQwpWebSocketTest {
         drainWalQueue();
         assertQuery("select v, marker, ts from " + tableName + " order by ts")
                 .noLeakCheck()
-                .returnsOnce("v\tmarker\tts\nA\t\t1970-01-01T00:00:01.000000Z\n"
+                .expectSize().timestamp("ts").returns("v\tmarker\tts\nA\t\t1970-01-01T00:00:01.000000Z\n"
                         + "C\t\t1970-01-01T00:00:02.000000Z\n");
     }
 

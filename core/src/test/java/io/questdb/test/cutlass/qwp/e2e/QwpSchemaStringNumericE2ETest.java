@@ -118,7 +118,7 @@ public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
                             response.getErrorMessage().contains("cannot parse") || response.getErrorMessage().contains("out of range"));
                     Assert.assertTrue(vector.caseId + ": " + response.getErrorMessage(), response.getErrorMessage().contains("column=value"));
                 }
-                assertQuery("select count() from " + tableName).noLeakCheck().returnsOnce("count\n0\n");
+                assertQuery("select count() from " + tableName).noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
             }
             Assert.assertEquals(236, rejected);
         });
@@ -144,7 +144,7 @@ public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
                     Assert.assertTrue(inputs[i], receiveResponse(client).isSuccess());
                 }
                 drainWalQueue();
-                assertQuery("select value from " + tableName).noLeakCheck().returnsOnce("value\n" + expected[i] + "\n");
+                assertQuery("select value from " + tableName).noLeakCheck().expectSize().returns("value\n" + expected[i] + "\n");
             }
         });
     }
@@ -177,7 +177,7 @@ public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select value, only_b from schema_string_rows").noLeakCheck()
-                    .returnsOnce("value\tonly_b\n10\tnull\n20\tnull\n");
+                    .expectSize().returns("value\tonly_b\n10\tnull\n20\tnull\n");
         });
     }
 
@@ -231,10 +231,10 @@ public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
                     long rows = withOmission ? 2 : 1;
                     long present = target == Target.BYTE || target == Target.SHORT ? rows : 0;
                     assertQuery("select count() rows, count(value) present from " + tableName).noLeakCheck()
-                            .returnsOnce("rows\tpresent\n" + rows + '\t' + present + "\n");
+                            .expectSize().noRandomAccess().returns("rows\tpresent\n" + rows + '\t' + present + "\n");
                     if (target == Target.BYTE || target == Target.SHORT) {
                         assertQuery("select value, value=0 zero from " + tableName).noLeakCheck()
-                                .returnsOnce(withOmission ? "value\tzero\n0\ttrue\n0\ttrue\n" : "value\tzero\n0\ttrue\n");
+                                .expectSize().returns(withOmission ? "value\tzero\n0\ttrue\n0\ttrue\n" : "value\tzero\n0\ttrue\n");
                     }
                 }
             }

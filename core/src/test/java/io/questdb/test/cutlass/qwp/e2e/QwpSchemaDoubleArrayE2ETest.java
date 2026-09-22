@@ -47,7 +47,7 @@ public class QwpSchemaDoubleArrayE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select marker, a1, a2, a3, a4 from schema_double_arrays order by ts")
-                    .noLeakCheck().returnsOnce("""
+                    .noLeakCheck().expectSize().returns("""
                             marker\ta1\ta2\ta3\ta4
                             values\t[1.0,-2.5]\t[[3.0,4.0],[5.0,6.0]]\t[[[7.0],[8.0]]]\t[[[[9.0,10.0]]]]
                             empty\t[]\t[]\t[]\t[]
@@ -58,7 +58,7 @@ public class QwpSchemaDoubleArrayE2ETest extends AbstractQwpWebSocketTest {
                     + "dim_length(a4, 1) a4d1, dim_length(a4, 2) a4d2, "
                     + "dim_length(a4, 3) a4d3, dim_length(a4, 4) a4d4 "
                     + "from schema_double_arrays where marker = 'empty'")
-                    .noLeakCheck().returnsOnce("""
+                    .noLeakCheck().returns("""
                             a1d1\ta2d1\ta2d2\ta3d1\ta3d2\ta3d3\ta4d1\ta4d2\ta4d3\ta4d4
                             0\t0\t0\t0\t0\t0\t0\t1\t1\t1
                             """);
@@ -88,7 +88,7 @@ public class QwpSchemaDoubleArrayE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select marker, value from schema_double_array_rows order by ts")
-                    .noLeakCheck().returnsOnce("marker\tvalue\nA\t[[1.0,2.0]]\nC\t[[3.0],[4.0]]\n");
+                    .noLeakCheck().expectSize().returns("marker\tvalue\nA\t[[1.0,2.0]]\nC\t[[3.0],[4.0]]\n");
         });
     }
 }

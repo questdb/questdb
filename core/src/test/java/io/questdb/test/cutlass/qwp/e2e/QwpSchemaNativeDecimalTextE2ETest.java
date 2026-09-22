@@ -76,7 +76,7 @@ public class QwpSchemaNativeDecimalTextE2ETest extends AbstractQwpWebSocketTest 
             for (Target target : Target.values()) {
                 assertQuery("select type from table_columns('" + target.tableName
                         + "') where \"column\" = 'value'")
-                        .noLeakCheck().returnsOnce("type\n" + target.sqlType + "\n");
+                        .noLeakCheck().noRandomAccess().returns("type\n" + target.sqlType + "\n");
                 StringBuilder expected = new StringBuilder("seq\tvalue\tn\n");
                 int row = 0;
                 for (Vector vector : vectors) {
@@ -89,7 +89,7 @@ public class QwpSchemaNativeDecimalTextE2ETest extends AbstractQwpWebSocketTest 
                     }
                 }
                 assertQuery("select seq, value, value is null n from " + target.tableName + " order by seq")
-                        .noLeakCheck().returnsOnce(expected.toString());
+                        .noLeakCheck().expectSize().returns(expected.toString());
             }
         });
         for (int source = 0; source < sourceTargets.length; source++) {
@@ -157,7 +157,7 @@ public class QwpSchemaNativeDecimalTextE2ETest extends AbstractQwpWebSocketTest 
             drainWalQueue();
             assertQuery("select value, value is null n, marker "
                     + "from schema_native_decimal_text_rows order by ts")
-                    .noLeakCheck().returnsOnce("value\tn\tmarker\n"
+                    .noLeakCheck().expectSize().returns("value\tn\tmarker\n"
                             + "123.40\tfalse\tA\n"
                             + "-0.125\tfalse\tC\n"
                             + "\ttrue\tomitted\n"
@@ -280,7 +280,7 @@ public class QwpSchemaNativeDecimalTextE2ETest extends AbstractQwpWebSocketTest 
             drainWalQueue();
             assertQuery("select d64_string, d64_varchar, d128_string, d128_varchar, "
                     + "d256_string, d256_varchar from " + tableName + " where case_id = 0")
-                    .noLeakCheck().returnsOnce("d64_string\td64_varchar\td128_string\td128_varchar\t"
+                    .noLeakCheck().returns("d64_string\td64_varchar\td128_string\td128_varchar\t"
                             + "d256_string\td256_varchar\n"
                             + "123.40\t-0.125\t" + NINES_38 + "\t-0." + NINES_38
                             + "\t123.40\t-0." + NINES_76 + "\n");
@@ -289,7 +289,7 @@ public class QwpSchemaNativeDecimalTextE2ETest extends AbstractQwpWebSocketTest 
                     + "d128_string is null n128s, d128_varchar is null n128v, "
                     + "d256_string is null n256s, d256_varchar is null n256v "
                     + "from " + tableName + " where case_id = 1")
-                    .noLeakCheck().returnsOnce("case_id\tn64s\tn64v\tn128s\tn128v\tn256s\tn256v\n"
+                    .noLeakCheck().returns("case_id\tn64s\tn64v\tn128s\tn128v\tn256s\tn256v\n"
                             + "1\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\n");
         });
     }

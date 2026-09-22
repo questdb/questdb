@@ -323,7 +323,7 @@ public class QwpSchemaBinaryE2ETest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             assertQuery("select case_id, value from legacy_throwing_varchar order by case_id")
-                    .noLeakCheck().returnsOnce("case_id\tvalue\n0\tA\n2\tC\n");
+                    .noLeakCheck().expectSize().returns("case_id\tvalue\n0\tA\n2\tC\n");
             assertBinaryRows("schema_throwing_binary", new byte[][]{{'A'}, {'C'}}, new long[]{0, 2});
         });
     }

@@ -58,9 +58,9 @@ public class QwpSchemaNativeGeoHashE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select type from table_columns('schema_native_geo_infer') where \"column\" = 'value'")
-                    .noLeakCheck().returnsOnce("type\nGEOHASH(4c)\n");
+                    .noLeakCheck().noRandomAccess().returns("type\nGEOHASH(4c)\n");
             assertQuery("select value, value is null n from schema_native_geo_infer order by timestamp")
-                    .noLeakCheck().returnsOnce("value\tn\n\ttrue\nu33d\tfalse\n");
+                    .noLeakCheck().expectSize().returns("value\tn\n\ttrue\nu33d\tfalse\n");
         });
     }
 
@@ -97,7 +97,7 @@ public class QwpSchemaNativeGeoHashE2ETest extends AbstractQwpWebSocketTest {
                             .append("\tfalse\n");
                 }
                 assertQuery("select case_id, value, value is null n from " + target.tableName + " order by ts")
-                        .noLeakCheck().returnsOnce(expected.toString());
+                        .noLeakCheck().expectSize().returns(expected.toString());
             }
         });
     }
@@ -132,7 +132,7 @@ public class QwpSchemaNativeGeoHashE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select g20, g8, marker, g8 is null n from schema_native_geo_rows order by ts")
-                    .noLeakCheck().returnsOnce("g20\tg8\tmarker\tn\n"
+                    .noLeakCheck().expectSize().returns("g20\tg8\tmarker\tn\n"
                             + "u33d\t11111111\tA\tfalse\n"
                             + "28u5\t00000000\tC\tfalse\n");
         });
@@ -192,7 +192,7 @@ public class QwpSchemaNativeGeoHashE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select g, s, v, g is null gn, s is null sn, v is null vn from schema_native_geo_sf")
-                    .noLeakCheck().returnsOnce("g\ts\tv\tgn\tsn\tvn\n"
+                    .noLeakCheck().expectSize().returns("g\ts\tv\tgn\tsn\tvn\n"
                             + "pg6y\t10101011110011011110\t10101011110011011110\tfalse\tfalse\tfalse\n"
                             + "\t\t\ttrue\ttrue\ttrue\n");
         });

@@ -108,7 +108,7 @@ public class QwpSchemaStringTimestampE2ETest extends AbstractQwpWebSocketTest {
                 }
                 drainWalQueue();
                 assertQuery("select marker, cast(ts as long) ts from " + table)
-                        .noLeakCheck().returnsOnce("marker\tts\nC\t2\n");
+                        .noLeakCheck().expectSize().returns("marker\tts\nC\t2\n");
             }
         });
     }
@@ -142,7 +142,7 @@ public class QwpSchemaStringTimestampE2ETest extends AbstractQwpWebSocketTest {
                 drainWalQueue();
                 long cValue = target == Target.TIMESTAMP ? 1 : 1_000;
                 assertQuery("select marker, cast(value as long) value from " + table + " order by ts")
-                        .noLeakCheck().returnsOnce("marker\tvalue\nA\t0\nC\t" + cValue + "\n");
+                        .noLeakCheck().expectSize().returns("marker\tvalue\nA\t0\nC\t" + cValue + "\n");
             }
         });
     }
@@ -203,7 +203,7 @@ public class QwpSchemaStringTimestampE2ETest extends AbstractQwpWebSocketTest {
                     }
                 }
                 assertQuery("select case_id, value is null n from " + target.table
-                        + "_runtime order by case_id").noLeakCheck().returnsOnce(expectedNulls.toString());
+                        + "_runtime order by case_id").noLeakCheck().expectSize().returns(expectedNulls.toString());
             }
         });
     }
@@ -255,7 +255,7 @@ public class QwpSchemaStringTimestampE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select cast(value as long) value, value is null n from legacy_string_ts_wire")
-                    .noLeakCheck().returnsOnce("value\tn\n"
+                    .noLeakCheck().expectSize().returns("value\tn\n"
                             + "1704164645234000\tfalse\n"
                             + "null\ttrue\n"
                             + "null\ttrue\n"
@@ -309,7 +309,7 @@ public class QwpSchemaStringTimestampE2ETest extends AbstractQwpWebSocketTest {
             }
         }
         assertQuery("select case_id, value is null n from " + target.table + " order by case_id")
-                .noLeakCheck().returnsOnce(expected.toString());
+                .noLeakCheck().expectSize().returns(expected.toString());
     }
 
     private static List<Vector> readVectors(String resource) throws Exception {

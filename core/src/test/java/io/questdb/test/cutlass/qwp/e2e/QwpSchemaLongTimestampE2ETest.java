@@ -74,7 +74,7 @@ public class QwpSchemaLongTimestampE2ETest extends AbstractQwpWebSocketTest {
                     }
                     drainWalQueue();
                     assertQuery("select cast(value as long) value, value is null n from " + tableName)
-                            .noLeakCheck().returnsOnce(bitmap
+                            .noLeakCheck().expectSize().returns(bitmap
                                     ? "value\tn\nnull\ttrue\nnull\ttrue\n"
                                     : "value\tn\nnull\ttrue\n");
                 }
@@ -120,7 +120,7 @@ public class QwpSchemaLongTimestampE2ETest extends AbstractQwpWebSocketTest {
                 }
                 assertQuery("select case_id, cast(value as long) value, value is null n from "
                         + target.tableName + " order by case_id")
-                        .noLeakCheck().returnsOnce(expected.toString());
+                        .noLeakCheck().expectSize().returns(expected.toString());
             }
         });
     }
@@ -183,7 +183,7 @@ public class QwpSchemaLongTimestampE2ETest extends AbstractQwpWebSocketTest {
                 drainWalQueue();
                 assertQuery("select marker, cast(value as long) value, value is null n, cast(ts as long) ts from "
                         + tableName + " order by ts")
-                        .noLeakCheck().returnsOnce("marker\tvalue\tn\tts\n"
+                        .noLeakCheck().expectSize().returns("marker\tvalue\tn\tts\n"
                                 + "A\tnull\ttrue\t1\n"
                                 + "C\t" + Long.MAX_VALUE + "\tfalse\t2\n"
                                 + "D\tnull\ttrue\t4\n");

@@ -91,7 +91,7 @@ public class QwpSchemaDiscoveryE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertEquals(QwpSchemaProtocol.RESULT_MISSING, followUp.getResult());
             }
             drainWalQueue();
-            assertQuery("select val from schema_ack").noLeakCheck().returnsOnce("val\n7\n");
+            assertQuery("select val from schema_ack").noLeakCheck().expectSize().returns("val\n7\n");
         }, 65_536, Integer.MAX_VALUE, forceSendChunk);
     }
 
@@ -116,7 +116,7 @@ public class QwpSchemaDiscoveryE2ETest extends AbstractQwpWebSocketTest {
                 QwpSchemaResponse schema = describe(client, 41, "schema_deferred");
                 Assert.assertEquals(QwpSchemaProtocol.RESULT_KNOWN, schema.getResult());
                 drainWalQueue();
-                assertQuery("select count() from schema_deferred").noLeakCheck().returnsOnce("count\n0\n");
+                assertQuery("select count() from schema_deferred").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
 
                 encoder.getBuffer().reset();
                 encoder.setDeferCommit(false);
@@ -143,7 +143,7 @@ public class QwpSchemaDiscoveryE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertEquals("schema_deferred", ack.getSchemaUpdateTableName(0));
             }
             drainWalQueue();
-            assertQuery("select val from schema_deferred").noLeakCheck().returnsOnce("val\n42\n");
+            assertQuery("select val from schema_deferred").noLeakCheck().expectSize().returns("val\n42\n");
         });
     }
 

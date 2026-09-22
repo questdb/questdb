@@ -81,7 +81,7 @@ public class QwpSchemaSmallIntegerNumericE2ETest extends AbstractQwpWebSocketTes
                 drainWalQueue();
                 assertQuery("select case_id, value from " + tableName + " order by case_id")
                         .noLeakCheck()
-                        .returnsOnce(expectedValues(targetVectors, target));
+                        .expectSize().returns(expectedValues(targetVectors, target));
             }
         });
     }

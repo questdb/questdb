@@ -97,7 +97,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
                 }
                 drainWalQueue();
                 assertQuery("select case_id, cast(value as long) value from " + tableName + " order by case_id")
-                        .noLeakCheck().returnsOnce(expectedInputRows(targetVectors));
+                        .noLeakCheck().expectSize().returns(expectedInputRows(targetVectors));
             }
         });
     }
@@ -121,7 +121,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
             // Legacy normalizes both inputs to unchecked micros before server conversion.
             assertQuery("select cast(wrapped as long) wrapped, cast(instant_value as long) instant_value "
                     + "from legacy_ts_inputs")
-                    .noLeakCheck().returnsOnce("wrapped\tinstant_value\n-1000000000\t0\n");
+                    .noLeakCheck().expectSize().returns("wrapped\tinstant_value\n-1000000000\t0\n");
         });
     }
 
@@ -168,9 +168,9 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
                 drainWalQueue();
                 String expected = expectedRows(targetVectors);
                 assertQuery("select case_id, cast(value as long) value from " + schemaTable + " order by case_id")
-                        .noLeakCheck().returnsOnce(expected);
+                        .noLeakCheck().expectSize().returns(expected);
                 assertQuery("select case_id, cast(value as long) value from " + legacyTable + " order by case_id")
-                        .noLeakCheck().returnsOnce(expected);
+                        .noLeakCheck().expectSize().returns(expected);
             }
         });
     }
@@ -223,7 +223,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select cast(u as long) u, cast(n as long) n, only_b from schema_ts_rows")
-                    .noLeakCheck().returnsOnce("u\tn\tonly_b\n"
+                    .noLeakCheck().expectSize().returns("u\tn\tonly_b\n"
                             + "1\t1\tnull\n"
                             + "null\tnull\tnull\n"
                             + "null\tnull\tnull\n"
@@ -278,7 +278,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
                             expected = "value\nnull\n" + (withOmission ? "null\n" : "");
                         }
                         assertQuery("select cast(value as long) value from " + name)
-                                .noLeakCheck().returnsOnce(expected);
+                                .noLeakCheck().expectSize().returns(expected);
                     }
                 }
             }
@@ -332,7 +332,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
                             expectedSql = "value\nnull\n" + (withOmission ? "null\n" : "");
                         }
                         assertQuery("select cast(value as long) value from " + name)
-                                .noLeakCheck().returnsOnce(expectedSql);
+                                .noLeakCheck().expectSize().returns(expectedSql);
                     }
                 }
             }
@@ -374,7 +374,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
                 expected.append(1_000_000L + i * 1_000L).append('\n');
             }
             assertQuery("select cast(value as long) value from schema_ts_gorilla")
-                    .noLeakCheck().returnsOnce(expected.toString());
+                    .noLeakCheck().expectSize().returns(expected.toString());
         });
     }
 
@@ -412,7 +412,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("select cast(value as long) value, cast(instant_value as long) instant_value "
                     + "from schema_ts_replay")
-                    .noLeakCheck().returnsOnce("value\tinstant_value\n1001000\t123\n");
+                    .noLeakCheck().expectSize().returns("value\tinstant_value\n1001000\t123\n");
         });
     }
 

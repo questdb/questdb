@@ -85,7 +85,7 @@ public class QwpSchemaFloatingTextConversionE2ETest extends AbstractQwpWebSocket
                         }
                     }
                     assertQuery("select case_id, value, value is null n from " + tableName(input, target)
-                            + " order by case_id").noLeakCheck().returnsOnce(expected.toString());
+                            + " order by case_id").noLeakCheck().expectSize().returns(expected.toString());
                 }
             }
         });
@@ -121,7 +121,7 @@ public class QwpSchemaFloatingTextConversionE2ETest extends AbstractQwpWebSocket
             }
             drainWalQueue();
             assertQuery("select s, v, marker, bad, s is null sn, ts from schema_floating_text_rows order by ts")
-                    .noLeakCheck().returnsOnce("s\tv\tmarker\tbad\tsn\tts\n"
+                    .noLeakCheck().expectSize().timestamp("ts").returns("s\tv\tmarker\tbad\tsn\tts\n"
                             + "\t-0.0\t\t\ttrue\t1970-01-01T00:00:01.000000Z\n"
                             + "0.10000000149011612\t1.0E23\t\t\tfalse\t1970-01-01T00:00:02.000000Z\n");
         });
@@ -157,7 +157,7 @@ public class QwpSchemaFloatingTextConversionE2ETest extends AbstractQwpWebSocket
             }
             drainWalQueue();
             assertQuery("select value, marker, ts from schema_floating_text_rebind order by marker")
-                    .noLeakCheck().returnsOnce("value\tmarker\tts\n"
+                    .noLeakCheck().expectSize().returns("value\tmarker\tts\n"
                             + "1.5\tA\t1970-01-01T00:00:01.000000Z\n"
                             + "0.10000000149011612\tC\t1970-01-01T00:00:02.000000Z\n");
         });
@@ -210,7 +210,7 @@ public class QwpSchemaFloatingTextConversionE2ETest extends AbstractQwpWebSocket
             }
             drainWalQueue();
             assertQuery("select s, v, y, n, n is null nn from schema_floating_text_sf")
-                    .noLeakCheck().returnsOnce("s\tv\ty\tn\tnn\n"
+                    .noLeakCheck().expectSize().returns("s\tv\ty\tn\tnn\n"
                             + "0.10000000149011612\t1.0E23\t-0.0\t\ttrue\n");
         });
     }

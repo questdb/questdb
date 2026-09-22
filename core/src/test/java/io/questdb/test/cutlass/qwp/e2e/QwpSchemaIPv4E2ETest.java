@@ -92,7 +92,7 @@ public class QwpSchemaIPv4E2ETest extends AbstractQwpWebSocketTest {
                     }
                 }
                 assertQuery("select case_id, value, value is null n from " + target.tableName + " order by case_id")
-                        .noLeakCheck().returnsOnce(expected.toString());
+                        .noLeakCheck().expectSize().returns(expected.toString());
             }
         });
     }
@@ -112,9 +112,9 @@ public class QwpSchemaIPv4E2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select type from table_columns('schema_ipv4_infer') where \"column\" = 'value'")
-                    .noLeakCheck().returnsOnce("type\nIPv4\n");
+                    .noLeakCheck().noRandomAccess().returns("type\nIPv4\n");
             assertQuery("select value, value is null n from schema_ipv4_infer order by timestamp")
-                    .noLeakCheck().returnsOnce("value\tn\n\ttrue\n10.20.30.40\tfalse\n");
+                    .noLeakCheck().expectSize().returns("value\tn\n\ttrue\n10.20.30.40\tfalse\n");
         });
     }
 
@@ -172,7 +172,7 @@ public class QwpSchemaIPv4E2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("select ip, s, v, ip is null ipn, s is null sn, v is null vn "
                     + "from schema_ipv4_sf order by ts")
-                    .noLeakCheck().returnsOnce("ip\ts\tv\tipn\tsn\tvn\n"
+                    .noLeakCheck().expectSize().returns("ip\ts\tv\tipn\tsn\tvn\n"
                             + "192.168.1.1\t10.20.30.40\t1.2.3.4\tfalse\tfalse\tfalse\n"
                             + "\t\t\ttrue\ttrue\ttrue\n");
         });

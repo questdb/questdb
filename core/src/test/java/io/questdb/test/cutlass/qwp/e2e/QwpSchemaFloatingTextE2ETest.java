@@ -112,7 +112,7 @@ public class QwpSchemaFloatingTextE2ETest extends AbstractQwpWebSocketTest {
             expected.append(valueCount).append("\t\ttrue\n");
         }
         assertQuery("select case_id, v, v is null n from " + tableName + " order by case_id")
-                .noLeakCheck().returnsOnce(expected.toString());
+                .noLeakCheck().expectSize().returns(expected.toString());
     }
 
     private static void assertRawWire(

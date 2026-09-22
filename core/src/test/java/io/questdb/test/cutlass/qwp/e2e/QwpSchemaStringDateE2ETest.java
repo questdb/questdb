@@ -96,7 +96,7 @@ public class QwpSchemaStringDateE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select marker, cast(value as long) value from schema_string_date_rows order by ts")
-                    .noLeakCheck().returnsOnce("marker\tvalue\nA\t0\nC\t-86400000\n");
+                    .noLeakCheck().expectSize().returns("marker\tvalue\nA\t0\nC\t-86400000\n");
         });
     }
 

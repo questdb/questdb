@@ -113,7 +113,7 @@ public class QwpSchemaFloatingNumericE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select v, only_b from schema_float_rows")
-                    .noLeakCheck().returnsOnce("v\tonly_b\n10\tnull\n20\tnull\n");
+                    .noLeakCheck().expectSize().returns("v\tonly_b\n10\tnull\n20\tnull\n");
         });
     }
 
@@ -142,7 +142,7 @@ public class QwpSchemaFloatingNumericE2ETest extends AbstractQwpWebSocketTest {
                             message.contains("loses precision") || message.contains("out of range"));
                     Assert.assertTrue(vector.caseId + ": " + message, message.contains(vector.target.wireName));
                 }
-                assertQuery("select count() from " + tableName).noLeakCheck().returnsOnce("count\n0\n");
+                assertQuery("select count() from " + tableName).noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
             }
             Assert.assertEquals(104, tableId);
         });
@@ -194,11 +194,11 @@ public class QwpSchemaFloatingNumericE2ETest extends AbstractQwpWebSocketTest {
                         long rows = withOmission ? 2 : 1;
                         long nonNull = target == Target.BYTE || target == Target.SHORT ? rows : 0;
                         assertQuery("select count() rows, count(value) non_null from " + tableName)
-                                .noLeakCheck().returnsOnce("rows\tnon_null\n" + rows + '\t' + nonNull + "\n");
+                                .noLeakCheck().expectSize().noRandomAccess().returns("rows\tnon_null\n" + rows + '\t' + nonNull + "\n");
                         if (target == Target.BYTE || target == Target.SHORT) {
                             StringBuilder expected = new StringBuilder("value\n");
                             for (int row = 0; row < rows; row++) expected.append("0\n");
-                            assertQuery("select value from " + tableName).noLeakCheck().returnsOnce(expected.toString());
+                            assertQuery("select value from " + tableName).noLeakCheck().expectSize().returns(expected.toString());
                         }
                     }
                 }

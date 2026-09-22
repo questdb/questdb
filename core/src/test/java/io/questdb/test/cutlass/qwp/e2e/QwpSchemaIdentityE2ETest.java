@@ -70,7 +70,7 @@ public class QwpSchemaIdentityE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertTrue(sender.drain(10_000));
             }
             drainWalQueue();
-            assertQuery("select n from schema_sf_replay order by n").noLeakCheck().returnsOnce("n\n1\n2\n");
+            assertQuery("select n from schema_sf_replay order by n").noLeakCheck().expectSize().returns("n\n1\n2\n");
         });
     }
 
@@ -88,7 +88,7 @@ public class QwpSchemaIdentityE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertEquals(changed.getMetadataVersion(), staleFeedback.getSchemaUpdate(0).getMetadataVersion());
                 Assert.assertEquals(changed.getTableId(), staleFeedback.getSchemaUpdate(0).getTableId());
                 drainWalQueue();
-                assertQuery("select n from schema_identity order by n").noLeakCheck().returnsOnce("n\n1\n2\n");
+                assertQuery("select n from schema_identity order by n").noLeakCheck().expectSize().returns("n\n1\n2\n");
 
                 execute("drop table schema_identity");
                 execute("create table schema_identity (n long, ts timestamp) timestamp(ts) partition by day wal");
@@ -99,7 +99,7 @@ public class QwpSchemaIdentityE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertEquals(recreated.getTableId(), recreatedFeedback.getSchemaUpdate(0).getTableId());
             }
             drainWalQueue();
-            assertQuery("select n from schema_identity").noLeakCheck().returnsOnce("n\n3\n");
+            assertQuery("select n from schema_identity").noLeakCheck().expectSize().returns("n\n3\n");
         });
     }
 
@@ -120,8 +120,8 @@ public class QwpSchemaIdentityE2ETest extends AbstractQwpWebSocketTest {
                 assertOk(client, 0, true);
             }
             drainWalQueue();
-            assertQuery("select n from schema_known_multi").noLeakCheck().returnsOnce("n\n10\n");
-            assertQuery("select n from schema_unknown_multi").noLeakCheck().returnsOnce("n\n20\n");
+            assertQuery("select n from schema_known_multi").noLeakCheck().expectSize().returns("n\n10\n");
+            assertQuery("select n from schema_unknown_multi").noLeakCheck().expectSize().returns("n\n20\n");
         });
     }
 
@@ -138,7 +138,7 @@ public class QwpSchemaIdentityE2ETest extends AbstractQwpWebSocketTest {
                 assertOk(client, 0, true);
             }
             drainWalQueue();
-            assertQuery("select n from schema_legacy_on_new").noLeakCheck().returnsOnce("n\n7\n");
+            assertQuery("select n from schema_legacy_on_new").noLeakCheck().expectSize().returns("n\n7\n");
         });
     }
 
@@ -168,7 +168,7 @@ public class QwpSchemaIdentityE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertEquals(1002, closeCode[0]);
             }
             drainWalQueue();
-            assertQuery("select count() from schema_unnegotiated").noLeakCheck().returnsOnce("count\n0\n");
+            assertQuery("select count() from schema_unnegotiated").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
         });
     }
 

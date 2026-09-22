@@ -69,7 +69,7 @@ public class QwpSchemaIntegerTemporalE2ETest extends AbstractQwpWebSocketTest {
                 assertQuery("select case_id, cast(value as long) value, value is null n from "
                         + tableName + " order by case_id")
                         .noLeakCheck()
-                        .returnsOnce(expectedValues(targetVectors));
+                        .expectSize().returns(expectedValues(targetVectors));
             }
         });
     }

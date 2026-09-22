@@ -118,8 +118,8 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertEquals("feedback_nack", nack.getSchemaUpdateTableName(0));
             }
             drainWalQueue();
-            assertQuery("select n from feedback_ack").noLeakCheck().returnsOnce("n\n1\n");
-            assertQuery("select count() from feedback_nack").noLeakCheck().returnsOnce("count\n0\n");
+            assertQuery("select n from feedback_ack").noLeakCheck().expectSize().returns("n\n1\n");
+            assertQuery("select count() from feedback_nack").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
         }, 65_536, Integer.MAX_VALUE, 1);
     }
 
@@ -155,8 +155,8 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
                 }
             }
             drainWalQueue();
-            assertQuery("select column_name_0_abcdefghijklmnop from feedback_wide").noLeakCheck().returnsOnce("column_name_0_abcdefghijklmnop\n1\n");
-            assertQuery("select n from feedback_small").noLeakCheck().returnsOnce("n\n2\n");
+            assertQuery("select column_name_0_abcdefghijklmnop from feedback_wide").noLeakCheck().expectSize().returns("column_name_0_abcdefghijklmnop\n1\n");
+            assertQuery("select n from feedback_small").noLeakCheck().expectSize().returns("n\n2\n");
         }, 65_536, 65_536, 65_536, 512, null);
     }
 
@@ -183,8 +183,8 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertTrue(tableB.equals(response.getTableName(0)) || tableB.equals(response.getTableName(1)));
             }
             drainWalQueue();
-            assertQuery("select n from \"" + tableA + "\"").noLeakCheck().returnsOnce("n\n1\n");
-            assertQuery("select n from \"" + tableB + "\"").noLeakCheck().returnsOnce("n\n2\n");
+            assertQuery("select n from \"" + tableA + "\"").noLeakCheck().expectSize().returns("n\n1\n");
+            assertQuery("select n from \"" + tableB + "\"").noLeakCheck().expectSize().returns("n\n2\n");
         }, 65_536, 65_536, 65_536, 256, null);
     }
 
@@ -206,7 +206,7 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertEquals("n", response.getSchemaUpdate(0).getColumnName(0));
             }
         }, 65_536, Integer.MAX_VALUE, 1);
-        assertQuery("select count() from feedback_non_wal").noLeakCheck().returnsOnce("count\n0\n");
+        assertQuery("select count() from feedback_non_wal").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
     }
 
     private static WebSocketClient connect(int port) {

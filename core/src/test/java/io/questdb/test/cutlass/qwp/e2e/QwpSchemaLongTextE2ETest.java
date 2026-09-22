@@ -81,7 +81,7 @@ public class QwpSchemaLongTextE2ETest extends AbstractQwpWebSocketTest {
                     }
                 }
                 assertQuery("select case_id, value, value is null n from " + target.tableName + " order by case_id")
-                        .noLeakCheck().returnsOnce(expected.toString());
+                        .noLeakCheck().expectSize().returns(expected.toString());
             }
         });
     }
@@ -114,7 +114,7 @@ public class QwpSchemaLongTextE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select s, v, y, marker, bad, ts from schema_long_text_rows order by ts")
-                    .noLeakCheck().returnsOnce("s\tv\ty\tmarker\tbad\tts\n"
+                    .noLeakCheck().expectSize().timestamp("ts").returns("s\tv\ty\tmarker\tbad\tts\n"
                             + "10\t11\t12\t\t\t1970-01-01T00:00:01.000000Z\n"
                             + "20\t21\t12\t\t\t1970-01-01T00:00:02.000000Z\n");
         });
@@ -161,7 +161,7 @@ public class QwpSchemaLongTextE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select s, v, y, v is null n from schema_long_text_sf")
-                    .noLeakCheck().returnsOnce("s\tv\ty\tn\n42\t\t42\ttrue\n");
+                    .noLeakCheck().expectSize().returns("s\tv\ty\tn\n42\t\t42\ttrue\n");
         });
     }
 

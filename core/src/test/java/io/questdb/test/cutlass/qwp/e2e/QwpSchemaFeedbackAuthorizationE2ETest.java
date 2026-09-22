@@ -66,7 +66,7 @@ public class QwpSchemaFeedbackAuthorizationE2ETest extends AbstractQwpWebSocketT
                 assertInvalidation(receive(client));
             }
         }, ReadOnlySecurityContext.INSTANCE);
-        assertQuery("select count() from feedback_acl_denied").noLeakCheck().returnsOnce("count\n0\n");
+        assertQuery("select count() from feedback_acl_denied").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
     }
 
     @Test
@@ -88,7 +88,7 @@ public class QwpSchemaFeedbackAuthorizationE2ETest extends AbstractQwpWebSocketT
             }
         }, context);
         drainWalQueue();
-        assertQuery("select count() from feedback_acl_revoked").noLeakCheck().returnsOnce("count\n0\n");
+        assertQuery("select count() from feedback_acl_revoked").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
     }
 
     @Test
@@ -116,8 +116,8 @@ public class QwpSchemaFeedbackAuthorizationE2ETest extends AbstractQwpWebSocketT
             }
         }, context);
         drainWalQueue();
-        assertQuery("select n from feedback_acl_allowed").noLeakCheck().returnsOnce("n\n4\n");
-        assertQuery("select count() from feedback_acl_later_denied").noLeakCheck().returnsOnce("count\n0\n");
+        assertQuery("select n from feedback_acl_allowed").noLeakCheck().expectSize().returns("n\n4\n");
+        assertQuery("select count() from feedback_acl_later_denied").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
     }
 
     @Test
@@ -147,7 +147,7 @@ public class QwpSchemaFeedbackAuthorizationE2ETest extends AbstractQwpWebSocketT
             }
         }, writeOnly);
         drainWalQueue();
-        assertQuery("select n from feedback_acl_write_only").noLeakCheck().returnsOnce("n\n6\n");
+        assertQuery("select n from feedback_acl_write_only").noLeakCheck().expectSize().returns("n\n6\n");
     }
 
     private static void assertInvalidation(WebSocketResponse response) {

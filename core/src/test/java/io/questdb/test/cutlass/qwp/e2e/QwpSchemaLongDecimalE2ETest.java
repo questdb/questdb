@@ -70,7 +70,7 @@ public class QwpSchemaLongDecimalE2ETest extends AbstractQwpWebSocketTest {
                 String expected = vector.invalid() ? "value\n"
                         : vector.isNull() ? "value\n\n" : "value\n" + vector.expectedSql + '\n';
                 assertQuery("select value from schema_long_decimal_" + i + " order by ts")
-                        .noLeakCheck().returnsOnce(expected);
+                        .noLeakCheck().expectSize().returns(expected);
             }
         });
         for (int i = 0; i < targets.length; i++) {
@@ -113,7 +113,7 @@ public class QwpSchemaLongDecimalE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("select value, value is null as is_null, marker "
                     + "from schema_long_decimal_recovery order by ts")
-                    .noLeakCheck().returnsOnce(
+                    .noLeakCheck().expectSize().returns(
                             "value\tis_null\tmarker\n"
                                     + "1.0\tfalse\tA\n"
                                     + "-1.0\tfalse\tC\n"
@@ -140,11 +140,11 @@ public class QwpSchemaLongDecimalE2ETest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             assertQuery("select value from legacy_long_decimal_plain")
-                    .noLeakCheck().returnsOnce("value\n\n");
+                    .noLeakCheck().expectSize().returns("value\n\n");
             assertQuery("select value from legacy_long_decimal_bitmap_wide")
-                    .noLeakCheck().returnsOnce("value\n-9223372036854775808\n\n");
+                    .noLeakCheck().expectSize().returns("value\n-9223372036854775808\n\n");
             assertQuery("select count() from legacy_long_decimal_bitmap_narrow")
-                    .noLeakCheck().returnsOnce("count\n0\n");
+                    .noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
         });
     }
 

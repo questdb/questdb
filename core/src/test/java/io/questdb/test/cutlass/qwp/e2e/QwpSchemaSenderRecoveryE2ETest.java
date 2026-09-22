@@ -60,7 +60,7 @@ public class QwpSchemaSenderRecoveryE2ETest extends AbstractQwpWebSocketTest {
                         Assert.assertTrue((publishedFrame[5] & QwpConstants.FLAG_SCHEMA) != 0);
                         assertQuery("select count() from " + TABLE)
                                 .noLeakCheck()
-                                .returnsOnce("count\n0\n");
+                                .expectSize().noRandomAccess().returns("count\n0\n");
 
                         child.process.destroyForcibly();
                         Assert.assertTrue("producer JVM did not terminate",
@@ -82,7 +82,7 @@ public class QwpSchemaSenderRecoveryE2ETest extends AbstractQwpWebSocketTest {
                 drainWalQueue();
                 assertQuery("select marker, sym, id from " + TABLE + " order by marker")
                         .noLeakCheck()
-                        .returnsOnce("marker\tsym\tid\n"
+                        .expectSize().returns("marker\tsym\tid\n"
                                 + "A\talpha\t123e4567-e89b-12d3-a456-426614174000\n"
                                 + "C\tgamma\t223e4567-e89b-12d3-a456-426614174001\n");
 
@@ -92,7 +92,7 @@ public class QwpSchemaSenderRecoveryE2ETest extends AbstractQwpWebSocketTest {
                 drainWalQueue();
                 assertQuery("select count() from " + TABLE)
                         .noLeakCheck()
-                        .returnsOnce("count\n2\n");
+                        .expectSize().noRandomAccess().returns("count\n2\n");
             });
         });
     }
@@ -123,7 +123,7 @@ public class QwpSchemaSenderRecoveryE2ETest extends AbstractQwpWebSocketTest {
                     Assert.assertTrue(gate.awaitData(15, TimeUnit.SECONDS));
                     publishedFrame = gate.getDataFrame();
                     assertStaleUuidBlock(publishedFrame, engine.verifyTableName(table).getTableId());
-                    assertQuery("select count() from " + table).noLeakCheck().returnsOnce("count\n0\n");
+                    assertQuery("select count() from " + table).noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
                     child.process.destroyForcibly();
                     Assert.assertTrue(child.process.waitFor(15, TimeUnit.SECONDS));
                     Assert.assertNotEquals(0, child.process.exitValue());
@@ -139,7 +139,7 @@ public class QwpSchemaSenderRecoveryE2ETest extends AbstractQwpWebSocketTest {
                 // The server converts the recovered UUID wire values into the retyped column.
                 assertQuery("select marker, sym, id from " + table + " order by marker")
                         .noLeakCheck()
-                        .returnsOnce("marker\tsym\tid\n"
+                        .expectSize().returns("marker\tsym\tid\n"
                                 + "A\talpha\t123e4567-e89b-12d3-a456-426614174000\n"
                                 + "C\tgamma\t223e4567-e89b-12d3-a456-426614174001\n");
             });

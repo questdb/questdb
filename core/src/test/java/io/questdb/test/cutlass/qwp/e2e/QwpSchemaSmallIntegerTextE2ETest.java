@@ -75,7 +75,7 @@ public class QwpSchemaSmallIntegerTextE2ETest extends AbstractQwpWebSocketTest {
                 assertQuery("select case_id, value, value is null n from " + target.tableName
                         + " order by case_id")
                         .noLeakCheck()
-                        .returnsOnce(expectedValues(vectors, target));
+                        .expectSize().returns(expectedValues(vectors, target));
             }
         });
     }
@@ -119,7 +119,7 @@ public class QwpSchemaSmallIntegerTextE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("select s, v, y, marker, bad, ts from schema_small_integer_text_rows order by ts")
                     .noLeakCheck()
-                    .returnsOnce("s\tv\ty\tmarker\tbad\tts\n"
+                    .expectSize().timestamp("ts").returns("s\tv\ty\tmarker\tbad\tts\n"
                             + "-128\t-32768\t7\t\t\t1970-01-01T00:00:01.000000Z\n"
                             + "127\t32767\t7\t\t\t1970-01-01T00:00:02.000000Z\n");
         });

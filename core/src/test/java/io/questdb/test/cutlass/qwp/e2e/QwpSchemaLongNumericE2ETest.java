@@ -98,9 +98,9 @@ public class QwpSchemaLongNumericE2ETest extends AbstractQwpWebSocketTest {
                 drainWalQueue();
                 String expected = expectedValues(targetVectors, target);
                 assertQuery("select case_id, value from " + schemaTable + " order by case_id")
-                        .noLeakCheck().returnsOnce(expected);
+                        .noLeakCheck().expectSize().returns(expected);
                 assertQuery("select case_id, value from " + legacyTable + " order by case_id")
-                        .noLeakCheck().returnsOnce(expected);
+                        .noLeakCheck().expectSize().returns(expected);
             }
         });
     }
@@ -153,7 +153,7 @@ public class QwpSchemaLongNumericE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select value, only_b from schema_long_rows")
-                    .noLeakCheck().returnsOnce("value\tonly_b\n10\tnull\n20\tnull\n0\tnull\n");
+                    .noLeakCheck().expectSize().returns("value\tonly_b\n10\tnull\n20\tnull\n0\tnull\n");
         });
     }
 
@@ -180,7 +180,7 @@ public class QwpSchemaLongNumericE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select b, s, i, l, f, d from schema_long_nulls")
-                    .noLeakCheck().returnsOnce("b\ts\ti\tl\tf\td\n"
+                    .noLeakCheck().expectSize().returns("b\ts\ti\tl\tf\td\n"
                             + "1\t1\t1\t1\t1.0\t1.0\n"
                             + "0\t0\tnull\tnull\tnull\tnull\n"
                             + "0\t0\tnull\tnull\tnull\tnull\n");
@@ -239,7 +239,7 @@ public class QwpSchemaLongNumericE2ETest extends AbstractQwpWebSocketTest {
         } else {
             expected = missingValues(target, withOmission ? 2 : 1);
         }
-        assertQuery("select value from " + tableName).noLeakCheck().returnsOnce(expected);
+        assertQuery("select value from " + tableName).noLeakCheck().expectSize().returns(expected);
     }
 
     private void assertSchemaLongMin(int port, Target target, boolean withOmission) throws Exception {
@@ -275,7 +275,7 @@ public class QwpSchemaLongNumericE2ETest extends AbstractQwpWebSocketTest {
         }
         drainWalQueue();
         assertQuery("select value from " + tableName).noLeakCheck()
-                .returnsOnce(missingValues(target, withOmission ? 2 : 1));
+                .expectSize().returns(missingValues(target, withOmission ? 2 : 1));
     }
 
     private static String missingValues(Target target, int count) {

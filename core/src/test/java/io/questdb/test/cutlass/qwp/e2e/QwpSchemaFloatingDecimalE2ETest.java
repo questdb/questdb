@@ -54,7 +54,7 @@ public class QwpSchemaFloatingDecimalE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("select \"column\", type from table_columns('schema_floating_decimal_missing') "
                     + "order by \"column\"")
-                    .noLeakCheck().returnsOnce("column\ttype\n"
+                    .noLeakCheck().returns("column\ttype\n"
                             + "d\tDOUBLE\n"
                             + "f\tFLOAT\n"
                             + "timestamp\tTIMESTAMP\n");
@@ -95,7 +95,7 @@ public class QwpSchemaFloatingDecimalE2ETest extends AbstractQwpWebSocketTest {
                 String expected = vector.invalid() ? "value\n"
                         : vector.isNull() ? "value\n\n" : "value\n" + vector.expectedSql + '\n';
                 assertQuery("select value from schema_floating_decimal_" + i + " order by ts")
-                        .noLeakCheck().returnsOnce(expected);
+                        .noLeakCheck().expectSize().returns(expected);
             }
         });
     }
@@ -140,7 +140,7 @@ public class QwpSchemaFloatingDecimalE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("select value, value is null is_null, marker "
                     + "from schema_floating_decimal_recovery order by ts")
-                    .noLeakCheck().returnsOnce("value\tis_null\tmarker\n"
+                    .noLeakCheck().expectSize().returns("value\tis_null\tmarker\n"
                             + "1.0\tfalse\tA\n"
                             + "-2.5\tfalse\tC\n"
                             + "\ttrue\tsource-null\n"
@@ -168,7 +168,7 @@ public class QwpSchemaFloatingDecimalE2ETest extends AbstractQwpWebSocketTest {
             expected += "2\t\t\ttrue\ttrue\n";
         }
         assertQuery("select case_id, f, d, f is null f_null, d is null d_null from "
-                + table + " order by case_id").noLeakCheck().returnsOnce(expected);
+                + table + " order by case_id").noLeakCheck().expectSize().returns(expected);
     }
 
     private static WebSocketClient connectLegacy(int port) {

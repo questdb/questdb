@@ -60,9 +60,9 @@ public class QwpSchemaLong256E2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select type from table_columns('schema_long256_infer') where \"column\" = 'value'")
-                    .noLeakCheck().returnsOnce("type\nLONG256\n");
+                    .noLeakCheck().noRandomAccess().returns("type\nLONG256\n");
             assertQuery("select value, value is null n from schema_long256_infer order by timestamp")
-                    .noLeakCheck().returnsOnce("value\tn\n\ttrue\n"
+                    .noLeakCheck().expectSize().returns("value\tn\n\ttrue\n"
                             + "0x04000000000000000300000000000000020000000000000001\tfalse\n");
         });
     }
@@ -104,7 +104,7 @@ public class QwpSchemaLong256E2ETest extends AbstractQwpWebSocketTest {
                     expected.append('\t').append(vector.isNull()).append('\n');
                 }
                 assertQuery("select case_id, value, value is null n from " + target.tableName + " order by ts")
-                        .noLeakCheck().returnsOnce(expected.toString());
+                        .noLeakCheck().expectSize().returns(expected.toString());
             }
         });
     }
@@ -136,7 +136,7 @@ public class QwpSchemaLong256E2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select value, marker, bad from schema_long256_rows order by ts")
-                    .noLeakCheck().returnsOnce("value\tmarker\tbad\n"
+                    .noLeakCheck().expectSize().returns("value\tmarker\tbad\n"
                             + "0x04000000000000000300000000000000020000000000000001\tA\t\n"
                             + "0x10000000000000000f000000000000000e000000000000000d\tC\t\n");
         });
@@ -201,7 +201,7 @@ public class QwpSchemaLong256E2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select l, s, v, l is null ln, s is null sn, v is null vn from schema_long256_sf order by ts")
-                    .noLeakCheck().returnsOnce("l\ts\tv\tln\tsn\tvn\n"
+                    .noLeakCheck().expectSize().returns("l\ts\tv\tln\tsn\tvn\n"
                             + "0x04000000000000000300000000000000020000000000000001\t"
                             + "0x04000000000000000300000000000000020000000000000001\t"
                             + "0x04000000000000000300000000000000020000000000000001\tfalse\tfalse\tfalse\n"

@@ -163,11 +163,11 @@ public class QwpSchemaStringGeoHashE2ETest extends AbstractQwpWebSocketTest {
                     assertGeoRows("schema_geo_case_" + v.caseId, v.bits,
                             new long[]{v.value}, new boolean[]{v.outcome.equals("NULL")});
                 } else {
-                    assertQuery("select count() from schema_geo_case_" + v.caseId).noLeakCheck().returnsOnce("count\n0\n");
+                    assertQuery("select count() from schema_geo_case_" + v.caseId).noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
                 }
             }
             assertQuery("select marker from schema_geo_recovery order by ts")
-                    .noLeakCheck().returnsOnce("marker\nA\nC\nD\n");
+                    .noLeakCheck().expectSize().returns("marker\nA\nC\nD\n");
             assertGeoRows("schema_geo_recovery", 8,
                     new long[]{0, 0xff, -1}, new boolean[]{false, false, true});
         });
@@ -276,7 +276,7 @@ public class QwpSchemaStringGeoHashE2ETest extends AbstractQwpWebSocketTest {
             assertResponse(client, false, "geohash");
         }
         drainWalQueue();
-        assertQuery("select count() from " + tableName).noLeakCheck().returnsOnce("count\n0\n");
+        assertQuery("select count() from " + tableName).noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
     }
 
     private void assertGeoRows(String table, int bits, long[] values, boolean[] nulls) throws Exception {

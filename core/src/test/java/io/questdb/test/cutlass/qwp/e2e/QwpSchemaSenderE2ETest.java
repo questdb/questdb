@@ -82,10 +82,10 @@ public class QwpSchemaSenderE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("select count() from schema_sender_denied")
                     .noLeakCheck()
-                    .returnsOnce("count\n0\n");
+                    .expectSize().noRandomAccess().returns("count\n0\n");
             assertQuery("select marker, id from schema_sender_allowed")
                     .noLeakCheck()
-                    .returnsOnce("marker\tid\nallowed\tbbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb\n");
+                    .expectSize().returns("marker\tid\nallowed\tbbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb\n");
         }, context);
     }
 
@@ -112,7 +112,7 @@ public class QwpSchemaSenderE2ETest extends AbstractQwpWebSocketTest {
                 drainWalQueue();
                 assertQuery("select marker, id from schema_sender_lifecycle")
                         .noLeakCheck()
-                        .returnsOnce("marker\tid\nauto\taaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n");
+                        .expectSize().returns("marker\tid\nauto\taaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n");
             }
 
             try (Sender sender = connectWs(
@@ -137,7 +137,7 @@ public class QwpSchemaSenderE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("select marker, id from schema_sender_lifecycle order by marker")
                     .noLeakCheck()
-                    .returnsOnce("marker\tid\n"
+                    .expectSize().returns("marker\tid\n"
                             + "auto\taaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n"
                             + "close\tcccccccc-cccc-cccc-cccc-cccccccccccc\n");
         });
@@ -191,22 +191,22 @@ public class QwpSchemaSenderE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("select marker, id from schema_sender_missing order by marker")
                     .noLeakCheck()
-                    .returnsOnce("marker\tid\n"
+                    .expectSize().returns("marker\tid\n"
                             + "inferred-a\taaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n"
                             + "inferred-c\tcccccccc-cccc-cccc-cccc-cccccccccccc\n");
             assertQuery("select count() from table_columns('schema_sender_missing') "
                     + "where \"column\" = 'failed_only'")
                     .noLeakCheck()
-                    .returnsOnce("count\n0\n");
+                    .expectSize().noRandomAccess().returns("count\n0\n");
             assertQuery("select \"column\", type from table_columns('schema_sender_missing') order by \"column\"")
                     .noLeakCheck()
-                    .returnsOnce("column\ttype\n"
+                    .returns("column\ttype\n"
                             + "id\tUUID\n"
                             + "marker\tVARCHAR\n"
                             + "timestamp\tTIMESTAMP\n");
             assertQuery("select marker, id from schema_sender_known")
                     .noLeakCheck()
-                    .returnsOnce("marker\tid\nknown\tbbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb\n");
+                    .expectSize().returns("marker\tid\nknown\tbbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb\n");
         });
     }
 
@@ -230,7 +230,7 @@ public class QwpSchemaSenderE2ETest extends AbstractQwpWebSocketTest {
 
                 assertQuery("select count() from schema_sender_stale")
                         .noLeakCheck()
-                        .returnsOnce("count\n0\n");
+                        .expectSize().noRandomAccess().returns("count\n0\n");
                 execute("alter table schema_sender_stale drop column id");
                 execute("alter table schema_sender_stale add column id varchar");
 
@@ -267,7 +267,7 @@ public class QwpSchemaSenderE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("select marker, id, failed_b from schema_sender_stale order by marker")
                     .noLeakCheck()
-                    .returnsOnce("marker\tid\tfailed_b\n"
+                    .expectSize().returns("marker\tid\tfailed_b\n"
                             + "A\taaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\t\n"
                             + "C\tnot-a-uuid\t\n");
         });
@@ -311,7 +311,7 @@ public class QwpSchemaSenderE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("select marker, id, failed_b, unrelated from schema_sender_unrelated order by marker")
                     .noLeakCheck()
-                    .returnsOnce("marker\tid\tfailed_b\tunrelated\n"
+                    .expectSize().returns("marker\tid\tfailed_b\tunrelated\n"
                             + "A\taaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\t\tnull\n"
                             + "C\tcccccccc-cccc-cccc-cccc-cccccccccccc\t\tnull\n");
         });
@@ -373,7 +373,7 @@ public class QwpSchemaSenderE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("select marker, id, failed_b from schema_sender_uuid order by marker")
                     .noLeakCheck()
-                    .returnsOnce("marker\tid\tfailed_b\n"
+                    .expectSize().returns("marker\tid\tfailed_b\n"
                             + "A\t11111111-1111-1111-1111-111111111111\t\n"
                             + "C\t123e4567-e89b-12d3-a456-426614174000\t\n");
         });
@@ -433,17 +433,17 @@ public class QwpSchemaSenderE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("select count() rows_count, count(marker) marker_count from " + tableName)
                     .noLeakCheck()
-                    .returnsOnce("rows_count\tmarker_count\n3\t2\n");
+                    .expectSize().noRandomAccess().returns("rows_count\tmarker_count\n3\t2\n");
             assertQuery("select marker, cast(ts as long) ts from " + tableName
                     + " where marker is not null order by ts")
                     .noLeakCheck()
-                    .returnsOnce("marker\tts\n"
+                    .returns("marker\tts\n"
                             + "primitive\t" + primitiveValue + "\n"
                             + "instant\t" + instantValue + "\n");
             assertQuery("select count() from " + tableName
                     + " where marker is null and cast(ts as long) > " + instantValue)
                     .noLeakCheck()
-                    .returnsOnce("count\n1\n");
+                    .expectSize().noRandomAccess().returns("count\n1\n");
         });
     }
 }

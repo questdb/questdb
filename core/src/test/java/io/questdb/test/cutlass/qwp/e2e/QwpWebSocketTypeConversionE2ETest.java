@@ -94,7 +94,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             drainWalQueue();
             assertQuery("SELECT col, col is null n FROM tc_bool_str ORDER BY ts")
                     .noLeakCheck()
-                    .returnsOnce("col\tn\ntrue\tfalse\n\ttrue\nfalse\tfalse\n\ttrue\ntrue\tfalse\n");
+                    .expectSize().returns("col\tn\ntrue\tfalse\n\ttrue\nfalse\tfalse\n\ttrue\ntrue\tfalse\n");
         });
     }
 
@@ -190,7 +190,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             drainWalQueue();
             assertQuery("SELECT col, col is null n FROM tc_bool_vc ORDER BY ts")
                     .noLeakCheck()
-                    .returnsOnce("col\tn\nfalse\tfalse\n\ttrue\ntrue\tfalse\n\ttrue\nfalse\tfalse\n");
+                    .expectSize().returns("col\tn\nfalse\tfalse\n\ttrue\ntrue\tfalse\n\ttrue\nfalse\tfalse\n");
         });
     }
 

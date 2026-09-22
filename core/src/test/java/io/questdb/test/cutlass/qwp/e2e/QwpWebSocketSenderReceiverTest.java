@@ -943,7 +943,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("SELECT value FROM ws_test_col_type_mismatch ORDER BY timestamp")
                     .noLeakCheck()
-                    .returnsOnce("value\n42\n3\n");
+                    .expectSize().returns("value\n42\n3\n");
         });
     }
 

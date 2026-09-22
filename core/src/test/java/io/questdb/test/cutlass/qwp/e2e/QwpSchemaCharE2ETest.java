@@ -227,7 +227,7 @@ public class QwpSchemaCharE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select value, marker, bad, wrong, ts from schema_char_rows order by ts")
-                    .noLeakCheck().returnsOnce("value\tmarker\tbad\twrong\tts\n\tnull-first\t\tnull\t1970-01-01T00:00:00.000000Z\nA\tA\t\tnull\t1970-01-01T00:00:00.000001Z\nC\tC\t\tnull\t1970-01-01T00:00:00.000002Z\n\tD\t\tnull\t1970-01-01T00:00:00.000003Z\n");
+                    .noLeakCheck().expectSize().timestamp("ts").returns("value\tmarker\tbad\twrong\tts\n\tnull-first\t\tnull\t1970-01-01T00:00:00.000000Z\nA\tA\t\tnull\t1970-01-01T00:00:00.000001Z\nC\tC\t\tnull\t1970-01-01T00:00:00.000002Z\n\tD\t\tnull\t1970-01-01T00:00:00.000003Z\n");
         });
     }
 
@@ -244,7 +244,7 @@ public class QwpSchemaCharE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select value, value is null n, timestamp from schema_char_inferred order by timestamp")
-                    .noLeakCheck().returnsOnce("value\tn\ttimestamp\nA\tfalse\t1970-01-01T00:00:00.000001Z\n€\tfalse\t1970-01-01T00:00:00.000002Z\n");
+                    .noLeakCheck().expectSize().timestamp("timestamp").returns("value\tn\ttimestamp\nA\tfalse\t1970-01-01T00:00:00.000001Z\n€\tfalse\t1970-01-01T00:00:00.000002Z\n");
         });
     }
 

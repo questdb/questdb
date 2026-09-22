@@ -75,7 +75,7 @@ public class QwpSchemaStringLong256E2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select value, value is null n from legacy_string_l256 order by ts")
-                    .noLeakCheck().returnsOnce("value\tn\n0x0123456789abcdeffedcba9876543210\tfalse\n\ttrue\n\ttrue\n");
+                    .noLeakCheck().expectSize().returns("value\tn\n0x0123456789abcdeffedcba9876543210\tfalse\n\ttrue\n\ttrue\n");
 
             assertLegacyRejected(port, "0x0", "odd_digits");
             assertLegacyRejected(port,
@@ -155,7 +155,7 @@ public class QwpSchemaStringLong256E2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select value, marker, value is null n from schema_string_l256_rows order by ts")
-                    .noLeakCheck().returnsOnce("value\tmarker\tn\n\tA\ttrue\n0xff\tC\tfalse\n\tD\ttrue\n");
+                    .noLeakCheck().expectSize().returns("value\tmarker\tn\n\tA\ttrue\n0xff\tC\tfalse\n\tD\ttrue\n");
         });
     }
 
@@ -173,7 +173,7 @@ public class QwpSchemaStringLong256E2ETest extends AbstractQwpWebSocketTest {
             assertResponse(client, false, 0, "long256");
         }
         drainWalQueue();
-        assertQuery("select count() from " + tableName).noLeakCheck().returnsOnce("count\n0\n");
+        assertQuery("select count() from " + tableName).noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
     }
 
     private static WebSocketClient connectLegacy(int port) {

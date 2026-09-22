@@ -140,7 +140,7 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
             }
             drainWalQueue();
             assertQuery("select n from feedback_coordinator order by n").noLeakCheck()
-                    .returnsOnce("n\n42\n43\n2147483648\n");
+                    .expectSize().returns("n\n42\n43\n2147483648\n");
         }, 65_536, Integer.MAX_VALUE, 1);
     }
 
@@ -196,7 +196,7 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
             }
             drainWalQueue();
             assertQuery("select n from feedback_evolution order by n").noLeakCheck()
-                    .returnsOnce("n\n42\n2147483648\n");
+                    .expectSize().returns("n\n42\n2147483648\n");
         });
     }
 

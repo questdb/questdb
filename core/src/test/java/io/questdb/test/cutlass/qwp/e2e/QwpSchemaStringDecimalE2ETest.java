@@ -70,7 +70,7 @@ public class QwpSchemaStringDecimalE2ETest extends AbstractQwpWebSocketTest {
                 String expected = vector.invalid() ? "value\n"
                         : vector.isNull() ? "value\n\n" : "value\n" + vector.expectedSql + '\n';
                 assertQuery("select value from schema_string_decimal_" + i + " order by ts")
-                        .noLeakCheck().returnsOnce(expected);
+                        .noLeakCheck().expectSize().returns(expected);
             }
         });
         for (int i = 0; i < targets.length; i++) {
@@ -113,7 +113,7 @@ public class QwpSchemaStringDecimalE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("select value, value is null as is_null, marker "
                     + "from schema_string_decimal_recovery order by ts")
-                    .noLeakCheck().returnsOnce(
+                    .noLeakCheck().expectSize().returns(
                             "value\tis_null\tmarker\n"
                                     + "1.0\tfalse\tA\n"
                                     + "-2.5\tfalse\tC\n"
@@ -136,9 +136,9 @@ public class QwpSchemaStringDecimalE2ETest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             assertQuery("select value is null as is_null from legacy_string_decimal_nan")
-                    .noLeakCheck().returnsOnce("is_null\ntrue\n");
+                    .noLeakCheck().expectSize().returns("is_null\ntrue\n");
             assertQuery("select count() from legacy_string_decimal_empty")
-                    .noLeakCheck().returnsOnce("count\n0\n");
+                    .noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
         });
     }
 

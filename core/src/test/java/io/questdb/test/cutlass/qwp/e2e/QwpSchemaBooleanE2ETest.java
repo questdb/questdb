@@ -260,9 +260,9 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select i, s, i is null ni, s is null ns from schema_bool_missing")
-                    .noLeakCheck().returnsOnce("i\ts\tni\tns\n1\ttrue\tfalse\tfalse\nnull\t\ttrue\ttrue\n");
+                    .noLeakCheck().expectSize().returns("i\ts\tni\tns\n1\ttrue\tfalse\tfalse\nnull\t\ttrue\ttrue\n");
             assertQuery("select i, s, i is null ni, s is null ns from legacy_bool_missing")
-                    .noLeakCheck().returnsOnce("i\ts\tni\tns\n1\ttrue\tfalse\tfalse\n0\tfalse\tfalse\tfalse\n");
+                    .noLeakCheck().expectSize().returns("i\ts\tni\tns\n1\ttrue\tfalse\tfalse\n0\tfalse\tfalse\tfalse\n");
         });
     }
 
@@ -301,7 +301,7 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select value, only_b, unsupported, unsupported is null u from schema_bool_rows")
-                    .noLeakCheck().returnsOnce("value\tonly_b\tunsupported\tu\ntrue\tnull\t\ttrue\nfalse\tnull\t\ttrue\ntrue\tnull\t\ttrue\n");
+                    .noLeakCheck().expectSize().returns("value\tonly_b\tunsupported\tu\ntrue\tnull\t\ttrue\nfalse\tnull\t\ttrue\ntrue\tnull\t\ttrue\n");
         });
     }
 
@@ -338,7 +338,7 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select b, n, s from schema_bool_replay")
-                    .noLeakCheck().returnsOnce("b\tn\ts\ntrue\t0\ttrue\n");
+                    .noLeakCheck().expectSize().returns("b\tn\ts\ntrue\t0\ttrue\n");
         });
     }
 

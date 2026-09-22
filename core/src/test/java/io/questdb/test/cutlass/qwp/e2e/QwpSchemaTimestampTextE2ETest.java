@@ -82,7 +82,7 @@ public class QwpSchemaTimestampTextE2ETest extends AbstractQwpWebSocketTest {
                 }
                 assertQuery("select case_id, v, v is null n from schema_timestamp_text_"
                         + target.name().toLowerCase(Locale.ROOT) + " order by case_id")
-                        .noLeakCheck().returnsOnce(expected.toString());
+                        .noLeakCheck().expectSize().returns(expected.toString());
             }
         });
     }
@@ -135,7 +135,7 @@ public class QwpSchemaTimestampTextE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select v, v is null n, marker, ts from schema_timestamp_text_rows order by ts")
-                    .noLeakCheck().returnsOnce("v\tn\tmarker\tts\n"
+                    .noLeakCheck().expectSize().timestamp("ts").returns("v\tn\tmarker\tts\n"
                             + "\tfalse\tA\t1970-01-01T00:00:01.000000Z\n"
                             + "1970-01-01T00:00:01.000Z\tfalse\tC\t1970-01-01T00:00:02.000000Z\n");
         });
@@ -173,7 +173,7 @@ public class QwpSchemaTimestampTextE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select v, marker, ts from schema_timestamp_text_guards")
-                    .noLeakCheck().returnsOnce("v\tmarker\tts\n"
+                    .noLeakCheck().expectSize().timestamp("ts").returns("v\tmarker\tts\n"
                             + "1970-01-01T00:00:02.000Z\tC\t1970-01-01T00:00:03.000000Z\n");
         });
     }
@@ -231,7 +231,7 @@ public class QwpSchemaTimestampTextE2ETest extends AbstractQwpWebSocketTest {
             expected += "\ttrue\n";
         }
         assertQuery("select v, v is null n from " + tableName + " order by n")
-                .noLeakCheck().returnsOnce(expected);
+                .noLeakCheck().expectSize().returns(expected);
     }
 
     private static List<Vector> readVectors() throws Exception {

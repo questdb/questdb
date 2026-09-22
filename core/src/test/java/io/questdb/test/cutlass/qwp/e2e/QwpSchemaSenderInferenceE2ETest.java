@@ -62,14 +62,14 @@ public class QwpSchemaSenderInferenceE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("select marker, added, cast(ts as long) ts from schema_infer_column order by marker")
                     .noLeakCheck()
-                    .returnsOnce("marker\tadded\tts\nA\t7\t1000000\nC\t8\t2000000\n");
+                    .expectSize().returns("marker\tadded\tts\nA\t7\t1000000\nC\t8\t2000000\n");
             assertQuery("select count() from table_columns('schema_infer_column') "
                     + "where \"column\" = 'failed_only'")
                     .noLeakCheck()
-                    .returnsOnce("count\n0\n");
+                    .expectSize().noRandomAccess().returns("count\n0\n");
             assertQuery("select type from table_columns('schema_infer_column') where \"column\" = 'added'")
                     .noLeakCheck()
-                    .returnsOnce("type\nLONG\n");
+                    .noRandomAccess().returns("type\nLONG\n");
         });
     }
 
@@ -90,7 +90,7 @@ public class QwpSchemaSenderInferenceE2ETest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             assertQuery("select count() from schema_infer_at_now")
-                    .noLeakCheck().returnsOnce("count\n1\n");
+                    .noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
             assertTimestampOnlyTable("schema_infer_at_now", "TIMESTAMP", null);
             assertTimestampOnlyTable("schema_infer_at_micro", "TIMESTAMP", 1_234_567L);
             assertTimestampOnlyTable("schema_infer_at_nano", "TIMESTAMP_NS", 2_345_678_901L);
@@ -149,10 +149,10 @@ public class QwpSchemaSenderInferenceE2ETest extends AbstractQwpWebSocketTest {
             );
             drainWalQueue();
             assertQuery("select count() from schema_infer_add_denied")
-                    .noLeakCheck().returnsOnce("count\n0\n");
+                    .noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
             assertQuery("select count() from table_columns('schema_infer_add_denied') "
                     + "where \"column\" = 'added'")
-                    .noLeakCheck().returnsOnce("count\n0\n");
+                    .noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
         }, context);
     }
 
@@ -210,18 +210,18 @@ public class QwpSchemaSenderInferenceE2ETest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             assertQuery("select count() from schema_infer_no_designated")
-                    .noLeakCheck().returnsOnce("count\n0\n");
+                    .noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
             assertQuery("select marker from schema_infer_after_reject")
-                    .noLeakCheck().returnsOnce("marker\naccepted\n");
+                    .noLeakCheck().expectSize().returns("marker\naccepted\n");
         });
     }
 
     private void assertTimestampOnlyTable(String table, String expectedType, Long expectedValue) throws Exception {
         assertQuery("select type from table_columns('" + table + "') where \"column\" = 'timestamp'")
-                .noLeakCheck().returnsOnce("type\n" + expectedType + "\n");
+                .noLeakCheck().noRandomAccess().returns("type\n" + expectedType + "\n");
         if (expectedValue != null) {
             assertQuery("select cast(timestamp as long) timestamp from " + table)
-                    .noLeakCheck().returnsOnce("timestamp\n" + expectedValue + "\n");
+                    .noLeakCheck().expectSize().returns("timestamp\n" + expectedValue + "\n");
         }
     }
 

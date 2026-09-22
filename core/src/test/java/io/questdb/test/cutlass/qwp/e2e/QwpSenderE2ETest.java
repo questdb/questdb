@@ -580,7 +580,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
             assertQuery("select count() from tables() where table_name = 'dummy'")
                     .noLeakCheck()
-                    .returnsOnce("count\n0\n");
+                    .expectSize().noRandomAccess().returns("count\n0\n");
         });
     }
 
@@ -1074,7 +1074,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertQuery("select v from " + table).noLeakCheck().returnsOnce("v\n1970-01-02T00:00:00.000Z\n");
+            assertQuery("select v from " + table).noLeakCheck().expectSize().returns("v\n1970-01-02T00:00:00.000Z\n");
         });
     }
 
@@ -1418,7 +1418,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertQuery("select v from " + table).noLeakCheck().returnsOnce("v\n[5.0,6.0]\n");
+            assertQuery("select v from " + table).noLeakCheck().expectSize().returns("v\n[5.0,6.0]\n");
         });
     }
 
@@ -1444,8 +1444,8 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertQuery("select v from " + existing).noLeakCheck().returnsOnce("v\n[1.0,2.0]\n");
-            assertQuery("select v from " + autoCreate).noLeakCheck().returnsOnce("v\n[5.0,6.0]\n");
+            assertQuery("select v from " + existing).noLeakCheck().expectSize().returns("v\n[1.0,2.0]\n");
+            assertQuery("select v from " + autoCreate).noLeakCheck().expectSize().returns("v\n[5.0,6.0]\n");
         });
     }
 
@@ -1600,7 +1600,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertQuery("SELECT v FROM " + table).noLeakCheck().returnsOnce("v\ns24se\n");
+            assertQuery("SELECT v FROM " + table).noLeakCheck().expectSize().returns("v\ns24se\n");
         });
     }
 
@@ -1917,7 +1917,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("SELECT s, v FROM " + table)
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .expectSize().returns("""
                             s\tv
                             Ω\tΩ
                             """);
@@ -2894,7 +2894,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     .returnsOnce("px\n1.5\n");
             assertQuery("SELECT count(), min(id), max(id) FROM defer_mismatch_b")
                     .noLeakCheck()
-                    .returnsOnce("count\tmin\tmax\n11\t0\t10\n");
+                    .expectSize().noRandomAccess().returns("count\tmin\tmax\n11\t0\t10\n");
         });
     }
 
@@ -4857,8 +4857,8 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     String expected = target.equals("byte") || target.equals("short")
                             ? "v\tn\n0\tfalse\n"
                             : "v\tn\nnull\ttrue\n";
-                    assertQuery("select v, v is null n from " + plain).noLeakCheck().returnsOnce(expected);
-                    assertQuery("select count() from " + bitmap).noLeakCheck().returnsOnce("count\n0\n");
+                    assertQuery("select v, v is null n from " + plain).noLeakCheck().expectSize().returns(expected);
+                    assertQuery("select count() from " + bitmap).noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
                 }
             }
         });
@@ -4881,11 +4881,11 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     Double.doubleToRawLongBits(Math.nextUp(0x1.0p63)));
             drainWalQueue();
             assertQuery("select source, v from float_long_edge order by source")
-                    .noLeakCheck().returnsOnce("source\tv\nat\t9223372036854775807\nbelow\t9223371487098961920\n");
+                    .noLeakCheck().expectSize().returns("source\tv\nat\t9223372036854775807\nbelow\t9223371487098961920\n");
             assertQuery("select source, v from double_long_edge order by source")
-                    .noLeakCheck().returnsOnce("source\tv\nat\t9223372036854775807\nbelow\t9223372036854774784\n");
-            assertQuery("select count() from float_long_above").noLeakCheck().returnsOnce("count\n0\n");
-            assertQuery("select count() from double_long_above").noLeakCheck().returnsOnce("count\n0\n");
+                    .noLeakCheck().expectSize().returns("source\tv\nat\t9223372036854775807\nbelow\t9223372036854774784\n");
+            assertQuery("select count() from float_long_above").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+            assertQuery("select count() from double_long_above").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
         });
     }
 
@@ -4918,9 +4918,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select v, v is null n from schema_nan_public order by ts")
-                    .noLeakCheck().returnsOnce("v\tn\nnull\ttrue\nnull\ttrue\nnull\ttrue\n");
+                    .noLeakCheck().expectSize().returns("v\tn\nnull\ttrue\nnull\ttrue\nnull\ttrue\n");
             assertQuery("select marker, v from schema_long_edge_public order by ts")
-                    .noLeakCheck().returnsOnce("marker\tv\n1\t1\n4\t4\n");
+                    .noLeakCheck().expectSize().returns("marker\tv\n1\t1\n4\t4\n");
         });
     }
 
@@ -5075,7 +5075,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 "type coercion from BINARY to " + targetType + " is not supported"));
         Assert.assertTrue(response.getErrorMessage(), response.getErrorMessage().contains("column=v"));
         drainWalQueue();
-        assertQuery("select count() from " + tableName).noLeakCheck().returnsOnce("count\n0\n");
+        assertQuery("select count() from " + tableName).noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
 
         try (QwpWebSocketSender sender = connectWs(port)) {
             sender.table(tableName).longColumn("marker", 1);
@@ -5086,7 +5086,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             sender.flush();
         }
         drainWalQueue();
-        assertQuery("select marker from " + tableName).noLeakCheck().returnsOnce("marker\n2\n");
+        assertQuery("select marker from " + tableName).noLeakCheck().expectSize().returns("marker\n2\n");
     }
 
     private static void assertBytes(byte[] expected, Utf8Sequence actual) {

@@ -82,7 +82,7 @@ public class QwpSchemaIntIpv4E2ETest extends AbstractQwpWebSocketTest {
             assertQuery("select coalesce(value::string, 'null') value, marker "
                     + "from schema_int_ipv4 order by ts")
                     .noLeakCheck()
-                    .returnsOnce("value\tmarker\n"
+                    .expectSize().returns("value\tmarker\n"
                             + "null\tint-null\n"
                             + "null\tipv4-null\n"
                             + "0.0.0.1\tone\n"

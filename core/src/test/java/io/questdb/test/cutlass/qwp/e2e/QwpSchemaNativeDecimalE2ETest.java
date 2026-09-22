@@ -73,7 +73,7 @@ public class QwpSchemaNativeDecimalE2ETest extends AbstractQwpWebSocketTest {
                 Vector v = vectors.get(i);
                 String expected = v.outcome.equals("VALUE") ? "value\n" + v.expectedSql + "\n" : "value\n";
                 assertQuery("select value from schema_decimal_" + i + " order by ts")
-                        .noLeakCheck().returnsOnce(expected);
+                        .noLeakCheck().expectSize().returns(expected);
             }
         });
         for (int source = 0; source < 3; source++) {
@@ -129,7 +129,7 @@ public class QwpSchemaNativeDecimalE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("select value, value is null as is_null, marker from schema_decimal_recovery order by ts")
-                    .noLeakCheck().returnsOnce(
+                    .noLeakCheck().expectSize().returns(
                             "value\tis_null\tmarker\n"
                                     + "1.2\tfalse\tA\n"
                                     + "\ttrue\tomitted\n"
@@ -192,7 +192,7 @@ public class QwpSchemaNativeDecimalE2ETest extends AbstractQwpWebSocketTest {
         }
         drainWalQueue();
         assertQuery("select count(), count(value) from " + tableName)
-                .noLeakCheck().returnsOnce(success
+                .noLeakCheck().expectSize().noRandomAccess().returns(success
                         ? (bitmap ? "count\tcount1\n2\t0\n" : "count\tcount1\n1\t0\n")
                         : "count\tcount1\n0\t0\n");
     }

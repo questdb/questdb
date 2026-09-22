@@ -87,7 +87,7 @@ public class QwpSchemaSmallIntegerDecimalE2ETest extends AbstractQwpWebSocketTes
                         : vector.isNull() ? "value\n\n" : "value\n" + vector.expectedSql + '\n';
                 assertQuery("select value from schema_small_integer_decimal_" + i + " order by ts")
                         .noLeakCheck()
-                        .returnsOnce(expected);
+                        .expectSize().returns(expected);
             }
         });
     }
@@ -134,7 +134,7 @@ public class QwpSchemaSmallIntegerDecimalE2ETest extends AbstractQwpWebSocketTes
             assertQuery("select value, value is null n, marker "
                     + "from schema_small_integer_decimal_rows order by ts")
                     .noLeakCheck()
-                    .returnsOnce("value\tn\tmarker\n"
+                    .expectSize().returns("value\tn\tmarker\n"
                             + "42.00\tfalse\tA\n"
                             + "-7.00\tfalse\tC\n"
                             + "\ttrue\tsource-null\n"
