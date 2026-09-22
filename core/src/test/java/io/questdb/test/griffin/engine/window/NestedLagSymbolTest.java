@@ -33,6 +33,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.List;
+
 public class NestedLagSymbolTest extends AbstractCairoTest {
 
     @Test
@@ -348,6 +350,94 @@ public class NestedLagSymbolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLagLeadSymbolOverPartitionExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            createPartitionedSymbols();
+            for (String function : List.of("lag", "lead")) {
+                String expected = function.equals("lag")
+                        ? """
+                        id\tneighbor
+                        1\t
+                        2\t
+                        3\ta
+                        4\tx
+                        5\t
+                        6\t
+                        7\tb
+                        8\ty
+                        9\tc
+                        10\tz
+                        """
+                        : """
+                        id\tneighbor
+                        1\t
+                        2\t
+                        3\tb
+                        4\ty
+                        5\tc
+                        6\tz
+                        7\td
+                        8\tw
+                        9\t
+                        10\t
+                        """;
+                for (String orderBy : List.of("", " ORDER BY id")) {
+                    boolean isCached = function.equals("lead") || !orderBy.isEmpty();
+                    assertQuery("SELECT id, " + function + "(sym) OVER (PARTITION BY grp::SYMBOL" + orderBy + ") neighbor FROM symbols")
+                            .noLeakCheck()
+                            .expectSize()
+                            .supportsRandomAccess(isCached)
+                            .withPlanContaining(isCached ? "CachedWindowLight" : "Window\n")
+                            .returns(expected);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLagLeadSymbolOverPartitionIgnoreNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            createPartitionedSymbols();
+            for (String function : List.of("lag", "lead")) {
+                assertQuery("SELECT id, " +
+                        function + "(sym) IGNORE NULLS OVER (PARTITION BY grp) skipped, " +
+                        function + "(sym) RESPECT NULLS OVER (PARTITION BY grp) kept FROM symbols")
+                        .noLeakCheck()
+                        .expectSize()
+                        .supportsRandomAccess(function.equals("lead"))
+                        .withPlanContaining(function.equals("lead") ? "CachedWindowLight" : "Window\n")
+                        .returns(function.equals("lag")
+                                ? """
+                                id\tskipped\tkept
+                                1\t\t
+                                2\t\t
+                                3\ta\ta
+                                4\tx\tx
+                                5\ta\t
+                                6\tx\t
+                                7\tb\tb
+                                8\ty\ty
+                                9\tc\tc
+                                10\tz\tz
+                                """
+                                : """
+                                id\tskipped\tkept
+                                1\tb\t
+                                2\ty\t
+                                3\tb\tb
+                                4\ty\ty
+                                5\tc\tc
+                                6\tz\tz
+                                7\td\td
+                                8\tw\tw
+                                9\t\t
+                                10\t\t
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testLagLeadSymbolOverPartitionRepeatedCursorsStayUnderQueryMemoryLimit() throws Exception {
         // Each cursor run must release what it charged: a leaked or asymmetric charge would
         // accumulate across the runs and breach the limit, or drive the counter negative.
@@ -410,31 +500,48 @@ public class NestedLagSymbolTest extends AbstractCairoTest {
     @Test
     public void testLagOffsetOverSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
-                    "CREATE TABLE balances (" +
-                            "  sym SYMBOL," +
-                            "  quantity DOUBLE," +
-                            "  ts TIMESTAMP" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY"
-            );
-            execute(
-                    "INSERT INTO balances VALUES" +
-                            " ('a', 1.0, '2024-01-01T00:00:00.000000Z')," +
-                            " ('a', 2.0, '2024-01-01T00:01:00.000000Z')," +
-                            " ('a', 3.0, '2024-01-01T00:02:00.000000Z')"
-            );
-
-            assertQuery(
-                    "SELECT sym," +
-                            "   LAG(sym, 1) OVER (PARTITION BY sym ORDER BY ts) AS prev_sym," +
-                            "   LAG(sym, 2) OVER (PARTITION BY sym ORDER BY ts) AS prev_prev_sym" +
-                            " FROM balances"
-            ).noRandomAccess().expectSize().returns(
-                    "sym\tprev_sym\tprev_prev_sym\n" +
-                            "a\t\t\n" +
-                            "a\ta\t\n" +
-                            "a\ta\ta\n"
-            );
+            createPartitionedSymbols();
+            assertQuery("""
+                    SELECT id,
+                        LAG(sym, 1) OVER (PARTITION BY grp ORDER BY ts) prev_sym,
+                        LAG(sym, 2) OVER (PARTITION BY grp ORDER BY ts) prev_prev_sym
+                    FROM symbols
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Window\n")
+                    .returns("""
+                            id\tprev_sym\tprev_prev_sym
+                            1\t\t
+                            2\t\t
+                            3\ta\t
+                            4\tx\t
+                            5\t\ta
+                            6\t\tx
+                            7\tb\t
+                            8\ty\t
+                            9\tc\tb
+                            10\tz\ty
+                            """);
+            assertQuery("SELECT id, LAG(sym, 2) OVER () prev_sym FROM symbols")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Window\n")
+                    .returns("""
+                            id\tprev_sym
+                            1\t
+                            2\t
+                            3\ta
+                            4\tx
+                            5\t
+                            6\t
+                            7\tb
+                            8\ty
+                            9\tc
+                            10\tz
+                            """);
         });
     }
 
@@ -469,34 +576,59 @@ public class NestedLagSymbolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLagSymbolZeroOffset() throws Exception {
+        assertZeroOffset("lag");
+    }
+
+    @Test
     public void testLeadOffsetOverSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
-                    "CREATE TABLE balances (" +
-                            "  sym SYMBOL," +
-                            "  quantity DOUBLE," +
-                            "  ts TIMESTAMP" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY"
-            );
-            execute(
-                    "INSERT INTO balances VALUES" +
-                            " ('a', 1.0, '2024-01-01T00:00:00.000000Z')," +
-                            " ('a', 2.0, '2024-01-01T00:01:00.000000Z')," +
-                            " ('a', 3.0, '2024-01-01T00:02:00.000000Z')"
-            );
-
-            assertQuery(
-                    "SELECT sym," +
-                            "   LEAD(sym, 1) OVER (PARTITION BY sym ORDER BY ts) AS next_sym," +
-                            "   LEAD(sym, 2) OVER (PARTITION BY sym ORDER BY ts) AS next_next_sym" +
-                            " FROM balances"
-            ).expectSize().returns(
-                    "sym\tnext_sym\tnext_next_sym\n" +
-                            "a\ta\ta\n" +
-                            "a\ta\t\n" +
-                            "a\t\t\n"
-            );
+            createPartitionedSymbols();
+            assertQuery("""
+                    SELECT id,
+                        LEAD(sym, 1) OVER (PARTITION BY grp ORDER BY ts) next_sym,
+                        LEAD(sym, 2) OVER (PARTITION BY grp ORDER BY ts) next_next_sym
+                    FROM symbols
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("CachedWindowLight")
+                    .returns("""
+                            id\tnext_sym\tnext_next_sym
+                            1\t\tb
+                            2\t\ty
+                            3\tb\tc
+                            4\ty\tz
+                            5\tc\td
+                            6\tz\tw
+                            7\td\t
+                            8\tw\t
+                            9\t\t
+                            10\t\t
+                            """);
+            assertQuery("SELECT id, LEAD(sym, 2) OVER () next_sym FROM symbols")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("CachedWindowLight")
+                    .returns("""
+                            id\tnext_sym
+                            1\t
+                            2\t
+                            3\tb
+                            4\ty
+                            5\tc
+                            6\tz
+                            7\td
+                            8\tw
+                            9\t
+                            10\t
+                            """);
         });
+    }
+
+    @Test
+    public void testLeadSymbolZeroOffset() throws Exception {
+        assertZeroOffset("lead");
     }
 
     @Test
@@ -590,5 +722,50 @@ public class NestedLagSymbolTest extends AbstractCairoTest {
                             "2024-01-01T00:00:00.000000Z\n"
             );
         });
+    }
+
+    private void assertZeroOffset(String function) throws Exception {
+        assertMemoryLeak(() -> {
+            createPartitionedSymbols();
+            for (String over : List.of("", "PARTITION BY grp", "PARTITION BY grp ORDER BY id DESC")) {
+                for (String nullTreatment : List.of("", "IGNORE NULLS")) {
+                    assertQuery("SELECT id, " + function + "(sym, 0) " + nullTreatment + " OVER (" + over + ") current_sym FROM symbols ORDER BY id")
+                            .noLeakCheck()
+                            .expectSize()
+                            .withPlanContaining(over.contains("ORDER BY") ? "CachedWindowLight" : "Window\n")
+                            .returns("""
+                                    id\tcurrent_sym
+                                    1\ta
+                                    2\tx
+                                    3\t
+                                    4\t
+                                    5\tb
+                                    6\ty
+                                    7\tc
+                                    8\tz
+                                    9\td
+                                    10\tw
+                                    """);
+                }
+            }
+        });
+    }
+
+    private void createPartitionedSymbols() throws Exception {
+        execute("CREATE TABLE symbols (id INT, grp STRING, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        // Interleaved groups, distinct values and NULLs make wrong keys and ring indices visible.
+        execute("""
+                INSERT INTO symbols VALUES
+                (1, 'a', 'a', '2024-01-01T00:00:01'),
+                (2, 'b', 'x', '2024-01-01T00:00:02'),
+                (3, 'a', NULL, '2024-01-01T00:00:03'),
+                (4, 'b', NULL, '2024-01-01T00:00:04'),
+                (5, 'a', 'b', '2024-01-01T00:00:05'),
+                (6, 'b', 'y', '2024-01-01T00:00:06'),
+                (7, 'a', 'c', '2024-01-01T00:00:07'),
+                (8, 'b', 'z', '2024-01-01T00:00:08'),
+                (9, 'a', 'd', '2024-01-01T00:00:09'),
+                (10, 'b', 'w', '2024-01-01T00:00:10')
+                """);
     }
 }
