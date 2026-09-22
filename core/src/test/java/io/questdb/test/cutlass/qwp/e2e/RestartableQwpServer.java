@@ -58,6 +58,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * QWP WebSocket processor, so tests can stop/start it across the same port
  * without losing the underlying {@link CairoEngine} state. Single-threaded
  * worker pool keeps test scheduling deterministic.
+ * <p>
+ * The server also tracks the upgraded connections that have carried a WebSocket frame and that
+ * its worker has not closed; {@link #stop()} returns how many of them it killed, and
+ * {@link #awaitStableLiveConnection(long, long)} lets a test land a stop on one deliberately.
  */
 public final class RestartableQwpServer implements AutoCloseable {
     static final int PORT_PICK_ATTEMPTS = 5;
@@ -67,7 +71,8 @@ public final class RestartableQwpServer implements AutoCloseable {
     private final int forceRecvFragmentationChunkSize;
     private final int forceSendFragmentationChunkSize;
     // fds of upgraded connections that have carried at least one WebSocket frame and that the
-    // worker has not yet closed. Written by the single worker thread, read by test threads.
+    // worker has not yet closed. Written by the single worker thread, read by test threads,
+    // and cleared by stop() only after the workers have halted.
     private final Set<Long> liveFds = ConcurrentHashMap.newKeySet();
     private final int port;
     private final AtomicBoolean running = new AtomicBoolean();
@@ -178,11 +183,16 @@ public final class RestartableQwpServer implements AutoCloseable {
         final long deadlineNanos = System.nanoTime() + timeoutMillis * 1_000_000L;
         Long stableFd = null;
         long stableSinceNanos = 0;
-        while (System.nanoTime() < deadlineNanos) {
+        while (deadlineNanos - System.nanoTime() > 0) {
+            // Exactly one live fd: during a recycle the worker removes the old connection only
+            // once it has processed the client's close, so the old and the new fd overlap
+            // briefly, and certifying whichever iterates first could pick the dead one.
             Long fd = null;
-            for (Long candidate : liveFds) {
-                fd = candidate;
-                break;
+            if (liveFds.size() == 1) {
+                for (Long candidate : liveFds) {
+                    fd = candidate;
+                    break;
+                }
             }
             if (fd != null && fd.equals(stableFd)) {
                 if (System.nanoTime() - stableSinceNanos >= stableMillis * 1_000_000L) {

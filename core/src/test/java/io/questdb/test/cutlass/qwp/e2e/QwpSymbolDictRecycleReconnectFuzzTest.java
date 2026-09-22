@@ -67,7 +67,11 @@ import java.util.concurrent.atomic.AtomicReference;
  * A single long-lived sender undergoes both kinds of reconnect repeatedly, in
  * an order this test does not control: one background thread bounces the
  * server on a seeded random schedule while the producer thread keeps writing,
- * so a restart can land mid-recycle and a recycle can land mid-catch-up. That
+ * so a restart can land mid-recycle and a recycle can land mid-catch-up.
+ * Every even-indexed bounce is targeted: the bouncer pauses the producer's
+ * reset requests and waits for a connection that has stayed live for 20 ms
+ * before stopping, so the stop lands on an armed client; odd-indexed bounces
+ * stay blind so restarts still land mid-recycle and mid-outage. That
  * overlap is the risk surface -- a recycle's engine teardown/epoch roll must
  * never observe (or be observed by) an in-flight ordinary reconnect, and vice
  * versa.
@@ -177,8 +181,10 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                 AtomicInteger targetedBounces = new AtomicInteger();
                 AtomicInteger targetedLiveDrops = new AtomicInteger();
                 // Set by the bouncer while it lines up a targeted stop, read by the producer
-                // before each reset request: with requests paused, no planned teardown can
-                // close the connection the bouncer is about to kill.
+                // before each reset request. With manual requests paused, only a recycle armed
+                // before the pause -- manual or organic (threshold-driven) -- can still tear the
+                // connection down, and the stability window the bouncer waits for is what
+                // absorbs it.
                 AtomicBoolean holdResets = new AtomicBoolean();
                 AtomicReference<QwpWebSocketSender> senderRef = new AtomicReference<>();
                 CountDownLatch producerDone = new CountDownLatch(1);
@@ -305,8 +311,12 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                             if (targeted) {
                                 targetedLiveDrops.addAndGet(killed);
                             }
-                            holdResets.set(false);
                             Os.sleep(15 + rnd.nextInt(60));  // 15..74ms downtime
+                            // Lift the pause only once the server is back: a reset requested
+                            // while it is down can only wait like an organic arm, and lifting
+                            // earlier would let a planned teardown absorb a drop the I/O loop
+                            // has not observed yet.
+                            holdResets.set(false);
                             server.start();
                             restartsDone.incrementAndGet();
                         }
@@ -407,7 +417,8 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                 // is ample margin for that. Kills on blind bounces are not counted here, so a
                 // broken targeting path cannot pass on luck.
                 Assert.assertTrue("targeted bounces must land on live connections: targetedBounces=" + targeted
-                                + ", targetedLiveDrops=" + targetedLiveDropCount,
+                                + ", targetedLiveDrops=" + targetedLiveDropCount
+                                + ", required=" + ((targeted + 1) / 2),
                         targetedLiveDropCount >= (targeted + 1) / 2);
                 // Direct, isolated evidence that the ordinary (unplanned) reconnect path ran:
                 // DISCONNECTED fires only when the client's I/O loop observes a live connection

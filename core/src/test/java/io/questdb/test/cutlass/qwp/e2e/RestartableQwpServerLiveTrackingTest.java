@@ -44,6 +44,41 @@ public class RestartableQwpServerLiveTrackingTest extends AbstractCairoTest {
     private static final long TS_NANOS = 1_700_000_000_000_000_000L;
 
     @Test
+    public void testStableWaitRequiresExactlyOneLiveConnection() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            int port = RestartableQwpServer.pickFreePort();
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
+                server.start();
+                // second is opened only after first's own single-fd stability is confirmed below:
+                // the dispatcher re-enters handleClientRecv right after the WS upgrade completes,
+                // with no new bytes yet available, and that data-less resumeRecv call already adds
+                // the fd to the live set (see LiveTrackingUpgradeProcessor.resumeRecv) before the
+                // connection ever carries a real frame. Opening both senders up front, as a single
+                // try-with-resources would, puts two live fds in the set from the start, and the
+                // assertTrue below could never observe a lone one.
+                try (Sender first = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
+                    first.table(TABLE_NAME).longColumn("id", 3).at(TS_NANOS + 2, ChronoUnit.NANOS);
+                    first.flush();
+                    Assert.assertTrue("server never saw a frame from the first sender",
+                            server.awaitStableLiveConnection(10_000, 20));
+                    try (Sender second = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
+                        second.table(TABLE_NAME).longColumn("id", 4).at(TS_NANOS + 3, ChronoUnit.NANOS);
+                        second.flush();
+                        TestUtils.assertEventually(() -> Assert.assertEquals(2, server.liveConnectionCount()));
+                        // Two live fds: neither may be certified as the stable one.
+                        Assert.assertFalse("stability must require exactly one live connection",
+                                server.awaitStableLiveConnection(500, 20));
+                        Assert.assertEquals("stop() must report both live connections", 2, server.stop());
+                        // Bring the server back before the senders close, as in the other test.
+                        server.start();
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testStopCountsOnlyConnectionsStillLiveWhenWorkersHalt() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
