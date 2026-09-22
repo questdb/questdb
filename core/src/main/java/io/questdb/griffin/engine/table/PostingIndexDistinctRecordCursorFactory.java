@@ -241,8 +241,10 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
                 );
                 long rowLo = frame.getRowLo();
                 long rowHi = frame.getRowHi();
-                boolean fullPartition = rowLo == 0 && rowHi == tableReader.getPartitionRowCount(partitionIndex);
-                foundCount += fullPartition
+                // Delta frame bounds count logical rows; the reader's partition count covers only the base.
+                boolean isFullPartition = frame.getPartitionFrameState() == 0
+                        && rowLo == 0 && rowHi == tableReader.getPartitionRowCount(partitionIndex);
+                foundCount += isFullPartition
                         ? indexReader.collectDistinctKeys(foundKeys)
                         : indexReader.collectDistinctKeysInRange(
                         foundKeys,
