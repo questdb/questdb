@@ -707,7 +707,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 && (factoryExecutionRequirements & SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
             final CharSequence objectKind = sqlExecutionContext.isLiveViewCompile() ? "live view" : "materialized view";
             final SqlException exception = SqlException.position(position)
-                    .put("function requires an enterprise security context and cannot be used in ")
+                    .put("administrative function cannot be used in ")
                     .put(objectKind)
                     .put(": ")
                     .put(node.token);

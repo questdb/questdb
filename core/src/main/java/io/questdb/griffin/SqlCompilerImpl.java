@@ -3763,7 +3763,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 );
                 if (securityContextPosition > -1) {
                     throw SqlException.position(securityContextPosition)
-                            .put("function requires an enterprise security context and cannot be used in materialized view: ")
+                            .put("administrative function cannot be used in materialized view: ")
                             .put(executionRequirements.getFunctionName(
                                     SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
                             ));

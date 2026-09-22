@@ -803,7 +803,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             } catch (SqlException e) {
                 TestUtils.assertContains(
                         e.getFlyweightMessage(),
-                        "function requires an enterprise security context and cannot be used in materialized view: ent_secure"
+                        "administrative function cannot be used in materialized view: ent_secure"
                 );
             }
             assertEquals(0, constructionCount.get());
@@ -850,7 +850,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                 assertEquals(0, e.getPosition());
                 TestUtils.assertContains(
                         e.getFlyweightMessage(),
-                        "function requires an enterprise security context and cannot be used in materialized view: ent_secure"
+                        "administrative function cannot be used in materialized view: ent_secure"
                 );
             }
             assertEquals(0, constructionCount.get());
@@ -864,7 +864,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     assertEquals(0, e.getPosition());
                     TestUtils.assertContains(
                             e.getFlyweightMessage(),
-                            "function requires an enterprise security context and cannot be used in live view: ent_secure"
+                            "administrative function cannot be used in live view: ent_secure"
                     );
                 }
                 assertEquals(0, constructionCount.get());
