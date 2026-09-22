@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 
 public abstract class ProjectableRecordCursorFactory implements RecordCursorFactory {
+    private final RecordMetadata metadata;
     // Same guard, and for the same reason, as AbstractRecordCursorFactory.closed: ownership chains close
     // the same factory from more than one owner on error paths (a failing constructor closes the base
     // factory it adopted, and the generator's catch then frees its own reference to it), while _close()
@@ -38,7 +39,6 @@ public abstract class ProjectableRecordCursorFactory implements RecordCursorFact
     // release; the flip side is that _close() runs at most once, so an implementation owning several
     // resources must attempt them all in one pass.
     private boolean closed;
-    private final RecordMetadata metadata;
     private RecordMetadata queryProjectMetadata;
 
     public ProjectableRecordCursorFactory(RecordMetadata metadata) {
