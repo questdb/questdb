@@ -98,10 +98,10 @@ public class TxReader implements Closeable, Mutable {
     // legacy: a cleared slot reads as 0L (written today) or -1L (older binaries), both folded by isPartitionOffset3Cleared().
     protected static final int PARTITION_TS_OFFSET = 0;
     protected static final int PARTITION_VERSION_OFFSET = 3;
-    protected long activePartitionLastCommitMicros = Numbers.LONG_NULL;
     protected final LongList attachedPartitions = new LongList();
     protected final FilesFacade ff;
     private final IntList symbolCountSnapshot = new IntList();
+    protected long activePartitionLastCommitMicros = Numbers.LONG_NULL;
     protected int attachedPartitionsSize = 0;
     protected long columnVersion;
     protected long dataVersion;

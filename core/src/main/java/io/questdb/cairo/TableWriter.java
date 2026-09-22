@@ -3791,7 +3791,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                     .I$();
             if (activePartition && isLastPartitionClosed()) {
-                openLastPartition();
+                reopenLastPartitionOrDistress();
             }
             return SWITCH_NO_PARQUET;
         }
@@ -3867,7 +3867,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
             if (activePartition && !txWriter.isPartitionParquet(partitionIndex) && isLastPartitionClosed()) {
-                openLastPartition();
+                reopenLastPartitionOrDistress();
             }
         }
 
@@ -4587,7 +4587,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // ignore the return are additionally kept off this method for a
                 // legacy head by the Possible-predicate guard; the block-apply gate
                 // bails earlier still. See lastPartitionHasLegacyCoveringHead().
-                && !lastPartitionHasLegacyCoveringHead()) {
+                && !lastPartitionHasLegacyCoveringHead()
+                // Same reason, same shape: a sealed active partition is frozen, and this
+                // method makes lag rows visible in the last partition by raising its
+                // transient row count. The pre-existing-lag-before-O3 call site bypasses
+                // the Possible-predicate, so the read-only decision has to live here too
+                // or a frozen partition grows after the seal.
+                && !isLastPartitionReadOnly()) {
             // There is some data in LAG, it's ordered, and it's already written to the last partition.
             // We can simply increase the last partition transient row count to make it committed.
 
@@ -10743,9 +10749,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // unaffected: those partitions accept LAG normally.
                 boolean isParquetTableEmptyPlaceholder = txWriter.getRowCount() == 0
                         && metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET;
-                boolean noLag = lastPartitionIsParquet || isParquetTableEmptyPlaceholder;
+                // A sealed active partition is frozen. The LAG area IS the last partition's column
+                // files (cthAppendWalColumnToLastPartition writes straight into them), so stashing
+                // rows there mutates a partition a storage policy has already declared read-only and
+                // possibly uploaded. Deny LAG and send the rows down the O3 path, which is the single
+                // place that decides what happens to a write aimed at a frozen partition.
+                boolean lastPartitionIsReadOnly = isLastPartitionReadOnly();
+                boolean noLag = lastPartitionIsParquet || isParquetTableEmptyPlaceholder || lastPartitionIsReadOnly;
                 boolean needFullCommit = forceFullCommit
-                        // No LAG available (parquet partition or parquet table)
+                        // No LAG available (parquet partition, parquet table, or a sealed last partition)
                         || noLag
                         // Too many rows in LAG
                         || totalUncommitted > maxLagRows
@@ -13363,6 +13375,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 symColIndex++;
             }
             Misc.freeIfCloseable(writer);
+        }
+    }
+
+    /**
+     * Reopens the active partition after an aborted active-partition switch, distressing the writer
+     * when it cannot. A writer whose active partition stays closed must never go back to the pool:
+     * {@link #processAsyncWriterCommand} swallows a failed command without distressing it, so the
+     * next non-WAL {@code newRow()} would map through closed append columns.
+     */
+    private void reopenLastPartitionOrDistress() {
+        try {
+            openLastPartition();
+        } catch (Throwable reopenFailure) {
+            distressed = true;
+            throw reopenFailure;
         }
     }
 
