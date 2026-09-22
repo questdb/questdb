@@ -202,6 +202,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             Misc.freeObjList(partitionByRecord.getFunctions());
         }
 
+        @Override
+        public void cursorClosed() {
+            Function.cursorClosed(partitionByRecord.getFunctions());
+        }
+
         /**
          * The running count of rows since the partition's last anchor crossing, which is
          * exactly what {@code count(*)} over the same window keeps. Sharing it is what
@@ -214,11 +219,6 @@ public class RowNumberFunctionFactory implements FunctionFactory {
          * property of the count implementation rather than an accident of this one, and a
          * change to it has to withdraw this declaration with it.
          */
-        @Override
-        public void cursorClosed() {
-            Function.cursorClosed(partitionByRecord.getFunctions());
-        }
-
         @Override
         public int windowAccumulatorFamily() {
             return WindowAccumulatorDescriptor.FAMILY_ROW_COUNT;

@@ -512,7 +512,6 @@ class LeadLagSymbolFunctionFactoryHelper {
     }
 
     static class LeadLagCurrentRowFunction extends BaseSymbolWindowFunction {
-        private final boolean ignoreNulls;
         private final String name;
         private final VirtualRecord partitionByRecord;
 
@@ -520,7 +519,6 @@ class LeadLagSymbolFunctionFactoryHelper {
             super(arg, null, 0, ignoreNulls);
             this.partitionByRecord = partitionByRecord;
             this.name = name;
-            this.ignoreNulls = ignoreNulls;
         }
 
         @Override

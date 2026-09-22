@@ -187,7 +187,7 @@ public class LagLeadSymbolTableTest extends AbstractCairoTest {
                                     .noLeakCheck()
                                     .noRandomAccess()
                                     .expectSize()
-                                    .withPlanContaining("AsOf Join Light", isLight ? "CachedWindowLight" : "CachedWindow")
+                                    .withPlanContaining("AsOf Join Light", isLight ? "CachedWindowLight\n" : "CachedWindow\n")
                                     .returns(expected);
                         }
                     }

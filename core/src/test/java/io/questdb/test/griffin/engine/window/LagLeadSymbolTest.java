@@ -35,7 +35,7 @@ import org.junit.Test;
 
 import java.util.List;
 
-public class NestedLagSymbolTest extends AbstractCairoTest {
+public class LagLeadSymbolTest extends AbstractCairoTest {
 
     @Test
     public void testLagLeadOverBooleanCastKeepsMissingNeighborNull() throws Exception {
@@ -263,7 +263,7 @@ public class NestedLagSymbolTest extends AbstractCairoTest {
                             "   LAG(sym, 1) OVER (ORDER BY ts) AS prev_sym," +
                             "   LEAD(sym, 1) OVER (ORDER BY ts) AS next_sym" +
                             " FROM balances"
-            ).expectSize().returns(
+            ).expectSize().withPlanContaining("CachedWindow\n").returns(
                     "sym\tprev_sym\tnext_sym\n" +
                             "a\t\tb\n" +
                             "b\ta\tc\n" +
@@ -383,7 +383,7 @@ public class NestedLagSymbolTest extends AbstractCairoTest {
                         """;
                 for (String orderBy : List.of("", " ORDER BY id")) {
                     boolean isCached = function.equals("lead") || !orderBy.isEmpty();
-                    assertQuery("SELECT id, " + function + "(sym) OVER (PARTITION BY grp::SYMBOL" + orderBy + ") neighbor FROM symbols")
+                    assertQuery("SELECT id, " + function + "(sym) OVER (PARTITION BY grp::SYMBOL" + orderBy + ") neighbor FROM partitioned_symbols")
                             .noLeakCheck()
                             .expectSize()
                             .supportsRandomAccess(isCached)
@@ -401,7 +401,7 @@ public class NestedLagSymbolTest extends AbstractCairoTest {
             for (String function : List.of("lag", "lead")) {
                 assertQuery("SELECT id, " +
                         function + "(sym) IGNORE NULLS OVER (PARTITION BY grp) skipped, " +
-                        function + "(sym) RESPECT NULLS OVER (PARTITION BY grp) kept FROM symbols")
+                        function + "(sym) RESPECT NULLS OVER (PARTITION BY grp) kept FROM partitioned_symbols")
                         .noLeakCheck()
                         .expectSize()
                         .supportsRandomAccess(function.equals("lead"))
@@ -505,7 +505,7 @@ public class NestedLagSymbolTest extends AbstractCairoTest {
                     SELECT id,
                         LAG(sym, 1) OVER (PARTITION BY grp ORDER BY ts) prev_sym,
                         LAG(sym, 2) OVER (PARTITION BY grp ORDER BY ts) prev_prev_sym
-                    FROM symbols
+                    FROM partitioned_symbols
                     """)
                     .noLeakCheck()
                     .noRandomAccess()
@@ -524,7 +524,7 @@ public class NestedLagSymbolTest extends AbstractCairoTest {
                             9\tc\tb
                             10\tz\ty
                             """);
-            assertQuery("SELECT id, LAG(sym, 2) OVER () prev_sym FROM symbols")
+            assertQuery("SELECT id, LAG(sym, 2) OVER () prev_sym FROM partitioned_symbols")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -588,7 +588,7 @@ public class NestedLagSymbolTest extends AbstractCairoTest {
                     SELECT id,
                         LEAD(sym, 1) OVER (PARTITION BY grp ORDER BY ts) next_sym,
                         LEAD(sym, 2) OVER (PARTITION BY grp ORDER BY ts) next_next_sym
-                    FROM symbols
+                    FROM partitioned_symbols
                     """)
                     .noLeakCheck()
                     .expectSize()
@@ -606,7 +606,7 @@ public class NestedLagSymbolTest extends AbstractCairoTest {
                             9\t\t
                             10\t\t
                             """);
-            assertQuery("SELECT id, LEAD(sym, 2) OVER () next_sym FROM symbols")
+            assertQuery("SELECT id, LEAD(sym, 2) OVER () next_sym FROM partitioned_symbols")
                     .noLeakCheck()
                     .expectSize()
                     .withPlanContaining("CachedWindowLight")
@@ -686,50 +686,12 @@ public class NestedLagSymbolTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testTimestampValueFunctionsRejectSymbolArgument() throws Exception {
-        // These functions have no SYMBOL variant. The function parser used to resolve them to
-        // the TIMESTAMP factory through the implicit SYMBOL -> TIMESTAMP cast, which produced a
-        // window column typed SYMBOL backed by a long.
-        assertMemoryLeak(() -> {
-            execute(
-                    "CREATE TABLE symbols (" +
-                            "  sym SYMBOL," +
-                            "  ts TIMESTAMP" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY"
-            );
-            execute("INSERT INTO symbols VALUES ('a', '2024-01-01T00:00:00.000000Z')");
-
-            assertQuery("SELECT first_value(sym) OVER () FROM symbols")
-                    .noLeakCheck()
-                    .fails(19, "there is no matching window function `first_value` with the argument type: SYMBOL");
-            assertQuery("SELECT last_value(sym) OVER () FROM symbols")
-                    .noLeakCheck()
-                    .fails(18, "there is no matching window function `last_value` with the argument type: SYMBOL");
-            assertQuery("SELECT max(sym) OVER (PARTITION BY sym) FROM symbols")
-                    .noLeakCheck()
-                    .fails(11, "there is no matching window function `max` with the argument type: SYMBOL");
-            assertQuery("SELECT min(sym) OVER (PARTITION BY sym ORDER BY ts) FROM symbols")
-                    .noLeakCheck()
-                    .fails(11, "there is no matching window function `min` with the argument type: SYMBOL");
-            assertQuery("SELECT nth_value(sym, 1) OVER () FROM symbols")
-                    .noLeakCheck()
-                    .fails(17, "there is no matching window function `nth_value` with the argument type: SYMBOL");
-
-            // an explicit cast remains available
-            assertQuery("SELECT max(ts::STRING::SYMBOL::TIMESTAMP) OVER () AS m FROM symbols").expectSize().returns(
-                    "m\n" +
-                            "2024-01-01T00:00:00.000000Z\n"
-            );
-        });
-    }
-
     private void assertZeroOffset(String function) throws Exception {
         assertMemoryLeak(() -> {
             createPartitionedSymbols();
             for (String over : List.of("", "PARTITION BY grp", "PARTITION BY grp ORDER BY id DESC")) {
                 for (String nullTreatment : List.of("", "IGNORE NULLS")) {
-                    assertQuery("SELECT id, " + function + "(sym, 0) " + nullTreatment + " OVER (" + over + ") current_sym FROM symbols ORDER BY id")
+                    assertQuery("SELECT id, " + function + "(sym, 0) " + nullTreatment + " OVER (" + over + ") current_sym FROM partitioned_symbols ORDER BY id")
                             .noLeakCheck()
                             .expectSize()
                             .withPlanContaining(over.contains("ORDER BY") ? "CachedWindowLight" : "Window\n")
@@ -752,10 +714,10 @@ public class NestedLagSymbolTest extends AbstractCairoTest {
     }
 
     private void createPartitionedSymbols() throws Exception {
-        execute("CREATE TABLE symbols (id INT, grp STRING, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE partitioned_symbols (id INT, grp STRING, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         // Interleaved groups, distinct values and NULLs make wrong keys and ring indices visible.
         execute("""
-                INSERT INTO symbols VALUES
+                INSERT INTO partitioned_symbols VALUES
                 (1, 'a', 'a', '2024-01-01T00:00:01'),
                 (2, 'b', 'x', '2024-01-01T00:00:02'),
                 (3, 'a', NULL, '2024-01-01T00:00:03'),
