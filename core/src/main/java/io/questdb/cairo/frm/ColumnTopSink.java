@@ -31,18 +31,11 @@ package io.questdb.cairo.frm;
 public interface ColumnTopSink {
 
     /**
-     * Applies everything {@link #setColumnTop} staged, and is the ONLY place a thread-safe implementation may touch
-     * shared, structurally mutable state.
+     * Applies everything {@link #setColumnTop} staged. One thread drives any one sink through both methods - the
+     * owning {@link Frame} calls them on the thread running the frame operation, never from the per-column tasks that
+     * operation fans out - so an implementation needs no synchronisation of its own.
      */
     default void commitColumnTops() {
-    }
-
-    /**
-     * Whether {@link #setColumnTop} may run concurrently, one thread per DISTINCT column index, once {@link
-     * #ofColumnCount} has sized this sink.
-     */
-    default boolean isThreadSafe() {
-        return false;
     }
 
     /**

@@ -699,6 +699,67 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
     }
 
     /**
+     * The only test driving the VAR-SIZE branches of {@code getDedupRowsWithAdditionalKeys} - the aux ({@code .i})
+     * rebuild and the {@code varMapSize > 0} data ({@code .d}) rebuild - through the touching-dedup flatten, by
+     * keying a dedup upsert on a VARCHAR column of a composite partition with touching pieces.
+     */
+    @Test
+    public void testDedupFlattenOfTouchingPiecesComparesVarSizeDedupKey() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
+            // The varchar values are too long to inline, so the key comparison needs varMapSize > 0 and the data vector.
+            execute("CREATE TABLE x (i INT, s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT x::INT + 90_000, " + VARCHAR_LONG_EXPR + ", timestamp_sequence('2020-02-06', 60*1_000_000L) ts FROM long_sequence(1)");
+            drainWalQueue();
+            execute("INSERT INTO x SELECT x::INT, " + VARCHAR_LONG_EXPR + ", timestamp_sequence('2020-02-03', 15*1_000_000L) ts FROM long_sequence(5_760)");
+            drainWalQueue();
+            execute("INSERT INTO x SELECT x::INT + 70_000, " + VARCHAR_LONG_EXPR + ", timestamp_sequence('2020-02-03T04:00:07', 5*1_000_000L) ts FROM long_sequence(200)");
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            final long tieTs;
+            try (TableReader reader = engine.getReader(xt)) {
+                final PartitionGeometry geometry = reader.getGeometry();
+                Assert.assertTrue("fixture must create multiple pieces: " + describePieces(reader, 0), geometry.getPieceCount(0) > 1);
+                tieTs = geometry.getPieceTimestampHi(0, 0);
+            }
+
+            execute("INSERT INTO x (i, ts) SELECT (-1)::INT, " + tieTs + "::TIMESTAMP FROM long_sequence(1)");
+            drainWalQueue();
+            execute("ALTER TABLE x DEDUP ENABLE UPSERT KEYS(ts, s)");
+            drainWalQueue();
+
+            try (TableReader reader = engine.getReader(xt)) {
+                final PartitionGeometry geometry = reader.getGeometry();
+                boolean hasTouchingPieces = false;
+                for (int p = 1, n = geometry.getPieceCount(0); p < n; p++) {
+                    if (geometry.getPieceTimestampLo(0, p) == geometry.getPieceTimestampHi(0, p - 1)) {
+                        hasTouchingPieces = true;
+                        break;
+                    }
+                }
+                Assert.assertTrue("fixture lost its touching pieces before the dedup commit: " + describePieces(reader, 0), hasTouchingPieces);
+            }
+
+            execute("INSERT INTO x (i, s, ts) SELECT (-2)::INT, 'a-varchar-too-long-to-inline-1921'::VARCHAR, '2020-02-03T08:00:00'::TIMESTAMP FROM long_sequence(1)");
+            drainWalQueue();
+
+            Assert.assertFalse("the dedup commit suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            assertQuery("SELECT i, s FROM x WHERE ts = '2020-02-03T08:00:00'::TIMESTAMP")
+                    .returns("i\ts\n-2\ta-varchar-too-long-to-inline-1921\n");
+            assertQuery("SELECT i, s FROM x WHERE ts BETWEEN '2020-02-03T07:59:45' AND '2020-02-03T08:00:15'")
+                    .returns("i\ts\n1920\ta-varchar-too-long-to-inline-1920\n-2\ta-varchar-too-long-to-inline-1921\n1922\ta-varchar-too-long-to-inline-1922\n");
+            assertQuery("SELECT count() c FROM x WHERE ts IN '2020-02-03'")
+                    .noRandomAccess().expectSize().returns("c\n5961\n");
+        });
+    }
+
+    /**
      * A day is built into a composite partition, the table is TRUNCATEd, and the same day is built into a
      * composite partition again from nothing - each round's backdated batches submitted without a drain
      * between them, so {@code ApplyWal2TableJob} replays them as ONE bundled WAL transaction block, letting

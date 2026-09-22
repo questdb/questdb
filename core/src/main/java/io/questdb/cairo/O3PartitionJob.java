@@ -1096,8 +1096,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         partitionTimestamp,
                         stagingNameTxn
                 );
+                // Critical: a leftover staging directory can be adopted by a later transaction's fresh partition version.
                 if (ff.exists(stagingPath.slash().$()) && !ff.rmdir(stagingPath, false)) {
-                    LOG.error().$("could not remove touching-dedup staging directory [path=").$(stagingPath).I$();
+                    LOG.critical().$("could not remove touching-dedup staging directory [path=").$(stagingPath).$(", errno=").$(ff.errno()).I$();
                 }
             }
         }
@@ -5843,11 +5844,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     columnTopAfter[i] = transientVersions.getColumnTop(sinkPartitionTimestamp, i);
                 }
             }
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return true;
         }
 
         @Override

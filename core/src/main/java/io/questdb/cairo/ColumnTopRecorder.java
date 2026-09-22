@@ -50,11 +50,6 @@ public class ColumnTopRecorder implements ColumnTopSink {
     }
 
     @Override
-    public boolean isThreadSafe() {
-        return true;
-    }
-
-    @Override
     public void ofColumnCount(int columnCount) {
         tops.setPos(columnCount);
         tops.fill(0, columnCount, NOT_REPORTED);
