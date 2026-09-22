@@ -883,6 +883,36 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropNotNullOnDesignatedTimestampFailsWal() throws Exception {
+        assertMemoryLeak(() -> {
+            // The rejection must be synchronous, at DDL time. If the WAL validator let
+            // the structural txn through, the failure would only surface at apply time
+            // in TableWriter.setColumnNotNull, suspending the table with sequencer and
+            // table metadata permanently diverged. The validator's pre-existing
+            // designated-timestamp check in validateExistingColumnName covers this DDL;
+            // this test pins that coverage.
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES (1, '2024-01-01')");
+            drainWalQueue();
+            assertTrue(getNotNull("t", "ts"));
+
+            try {
+                execute("ALTER TABLE t ALTER COLUMN ts SET NULL");
+                fail("Expected synchronous error for dropping NOT NULL on WAL designated timestamp");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "designated timestamp");
+            }
+
+            drainWalQueue();
+            assertFalse(
+                    "rejection must be synchronous, not a WAL-apply suspension",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t"))
+            );
+            assertTrue(getNotNull("t", "ts"));
+        });
+    }
+
+    @Test
     public void testDropNotNullOnDesignatedTimestampFails() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
