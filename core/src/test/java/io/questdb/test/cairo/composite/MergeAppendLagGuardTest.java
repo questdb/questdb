@@ -36,33 +36,17 @@ import org.junit.Test;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
-/**
- * The WAL LAG guard in {@code TableWriter.processWalCommit} and the in-order block fast append in
- * {@code TableWriter.tryFastAppendInOrderBlock} both refuse a merge-append table, because a commit that turns the
- * last partition COMPOSITE relocates a piece onto exactly the file rows those two mechanisms park data in.
- * <p>
- * Both guards ask {@code isMergeAppendTable()}, which is {@code walEnabled && flagOn && isPartitioned}, rather than
- * the raw {@code isO3PartitionMergeAppendEnabled()} flag. Narrowing to PARTITIONED tables is free, because two
- * independent things keep a non-partitioned table away from a composite partition:
- * <ol>
- *     <li>A WAL table is always partitioned. {@code SqlParser} refuses {@code PARTITION BY NONE ... WAL} and
- *     resolves the WAL-by-default setting to false for it; {@code SqlCompilerImpl.alterTableSetType} refuses to
- *     convert a non-partitioned table, and it is the only writer of the {@code _convert} marker;
- *     {@code CairoEngine.createTable} asserts the invariant at the engine's one creation chokepoint. Both guards
- *     sit on the WAL apply path, so the shape they would newly admit cannot be created in the first place.</li>
- *     <li>A non-partitioned table refuses out-of-order rows outright - {@code TableWriter.newRow} throws
- *     "cannot insert rows out of order to non-partitioned table" under {@code ROW_ACTION_NO_PARTITION}. Composite
- *     partitions are what an O3 commit leaves behind when it tiles a partition into pieces, so with no O3 commit
- *     there is nothing to make one.</li>
- * </ol>
- * Note that the first reason, not the second, is what the guards actually rest on, and that a non-partitioned table
- * DOES have a partition: {@code TxReader.initPartitionBy} seeds one at {@code DEFAULT_PARTITION_TIMESTAMP}, so
- * {@code getPartitionCount()} is 1 and {@code getPartitionIndex()} returns 0 for it. That matters because
- * {@code O3PartitionJob.processPartition} gates composite promotion on {@code isWalEnabled()} and
- * {@code compositeIndex > -1} WITHOUT an {@code isPartitioned} conjunct - both of which a non-partitioned WAL table
- * would satisfy. "There is no partition for a composite to exist on" is NOT what makes this safe.
- */
 public class MergeAppendLagGuardTest extends AbstractCairoTest {
+
+    @Test
+    public void testMergeAppendTableDrainsOrderedPersistedLagAfterEnablement() throws Exception {
+        checkPersistedLagBeforeMergeAppendEnable(1);
+    }
+
+    @Test
+    public void testMergeAppendTableDrainsUnorderedPersistedLagAfterEnablement() throws Exception {
+        checkPersistedLagBeforeMergeAppendEnable(2);
+    }
 
     /**
      * The live behaviour the guard exists for: a merge-append WAL table parks no LAG, not even on the FIRST commit
@@ -148,6 +132,50 @@ public class MergeAppendLagGuardTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns("c\tlo\thi\n600\t2022-02-24T00:00:00.000000Z\t2022-02-24T05:01:39.000000Z\n");
+        });
+    }
+
+    private void checkPersistedLagBeforeMergeAppendEnable(int lagRows) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES (1, '2022-02-24T01')");
+            execute("INSERT INTO x VALUES (2, '2022-02-24T00')");
+            execute("INSERT INTO x VALUES (3, '2022-02-24T02')");
+
+            final TableToken token = engine.verifyTableName("x");
+            for (int i = 0; i < lagRows; i++) {
+                runApplyOnce(token);
+            }
+
+            final int timestampType;
+            final int partitionBy;
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                timestampType = metadata.getTimestampType();
+                partitionBy = metadata.getPartitionBy();
+            }
+            try (TxReader txReader = new TxReader(configuration.getFilesFacade())) {
+                txReader.ofRO(Path.getThreadLocal(root).concat(token).concat(TXN_FILE_NAME).$(), timestampType, partitionBy);
+                txReader.unsafeLoadAll();
+                Assert.assertEquals(lagRows, txReader.getLagRowCount());
+                Assert.assertEquals(lagRows, txReader.getLagTxnCount());
+                Assert.assertEquals(lagRows == 1, txReader.isLagOrdered());
+
+                engine.releaseAllWriters();
+                txReader.unsafeLoadAll();
+                Assert.assertEquals(lagRows, txReader.getLagRowCount());
+                Assert.assertEquals(lagRows, txReader.getLagTxnCount());
+                Assert.assertEquals(lagRows == 1, txReader.isLagOrdered());
+
+                node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+                drainWalQueue();
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            }
+
+            assertQuery("SELECT x FROM x")
+                    .expectSize()
+                    .returns("x\n2\n1\n3\n");
         });
     }
 

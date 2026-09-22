@@ -949,6 +949,33 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testConvertVarcharToCharAcrossPieces() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 1);
+
+            execute("CREATE TABLE x AS (SELECT 'é'::VARCHAR v, timestamp_sequence('2020-02-03', 15*1000000L) ts FROM long_sequence(5760)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES ('é', '2020-02-06')");
+            drainWalQueue();
+            execute("INSERT INTO x SELECT 'é'::VARCHAR, timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) FROM long_sequence(200)");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("x")) {
+                Assert.assertTrue(reader.getGeometry().getPieceCount(0) > 1);
+            }
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE CHAR");
+            drainWalQueue();
+
+            assertQuery("SELECT v, count() FROM x GROUP BY v")
+                    .expectSize()
+                    .returns("v\tcount\né\t5961\n");
+        });
+    }
+
     /**
      * The byte-level proof behind the padding rule, over dead pieces, across every direction the rule
      * applies to: FIXED (INT -> LONG), VAR (STRING <-> VARCHAR) and MIXED (LONG -> VARCHAR,

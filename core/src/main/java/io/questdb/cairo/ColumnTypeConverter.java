@@ -596,6 +596,7 @@ public class ColumnTypeConverter {
             final int dstTypeSize = ColumnType.sizeOf(dstColumnType);
             final long dstByteOffset = segmentOffset * dstTypeSize;
             Var2FixedConverter<CharSequence> converter = getConverterFromVarToFixed(ColumnType.VARCHAR, dstColumnType);
+            StringSink sink = sinkUtf16TL.get();
 
             MemoryCMARW dstFixMem = dstFixMemTL.get();
             try {
@@ -604,7 +605,7 @@ public class ColumnTypeConverter {
 
                 for (long i = segmentOffset; i < segmentOffset + rowCount; i++) {
                     Utf8Sequence utf8 = VarcharTypeDriver.getSplitValue(srcFixMem, srcVarMem, i, 1);
-                    converter.convert(utf8 != null ? utf8.asAsciiCharSequence() : null, dstFixMem);
+                    converter.convert(utf8 != null ? Utf8s.utf8ToUtf16OrView(utf8, sink) : null, dstFixMem);
                 }
             } finally {
                 dstFixMem.detachFdClose();

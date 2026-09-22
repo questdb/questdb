@@ -12617,6 +12617,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.setMaxTimestamp(o3TimestampMin);
                 // Add the partition to the list of partitions with 0 size.
                 txWriter.updatePartitionSizeByTimestamp(o3TimestampMin, 0, txWriter.getTxn() - 1);
+            } else if (txWriter.getLagRowCount() > 0) {
+                openPartition(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount() + txWriter.getLagRowCount());
             } else if (!isLastPartitionAppendBlocked()) {
                 if (isMergeAppendJustDisabled()) {
                     openLastPartition();
