@@ -78,10 +78,6 @@ public class LagLeadSymbolTableTest extends AbstractCairoTest {
                                     } finally {
                                         Misc.freeIfCloseable(clone);
                                     }
-                                    // The generated-NULL view borrows rather than owns the source dictionary.
-                                    if (offset > 0) {
-                                        Misc.freeIfCloseable(borrowed);
-                                    }
                                     TestUtils.assertEquals("aa", source.valueOf(0));
                                     for (int pass = 0; pass < 2; pass++) {
                                         int count = 0;
