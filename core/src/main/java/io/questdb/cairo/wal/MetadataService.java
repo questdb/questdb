@@ -98,7 +98,11 @@ public interface MetadataService {
         );
     }
 
-    default void addColumn(
+    // The only abstract addColumn overload: the default overloads above and below all
+    // delegate here. Keeping exactly one non-default overload prevents the mutual-
+    // recursion StackOverflowError an implementer would hit if two defaults called
+    // each other and neither was overridden.
+    void addColumn(
             CharSequence columnName,
             int columnType,
             int symbolCapacity,
@@ -109,19 +113,7 @@ public interface MetadataService {
             boolean isDedupKey,
             boolean isNotNull,
             SecurityContext securityContext
-    ) {
-        addColumn(
-                columnName,
-                columnType,
-                symbolCapacity,
-                symbolCacheFlag,
-                indexType,
-                indexValueBlockCapacity,
-                isSequential,
-                isDedupKey,
-                securityContext
-        );
-    }
+    );
 
     default void addColumn(
             CharSequence columnName,
