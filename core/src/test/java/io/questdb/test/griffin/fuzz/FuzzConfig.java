@@ -85,6 +85,10 @@ public final class FuzzConfig {
     private final String tsStart;
 
     public FuzzConfig(Rnd rnd) {
+        this(rnd, DEFAULT_NUM_QUERIES);
+    }
+
+    public FuzzConfig(Rnd rnd, int defaultNumQueries) {
         // At least two: QueryGenerator gates every join shape (TEMPORAL, HORIZON, WINDOW JOIN) on
         // tables.size() >= 2, so a single-table run generated none of them at all - whatever the
         // query budget - and one run in three drew exactly one table. No shape needs a lone table
@@ -100,7 +104,7 @@ public final class FuzzConfig {
         // 30 minutes: rowsPerTable * 30min covers 30..75 hours, so 2-4 DAY partitions.
         this.stepMicros = 30L * 60L * 1_000_000L;
         this.tsStart = "2024-01-01";
-        this.numQueries = Integer.getInteger(QUERIES_PROP, DEFAULT_NUM_QUERIES);
+        this.numQueries = Integer.getInteger(QUERIES_PROP, defaultNumQueries);
         this.dumpPath = System.getProperty(DUMP_PROP);
         this.isDiffJitEnabled = Boolean.parseBoolean(System.getProperty(DIFF_JIT_PROP, "true"));
         this.isDiffShadowEnabled = Boolean.parseBoolean(System.getProperty(DIFF_SHADOW_PROP, "true"));
