@@ -1167,6 +1167,15 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testPacedWriterWaitStopsOnFailure() {
+        final AtomicLong refreshTicks = new AtomicLong();
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        errors.add(new RuntimeException("injected refresh failure"));
+        awaitRefreshTick(refreshTicks, errors);
+        Assert.assertEquals("failure must not manufacture progress", 0, refreshTicks.get());
+    }
+
+    @Test
     public void testParallelFilterRacesTierSwap() throws Exception {
         // The page-frame read path under its own risk: a filtered read routes through the
         // tier's synthetic frame, which publishes the pinned slot's raw native addresses,
@@ -1174,7 +1183,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // argument that this is safe is that the frame cursor holds the pin for its whole
         // life and no worker outlives the cursor that produced it - so a swap can only
         // ever take the slot the readers are NOT on. This drives it: real filter workers
-        // read tier frames while the refresh worker swaps slots on every publish and
+        // read tier frames while the refresh worker swaps slots on normal publication and
         // writers ingest cross-writer O3. A worker reading a slot the writer reclaimed is
         // a use-after-free, so it surfaces as a torn value or a crash rather than a
         // wrong-but-plausible answer.
@@ -1251,6 +1260,16 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> runVarSizeReaderChurnSoak(rnd, 4, 4, 800));
     }
 
+    @Test
+    public void testTierSwapDriverClosesInitialCursorAfterSwap() throws Exception {
+        assertMemoryLeak(() -> assertInitialTierCursorClosed(false));
+    }
+
+    @Test
+    public void testTierSwapDriverClosesInitialCursorOnFailure() throws Exception {
+        assertMemoryLeak(() -> assertInitialTierCursorClosed(true));
+    }
+
     /**
      * False: {@link #setUpStatic} pins this class's {@code MillisecondClock} to
      * {@code MillisecondClockImpl.INSTANCE}, so the storage engine's spin deadlines measure real
@@ -1324,6 +1343,100 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         };
     }
 
+    private void assertInitialTierCursorClosed(boolean hasInjectedFailure) throws Exception {
+        setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
+        execute("CREATE TABLE base (ts TIMESTAMP, i LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("""
+                CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS
+                SELECT ts, i, count(*) OVER (
+                    PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW
+                ) AS rn FROM base
+                """);
+        execute("""
+                INSERT INTO base VALUES
+                    ('2027-01-01T00:00:00.000000Z', 1),
+                    ('2027-01-01T00:00:02.000000Z', 3)
+                """);
+        try (LiveViewRefreshJob warmupJob = new LiveViewRefreshJob(0, engine, 1)) {
+            drainWalQueue();
+            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+            drainJob(warmupJob);
+            drainWalQueue();
+
+            final LiveViewInMemoryTier tier = engine.getLiveViewRegistry().getViewInstance("lv").getInMemoryTier();
+            Assert.assertNotNull(tier);
+            final int initialIdx = tier.getPublishedIdx();
+            final AtomicBoolean isRunning = new AtomicBoolean(true);
+            final AtomicLong refreshTicks = new AtomicLong();
+            final AtomicLong swapsObserved = new AtomicLong();
+            final AtomicLong inPlacePublishesObserved = new AtomicLong();
+            final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+            final RuntimeException injectedFailure = new RuntimeException("injected refresh failure");
+            execute("INSERT INTO base VALUES ('2027-01-01T00:00:01.000000Z', 2)");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1) {
+                private int runs;
+
+                @Override
+                public boolean run() {
+                    if (runs++ == 0) {
+                        Assert.assertFalse("the driver must pin the original slot before refreshing", isTierSlotWritable(tier, initialIdx));
+                        if (hasInjectedFailure) {
+                            throw injectedFailure;
+                        }
+                        return super.run();
+                    }
+                    Assert.assertEquals(1, swapsObserved.get());
+                    Assert.assertTrue("the driver must release the pin before its next pass", isTierSlotWritable(tier, initialIdx));
+                    isRunning.set(false);
+                    return false;
+                }
+            }) {
+                final Thread driver = newTierSwapRefreshThread(
+                        job, tier, new CyclicBarrier(1), isRunning, refreshTicks, swapsObserved,
+                        inPlacePublishesObserved, errors, CLOCK_ADVANCE_MICROS
+                );
+                try {
+                    driver.start();
+                    TestUtils.joinThreads(driver);
+                } finally {
+                    isRunning.set(false);
+                    TestUtils.joinThreads(driver);
+                }
+            }
+            if (hasInjectedFailure) {
+                Assert.assertSame(injectedFailure, errors.poll());
+                Assert.assertEquals(0, refreshTicks.get());
+                Assert.assertEquals(0, swapsObserved.get());
+            }
+            Assert.assertEquals(0, inPlacePublishesObserved.get());
+            if (!errors.isEmpty()) {
+                throw new AssertionError("refresh driver failed", errors.peek());
+            }
+            Assert.assertTrue("the driver must release the pin on every exit", isTierSlotWritable(tier, initialIdx));
+            driveRefreshToQuiescence(warmupJob);
+        }
+        assertQuery("SELECT * FROM lv")
+                .noLeakCheck() // The caller owns the memory-leak scope and the live-view registry.
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        ts\ti\trn
+                        2027-01-01T00:00:00.000000Z\t1\t1
+                        2027-01-01T00:00:01.000000Z\t2\t2
+                        2027-01-01T00:00:02.000000Z\t3\t3
+                        """);
+        assertNoRefreshFaults("lv");
+    }
+
+    private static boolean isTierSlotWritable(LiveViewInMemoryTier tier, int slotIdx) {
+        if (tier.tryAcquireWrite(slotIdx) == null) {
+            return false;
+        }
+        tier.releaseWriteWithoutPublish(slotIdx);
+        return true;
+    }
+
     // Like newPacedWriterThread, but for the var-size base table (ts, vs STRING,
     // vv VARCHAR): writer w ingests the round-robin slice fromIndex+w, fromIndex+w+numWriters,
     // ... one batch per refresh tick. Each row's var-length values are derived from its
@@ -1348,19 +1461,22 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             final StringSink strSink = new StringSink();
             final Utf8StringSink vcSink = new Utf8StringSink();
             try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
-                barrier.await();
+                barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
                 int sinceCommit = 0;
-                for (int k = fromIndex + writerId; k < rowCount; k += numWriters) {
+                for (int k = fromIndex + writerId; k < rowCount && errors.isEmpty(); k += numWriters) {
                     appendVarSizeRow(walWriter, tsv[k], strSink, vcSink);
                     if (++sinceCommit >= batch) {
                         walWriter.commit();
                         sinceCommit = 0;
-                        awaitRefreshTick(refreshTicks);
+                        awaitRefreshTick(refreshTicks, errors);
                     }
                 }
-                walWriter.commit();
+                if (errors.isEmpty()) {
+                    walWriter.commit();
+                }
             } catch (Throwable th) {
                 errors.add(th);
+                barrier.reset();
             } finally {
                 Path.clearThreadLocals();
             }
@@ -1390,23 +1506,86 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     ) {
         return new Thread(() -> {
             try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
-                barrier.await();
+                barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
                 int sinceCommit = 0;
-                for (int k = fromIndex + writerId; k < rowCount; k += numWriters) {
+                for (int k = fromIndex + writerId; k < rowCount && errors.isEmpty(); k += numWriters) {
                     appendRow(walWriter, tsv[k], symIdx[k], iv[k], xv[k]);
                     if (++sinceCommit >= batch) {
                         walWriter.commit();
                         sinceCommit = 0;
-                        awaitRefreshTick(refreshTicks);
+                        awaitRefreshTick(refreshTicks, errors);
                     }
                 }
-                walWriter.commit();
+                if (errors.isEmpty()) {
+                    walWriter.commit();
+                }
             } catch (Throwable th) {
                 errors.add(th);
+                barrier.reset();
             } finally {
                 Path.clearThreadLocals();
             }
         }, "lv-paced-writer-" + writerId);
+    }
+
+    private Thread newTierSwapRefreshThread(
+            LiveViewRefreshJob job,
+            LiveViewInMemoryTier tier,
+            CyclicBarrier barrier,
+            AtomicBoolean isRunning,
+            AtomicLong refreshTicks,
+            AtomicLong swapsObserved,
+            AtomicLong inPlacePublishesObserved,
+            ConcurrentLinkedQueue<Throwable> errors,
+            long clockStepMicros
+    ) {
+        return new Thread(() -> {
+            try (
+                    SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory factory = compiler.compile("SELECT * FROM lv", ctx).getRecordCursorFactory()
+            ) {
+                // Pin the pre-warmed slot before releasing the writers. A run can publish
+                // twice (0 -> 1 -> 0), hiding both swaps from the index sample. This real
+                // reader prevents the second swap until the driver observes the first.
+                LiveViewRecordCursor initialCursor = (LiveViewRecordCursor) unwrapLvFactory(factory).getCursor(ctx);
+                try {
+                    Assert.assertTrue("the startup cursor must pin the tier", initialCursor.isRoutingEligible());
+                    int lastPublishedIdx = tier.getPublishedIdx();
+                    long lastPublishedLvSeqTxn = tier.getSlot(lastPublishedIdx).lvSeqTxn();
+                    barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
+                    while (isRunning.get() && errors.isEmpty()) {
+                        setCurrentMicros(currentMicros + clockStepMicros);
+                        drainWalQueue();
+                        // Sample between passes: O3 can publish in place without changing the
+                        // slot index. This driver owns every refresh, so it can read the stamp
+                        // without a pin after job.run() returns.
+                        for (int i = 0; i < REFRESH_PASSES_PER_TICK && job.run(); i++) {
+                            final int publishedIdx = tier.getPublishedIdx();
+                            final long publishedLvSeqTxn = tier.getSlot(publishedIdx).lvSeqTxn();
+                            if (publishedIdx != lastPublishedIdx) {
+                                swapsObserved.incrementAndGet();
+                                // Close on the owning thread, outside job.run(). Subsequent
+                                // churn stays uncoordinated; the counter remains a lower bound.
+                                initialCursor = Misc.free(initialCursor);
+                            } else if (publishedLvSeqTxn != lastPublishedLvSeqTxn) {
+                                inPlacePublishesObserved.incrementAndGet();
+                            }
+                            lastPublishedIdx = publishedIdx;
+                            lastPublishedLvSeqTxn = publishedLvSeqTxn;
+                        }
+                        refreshTicks.incrementAndGet();
+                    }
+                } finally {
+                    Misc.free(initialCursor);
+                }
+            } catch (Throwable th) {
+                errors.add(th);
+                barrier.reset();
+            } finally {
+                Path.clearThreadLocals();
+            }
+        }, "lv-refresh-driver");
     }
 
     // Waits for the refresh driver to complete one more tick than it had when called.
@@ -1414,10 +1593,10 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // silently drop the paced writer's intended refresh/writer overlap. The caller runs on
     // a writer thread whose try/catch routes any throw into the shared errors queue, so a
     // timeout surfaces as a test failure instead of a vacuous pass (or a hang).
-    private static void awaitRefreshTick(AtomicLong refreshTicks) {
+    private static void awaitRefreshTick(AtomicLong refreshTicks, ConcurrentLinkedQueue<Throwable> errors) {
         final long seen = refreshTicks.get();
         final long deadlineNanos = System.nanoTime() + REFRESH_TICK_WAIT_NANOS;
-        while (refreshTicks.get() == seen) {
+        while (refreshTicks.get() == seen && errors.isEmpty()) {
             if (System.nanoTime() >= deadlineNanos) {
                 throw new AssertionError("refresh driver did not tick within "
                         + (REFRESH_TICK_WAIT_NANOS / 1_000_000_000L)
@@ -2607,13 +2786,10 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     //   the first reader opens. It only comes into being on the first publish, which is a
     //   tick the readers would otherwise spend reading a view that has no tier to route
     //   to.</li>
-    //   <li><b>The growth budget is 0</b>, which makes isCompactionWorthwhile true on every
-    //   publish, so the refresh worker always takes the SLOW path (fill the other slot,
-    //   then publishSwap) rather than appending in place. It is a determinism knob rather
-    //   than an enabler: swaps happen under this soak's churn either way, because a
-    //   reader's pin defeats the fast-path CAS on the published slot and drops the writer
-    //   onto the slow path regardless. The budget makes every publish a swap instead of
-    //   only the ones a reader happened to collide with.</li>
+    //   <li><b>The growth budget is 0</b>, forcing normal publication onto the swap path.
+    //   O3 restaging can still update the current slot in place. The driver pins a real
+    //   startup cursor until it observes the first swap, preventing two swaps within
+    //   one job.run() from hiding all progress from the sampler.</li>
     // </ul>
     // The readers assert the same per-snapshot invariant the other row_number() soaks do -
     // ts ascending, rn a gapless 1..N - which holds for the filtered output too because the
@@ -2698,40 +2874,9 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             // few ticks and the refreshes in between leave an un-flushed lead resident -
             // which is what makes the frames the filter workers read carry slot rows disk
             // does not have.
-            final Thread driver = new Thread(() -> {
-                try {
-                    barrier.await();
-                    int lastPublishedIdx = tier.getPublishedIdx();
-                    while (running.get()) {
-                        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS / 6);
-                        drainWalQueue();
-                        // drainJob's own loop, opened up so the published index can be
-                        // sampled between passes rather than once per tick. A tick runs up
-                        // to 64 passes and the index only ever alternates between two
-                        // slots, so a per-tick sample reports the parity a run of swaps
-                        // happened to land on rather than its length - it read single
-                        // digits against passes that had swapped an order of magnitude
-                        // more. Per pass it is still a lower bound (a pass can publish and
-                        // the sample can miss a pair), which is all the assertion needs.
-                        for (int i = 0; i < REFRESH_PASSES_PER_TICK && job.run(); i++) {
-                            final int publishedIdx = tier.getPublishedIdx();
-                            if (publishedIdx != lastPublishedIdx) {
-                                swapsObserved.incrementAndGet();
-                                lastPublishedIdx = publishedIdx;
-                            }
-                        }
-                        refreshTicks.incrementAndGet();
-                    }
-                } catch (Throwable th) {
-                    errors.add(th);
-                    // The writers pace off this counter; keep it moving or they wait out
-                    // their deadline one batch at a time and the failure takes minutes to
-                    // surface.
-                    refreshTicks.addAndGet(Long.MAX_VALUE / 2);
-                } finally {
-                    Path.clearThreadLocals();
-                }
-            }, "lv-refresh-driver");
+            final Thread driver = newTierSwapRefreshThread(
+                    job, tier, barrier, running, refreshTicks, swapsObserved, new AtomicLong(), errors, CLOCK_ADVANCE_MICROS / 6
+            );
 
             final Thread[] readers = new Thread[numReaders];
             for (int r = 0; r < numReaders; r++) {
@@ -2826,14 +2971,9 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // (for a tier-routing shape) reads that actually reached the tier mid-soak.
     private void runReaderChurnSoak(Rnd rnd, int numWriters, int numReaders, int rowCount, boolean modeB, boolean leadMode) throws Exception {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
-        // Growth budget 0 makes isCompactionWorthwhile true on every publish, so an in-order
-        // publish always takes the slow path (fill the other slot, then publishSwap). The O3
-        // tier rebuild ignores the budget, though, and the paced writers' interleaved slices
-        // make nearly every tick O3: rebuildInMemoryTier refills the published slot IN PLACE
-        // unless a reader happens to pin it at that instant, so a run can publish on every tick
-        // and never swap. The driver below therefore counts both kinds of publish - a swap
-        // flips the published index, an in-place publish re-stamps the published slot - and
-        // the run asserts on their sum, which no reader pin has to collide with.
+        // Growth budget 0 forces normal publication onto the swap path, but O3 restaging
+        // can still rewrite the current slot. The driver's startup cursor makes the first
+        // swap observable; subsequent passes count both swaps and in-place publications.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
 
         final int n = 1 + rnd.nextInt(8);
@@ -2914,42 +3054,9 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                         w, numWriters, preCount, rowCount, batch, tsv, symIdx, iv, xv, baseToken, barrier, refreshTicks, errors
                 );
             }
-            final Thread driver = new Thread(() -> {
-                try {
-                    barrier.await();
-                    int lastPublishedIdx = tier.getPublishedIdx();
-                    long lastPublishedLvSeqTxn = tier.getSlot(lastPublishedIdx).lvSeqTxn();
-                    while (running.get()) {
-                        setCurrentMicros(currentMicros + clockStepMicros);
-                        drainWalQueue();
-                        // drainJob's own loop, opened up so the published state can be sampled
-                        // between passes: a tick runs up to 64 passes and the index only
-                        // alternates between two slots, so a per-tick sample would report a run
-                        // of swaps' parity rather than its length. This thread runs every
-                        // refresh pass, so it is the only one that writes a slot's stamp and
-                        // reads it here without a pin.
-                        for (int i = 0; i < REFRESH_PASSES_PER_TICK && job.run(); i++) {
-                            final int publishedIdx = tier.getPublishedIdx();
-                            final long publishedLvSeqTxn = tier.getSlot(publishedIdx).lvSeqTxn();
-                            if (publishedIdx != lastPublishedIdx) {
-                                swapsObserved.incrementAndGet();
-                            } else if (publishedLvSeqTxn != lastPublishedLvSeqTxn) {
-                                inPlacePublishesObserved.incrementAndGet();
-                            }
-                            lastPublishedIdx = publishedIdx;
-                            lastPublishedLvSeqTxn = publishedLvSeqTxn;
-                        }
-                        refreshTicks.incrementAndGet();
-                    }
-                } catch (Throwable th) {
-                    errors.add(th);
-                    // The writers pace off this counter; keep it moving so a dead driver fails
-                    // the run through the errors queue rather than hanging it.
-                    refreshTicks.addAndGet(Long.MAX_VALUE / 2);
-                } finally {
-                    Path.clearThreadLocals();
-                }
-            }, "lv-refresh-driver");
+            final Thread driver = newTierSwapRefreshThread(
+                    job, tier, barrier, running, refreshTicks, swapsObserved, inPlacePublishesObserved, errors, clockStepMicros
+            );
 
             final Thread[] readers = new Thread[numReaders];
             for (int r = 0; r < numReaders; r++) {
@@ -3060,10 +3167,9 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // state still matches the recompute.
     private void runVarSizeReaderChurnSoak(Rnd rnd, int numWriters, int numReaders, int rowCount) throws Exception {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
-        // See runReaderChurnSoak: forces every in-order publish onto the slow path, which
-        // makes it realloc-and-move the (data, aux) regions the var-length reads dereference -
-        // the base-pointer move this soak is about. The O3 rebuild still refills the published
-        // slot in place, which is why the driver counts in-place publishes as well as swaps.
+        // See runReaderChurnSoak: force normal publication onto the swap path, moving the
+        // data/aux regions that var-length readers dereference. The driver's startup cursor
+        // makes the first swap observable; it also counts later in-place O3 publications.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
 
         final String viewSql = "SELECT ts, vs, vv, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base";
@@ -3130,36 +3236,9 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                         w, numWriters, preCount, rowCount, batch, tsv, baseToken, barrier, refreshTicks, errors
                 );
             }
-            final Thread driver = new Thread(() -> {
-                try {
-                    barrier.await();
-                    int lastPublishedIdx = tier.getPublishedIdx();
-                    long lastPublishedLvSeqTxn = tier.getSlot(lastPublishedIdx).lvSeqTxn();
-                    while (running.get()) {
-                        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
-                        drainWalQueue();
-                        // drainJob's own loop, opened up so a publish is sampled between passes
-                        // rather than once per tick; see runReaderChurnSoak.
-                        for (int i = 0; i < REFRESH_PASSES_PER_TICK && job.run(); i++) {
-                            final int publishedIdx = tier.getPublishedIdx();
-                            final long publishedLvSeqTxn = tier.getSlot(publishedIdx).lvSeqTxn();
-                            if (publishedIdx != lastPublishedIdx) {
-                                swapsObserved.incrementAndGet();
-                            } else if (publishedLvSeqTxn != lastPublishedLvSeqTxn) {
-                                inPlacePublishesObserved.incrementAndGet();
-                            }
-                            lastPublishedIdx = publishedIdx;
-                            lastPublishedLvSeqTxn = publishedLvSeqTxn;
-                        }
-                        refreshTicks.incrementAndGet();
-                    }
-                } catch (Throwable th) {
-                    errors.add(th);
-                    refreshTicks.addAndGet(Long.MAX_VALUE / 2);
-                } finally {
-                    Path.clearThreadLocals();
-                }
-            }, "lv-refresh-driver");
+            final Thread driver = newTierSwapRefreshThread(
+                    job, tier, barrier, running, refreshTicks, swapsObserved, inPlacePublishesObserved, errors, CLOCK_ADVANCE_MICROS
+            );
 
             final Thread[] readers = new Thread[numReaders];
             for (int r = 0; r < numReaders; r++) {
