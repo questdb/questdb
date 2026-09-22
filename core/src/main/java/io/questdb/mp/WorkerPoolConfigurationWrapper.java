@@ -25,6 +25,7 @@
 package io.questdb.mp;
 
 import io.questdb.Metrics;
+import io.questdb.mp.continuation.FiberDispatchController;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -45,6 +46,11 @@ public class WorkerPoolConfigurationWrapper implements DynamicFiberWorkerPoolCon
 
     public WorkerPoolConfiguration getDelegate() {
         return state.get().delegate;
+    }
+
+    @Override
+    public FiberDispatchController getFiberDispatchController() {
+        return getDelegate().getFiberDispatchController();
     }
 
     @Override
