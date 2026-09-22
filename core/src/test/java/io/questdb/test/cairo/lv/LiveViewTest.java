@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.SqlJitMode;
@@ -1039,6 +1040,47 @@ public class LiveViewTest extends AbstractLiveViewTest {
             assertQuery("SELECT c, a FROM lv").noLeakCheck().expectSize().returns("c\ta\n" +
                     "30\t10\n");
 
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testWalCursorSymbolTableContainsNullValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (a SYMBOL, b SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('seed', NULL, '2026-01-01T00:00:00.000000Z')");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT a, b, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                final WalSegmentPageFrameCursor cursor = job.walFrameCursorForTest();
+
+                execute("INSERT INTO base VALUES ('x', NULL, '2026-01-01T00:01:00.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                assertNoRefreshFaults("lv");
+                Assert.assertFalse("a has no NULL in its dictionary or transaction", cursor.getSymbolTable(0).containsNullValue());
+
+                execute("INSERT INTO base VALUES (NULL, NULL, '2026-01-01T00:02:00.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                assertNoRefreshFaults("lv");
+                // The cursor retains the transaction's NULL flags after releasing its WAL reader.
+                Assert.assertTrue("the transaction introducing NULL must update a's metadata", cursor.getSymbolTable(0).containsNullValue());
+                Assert.assertTrue("the NULL-only column must report NULL with no non-NULL symbols", cursor.getSymbolTable(1).containsNullValue());
+                try (TableReader reader = getReader("base")) {
+                    Assert.assertEquals(0, reader.getSymbolMapReader(1).getSymbolCount());
+                }
+            }
+            drainWalQueue();
+            assertQuery("SELECT a, b, rn FROM lv ORDER BY ts").noLeakCheck().expectSize().returns("""
+                    a\tb\trn
+                    seed\t\t1
+                    x\t\t2
+                    \t\t3
+                    """);
             execute("DROP LIVE VIEW lv");
         });
     }
