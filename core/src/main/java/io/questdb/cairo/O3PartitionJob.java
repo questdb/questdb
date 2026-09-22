@@ -237,14 +237,38 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // A replace-range commit needs every piece fully inside or fully outside its declared range,
             // which two cuts at the range's edges guarantee. Each finds its piece fresh, since the
             // batch-edge cuts just shifted every index above the lowest one they touched.
+            //
+            // Each edge resolves by the SAME timestamp it cuts at: the high edge cuts at
+            // replaceRangeTsHi + 1, so it looks pieces up by that value too. Looking it up by
+            // replaceRangeTsHi instead left a piece STARTING at replaceRangeTsHi holding in-range rows,
+            // because two pieces can legitimately share a boundary timestamp - computeActions' spare-tie
+            // rule founds a piece at the very timestamp the piece below it ends on - and one first-match
+            // lookup resolves such a tie to the earlier piece.
+            //
+            // Cutting EVERY piece containing the key, rather than the first, is insurance against a
+            // producer that overlaps two pieces by more than a shared point: today the extra candidate
+            // starts exactly at the key, and applyCutResolved declines it on its positional guard. The
+            // key correction above is what repairs the tie, not the loop. Descending, because a cut
+            // inserts the upper half at p + 1 and shifts only indices this walk has already visited; the
+            // low edge runs to completion before the high edge, so the high edge's lower half inherits a
+            // tsLo the drop pass can accept.
             if (tableWriter.isCommitReplaceMode() && replaceRangeTsLo <= replaceRangeTsHi) {
-                final int loPiece = O3CompositeMergeStrategy.findPieceContaining(boundsOut, replaceRangeTsLo);
-                if (loPiece > -1) {
-                    applyCutResolved(boundsOut, loPiece, replaceRangeTsLo, tsAddr, e, 0, 0);
+                for (int p = boundsOut.size() / O3CompositeMergeStrategy.LONGS_PER_BOUND - 1; p >= 0; p--) {
+                    final long tsHi = O3CompositeMergeStrategy.getTsHi(boundsOut, p);
+                    if (tsHi != Numbers.LONG_NULL
+                            && O3CompositeMergeStrategy.getTsLo(boundsOut, p) <= replaceRangeTsLo
+                            && replaceRangeTsLo <= tsHi) {
+                        applyCutResolved(boundsOut, p, replaceRangeTsLo, tsAddr, e, 0, 0);
+                    }
                 }
-                final int hiPiece = O3CompositeMergeStrategy.findPieceContaining(boundsOut, replaceRangeTsHi);
-                if (hiPiece > -1) {
-                    applyCutResolved(boundsOut, hiPiece, replaceRangeTsHi + 1, tsAddr, e, 0, 0);
+                final long hiCutTs = replaceRangeTsHi + 1;
+                for (int p = boundsOut.size() / O3CompositeMergeStrategy.LONGS_PER_BOUND - 1; p >= 0; p--) {
+                    final long tsHi = O3CompositeMergeStrategy.getTsHi(boundsOut, p);
+                    if (tsHi != Numbers.LONG_NULL
+                            && O3CompositeMergeStrategy.getTsLo(boundsOut, p) <= hiCutTs
+                            && hiCutTs <= tsHi) {
+                        applyCutResolved(boundsOut, p, hiCutTs, tsAddr, e, 0, 0);
+                    }
                 }
             }
         } finally {
@@ -288,8 +312,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long dedupColSinkAddr,
             long oldPartitionSize,
             long o3TimestampLo,
-            long o3TimestampHi,
-            boolean isLastPartition
+            long o3TimestampHi
     ) {
         final O3CompositeContext ctx = COMPOSITE_CONTEXT.get();
         ctx.clear();
@@ -306,9 +329,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 MemoryTag.NATIVE_O3
         );
 
-        // A replace-range commit's last partition is excluded: nothing downstream learns a dropped piece's
-        // absence from the table-wide maxTimestamp the way it already does from minTimestamp, and
-        // declining here leaves the known gap rather than trading it for a wrong maxTimestamp.
+        // The last partition is NOT excluded from composite replacement: processPartition routes on
+        // !isParquet, srcDataMax > 0, a known partition index, WAL-or-composite and merge-append, with no
+        // term for `last`, so a replace-range commit plans the last partition here like any other.
+        // TableWriter raises the table-wide maxTimestamp from a replace commit's OWN rows only
+        // (replaceMaxTimestamp), so a pure-delete replace that drops the highest pieces leaves
+        // maxTimestamp above the last surviving row. That gap belongs to the replace bookkeeping; this
+        // planner does not decide it.
         O3CompositeMergeStrategy.Plan plan = processCompositePartition(
                 pathToTable,
                 partitionIndex,
@@ -2526,8 +2553,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         dedupColSinkAddr,
                         oldPartitionSize,
                         o3TimestampLo,
-                        o3TimestampHi,
-                        last
+                        o3TimestampHi
                 );
             } catch (Throwable e) {
                 LOG.error().$("process composite partition error [table=").$(tableWriter.getTableToken())

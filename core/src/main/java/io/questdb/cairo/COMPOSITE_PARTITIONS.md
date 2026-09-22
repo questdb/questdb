@@ -306,7 +306,10 @@ it back to 426 via `maybeDowngradeStorageVersion` only AFTER a commit clears the
 table and read its pieces as flat `[0, liveRows)` - it refuses the table outright with
 `metadataVersionMismatch` (expected 426, actual 430). This is the safe outcome: the older binary never
 misreads composite pieces, and its checkpoint scrub never touches the geometry pointer, because it
-cannot open the table at all.
+cannot open the table at all. A checkpoint or backup image is the second producer of a (`_meta`, `_txn`)
+pair, so `DatabaseCheckpointAgent` derives the image's `META_OFFSET_VERSION` stamp from
+`hasCompositePartitions()` on the `_txn` it ships instead of copying it from the reader, whose metadata
+may be a private snapshot that predates `TableWriter`'s in-place storage version write.
 
 The practical consequence for a rollback plan: an older binary hard-fails on any table that currently
 holds a composite partition. To downgrade, first fold every composite partition back to plain on a
