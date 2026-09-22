@@ -3750,7 +3750,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         int partitionCount = txWriter.getPartitionCount();
-        squashPartitionForce(partitionIndex);
+        try {
+            squashPartitionForce(partitionIndex);
+        } catch (Throwable e) {
+            // closeActivePartition() above runs outside the try below, and squashPartitionForce can
+            // throw before it reopens anything: createDirsOrFail when the squash has to copy the
+            // target partition, or the frame append itself. processAsyncWriterCommand swallows the
+            // failure without distressing the writer, so leaving the partition closed hands a writer
+            // with dead append columns back to the pool and the next non-WAL newRow() maps through a
+            // closed fd. Guard matches the squash-skipped reopen below.
+            if (activePartition && isLastPartitionClosed()) {
+                if (txWriter.getPartitionCount() != partitionCount) {
+                    // The squash already removed the partitions it merged but threw before it
+                    // adjusted the transient/fixed row counts, so getLastPartitionTimestamp() and
+                    // getTransientRowCount() no longer describe the same partition. Reopening would
+                    // take the append position from a stale row count, so distress instead - the
+                    // same call squashSplitPartitions makes once its state has diverged from _txn.
+                    distressed = true;
+                } else {
+                    try {
+                        openLastPartition();
+                    } catch (Throwable reopenFailure) {
+                        // A writer that cannot reopen its active partition must not be reused. Keep
+                        // the squash failure as the thrown cause, it is the one that explains why
+                        // the switch aborted.
+                        distressed = true;
+                        e.addSuppressed(reopenFailure);
+                    }
+                }
+            }
+            throw e;
+        }
         int newPartitionCount = txWriter.getPartitionCount();
         if (partitionCount != newPartitionCount) {
             // The force-squash merged one or more split sub-partitions into this logical partition.
