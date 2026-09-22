@@ -28,21 +28,29 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
+import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
+import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPoolUtils;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.PlainSocketFactory;
+import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.Os;
 import io.questdb.test.mp.TestWorkerPool;
 
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.ServerSocket;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -58,6 +66,9 @@ public final class RestartableQwpServer implements AutoCloseable {
     private final CairoEngine engine;
     private final int forceRecvFragmentationChunkSize;
     private final int forceSendFragmentationChunkSize;
+    // fds of upgraded connections that have carried at least one WebSocket frame and that the
+    // worker has not yet closed. Written by the single worker thread, read by test threads.
+    private final Set<Long> liveFds = ConcurrentHashMap.newKeySet();
     private final int port;
     private final AtomicBoolean running = new AtomicBoolean();
     private HttpServer server;
@@ -155,11 +166,46 @@ public final class RestartableQwpServer implements AutoCloseable {
         }
     }
 
+    /**
+     * Waits until one upgraded connection has been in the live set, unchanged, for
+     * {@code stableMillis}. "Live" means the server has already received a WebSocket frame on
+     * it, so the client's I/O loop finished the upgrade and is in its send loop rather than
+     * mid-connect. The stability window lets a recycle the client had already armed before the
+     * caller paused resets fire at its next barrier and reconnect before the caller acts on
+     * the connection. Polls every millisecond; returns false once {@code timeoutMillis} passes.
+     */
+    public boolean awaitStableLiveConnection(long timeoutMillis, long stableMillis) {
+        final long deadlineNanos = System.nanoTime() + timeoutMillis * 1_000_000L;
+        Long stableFd = null;
+        long stableSinceNanos = 0;
+        while (System.nanoTime() < deadlineNanos) {
+            Long fd = null;
+            for (Long candidate : liveFds) {
+                fd = candidate;
+                break;
+            }
+            if (fd != null && fd.equals(stableFd)) {
+                if (System.nanoTime() - stableSinceNanos >= stableMillis * 1_000_000L) {
+                    return true;
+                }
+            } else {
+                stableFd = fd;
+                stableSinceNanos = System.nanoTime();
+            }
+            Os.sleep(1);
+        }
+        return false;
+    }
+
     @Override
     public void close() {
         if (running.get()) {
             stop();
         }
+    }
+
+    public int liveConnectionCount() {
+        return liveFds.size();
     }
 
     public void start() throws SqlException {
@@ -188,6 +234,7 @@ public final class RestartableQwpServer implements AutoCloseable {
 
         workerPool = new TestWorkerPool(1);
         server = new HttpServer(httpConfig, workerPool, PlainSocketFactory.INSTANCE);
+        final LiveTrackingUpgradeProcessor processor = new LiveTrackingUpgradeProcessor(engine, httpConfig, liveFds);
         server.bind(new HttpRequestHandlerFactory() {
             @Override
             public ObjHashSet<String> getUrls() {
@@ -195,23 +242,35 @@ public final class RestartableQwpServer implements AutoCloseable {
             }
 
             @Override
-            public QwpIngressHttpProcessor newInstance() {
-                return new QwpIngressHttpProcessor(engine, httpConfig);
+            public HttpRequestHandler newInstance() {
+                // Production wraps the upgrade processor in QwpIngressHttpProcessor, whose
+                // getProcessor() unconditionally returns its one shared instance; returning
+                // ours directly keeps that shape and lets the test observe each connection.
+                return requestHeader -> processor;
             }
         });
         WorkerPoolUtils.setupWriterJobs(workerPool, engine);
         workerPool.start(LOG);
     }
 
-    public void stop() {
+    /**
+     * Halts the workers, then closes the server. Returns how many upgraded connections were
+     * still live when the workers halted: after {@code halt()} no worker can process a client
+     * close, so every fd left in the live set is a connection the shutdown below kills under
+     * the client. That shutdown is the dispatcher's {@code src=shutdown} path, which never
+     * calls the processor's {@code onConnectionClosed}, so the set is cleared here.
+     */
+    public int stop() {
         if (!running.compareAndSet(true, false)) {
-            return;
+            return 0;
         }
         try {
             workerPool.halt();
         } catch (Throwable t) {
             LOG.error().$("worker pool halt failed").$(t).$();
         }
+        final int killed = liveFds.size();
+        liveFds.clear();
         try {
             server.close();
         } catch (Throwable t) {
@@ -219,6 +278,37 @@ public final class RestartableQwpServer implements AutoCloseable {
         }
         server = null;
         workerPool = null;
+        return killed;
+    }
+
+    /**
+     * Records which upgraded connections have carried a frame. {@code resumeRecv} is the
+     * dispatcher's entry for every readable event after the protocol switch, so its first call
+     * for an fd means the client finished the upgrade and is running its send loop. The fd is
+     * added on entry rather than after {@code super} returns because a frame whose ack cannot
+     * be sent at once surfaces as a backpressure exception, not a normal return. A
+     * peer-disconnect event on a connection that never sent anything adds the fd and then
+     * removes it through {@code onConnectionClosed} on the same worker call.
+     */
+    private static final class LiveTrackingUpgradeProcessor extends QwpIngressUpgradeProcessor {
+        private final Set<Long> liveFds;
+
+        private LiveTrackingUpgradeProcessor(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration, Set<Long> liveFds) {
+            super(engine, httpConfiguration);
+            this.liveFds = liveFds;
+        }
+
+        @Override
+        public void onConnectionClosed(HttpConnectionContext context) {
+            liveFds.remove(context.getFd());
+            super.onConnectionClosed(context);
+        }
+
+        @Override
+        public void resumeRecv(HttpConnectionContext context) throws PeerIsSlowToWriteException, ServerDisconnectException, PeerIsSlowToReadException {
+            liveFds.add(context.getFd());
+            super.resumeRecv(context);
+        }
     }
 
     @FunctionalInterface
