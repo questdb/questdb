@@ -25,9 +25,12 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileReader;
@@ -36,12 +39,23 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryDescriptor;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
+import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
+import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -191,6 +205,36 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 ),
         };
         testModelToSink(tests);
+    }
+
+    @Test
+    public void testCreateMatViewAdministrativeCursorFunctionInJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final AtomicInteger constructionCount = new AtomicInteger();
+            final String functionName = "ent_admin_cursor";
+            registerCursorFunctionFactory(functionName, true, constructionCount, null);
+            try {
+                final String sql = "create materialized view test as (select t1.ts, count() from " + TABLE1 +
+                        " t1 cross join " + functionName + "() sample by 30s) partition by day";
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(
+                                sql.indexOf(functionName + "()"),
+                                "administrative function cannot be used in materialized view: " + functionName
+                        );
+                // The optimiser instantiates a FROM/JOIN cursor function while compileMatViewQuery still
+                // allows non-deterministic functions, so FunctionParser's pre-check - which rejects before
+                // newInstance() - cannot fire here. A non-zero construction count therefore pins the
+                // rejection on the post-optimise backstop in SqlCompilerImpl.compileMatViewQuery, and the
+                // function name in the message can only come from SqlExecutionRequirements.getFunctionName().
+                assertEquals(1, constructionCount.get());
+                assertNull(getMatViewDefinition("test"));
+            } finally {
+                engine.getFunctionFactoryCache().getFactories().remove(functionName);
+            }
+        });
     }
 
     @Test
@@ -448,6 +492,73 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("column\tsymbolCapacity\nin\t2048\n");
+        });
+    }
+
+    @Test
+    public void testCreateMatViewCursorFunctionClosedOnPostOptimiseRejection() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final ObjList<CloseCountingRecordCursorFactory> factories = new ObjList<>();
+            final String functionName = "ent_admin_cursor";
+            registerCursorFunctionFactory(functionName, true, null, factories);
+            try {
+                final String sql = "create materialized view test as (select t1.ts, count() from " + TABLE1 +
+                        " t1 cross join " + functionName + "() sample by 30s) partition by day";
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(
+                                sql.indexOf(functionName + "()"),
+                                "administrative function cannot be used in materialized view: " + functionName
+                        );
+                // SqlOptimiser instantiates the JOIN cursor function and holds the factory in flight until
+                // code generation takes ownership of it. The rejection throws after optimise() returned and
+                // before generation runs, so no factory tree owns it and the compile path itself has to
+                // close it - exactly once, since a second close would be a use-after-free.
+                assertEquals(1, factories.size());
+                assertEquals(1, factories.getQuick(0).closeCount);
+                assertNull(getMatViewDefinition("test"));
+
+                // The next compile borrows the same pooled compiler and clears its optimiser state. A
+                // reference left behind in that state must not close the factory a second time.
+                execute("create table t2 (ts timestamp, v long) timestamp(ts) partition by day wal");
+                assertEquals(1, factories.getQuick(0).closeCount);
+            } finally {
+                engine.getFunctionFactoryCache().getFactories().remove(functionName);
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewCursorFunctionClosedOnSuccess() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final ObjList<CloseCountingRecordCursorFactory> factories = new ObjList<>();
+            final String functionName = "plain_cursor";
+            registerCursorFunctionFactory(functionName, false, null, factories);
+            try {
+                execute("create materialized view test as (select t1.ts, count() from " + TABLE1 +
+                        " t1 cross join " + functionName + "() sample by 30s) partition by day");
+                assertNotNull(getMatViewDefinition("test"));
+
+                // Code generation took ownership of every instantiated cursor factory, so the compiled
+                // factory tree - and nothing else - closes each of them, exactly once.
+                assertTrue(factories.size() > 0);
+                for (int i = 0, n = factories.size(); i < n; i++) {
+                    assertEquals(1, factories.getQuick(i).closeCount);
+                }
+
+                // Clearing the pooled compiler's optimiser state on the next compile must not close the
+                // factories the compiled tree already owned and released.
+                execute("create table t2 (ts timestamp, v long) timestamp(ts) partition by day wal");
+                for (int i = 0, n = factories.size(); i < n; i++) {
+                    assertEquals(1, factories.getQuick(i).closeCount);
+                }
+            } finally {
+                engine.getFunctionFactoryCache().getFactories().remove(functionName);
+            }
         });
     }
 
@@ -2599,6 +2710,56 @@ public class CreateMatViewTest extends AbstractCairoTest {
         return engine.getDependentViewGraph().getViewDefinition(matViewToken);
     }
 
+    private static void registerCursorFunctionFactory(
+            String functionName,
+            boolean requiresEnterpriseSecurityContext,
+            @Nullable AtomicInteger constructionCount,
+            @Nullable ObjList<CloseCountingRecordCursorFactory> instantiatedFactories
+    ) throws SqlException {
+        final ObjList<FunctionFactoryDescriptor> descriptors = new ObjList<>();
+        descriptors.add(new FunctionFactoryDescriptor(new FunctionFactory() {
+            @Override
+            public int getExecutionRequirements() {
+                return requiresEnterpriseSecurityContext
+                        ? SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
+                        : SqlExecutionRequirements.NONE;
+            }
+
+            @Override
+            public String getSignature() {
+                return functionName + "()";
+            }
+
+            @Override
+            public boolean isCursor() {
+                return true;
+            }
+
+            @Override
+            public Function newInstance(
+                    int position,
+                    ObjList<Function> args,
+                    IntList argPositions,
+                    CairoConfiguration configuration,
+                    SqlExecutionContext executionContext
+            ) {
+                if (constructionCount != null) {
+                    constructionCount.incrementAndGet();
+                }
+                final GenericRecordMetadata metadata = new GenericRecordMetadata();
+                metadata.add(new TableColumnMetadata("permission", ColumnType.VARCHAR));
+                final CloseCountingRecordCursorFactory factory =
+                        new CloseCountingRecordCursorFactory(new EmptyTableRecordCursorFactory(metadata));
+                if (instantiatedFactories != null) {
+                    instantiatedFactories.add(factory);
+                }
+                return new CursorFunction(factory);
+            }
+        }));
+        assertNull(engine.getFunctionFactoryCache().getFactories().get(functionName));
+        engine.getFunctionFactoryCache().getFactories().put(functionName, descriptors);
+    }
+
     private void assertQuery0(String expected, String query, String expectedTimestamp) throws Exception {
         assertQuery(query)
                 .timestamp(expectedTimestamp)
@@ -2785,6 +2946,46 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         .returns(test.expected);
             }
         });
+    }
+
+    /**
+     * Counts every {@link #close()} call rather than every effective release: the guard in
+     * {@code AbstractRecordCursorFactory} swallows repeated closes, which would hide the very
+     * double close these tests assert cannot happen.
+     */
+    private static class CloseCountingRecordCursorFactory implements RecordCursorFactory {
+        private final RecordCursorFactory delegate;
+        private int closeCount;
+
+        private CloseCountingRecordCursorFactory(RecordCursorFactory delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void close() {
+            closeCount++;
+            delegate.close();
+        }
+
+        @Override
+        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+            return delegate.getCursor(executionContext);
+        }
+
+        @Override
+        public RecordMetadata getMetadata() {
+            return delegate.getMetadata();
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return delegate.recordCursorSupportsRandomAccess();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            delegate.toPlan(sink);
+        }
     }
 
     private record DdlSerializationTest(@Nullable String viewName, String ddl, String expected) {

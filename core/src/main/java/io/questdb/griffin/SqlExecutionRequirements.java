@@ -36,10 +36,6 @@ public final class SqlExecutionRequirements implements Mutable {
     private int flags;
     private int liveWalProgressPosition = -1;
 
-    public void add(int requirements, int position) {
-        add(requirements, position, null);
-    }
-
     public void add(int requirements, int position, CharSequence functionName) {
         flags |= requirements;
         if ((requirements & REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0 && enterpriseSecurityContextPosition < 0) {

@@ -3289,6 +3289,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 return explainModel;
             }
         } catch (Throwable e) {
+            // Model compilation optimises but never generates, so a throw here - the INSERT column
+            // count check, UPDATE column validation, an authorization failure - can leave cursor
+            // functions the optimiser instantiated for FROM/JOIN table functions with no owner.
+            optimiser.freeTableFactoriesInFlight(e);
             if (generateCompileViewEvents && !executionContext.isValidationOnly()) {
                 enqueueCompileViews(model);
             }
@@ -3752,27 +3756,35 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try {
             final IQueryModel queryModel;
             try {
-                final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
-                if (executionModel.getModelType() != ExecutionModel.QUERY) {
-                    throw SqlException.$(startPos, "SELECT query expected");
+                try {
+                    final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
+                    if (executionModel.getModelType() != ExecutionModel.QUERY) {
+                        throw SqlException.$(startPos, "SELECT query expected");
+                    }
+                    queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
+                    final SqlExecutionRequirements executionRequirements = functionParser.getExecutionRequirements();
+                    final int securityContextPosition = executionRequirements.getPosition(
+                            SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
+                    );
+                    if (securityContextPosition > -1) {
+                        throw SqlException.position(securityContextPosition)
+                                .put("administrative function cannot be used in materialized view: ")
+                                .put(executionRequirements.getFunctionName(
+                                        SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
+                                ));
+                    }
+                } catch (SqlException e) {
+                    e.setPosition(e.getPosition() + selectTextPosition);
+                    throw e;
                 }
-                queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
-                final SqlExecutionRequirements executionRequirements = functionParser.getExecutionRequirements();
-                final int securityContextPosition = executionRequirements.getPosition(
-                        SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
-                );
-                if (securityContextPosition > -1) {
-                    throw SqlException.position(securityContextPosition)
-                            .put("administrative function cannot be used in materialized view: ")
-                            .put(executionRequirements.getFunctionName(
-                                    SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
-                            ));
-                }
-            } catch (SqlException e) {
-                e.setPosition(e.getPosition() + selectTextPosition);
-                throw e;
+                createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
+            } catch (Throwable th) {
+                // Rejecting the query after optimise() returned leaves the cursor functions it
+                // instantiated for FROM/JOIN table functions unowned: generation, which takes them over,
+                // has not run yet. Freeing after generateSelectWithRetries below would be a double free.
+                optimiser.freeTableFactoriesInFlight(th);
+                throw th;
             }
-            createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
 
             final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
             executionContext.setAllowNonDeterministicFunction(false);
@@ -4408,16 +4420,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try {
             final IQueryModel queryModel;
             try {
-                final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
-                if (executionModel.getModelType() != ExecutionModel.QUERY) {
-                    throw SqlException.$(startPos, "SELECT query expected");
+                try {
+                    final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
+                    if (executionModel.getModelType() != ExecutionModel.QUERY) {
+                        throw SqlException.$(startPos, "SELECT query expected");
+                    }
+                    queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
+                } catch (SqlException e) {
+                    e.setPosition(e.getPosition() + selectTextPosition);
+                    throw e;
                 }
-                queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
-            } catch (SqlException e) {
-                e.setPosition(e.getPosition() + selectTextPosition);
-                throw e;
+                createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
+            } catch (Throwable th) {
+                // Same ownership window as compileMatViewQuery: optimise() has attached the FROM/JOIN
+                // cursor functions to the model and generation has not taken them over yet.
+                optimiser.freeTableFactoriesInFlight(th);
+                throw th;
             }
-            createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
 
             try {
                 compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), queryModel.isCacheable());
