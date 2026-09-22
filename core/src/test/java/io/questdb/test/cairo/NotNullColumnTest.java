@@ -379,6 +379,94 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDoubleFloatNonFiniteValuesAreDataInNotNullColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            // DOUBLE/FLOAT are the one numeric family whose null sentinel is a CLASS of
+            // bit patterns: Numbers.isNull(double) is true for every NaN pattern AND for
+            // +/-Infinity. Under the NOT NULL contract the whole non-finite class is
+            // real data: it renders as NaN/Infinity/-Infinity (never "null"), IS NULL
+            // folds to FALSE, IS NOT NULL matches every row, and count(col) counts all
+            // rows. The nullable companion columns pin the contrast: same bit patterns
+            // render "null" and are matched by IS NULL.
+            execute("CREATE TABLE t (d DOUBLE NOT NULL, f FLOAT NOT NULL, dn DOUBLE, fn FLOAT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('NaN'::double, 'NaN'::float, 'NaN'::double, 'NaN'::float, '2024-01-01T00:00:00')");
+            execute("INSERT INTO t VALUES ('Infinity'::double, 'Infinity'::float, 'Infinity'::double, 'Infinity'::float, '2024-01-01T00:00:01')");
+            execute("INSERT INTO t VALUES ('-Infinity'::double, '-Infinity'::float, '-Infinity'::double, '-Infinity'::float, '2024-01-01T00:00:02')");
+
+            assertQuery("SELECT d, f, dn, fn FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d\tf\tdn\tfn
+                            NaN\tNaN\tnull\tnull
+                            Infinity\tInfinity\tnull\tnull
+                            -Infinity\t-Infinity\tnull\tnull
+                            """);
+
+            // IS NULL folds to FALSE on the NOT NULL columns; the nullable companions
+            // match all three rows (isNull(double) covers NaN and both infinities).
+            assertQuery("SELECT count() c1, count(d) c2, count(dn) c3 FROM t WHERE d IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            c1\tc2\tc3
+                            0\t0\t0
+                            """);
+            assertQuery("SELECT count() c1 FROM t WHERE d IS NOT NULL AND f IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            c1
+                            3
+                            """);
+            assertQuery("SELECT count() c1 FROM t WHERE dn IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            c1
+                            3
+                            """);
+
+            // count over the NOT NULL columns counts every non-finite row as data.
+            // supportsBatchComputation() == !isArgNotNull keeps NOT NULL columns off
+            // the native Vect.countDouble kernel, which is what makes this exact.
+            // (The nullable companions are deliberately NOT asserted here: upstream's
+            // count(nullable double) is path-dependent for Infinity -- the native batch
+            // kernel checks !isnan and counts +/-Inf, while the per-row/keyed Java arms
+            // check isFinite and skip them. Pre-existing upstream inconsistency,
+            // untouched by the NOT NULL feature.)
+            assertQuery("SELECT count(d) c1, count(f) c2 FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            c1\tc2
+                            3\t3
+                            """);
+
+            // Infinities order as IEEE values in filters: +Inf > 0, -Inf < 0, NaN
+            // incomparable (excluded by both). Same result in interpreted and JIT mode
+            // is covered by NotNullJitModeMatrixTest for the generic fold; this pins
+            // the value semantics.
+            assertQuery("SELECT d FROM t WHERE d > 0")
+                    .noLeakCheck()
+                    .returns("""
+                            d
+                            Infinity
+                            """);
+            assertQuery("SELECT d FROM t WHERE d < 0")
+                    .noLeakCheck()
+                    .returns("""
+                            d
+                            -Infinity
+                            """);
+        });
+    }
+
+    @Test
     public void testEnforceNotNullSentinelValuesAccepted() throws Exception {
         assertMemoryLeak(() -> {
             // Sentinel bit patterns (INT_NULL, NaN) are valid DATA for NOT NULL columns
