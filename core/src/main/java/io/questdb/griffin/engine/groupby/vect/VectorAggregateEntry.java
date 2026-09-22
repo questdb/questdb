@@ -237,26 +237,25 @@ public class VectorAggregateEntry implements Mutable {
     ) {
         startedCounter.incrementAndGet();
 
-        if (circuitBreaker.checkIfTripped() || (oomCounter != null && oomCounter.get() > 0)) {
-            doneLatch.countDown();
-            return;
-        }
-
         try {
-            aggregateUnsafe(
-                    workerId,
-                    oomCounter,
-                    frameIndex,
-                    frameRowCount,
-                    keyColIndex,
-                    valueColIndex,
-                    pRosti,
-                    frameMemoryPools,
-                    raf,
-                    func,
-                    perWorkerLocks,
-                    circuitBreaker
-            );
+            // The initial poll can throw cancellation after yielding. Complete the entry on
+            // that path too, but keep the normal countdown outside this error-handling scope.
+            if (!circuitBreaker.checkIfTrippedOrYield() && (oomCounter == null || oomCounter.get() <= 0)) {
+                aggregateUnsafe(
+                        workerId,
+                        oomCounter,
+                        frameIndex,
+                        frameRowCount,
+                        keyColIndex,
+                        valueColIndex,
+                        pRosti,
+                        frameMemoryPools,
+                        raf,
+                        func,
+                        perWorkerLocks,
+                        circuitBreaker
+                );
+            }
         } catch (Throwable th) {
             Throwable failure = th;
             try {
@@ -270,14 +269,14 @@ public class VectorAggregateEntry implements Mutable {
                 failure = Misc.foldCleanupFailure(failure, cleanupFailure);
             }
             try {
-                doneLatch.countDown();
+                doneLatch.detachResourceMemoryAndCountDown();
             } catch (Throwable cleanupFailure) {
                 failure = Misc.foldCleanupFailure(failure, cleanupFailure);
             }
             CairoException.rethrowCleanupFailure(failure);
             return;
         }
-        doneLatch.countDown();
+        doneLatch.detachResourceMemoryAndCountDown();
     }
 
     void of(

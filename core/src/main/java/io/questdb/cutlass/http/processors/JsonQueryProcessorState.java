@@ -43,6 +43,8 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionOwner;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -107,8 +109,12 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final Clock nanosecondClock;
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
+    private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
     private final long statementTimeout;
     private byte apiVersion = DEFAULT_API_VERSION;
+    private long clientWaitAccumNanos;
+    // -1 when not parked; doubles as the isParked flag.
+    private long clientWaitStartNanos = -1;
     private int columnCount;
     private int columnIndex;
     // indicates to the state machine that the column value was fully sent to
@@ -172,43 +178,49 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     @Override
     public void clear() {
-        apiVersion = DEFAULT_API_VERSION;
-        columnCount = 0;
-        columnSkewList.clear();
-        columnTypesAndFlags.clear();
-        columnNames.clear();
-        queryTimestampIndex = -1;
-        cursor = Misc.free(cursor);
-        record = null;
-        if (recordCursorFactory != null) {
-            if (queryCacheable) {
-                httpConnectionContext.getSelectCache().put(query, recordCursorFactory);
-            } else {
-                recordCursorFactory.close();
+        try {
+            apiVersion = DEFAULT_API_VERSION;
+            columnCount = 0;
+            columnSkewList.clear();
+            columnTypesAndFlags.clear();
+            columnNames.clear();
+            queryTimestampIndex = -1;
+            cursor = Misc.free(cursor);
+            record = null;
+            if (recordCursorFactory != null) {
+                if (queryCacheable) {
+                    httpConnectionContext.getSelectCache().put(query, recordCursorFactory);
+                } else {
+                    recordCursorFactory.close();
+                }
+                recordCursorFactory = null;
             }
-            recordCursorFactory = null;
+            query.clear();
+            columnNameSink.clear();
+            queryState = QUERY_SETUP_FIRST_RECORD;
+            columnIndex = 0;
+            columnValueFullySent = true;
+            arrayState.clear();
+            countRows = false;
+            explain = false;
+            noMeta = false;
+            timings = false;
+            pausedQuery = false;
+            quoteLargeNum = false;
+            queryJitCompiled = false;
+            operationFuture = Misc.free(operationFuture);
+            skip = 0;
+            count = 0;
+            counter.clear();
+            stop = 0;
+            containsSecret = false;
+            errorMessage.clear();
+            updateRecords = 0;
+            clientWaitAccumNanos = 0;
+            clientWaitStartNanos = -1;
+        } finally {
+            sqlExecutionOwner.end();
         }
-        query.clear();
-        columnNameSink.clear();
-        queryState = QUERY_SETUP_FIRST_RECORD;
-        columnIndex = 0;
-        columnValueFullySent = true;
-        arrayState.clear();
-        countRows = false;
-        explain = false;
-        noMeta = false;
-        timings = false;
-        pausedQuery = false;
-        quoteLargeNum = false;
-        queryJitCompiled = false;
-        operationFuture = Misc.free(operationFuture);
-        skip = 0;
-        count = 0;
-        counter.clear();
-        stop = 0;
-        containsSecret = false;
-        errorMessage.clear();
-        updateRecords = 0;
     }
 
     public void clearFactory() {
@@ -219,9 +231,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     @Override
     public void close() {
-        cursor = Misc.free(cursor);
-        clearFactory();
-        freeAsyncOperation();
+        try {
+            cursor = Misc.free(cursor);
+            clearFactory();
+            freeAsyncOperation();
+        } finally {
+            sqlExecutionOwner.end();
+        }
     }
 
     public void configure(
@@ -321,6 +337,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return pausedQuery;
     }
 
+    public boolean isSqlExecutionOwnerStarted() {
+        return sqlExecutionOwner.isStarted();
+    }
+
     public void logBufferTooSmall() {
         info().$("response buffer is too small, state=").$(queryState).$();
     }
@@ -332,6 +352,18 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 .$(", execute: ").$(nanosecondClock.getTicks() - executeStartNanos)
                 .$(", q=`").$safe(getQueryOrHidden())
                 .$("`]").$();
+    }
+
+    public void beginSqlExecutionOwner(
+            CharSequence query,
+            SqlExecutionContext executionContext,
+            short compiledQueryType
+    ) {
+        sqlExecutionOwner.begin(query, executionContext, compiledQueryType);
+    }
+
+    public void mountSqlExecutionOwner() {
+        sqlExecutionOwner.mount();
     }
 
     public void onResumeConfirmation(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {
@@ -363,6 +395,40 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         queryState = QUERY_DONE;
         readyForNextRequest(getHttpConnectionContext());
         response.sendChunk(true);
+    }
+
+    public void publishSqlExecutionOwner(boolean containsSecret) {
+        sqlExecutionOwner.publish(query, containsSecret);
+    }
+
+    public void parkSqlExecutionOwner() {
+        try {
+            suspendExecutionTimer();
+        } finally {
+            // Releasing admission must not depend on timer instrumentation
+            // succeeding. The ordering is still timer first, owner second.
+            unmountSqlExecutionOwner();
+        }
+    }
+
+    public void resumeExecutionTimer() {
+        if (clientWaitStartNanos != -1) {
+            clientWaitAccumNanos += nanosecondClock.getTicks() - clientWaitStartNanos;
+            clientWaitStartNanos = -1;
+        }
+        if (cursor != null) {
+            cursor.resumeTimer();
+        }
+    }
+
+    public void resumeSqlExecutionOwner() {
+        resumeExecutionTimer();
+        // A cursor means resumeSend can still pull/serialize query results. Confirmation and error
+        // responses have no query work left, so flushing them must not re-admit an already-completed
+        // CTAS/INSERT AS SELECT (or an unmanaged control statement).
+        if (cursor != null && queryState != QUERY_ERROR) {
+            mountSqlExecutionOwner();
+        }
     }
 
     public void setCompilerNanos(long compilerNanos) {
@@ -397,8 +463,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.rnd = rnd;
     }
 
+
     public void startExecutionTimer() {
         this.executeStartNanos = nanosecondClock.getTicks();
+        clientWaitAccumNanos = 0;
+        clientWaitStartNanos = -1;
     }
 
     public void storeConfirmation() {
@@ -430,6 +499,19 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     public void storeUpdateConfirmation(long updateRecords) {
         queryState = QUERY_UPDATE_CONFIRMATION;
         this.updateRecords = updateRecords;
+    }
+
+    public void suspendExecutionTimer() {
+        if (clientWaitStartNanos == -1) {
+            clientWaitStartNanos = nanosecondClock.getTicks();
+        }
+        if (cursor != null) {
+            cursor.suspendTimer();
+        }
+    }
+
+    public void unmountSqlExecutionOwner() {
+        sqlExecutionOwner.unmount();
     }
 
     private static byte parseApiVersion(HttpRequestHeader header) {
@@ -1284,7 +1366,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                         .putAsciiQuoted("authentication").putAscii(':').put(httpConnectionContext.getAuthenticationNanos()).putAscii(',')
                         .putAsciiQuoted("compiler").putAscii(':').put(compilerNanos).putAscii(',')
                         .putAsciiQuoted("execute").putAscii(':').put(nanosecondClock.getTicks() - executeStartNanos).putAscii(',')
-                        .putAsciiQuoted("count").putAscii(':').put(recordCountNanos)
+                        .putAsciiQuoted("count").putAscii(':').put(recordCountNanos).putAscii(',')
+                        .putAsciiQuoted("clientWait").putAscii(':').put(clientWaitAccumNanos)
                         .putAscii('}');
             }
             if (explain) {

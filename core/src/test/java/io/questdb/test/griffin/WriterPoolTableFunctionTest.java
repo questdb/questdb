@@ -127,6 +127,29 @@ public class WriterPoolTableFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelfJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table a as (select 1 x)");
+            execute("create table b as (select 1 x)");
+            execute("create table c as (select 1 x)");
+            assertQuery("select a.table_name l, b.table_name r from writer_pool() a cross join writer_pool() b order by l, r limit 20")
+                    .noLeakCheck()
+                    .returns("""
+                            l\tr
+                            a\ta
+                            a\tb
+                            a\tc
+                            b\ta
+                            b\tb
+                            b\tc
+                            c\ta
+                            c\tb
+                            c\tc
+                            """);
+        });
+    }
+
+    @Test
     public void testWriterList() throws Exception {
         currentMicros = MicrosFormatUtils.parseTimestamp("2024-10-24T17:22:09.842574Z");
         assertMemoryLeak(() -> {

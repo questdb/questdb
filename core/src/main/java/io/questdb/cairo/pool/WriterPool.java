@@ -129,6 +129,10 @@ public class WriterPool extends AbstractPool {
         return entries;
     }
 
+    public void entries(ConcurrentHashMap.EntryCursor<Entry> cursor) {
+        cursor.of(entries);
+    }
+
     /**
      * <p>
      * Creates or retrieves existing TableWriter from pool. Because of TableWriter compliance with <b>single

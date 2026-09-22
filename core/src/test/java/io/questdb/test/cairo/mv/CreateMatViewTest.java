@@ -43,6 +43,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -1227,6 +1228,42 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertFalse(metadata.isDedupKey(2));
                 assertEquals(3 * 7 * 24, metadata.getTtlHoursOrMonths());
             }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewSubsample() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            // The query carries the sampling interval a materialized view requires, so the SUBSAMPLE
+            // clause is the only thing the validator can refuse. Value-inspecting methods name the
+            // completed projection's alias: the base column is not visible above the aggregation.
+            final ObjList<String> methods = new ObjList<>(
+                    "uniform(2)",
+                    "cadence(2)",
+                    "cadence(2, 7)",
+                    "lttb(av, 2)",
+                    "lttb(av, 2, '2h')",
+                    "m4(av, 2)",
+                    "minmax(av, 2)",
+                    "sdt(av, 0.5)"
+            );
+            for (int methodIndex = 0; methodIndex < methods.size(); methodIndex++) {
+                final String method = methods.getQuick(methodIndex);
+                assertQuery("create materialized view test as (select ts, avg(v) av from " + TABLE1 + " sample by 1h subsample " + method + ") partition by day")
+                        .noLeakCheck()
+                        .fails(80, "SUBSAMPLE on base table is not supported for materialized views: " + TABLE1);
+            }
+            // SUBSAMPLE one level above the base-table aggregation: sub-query, CTE, and inside the sub-query
+            assertQuery("create materialized view test as (select ts, av from (select ts, avg(v) av from " + TABLE1 + " sample by 1h) subsample uniform(2)) partition by day")
+                    .noLeakCheck()
+                    .fails(101, "SUBSAMPLE on base table is not supported for materialized views: " + TABLE1);
+            assertQuery("create materialized view test as (with d as (select ts, avg(v) av from " + TABLE1 + " sample by 1h) select ts, av from d subsample uniform(2)) partition by day")
+                    .noLeakCheck()
+                    .fails(113, "SUBSAMPLE on base table is not supported for materialized views: " + TABLE1);
+            assertQuery("create materialized view test as (select ts, av from (select ts, avg(v) av from " + TABLE1 + " sample by 1h subsample uniform(2))) partition by day")
+                    .noLeakCheck()
+                    .fails(100, "SUBSAMPLE on base table is not supported for materialized views: " + TABLE1);
         });
     }
 
