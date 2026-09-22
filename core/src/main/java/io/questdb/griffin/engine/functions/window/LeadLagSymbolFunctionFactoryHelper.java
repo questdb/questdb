@@ -45,6 +45,7 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
 
@@ -60,6 +61,7 @@ class LeadLagSymbolFunctionFactoryHelper {
     }
 
     private abstract static class BaseSymbolWindowFunction extends SymbolFunction implements WindowFunction {
+        private NullIncludingSymbolTable staticSymbolTable;
         protected final SymbolFunction arg;
         protected final Function defaultValue;
         protected final boolean ignoreNulls;
@@ -76,6 +78,7 @@ class LeadLagSymbolFunctionFactoryHelper {
 
         @Override
         public void close() {
+            staticSymbolTable = null;
             Misc.free(arg);
             Misc.free(defaultValue);
         }
@@ -95,7 +98,16 @@ class LeadLagSymbolFunctionFactoryHelper {
 
         @Override
         public @Nullable StaticSymbolTable getStaticSymbolTable() {
-            return arg.getStaticSymbolTable();
+            final StaticSymbolTable table = arg.getStaticSymbolTable();
+            if (offset == 0 || table == null) {
+                return table;
+            }
+            // Missing neighbors add NULL to the window's domain, even when the source has none.
+            // Keep the view stable while its delegate stays the same, for dictionary-key caches.
+            if (staticSymbolTable == null || staticSymbolTable.delegate != table) {
+                staticSymbolTable = new NullIncludingSymbolTable(table, false);
+            }
+            return staticSymbolTable;
         }
 
         @Override
@@ -128,7 +140,11 @@ class LeadLagSymbolFunctionFactoryHelper {
 
         @Override
         public @Nullable SymbolTable newSymbolTable() {
-            return arg.newSymbolTable();
+            final SymbolTable table = arg.newSymbolTable();
+            if (offset > 0 && arg.isSymbolTableStatic() && table instanceof StaticSymbolTable staticTable) {
+                return new NullIncludingSymbolTable(staticTable, true);
+            }
+            return table;
         }
 
         @Override
@@ -637,6 +653,53 @@ class LeadLagSymbolFunctionFactoryHelper {
                 map.clear();
             }
             memory.truncate();
+        }
+    }
+
+    private static class NullIncludingSymbolTable implements StaticSymbolTable, QuietCloseable {
+        private final StaticSymbolTable delegate;
+        private final boolean isOwned;
+
+        private NullIncludingSymbolTable(StaticSymbolTable delegate, boolean isOwned) {
+            this.delegate = delegate;
+            this.isOwned = isOwned;
+        }
+
+        @Override
+        public void close() {
+            if (isOwned) {
+                Misc.freeIfCloseable(delegate);
+            }
+        }
+
+        @Override
+        public boolean containsNullValue() {
+            return true;
+        }
+
+        @Override
+        public int getSymbolCount() {
+            return delegate.getSymbolCount();
+        }
+
+        @Override
+        public long getSymbolTableGeneration() {
+            return delegate.getSymbolTableGeneration();
+        }
+
+        @Override
+        public int keyOf(CharSequence value) {
+            return delegate.keyOf(value);
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return delegate.valueBOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            return delegate.valueOf(key);
         }
     }
 }
