@@ -1032,6 +1032,14 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
     }
 
+    /**
+     * Closes the partition's files when the transaction rewrote them, and otherwise returns how many file rows a
+     * re-opened column of it must map - the partition's live file extent, the same number every other open path
+     * uses (see {@link #mappedRowCount}). The live row count would leave every piece a merge parked at the tail off
+     * the end of the mapping.
+     *
+     * @return the mapped row count, or -1 when the caller must re-open the partition from scratch
+     */
     private long closeRewrittenPartitionFiles(int partitionIndex, int oldBase) {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         long partitionTs = openPartitionInfo.getQuick(offset);
@@ -1057,7 +1065,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         long nameTxn = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_NAME_TXN);
         //noinspection resource
         pathGenNativePartition(partitionIndex, nameTxn);
-        return newSize;
+        // Resolve the geometry by TIMESTAMP: a metadata transition runs before reconcileOpenPartitions, so the
+        // reader's partition index need not yet line up with the transaction's, which is why every lookup above
+        // goes by timestamp too.
+        return mappedRowCount(txFile.getPartitionIndex(partitionTs), newSize);
     }
 
     private void copyColumns(
