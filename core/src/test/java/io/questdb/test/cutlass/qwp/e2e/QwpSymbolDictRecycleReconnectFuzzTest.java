@@ -169,6 +169,12 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                 AtomicLong symbolDictEpochHolder = new AtomicLong();
                 AtomicInteger restartsDone = new AtomicInteger();
                 AtomicInteger unplannedDisconnects = new AtomicInteger();
+                AtomicInteger liveDrops = new AtomicInteger();
+                AtomicInteger targetedBounces = new AtomicInteger();
+                // Set by the bouncer while it lines up a targeted stop, read by the producer
+                // before each reset request: with requests paused, no planned teardown can
+                // close the connection the bouncer is about to kill.
+                AtomicBoolean holdResets = new AtomicBoolean();
                 AtomicReference<QwpWebSocketSender> senderRef = new AtomicReference<>();
                 CountDownLatch producerDone = new CountDownLatch(1);
                 CountDownLatch bouncerDone = new CountDownLatch(1);
@@ -215,7 +221,7 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                             } else {
                                 sender.flush();
                             }
-                            if (batchesSinceReset >= RESET_EVERY_N_BATCHES) {
+                            if (batchesSinceReset >= RESET_EVERY_N_BATCHES && !holdResets.get()) {
                                 sender.resetSymbolDictionary();
                                 batchesSinceReset = 0;
                             }
@@ -274,7 +280,22 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                                 firstBatchAcked.await(60, TimeUnit.SECONDS));
                         for (int i = 0; i < restartTarget; i++) {
                             Os.sleep(40 + rnd.nextInt(160)); // 40..199ms uptime
-                            server.stop();
+                            if ((i & 1) == 0) {
+                                // Targeted bounce: pause the producer's reset requests, then
+                                // wait for one upgraded connection to stay live for 20 ms (a
+                                // recycle armed before the pause fires at its next barrier
+                                // within a batch or two), so this stop lands on a connection
+                                // whose I/O loop is armed and that no planned recycle can tear
+                                // down in the meantime. Odd bounces stay blind and keep the
+                                // "restart during the client's outage or reconnect walk"
+                                // interleaving this suite exists for.
+                                holdResets.set(true);
+                                Assert.assertTrue("client did not hold a live connection for 20ms within 10s before bounce " + i,
+                                        server.awaitStableLiveConnection(10_000, 20));
+                                targetedBounces.incrementAndGet();
+                            }
+                            liveDrops.addAndGet(server.stop());
+                            holdResets.set(false);
                             Os.sleep(15 + rnd.nextInt(60));  // 15..74ms downtime
                             server.start();
                             restartsDone.incrementAndGet();
@@ -282,6 +303,10 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                     } catch (Throwable t) {
                         bouncerError.set(t);
                     } finally {
+                        // A failed wait leaves the pause set; lift it so the producer's
+                        // remaining batches still exercise resets before the main thread
+                        // stops it.
+                        holdResets.set(false);
                         bouncerDone.countDown();
                     }
                 }, "qwp-recycle-reconnect-fuzz-bouncer");
@@ -349,36 +374,42 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                 long symbolDictEpoch = symbolDictEpochHolder.get();
                 int restarts = restartsDone.get();
                 int unplanned = unplannedDisconnects.get();
+                int liveDropCount = liveDrops.get();
+                int targeted = targetedBounces.get();
                 if (expected <= 0) {
                     throw new AssertionError("producer wrote zero rows");
                 }
                 LOG.info().$("fuzz run complete: rowsProduced=").$(expected)
                         .$(", serverRestarts=").$(restarts)
+                        .$(", targetedBounces=").$(targeted)
+                        .$(", liveDrops=").$(liveDropCount)
                         .$(", unplannedDisconnects=").$(unplanned)
                         .$(", symbolDictEpoch=").$(symbolDictEpoch).$();
 
                 Assert.assertEquals("bouncer must have completed its full randomized restart schedule",
                         restartTarget, restarts);
-                // Direct, isolated evidence that the ordinary (unplanned)
-                // reconnect path actually ran -- see the setConnectionListener
-                // comment above for why DISCONNECTED can't be conflated with a
-                // recycle's own step-7 reconnect. Not every restart produces its
-                // own DISCONNECTED: at this bounce cadence (40-199ms uptime), a
-                // restart landing before the sender fully completes the PREVIOUS
-                // reconnect just extends the same outage instead of starting a
-                // new observable one, since DISCONNECTED only fires again once
-                // the factory has re-armed on a prior success. Measured over 9
-                // exploratory runs (restarts 15-29 each), the observed ratio of
-                // unplannedDisconnects/restarts ranged 10%-40%, with a floor of
-                // 2 events observed at the lowest ratio (2/20). restarts/12
-                // (~8%) sits below every observed minimum with real margin
-                // while still scaling with restarts, rather than being a flat
-                // constant that would stay silent if the ratio collapsed to
-                // near-zero on a much larger restart count.
-                Assert.assertTrue("expected at least a fraction of the " + restarts + " server restarts "
-                                + "to surface as an unplanned DISCONNECTED event, but unplannedDisconnects="
+                // Every targeted bounce stopped the server while the client held a connection
+                // that had already carried a frame, with reset requests paused. The only way
+                // such a stop is not counted is a recycle armed before the pause firing inside
+                // the few milliseconds between the stability check and the worker halt; half
+                // is ample margin for that.
+                Assert.assertTrue("targeted bounces must land on live connections: targetedBounces=" + targeted
+                                + ", liveDrops=" + liveDropCount,
+                        liveDropCount >= (targeted + 1) / 2);
+                // Direct, isolated evidence that the ordinary (unplanned) reconnect path ran:
+                // DISCONNECTED fires only when the client's I/O loop observes a live connection
+                // drop and re-enters its own reconnect factory (see the setConnectionListener
+                // comment above for why it can't be conflated with a recycle's step-7
+                // reconnect). A drop the loop has not observed before a recycle barrier closes
+                // the loop is absorbed by the planned teardown, so the count trails liveDrops
+                // by at most the width of that race, which the paused resets make rare on
+                // targeted bounces; half is ample margin. On hosted Windows CI the old
+                // restarts/12 floor failed with 0 of 22 because the client was live for only
+                // 7% of server uptime, so only one blind stop ever hit a connection at all.
+                Assert.assertTrue("at least half of the " + liveDropCount + " server stops that hit a live "
+                                + "connection must surface as an unplanned DISCONNECTED event, but unplannedDisconnects="
                                 + unplanned,
-                        unplanned >= restarts / 12);
+                        unplanned >= liveDropCount / 2);
 
                 drainWalQueue();
                 engine.awaitTable(TABLE_NAME, 60, TimeUnit.SECONDS);
