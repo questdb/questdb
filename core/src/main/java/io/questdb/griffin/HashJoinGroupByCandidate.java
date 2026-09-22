@@ -65,6 +65,7 @@ public final class HashJoinGroupByCandidate {
     private final IntList columnSources;
     private final LowerCaseCharSequenceIntHashMap[] inputColumns;
     private final boolean isInputSwapped;
+    private final boolean isKeyCapacityPresized;
     private final IQueryModel joinModel;
     private final HashJoinGroupByKeys keys;
     private final int logicalJoinType;
@@ -76,7 +77,7 @@ public final class HashJoinGroupByCandidate {
     private final RecordMetadata resolvedMetadata;
     private final ObjList<ExpressionNode> resolvedPostJoinFilters;
 
-    private HashJoinGroupByCandidate(Analyzer analyzer, HashJoinGroupByKeys keys, boolean isInputSwapped) {
+    private HashJoinGroupByCandidate(Analyzer analyzer, HashJoinGroupByKeys keys, boolean isInputSwapped, boolean isKeyCapacityPresized) {
         this.probeBaseMetadata = GenericRecordMetadata.copyOf(analyzer.sources[1 - analyzer.buildIndex]);
         this.postJoinFilterSources = analyzer.postJoinFilterSources;
         this.inputColumns = analyzer.inputColumns;
@@ -89,6 +90,7 @@ public final class HashJoinGroupByCandidate {
         this.buildIndex = analyzer.buildIndex;
         this.keys = keys;
         this.isInputSwapped = isInputSwapped;
+        this.isKeyCapacityPresized = isKeyCapacityPresized;
         this.buildOnFilter = analyzer.buildOnFilter;
         this.joinModel = analyzer.join;
         this.logicalJoinType = analyzer.joinType;
@@ -130,6 +132,17 @@ public final class HashJoinGroupByCandidate {
     /** True when the build is the first input in join order: every RIGHT join, and an INNER join whose first table is smaller. */
     public boolean isInputSwapped() {
         return isInputSwapped;
+    }
+
+    /**
+     * True when the build table has no more rows than the probe table, so that an execution that
+     * knows its build's row count may size the key table by it. A build table with more rows is
+     * the shape of a fact table built for its dimension - {@code dim LEFT JOIN fact},
+     * {@code fact RIGHT JOIN dim} - whose join key repeats, and a key table sized by its rows
+     * would hold mostly empty slots. The sizes are those at compile time, as for the build side.
+     */
+    public boolean isKeyCapacityPresized() {
+        return isKeyCapacityPresized;
     }
 
     /** Exact implementations from HashJoinGroupByAggregates, not SQL names or supportsParallelism() alone. */
@@ -332,15 +345,16 @@ public final class HashJoinGroupByCandidate {
             // and a 61 MiB row heap. The unfiltered row count bounds the heap for every bind value,
             // as it bounds the INNER build in selectBuildIndex(). LEFT joins take no bound: their
             // ordinary plan chains every row of the same table, and the fused plan stayed faster.
+            final long buildRows = buildIndex == 0 ? leftReader.size() : rightReader.size();
             if (joinType == IQueryModel.JOIN_RIGHT_OUTER) {
-                final long buildRows = buildIndex == 0 ? leftReader.size() : rightReader.size();
                 final long maxBuildSize = executionContext.getCairoEngine().getConfiguration()
                         .getSqlParallelHashJoinGroupByRightJoinMaxBuildSize();
                 if (buildRows > maxBuildSize / analyzer.getBuildRowSize()) {
                     return null;
                 }
             }
-            return new HashJoinGroupByCandidate(analyzer, keys, buildIndex == order.getQuick(0));
+            final long probeRows = buildIndex == 0 ? rightReader.size() : leftReader.size();
+            return new HashJoinGroupByCandidate(analyzer, keys, buildIndex == order.getQuick(0), buildRows <= probeRows);
         } catch (SqlException e) {
             // The ordinary plan reports errors in its own compile order, and only its interval extraction
             // and generateFilter() compile optimiser-internal nodes such as and_offset. A failed

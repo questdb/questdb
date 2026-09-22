@@ -607,6 +607,60 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBuildPresizesOnlyFromExactCounts() throws Exception {
+        assertMemoryLeak(() -> {
+            // pb has twice the rows of pa and the same ten keys in each key column. pa spreads its
+            // 1_000 rows over four days, 250 a day.
+            execute("CREATE TABLE pa (k INT, l LONG, s SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE pb (k INT, l LONG, s SYMBOL, v DOUBLE)");
+            execute("""
+                    INSERT INTO pa SELECT (x % 10)::INT, x % 10, 'S' || (x % 10), x,
+                        timestamp_sequence('2020-01-01', 345_600_000L)
+                    FROM long_sequence(1_000)
+                    """);
+            execute("INSERT INTO pb SELECT (x % 10)::INT, x % 10, 'S' || (x % 10), x FROM long_sequence(2_000)");
+            // A build row is an eight-byte link plus its payload: 8 bytes with no payload, 16 with
+            // one DOUBLE. The INT layout's key table takes eight bytes a slot and starts at 64
+            // slots; a table presized for N keys takes the next power of two of 2N slots. The row
+            // heap grows by doubling from 64 bytes unless an exact row count presizes it.
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                for (boolean isParallelFilter : new boolean[]{true, false}) {
+                    context.setParallelFilterEnabled(isParallelFilter);
+                    // An unfiltered build with no more rows than its probe sizes both by its rows:
+                    // 2_048 slots for 1_000 rows, although they hold ten keys.
+                    assertBuildSize("SELECT count(*) n, sum(pb.v) v FROM pa JOIN pb ON pa.k = pb.k",
+                            1_000, 10, 2_048 * 8 + 1_000 * 8, context);
+                    assertBuildSize("SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k",
+                            1_000, 10, 2_048 * 8 + 1_000 * 16, context);
+                    // A LEFT join builds the table after it, here the larger one: its key table
+                    // grows to its ten keys, while its heap still takes the exact row count.
+                    assertBuildSize("SELECT count(*) n, sum(pb.v) v FROM pa LEFT JOIN pb ON pa.k = pb.k",
+                            2_000, 10, 64 * 8 + 2_000 * 16, context);
+                    // An interval scan counts its rows from its frames: 250 rows on one day.
+                    assertBuildSize("SELECT count(*) n, sum(pb.v) v FROM pa JOIN pb ON pa.k = pb.k"
+                            + " WHERE pa.ts IN '2020-01-02'", 250, 10, 512 * 8 + 250 * 8, context);
+                    // A filter hides the build's row count: the heap doubles to 8_192 bytes for
+                    // 8_000, and the key table grows to the ten keys.
+                    assertBuildSize("SELECT count(*) n, sum(pb.v) v FROM pa JOIN pb ON pa.k = pb.k"
+                            + " WHERE pa.v > 0", 1_000, 10, 64 * 8 + 8_192, context);
+                    assertBuildSize("SELECT count(*) n, sum(pb.v) v FROM pa JOIN pb ON pa.k = pb.k"
+                            + " WHERE pa.ts IN '2020-01-02' AND pa.v > 0", 250, 10, 64 * 8 + 2_048, context);
+                    // A SYMBOL key holds at most the build dictionary's ten keys and the null key:
+                    // 22 slots round up to 32, below the initial 64.
+                    assertBuildSize("SELECT count(*) n, sum(pb.v) v FROM pa JOIN pb ON pa.s = pb.s",
+                            1_000, 10, 64 * 8 + 1_000 * 8, context);
+                    // A LONG key takes an Unordered8Map, 16 bytes an entry plus one for the zero
+                    // key, at a 0.7 load factor: 128 entries initially, 2_048 for 1_000 keys.
+                    assertBuildSize("SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.l = pb.l",
+                            1_000, 10, 2_049 * 16 + 1_000 * 16, context);
+                    assertBuildSize("SELECT count(*) n, sum(pb.v) v FROM pa LEFT JOIN pb ON pa.l = pb.l",
+                            2_000, 10, 129 * 16 + 2_000 * 16, context);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testScalarEmptyInputAndCursorReuse() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -653,6 +707,20 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    // Checks the result against the ordinary plan, and the rows, keys and allocated bytes of the build.
+    private void assertBuildSize(String sql, long rows, long keys, long sizeInBytes, SqlExecutionContextImpl context) throws Exception {
+        assertDifferential(sql, context, true);
+        try (
+                RecordCursorFactory factory = engine.select(sql, context);
+                RecordCursor ignored = factory.getCursor(context)
+        ) {
+            FrozenHashJoinBuild build = fused(factory).getAtom().getFrozenBuild();
+            Assert.assertEquals(sql, rows, build.getRowCount());
+            Assert.assertEquals(sql, keys, build.getKeyCount());
+            Assert.assertEquals(sql, sizeInBytes, build.getSizeInBytes());
+        }
     }
 
     // Checks keyed and scalar results against the ordinary plan, the build input in EXPLAIN, and the build's row count.

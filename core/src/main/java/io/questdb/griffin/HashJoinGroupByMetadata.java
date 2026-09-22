@@ -82,6 +82,7 @@ public final class HashJoinGroupByMetadata implements Closeable {
     private final ObjList<QueryColumn> columns = new ObjList<>();
     private final String condition;
     private final boolean hasStaticSymbolTables;
+    private final boolean isKeyCapacityPresized;
     private final HashJoinGroupByKeys keys;
     private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     private final JoinRecordMetadata joinedMetadata;
@@ -118,6 +119,7 @@ public final class HashJoinGroupByMetadata implements Closeable {
         }
         probeColumnCount = probeMetadata.getColumnCount();
         keys = candidate.getKeys();
+        isKeyCapacityPresized = candidate.isKeyCapacityPresized();
         // Symbol keys translate through, and payload symbols resolve with, the inputs' static tables.
         boolean hasStaticSymbolTables = true;
         StringSink conditionSink = Misc.getThreadLocalSink();
@@ -331,6 +333,14 @@ public final class HashJoinGroupByMetadata implements Closeable {
     /** The INT layout's lone SYMBOL pair, whose probe keys translate into the build's domain. */
     public boolean isSymbolKey() {
         return keys.isSymbolKey();
+    }
+
+    /**
+     * True when the build may size its key table by its row count; see
+     * {@link HashJoinGroupByCandidate#isKeyCapacityPresized()}.
+     */
+    public boolean isKeyCapacityPresized() {
+        return isKeyCapacityPresized;
     }
 
     /** True when the key reaches its map through the two key sinks rather than the INT layout. */

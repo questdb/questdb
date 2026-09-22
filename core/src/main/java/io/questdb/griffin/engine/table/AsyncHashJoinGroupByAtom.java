@@ -77,8 +77,11 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private final int buildKeyColumn;
     // The owner's own build-side key sink; null for the INT layout, which stages nothing.
     private final RecordSink buildKeySink;
+    private final RecordCursor.Counter buildRowCounter = new RecordCursor.Counter();
     private final AsyncFilterContext filterContext;
     private final HashJoinGroupByFunctions functions;
+    private final boolean isBuildCountedFromFrames;
+    private final boolean isKeyCapacityPresized;
     private final boolean isKeyStaged;
     // The INT layout's lone SYMBOL pair, whose probe keys the reducer translates per row.
     private final boolean isSymbolKey;
@@ -119,6 +122,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         this.outer = outer;
         this.isKeyStaged = metadata.isKeyStaged();
         this.isSymbolKey = metadata.isSymbolKey();
+        this.isKeyCapacityPresized = metadata.isKeyCapacityPresized();
+        this.isBuildCountedFromFrames = isCountedFromFrames(buildFactory);
         this.probeKeyColumn = isKeyStaged ? -1 : metadata.getProbeKeyColumn();
         this.buildKeyColumn = isKeyStaged ? -1 : metadata.getBuildKeyColumn();
         symbolKeyProbeColumns.addAll(metadata.getSymbolKeyProbeColumns());
@@ -331,6 +336,22 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     }
 
     /**
+     * True when the factory returns exactly the rows of an interval scan's frames: projections over
+     * an unfiltered scan that reads every row of its frames. Such a cursor reports no size, since an
+     * interval does not know its row count up front, but it calculates the count from the frames'
+     * timestamp bounds without reading a row. A filter or an index scan would walk the rows to count
+     * them, and a filtered row count only bounds the rows the filter keeps, so neither qualifies.
+     */
+    private static boolean isCountedFromFrames(RecordCursorFactory factory) {
+        RecordCursorFactory current = factory;
+        while (current instanceof SelectedRecordCursorFactory) {
+            current = current.getBaseFactory();
+        }
+        return current instanceof PageFrameRecordCursorFactory frames
+                && frames.isIntervalScan() && !frames.hasFilter() && !frames.usesIndex();
+    }
+
+    /**
      * Sizes each SYMBOL key column's shared cache from the probe dictionary and gives every slot
      * its own pair of symbol tables over it. Symbol tables are not thread safe, so a worker
      * cannot share one; the cache it fills is a function of the two dictionaries alone, so every
@@ -360,17 +381,50 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         buildCursor = buildFactory.getCursor(executionContext);
-        // The child cursor is fresh. Unknown/filtered sizes retain incremental growth.
-        final long rowCountHint = buildCursor.size();
+        final long rowCountHint = countBuildRows(circuitBreaker);
+        final long keyCountHint = getKeyCountHint(rowCountHint);
         if (isKeyStaged) {
             mapBuild.open(memoryTracker, circuitBreaker);
-            frozen = mapBuild.build(buildCursor, buildKeySink, rowCountHint);
+            frozen = mapBuild.build(buildCursor, buildKeySink, rowCountHint, keyCountHint);
         } else {
             intBuild.open(memoryTracker, circuitBreaker);
             // A SYMBOL key keeps the build's own symbol keys; the probe translates into them.
-            frozen = intBuild.build(buildCursor, buildKeyColumn, rowCountHint);
+            frozen = intBuild.build(buildCursor, buildKeyColumn, rowCountHint, keyCountHint);
         }
         isBuildUnique = frozen.getRowCount() == frozen.getKeyCount();
+    }
+
+    /**
+     * Rows of the fresh build cursor, or -1 when it cannot tell them without reading them. A
+     * filtered build stays unknown and grows as it goes: the unfiltered row count only bounds it,
+     * and sizing by that bound over-allocates by the filter's selectivity.
+     */
+    private long countBuildRows(SqlExecutionCircuitBreaker circuitBreaker) {
+        final long size = buildCursor.size();
+        if (size > -1 || !isBuildCountedFromFrames) {
+            return size;
+        }
+        buildRowCounter.clear();
+        buildCursor.calculateSize(circuitBreaker, buildRowCounter);
+        buildCursor.toTop();
+        return buildRowCounter.get();
+    }
+
+    /**
+     * Distinct keys the key table is presized for, or -1 to let it grow. Rows bound the keys, but
+     * only a build whose table is not larger than its probe's sizes by them; see
+     * {@link HashJoinGroupByMetadata#isKeyCapacityPresized()}. The INT layout's lone SYMBOL key
+     * holds the build's own symbol keys, so its dictionary and the null key bound it as well.
+     */
+    private long getKeyCountHint(long rowCount) {
+        if (!isKeyCapacityPresized || rowCount < 1) {
+            return -1;
+        }
+        if (isSymbolKey) {
+            final StaticSymbolTable symbolTable = (StaticSymbolTable) buildCursor.getSymbolTable(buildKeyColumn);
+            return Math.min(rowCount, symbolTable.getSymbolCount() + 1L);
+        }
+        return rowCount;
     }
 
     AsyncFilterContext getFilterContext() {

@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.std.Hash;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTracker;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -61,6 +62,12 @@ import java.io.Closeable;
  * Hash tables and rows use tracked native buffers. Growth accounts for both old and
  * new allocations and is cancellable. Frozen views borrow these buffers until close;
  * see {@link FrozenHashJoinBuild}.
+ * <p>
+ * The key table doubles from its initial size, rehashing every key it holds, unless the
+ * caller bounds the distinct keys up front; a key count hint buys the whole table before
+ * the first row. Only the caller can bound them: a row count bounds them too, but a table
+ * sized by the rows of a key that repeats holds mostly empty slots, costs memory and scatters
+ * every lookup over them.
  */
 public final class IntHashJoinBuild implements Closeable {
     private static final int MAX_SLOTS = 1 << 30;
@@ -111,20 +118,25 @@ public final class IntHashJoinBuild implements Closeable {
 
     /** Consumes a borrowed INT-keyed cursor once. The caller retains ownership of the cursor. */
     public FrozenHashJoinBuild.IntKeyed build(RecordCursor cursor, int keyColumn) {
-        return build(cursor, keyColumn, -1);
+        return build(cursor, keyColumn, -1, -1);
     }
 
     /**
      * Consumes a borrowed cursor once and resolves SYMBOL payloads through it until close,
-     * so the caller keeps the cursor open until then. A nonnegative hint is the remaining
-     * row count of a freshly acquired cursor. A SYMBOL key column keeps its own key, which
-     * is the domain the probe translates into.
+     * so the caller keeps the cursor open until then. A positive row hint is the remaining
+     * row count of a freshly acquired cursor and presizes the row heap. A positive key hint
+     * bounds the distinct keys the cursor holds and presizes the key table for that many, so
+     * that no rehash runs below it; -1 leaves the table to grow. A SYMBOL key column keeps its
+     * own key, which is the domain the probe translates into.
      */
-    public FrozenHashJoinBuild.IntKeyed build(RecordCursor cursor, int keyColumn, long rowCountHint) {
+    public FrozenHashJoinBuild.IntKeyed build(RecordCursor cursor, int keyColumn, long rowCountHint, long keyCountHint) {
         requireBuilding();
         try {
             if (rowCountHint > 0) {
                 heap.reserve(rowCountHint);
+            }
+            if (keyCountHint > 0) {
+                reserveKeys(keyCountHint);
             }
             final Record record = cursor.getRecord();
             // The source cursor checks the breaker at its frame boundaries.
@@ -220,8 +232,10 @@ public final class IntHashJoinBuild implements Closeable {
         long slot = findKeySlot(keys.address, keySlotCount, key);
         int previous = Unsafe.getInt(slot + 4);
         if (previous == 0 && keyCount == keySlotCount / 2) {
-            growKeyTable();
-            keySlotCount *= 2;
+            if (keySlotCount == MAX_SLOTS) {
+                throw CairoException.nonCritical().put("hash join build capacity overflow");
+            }
+            growKeyTable(keySlotCount * 2);
             slot = findKeySlot(keys.address, keySlotCount, key);
         }
         final long offset = heap.append(record, toRowLink(previous));
@@ -232,16 +246,13 @@ public final class IntHashJoinBuild implements Closeable {
         }
     }
 
-    private void growKeyTable() {
-        final int slots = keySlotCount;
-        if (slots == MAX_SLOTS) {
-            throw CairoException.nonCritical().put("hash join build capacity overflow");
-        }
+    // Rehashes into a table of the given power-of-two slot count, larger than the current one.
+    private void growKeyTable(int slots) {
         // Separate destination keeps both allocations charged throughout rehashing.
         final HashJoinBuffer dest = keys.scratch();
         try {
-            dest.allocate((long) slots * 2 * SLOT_SIZE, true);
-            for (int i = 0; i < slots; i++) {
+            dest.allocate((long) slots * SLOT_SIZE, true);
+            for (int i = 0, n = keySlotCount; i < n; i++) {
                 if ((i & (KEY_SLOTS_PER_CHECK - 1)) == 0) {
                     circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 }
@@ -249,10 +260,10 @@ public final class IntHashJoinBuild implements Closeable {
                 int value = Unsafe.getInt(src + 4);
                 if (value != 0) {
                     int key = Unsafe.getInt(src);
-                    int index = (int) Hash.hashInt64(key) & (slots * 2 - 1);
+                    int index = (int) Hash.hashInt64(key) & (slots - 1);
                     long target = dest.address + (long) index * SLOT_SIZE;
                     while (Unsafe.getInt(target + 4) != 0) {
-                        index = (index + 1) & (slots * 2 - 1);
+                        index = (index + 1) & (slots - 1);
                         target = dest.address + (long) index * SLOT_SIZE;
                     }
                     Unsafe.putInt(target, key);
@@ -260,6 +271,7 @@ public final class IntHashJoinBuild implements Closeable {
                 }
             }
             keys.take(dest);
+            keySlotCount = slots;
         } finally {
             dest.close();
         }
@@ -268,6 +280,15 @@ public final class IntHashJoinBuild implements Closeable {
     private void requireBuilding() {
         if (!open || frozen != null) {
             throw new IllegalStateException("hash join build is not mutable");
+        }
+    }
+
+    // A table holds at most half its slots, as appendRow() grows it. A hint past the largest
+    // table is not an error here: the keys it bounds may still fit, so growth decides that.
+    private void reserveKeys(long keyCount) {
+        final int slots = Numbers.ceilPow2(2 * (int) Math.min(keyCount, MAX_SLOTS / 2));
+        if (slots > keySlotCount) {
+            growKeyTable(slots);
         }
     }
 

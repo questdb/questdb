@@ -262,12 +262,12 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                  RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 for (long hint : new long[]{limit / 16 + 1, Long.MAX_VALUE}) {
                     build.open(tracker, NOOP);
-                    CairoException error = Assert.assertThrows(CairoException.class, () -> build.build(cursor, 0, hint));
+                    CairoException error = Assert.assertThrows(CairoException.class, () -> build.build(cursor, 0, hint, -1));
                     TestUtils.assertContains(error.getFlyweightMessage(), "hash join build buffer overflow");
                     Assert.assertEquals(0, tracker.getUsed());
                     cursor.toTop();
                     build.open(tracker, NOOP);
-                    FrozenHashJoinBuild.IntProbe probe = build.build(cursor, 0, 1).newProbe();
+                    FrozenHashJoinBuild.IntProbe probe = build.build(cursor, 0, 1, -1).newProbe();
                     Assert.assertTrue(probe.findSingleUnchecked(17));
                     Assert.assertEquals(17, probe.getRecord().getInt(0));
                     build.close();
@@ -277,7 +277,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 // The largest legal hint reaches tracked allocation and is rejected
                 // by this tiny memory limit, rather than wrapping its compressed offset.
                 build.open(tracker, NOOP);
-                CairoException error = Assert.assertThrows(CairoException.class, () -> build.build(cursor, 0, limit / 16));
+                CairoException error = Assert.assertThrows(CairoException.class, () -> build.build(cursor, 0, limit / 16, -1));
                 TestUtils.assertContains(error.getFlyweightMessage(), "query memory limit exceeded");
                 TestUtils.assertContains(error.getFlyweightMessage(), ", size=" + limit + ",");
                 Assert.assertEquals(0, tracker.getUsed());
@@ -573,7 +573,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 for (int execution = 0; execution < 2; execution++) {
                     cursor.toTop();
                     build.open(tracker, NOOP);
-                    FrozenHashJoinBuild.IntKeyed frozen = build.build(cursor, 0, cursor.size());
+                    FrozenHashJoinBuild.IntKeyed frozen = build.build(cursor, 0, cursor.size(), -1);
                     Assert.assertEquals(10_000, frozen.getRowCount());
                     Assert.assertEquals(capacity, tracker.getUsed());
                     Assert.assertEquals(capacity, frozen.getSizeInBytes());
@@ -585,10 +585,88 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     Assert.assertEquals(0, tracker.getUsed());
                     build.open(tracker, NOOP);
                     CairoException error = Assert.assertThrows(CairoException.class,
-                            () -> build.build(cursor, 0, Long.MAX_VALUE));
+                            () -> build.build(cursor, 0, Long.MAX_VALUE, -1));
                     TestUtils.assertContains(error.getFlyweightMessage(), "hash join build buffer overflow");
                     Assert.assertEquals(0, tracker.getUsed());
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testKeyCountHintBoundsWithoutCapping() throws Exception {
+        assertMemoryLeak(() -> {
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(1 << 20);
+                 IntHashJoinBuild build = new IntHashJoinBuild(new ArrayColumnTypes(), new IntList(), 64, 64);
+                 RecordCursorFactory factory = select("SELECT x::INT k FROM long_sequence(1_000)");
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                // A hint below the distinct keys presizes that far, to 256 slots, and the table
+                // grows past it to 2_048 slots; the heap doubles from 64 bytes to 8_192 for 8_000.
+                build.open(tracker, NOOP);
+                FrozenHashJoinBuild.IntKeyed frozen = build.build(cursor, 0, -1, 100);
+                Assert.assertEquals(1_000, frozen.getKeyCount());
+                Assert.assertEquals(2_048 * 8 + 8_192, frozen.getSizeInBytes());
+                FrozenHashJoinBuild.IntProbe probe = frozen.newProbe();
+                for (int key = 0; key <= 1_001; key++) {
+                    Assert.assertEquals(key > 0 && key <= 1_000, probe.findSingleUnchecked(key));
+                }
+                build.close();
+                Assert.assertEquals(0, tracker.getUsed());
+                // A hint past the largest table asks for all of it, 8 GiB, which the limit rejects
+                // before any allocation; the failure releases the build, which then reopens.
+                cursor.toTop();
+                build.open(tracker, NOOP);
+                CairoException error = Assert.assertThrows(CairoException.class, () -> build.build(cursor, 0, -1, Long.MAX_VALUE));
+                TestUtils.assertContains(error.getFlyweightMessage(), "query memory limit exceeded");
+                Assert.assertEquals(0, tracker.getUsed());
+                Assert.assertEquals(0, build.getSizeInBytes());
+                cursor.toTop();
+                build.open(tracker, NOOP);
+                Assert.assertEquals(1_000, build.build(cursor, 0, 1_000, 1_000).getKeyCount());
+                build.close();
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
+    public void testKeyCountHintPresizesKeyTableAndLowersPeak() throws Exception {
+        assertMemoryLeak(() -> {
+            final int rows = 100_000;
+            // 100_000 distinct keys fill 262_144 eight-byte slots up to half, and an empty payload
+            // leaves an eight-byte link a row, presized from the row count in both builds below.
+            final long keyTableBytes = 262_144 * 8L;
+            final long heapBytes = rows * 8L;
+            // The presize replaces the 64 initial slots, which stay charged while it allocates.
+            final long initialKeyTableBytes = 64 * 8L;
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(keyTableBytes + heapBytes + initialKeyTableBytes);
+                 IntHashJoinBuild build = new IntHashJoinBuild(new ArrayColumnTypes(), new IntList(), 64, 64);
+                 RecordCursorFactory factory = select("SELECT x::INT k FROM long_sequence(" + rows + ")");
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                for (int execution = 0; execution < 2; execution++) {
+                    cursor.toTop();
+                    SiteBreaker breaker = new SiteBreaker(null);
+                    build.open(tracker, breaker);
+                    FrozenHashJoinBuild.IntKeyed frozen = build.build(cursor, 0, rows, rows);
+                    Assert.assertEquals(rows, frozen.getKeyCount());
+                    Assert.assertEquals(keyTableBytes + heapBytes, frozen.getSizeInBytes());
+                    Assert.assertEquals(keyTableBytes + heapBytes, tracker.getUsed());
+                    // A single rehash, of the 64 empty initial slots, before the first row.
+                    Assert.assertEquals(1, breaker.keyRehashChecks);
+                    FrozenHashJoinBuild.IntProbe probe = frozen.newProbe();
+                    Assert.assertTrue(probe.findSingleUnchecked(1));
+                    Assert.assertTrue(probe.findSingleUnchecked(rows));
+                    Assert.assertFalse(probe.findSingleUnchecked(rows + 1));
+                    build.close();
+                    Assert.assertEquals(0, tracker.getUsed());
+                }
+                // Growing into the same table rehashes the previous one, half its size, while both
+                // are charged, which the same limit does not hold.
+                cursor.toTop();
+                build.open(tracker, NOOP);
+                CairoException error = Assert.assertThrows(CairoException.class, () -> build.build(cursor, 0, rows, -1));
+                TestUtils.assertContains(error.getFlyweightMessage(), "query memory limit exceeded");
+                Assert.assertEquals(0, tracker.getUsed());
             }
         });
     }
@@ -617,7 +695,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     try (IntHashJoinBuild build = new IntHashJoinBuild(types, indexes(layouts[l]), 2, 8);
                          RecordCursor cursor = source.getCursor(sqlExecutionContext)) {
                         build.open(null, NOOP);
-                        FrozenHashJoinBuild.IntKeyed frozen = build.build(cursor, 0, cursor.size());
+                        FrozenHashJoinBuild.IntKeyed frozen = build.build(cursor, 0, cursor.size(), -1);
                         Assert.assertEquals(3, frozen.getRowCount());
                         // Two eight-byte key slots, and a heap presized to exactly three rows.
                         Assert.assertEquals(16 + 3 * rowSizes[l], frozen.getSizeInBytes());
@@ -1488,7 +1566,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     buildSymbols.resetCounts();
                     probeSymbols.resetCounts();
                     build.open(tracker, NOOP);
-                    FrozenHashJoinBuild.IntKeyed frozen = build.build(new KeyCursor(buildSymbols, keys), 0, keys.length);
+                    FrozenHashJoinBuild.IntKeyed frozen = build.build(new KeyCursor(buildSymbols, keys), 0, keys.length, -1);
                     Assert.assertEquals(build.getSizeInBytes(), tracker.getUsed());
                     // The build translates nothing, so no lookup happened while it read its rows.
                     Assert.assertEquals(0, buildSymbols.keyOfCalls);

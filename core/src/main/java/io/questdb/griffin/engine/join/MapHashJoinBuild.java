@@ -79,9 +79,11 @@ import java.io.Closeable;
  * <p>
  * Cancellation: the build loop checks the circuit breaker once per
  * {@value #ROWS_PER_BREAKER_CHECK} rows, and the row heap checks once per MiB it copies. The
- * maps never check it, so with a known row count the build presizes the map and no rehash runs;
- * with an unknown one, a single rehash and a single {@code OrderedMap.resize()} stay
- * uninterruptible.
+ * maps never check it, so with a key count hint the build presizes the map and no rehash runs
+ * below it; without one, a single rehash and a single {@code OrderedMap.resize()} stay
+ * uninterruptible. A row count bounds the keys too, but the caller passes it as a key count hint
+ * only when the keys are unlikely to repeat: a map sized by the rows of a repeating key holds
+ * mostly empty slots.
  */
 public final class MapHashJoinBuild implements Closeable {
     // The map value: the compressed offset of the chain head, as the INT layout's slot holds it.
@@ -184,20 +186,22 @@ public final class MapHashJoinBuild implements Closeable {
     /**
      * Consumes a borrowed cursor once and resolves SYMBOL payloads through it until close, so
      * the caller keeps the cursor open until then. The sink stages the build key from each row;
-     * it is the owner's own, since sinks must not be shared across workers. A nonnegative hint
-     * is the remaining row count of a freshly acquired cursor, and presizes both the row heap
-     * and the map.
+     * it is the owner's own, since sinks must not be shared across workers. A positive row hint
+     * is the remaining row count of a freshly acquired cursor and presizes the row heap. A
+     * positive key hint bounds the distinct keys the cursor holds and presizes the map for that
+     * many; -1 leaves the map to grow.
      */
-    public FrozenHashJoinBuild.RecordKeyed build(RecordCursor cursor, RecordSink keySink, long rowCountHint) {
+    public FrozenHashJoinBuild.RecordKeyed build(RecordCursor cursor, RecordSink keySink, long rowCountHint, long keyCountHint) {
         requireBuilding();
         try {
             if (rowCountHint > 0) {
                 heap.reserve(rowCountHint);
-                // A rehash is uninterruptible, so buy the whole table up front. The build has
-                // no distinct-key estimate, so a duplicate-heavy build over-allocates the table.
-                // A hint past what the map can hold is not an error here: the build may still
-                // fit, since rows are not distinct keys, so leave those rehashes to the map.
-                map.setKeyCapacity((int) Math.min(rowCountHint, maxPresizedKeys));
+            }
+            if (keyCountHint > 0) {
+                // A rehash is uninterruptible, so buy the whole table up front. A hint past what
+                // the map can hold is not an error here: the build may still fit, since the hint
+                // only bounds the distinct keys, so leave those rehashes to the map.
+                map.setKeyCapacity((int) Math.min(keyCountHint, maxPresizedKeys));
             }
             final Record record = cursor.getRecord();
             // The source cursor checks the breaker at its frame boundaries; the map's own
