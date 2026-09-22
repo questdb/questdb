@@ -152,6 +152,14 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private ConversionSymbolMapWriter conversionSymbolMap;
     private ConversionSymbolTable conversionSymbolTable;
     private long currentTxnStartRowNum = -1;
+    // Per-column "reject null" cache for the put*/rowAppend hot paths. Nullability
+    // is static table metadata; resolving it per value would walk metadata (incl.
+    // a volatile flag read) on every ingested null. Keyed on the local metadata
+    // structure version + columnCount, so every structural ALTER (including
+    // SET/DROP NOT NULL) invalidates it.
+    private boolean[] enforceableNotNullByColumn;
+    private int enforceableNotNullCacheColumnCount = -1;
+    private long enforceableNotNullCacheVersion = -1;
     private boolean isCommittingData;
     private byte lastDedupMode = WAL_DEDUP_MODE_DEFAULT;
     private long lastMatViewPeriodHi = WAL_DEFAULT_LAST_PERIOD_HI;
@@ -1039,6 +1047,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
+    private boolean columnRejectsNull(int columnIndex) {
+        return enforceableNotNullFlags()[columnIndex];
+    }
+
     private void commit0(
             byte txnType,
             long lastRefreshBaseTxn,
@@ -1385,6 +1397,22 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             columnVersionReader = Misc.free(columnVersionReader);
             txReader = Misc.free(txReader);
         }
+    }
+
+    private boolean[] enforceableNotNullFlags() {
+        final boolean[] cache = enforceableNotNullByColumn;
+        final long version = metadata.getMetadataVersion();
+        if (cache != null && enforceableNotNullCacheVersion == version && enforceableNotNullCacheColumnCount == columnCount) {
+            return cache;
+        }
+        final boolean[] rebuilt = new boolean[columnCount];
+        for (int i = 0; i < columnCount; i++) {
+            rebuilt[i] = TableUtils.isEnforceableNotNull(metadata.getColumnType(i), metadata.isNotNull(i));
+        }
+        enforceableNotNullByColumn = rebuilt;
+        enforceableNotNullCacheVersion = version;
+        enforceableNotNullCacheColumnCount = columnCount;
+        return rebuilt;
     }
 
     private void freeAndRemoveColumnPair(ObjList<MemoryMA> columns, int pi, int si) {
@@ -1936,9 +1964,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private void rowAppend(ObjList<Runnable> activeNullSetters, long rowTimestamp) {
+        final boolean[] rejectsNull = enforceableNotNullFlags();
         for (int i = 0; i < columnCount; i++) {
             if (rowValueIsNotNull.getQuick(i) < segmentRowCount) {
-                if (TableUtils.isEnforceableNotNull(metadata.getColumnType(i), metadata.isNotNull(i))) {
+                if (rejectsNull[i]) {
                     throw CairoException.nonCritical()
                             .put("NOT NULL constraint violation, column is required [column=")
                             .put(metadata.getColumnName(i))
@@ -2123,6 +2152,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     void finishColumnarWrite(int rowCount, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
         // Fill in nulls for any columns that weren't written
         long lastExpectedRow = segmentRowCount + rowCount - 1;
+        final boolean[] rejectsNull = enforceableNotNullFlags();
         for (int i = 0; i < columnCount; i++) {
             long lastWrittenRow = rowValueIsNotNull.getQuick(i);
             if (lastWrittenRow < lastExpectedRow) {
@@ -2133,7 +2163,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                             .put(", column=").put(metadata.getColumnName(timestampIndex))
                             .put(']');
                 }
-                if (TableUtils.isEnforceableNotNull(metadata.getColumnType(i), metadata.isNotNull(i))) {
+                if (rejectsNull[i]) {
                     throw CairoException.nonCritical()
                             .put("NOT NULL constraint violation, column is required [column=")
                             .put(metadata.getColumnName(i))
@@ -3082,7 +3112,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         @Override
         public void putSymIndex(int columnIndex, int key) {
             // SymbolTable.VALUE_IS_NULL = -1 -- guard symmetric with putSym(null).
-            if (key == SymbolTable.VALUE_IS_NULL && TableUtils.isEnforceableNotNull(metadata.getColumnType(columnIndex), metadata.isNotNull(columnIndex))) {
+            if (key == SymbolTable.VALUE_IS_NULL && columnRejectsNull(columnIndex)) {
                 throw CairoException.nonCritical()
                         .put("NOT NULL constraint violation, column is required [column=")
                         .put(metadata.getColumnName(columnIndex))
@@ -3158,7 +3188,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         private void checkNotNullValue(int columnIndex, Object value) {
-            if (value == null && TableUtils.isEnforceableNotNull(metadata.getColumnType(columnIndex), metadata.isNotNull(columnIndex))) {
+            if (value == null && columnRejectsNull(columnIndex)) {
                 throw CairoException.nonCritical()
                         .put("NOT NULL constraint violation, column is required [column=")
                         .put(metadata.getColumnName(columnIndex))
@@ -3199,7 +3229,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 // SYMBOL NOT NULL rejects explicit null even though numeric NOT NULL
                 // accepts sentinels: for SYMBOL the -1 sentinel IS the IS NULL match
                 // encoding, so accepting it would defeat the constraint user-side.
-                if (TableUtils.isEnforceableNotNull(metadata.getColumnType(columnIndex), metadata.isNotNull(columnIndex))) {
+                if (columnRejectsNull(columnIndex)) {
                     throw CairoException.nonCritical()
                             .put("NOT NULL constraint violation, column is required [column=")
                             .put(metadata.getColumnName(columnIndex))

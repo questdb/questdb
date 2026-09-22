@@ -312,6 +312,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // The hot path in rowAppend validates only these columns per row - the
     // list is empty for tables without NOT NULL columns - instead of resolving
     // metadata.getColumnType(i) + metadata.isNotNull(i) per row per column.
+    // per-column companion of enforceableNotNullColumnIndexes, for O(1) checks
+    // on the put* hot path; both arrays are rebuilt together.
+    private boolean[] enforceableNotNullByColumn;
     private int[] enforceableNotNullColumnIndexes;
     // columnCount enforceableNotNullColumnIndexes was built for; a mismatch
     // marks the cache stale even without an explicit invalidation.
@@ -13963,23 +13966,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private boolean columnRejectsNull(int columnIndex) {
+        // Nullability is static table metadata; the put* hot path must not walk
+        // metadata (incl. a volatile flag read) per value. The cache shares the
+        // validity rule and invalidation sites of enforceableNotNullColumnIndexes.
+        if (enforceableNotNullColumnIndexes == null || enforceableNotNullColumnIndexesColumnCount != columnCount) {
+            enforceableNotNullColumnIndexes();
+        }
+        return enforceableNotNullByColumn[columnIndex];
+    }
+
     private int[] enforceableNotNullColumnIndexes() {
         final int[] cache = enforceableNotNullColumnIndexes;
         if (cache != null && enforceableNotNullColumnIndexesColumnCount == columnCount) {
             return cache;
         }
+        final boolean[] flags = new boolean[columnCount];
         int requiredColumnCount = 0;
         for (int i = 0; i < columnCount; i++) {
             if (TableUtils.isEnforceableNotNull(metadata.getColumnType(i), metadata.isNotNull(i))) {
+                flags[i] = true;
                 requiredColumnCount++;
             }
         }
         final int[] rebuilt = new int[requiredColumnCount];
         for (int i = 0, k = 0; i < columnCount; i++) {
-            if (TableUtils.isEnforceableNotNull(metadata.getColumnType(i), metadata.isNotNull(i))) {
+            if (flags[i]) {
                 rebuilt[k++] = i;
             }
         }
+        enforceableNotNullByColumn = flags;
         enforceableNotNullColumnIndexesColumnCount = columnCount;
         enforceableNotNullColumnIndexes = rebuilt;
         return rebuilt;
@@ -16446,7 +16462,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // user-side. Numeric NOT NULL types (per testEnforceNotNullSentinelValuesAccepted)
             // accept explicit NULL because their sentinel value is distinct from
             // the NULL semantic; SYMBOL has no such distinction.
-            if (value == null && TableUtils.isEnforceableNotNull(metadata.getColumnType(columnIndex), metadata.isNotNull(columnIndex))) {
+            if (value == null && columnRejectsNull(columnIndex)) {
                 throw CairoException.nonCritical()
                         .put("NOT NULL constraint violation, column is required [column=")
                         .put(metadata.getColumnName(columnIndex))
@@ -16465,7 +16481,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         @Override
         public void putSymIndex(int columnIndex, int key) {
             // SymbolTable.VALUE_IS_NULL = -1 -- guard the same way as putSym(null).
-            if (key == SymbolTable.VALUE_IS_NULL && TableUtils.isEnforceableNotNull(metadata.getColumnType(columnIndex), metadata.isNotNull(columnIndex))) {
+            if (key == SymbolTable.VALUE_IS_NULL && columnRejectsNull(columnIndex)) {
                 throw CairoException.nonCritical()
                         .put("NOT NULL constraint violation, column is required [column=")
                         .put(metadata.getColumnName(columnIndex))
@@ -16520,7 +16536,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         private void checkNotNullValue(int columnIndex, Object value) {
-            if (value == null && TableUtils.isEnforceableNotNull(metadata.getColumnType(columnIndex), metadata.isNotNull(columnIndex))) {
+            if (value == null && columnRejectsNull(columnIndex)) {
                 throw CairoException.nonCritical()
                         .put("NOT NULL constraint violation, column is required [column=")
                         .put(metadata.getColumnName(columnIndex))
