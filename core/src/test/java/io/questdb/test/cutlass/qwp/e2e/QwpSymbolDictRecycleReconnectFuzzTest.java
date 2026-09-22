@@ -145,6 +145,10 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
             // produces, small enough to keep the run under a handful of
             // seconds.
             int restartTarget = 15 + rnd.nextInt(16);
+            // One full stability-wait bound per bounce on top of the schedule itself, so a
+            // stalled client fails the per-bounce wait assertion (10 s, naming the bounce)
+            // before this outer ceiling can fire.
+            long bouncerBudgetSeconds = 120 + 10L * restartTarget;
             long tsBase = 1_700_000_000_000_000_000L;
             long tsStepNanos = 1_000L; // 1us per row, well under DAY partition
 
@@ -171,6 +175,7 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                 AtomicInteger unplannedDisconnects = new AtomicInteger();
                 AtomicInteger liveDrops = new AtomicInteger();
                 AtomicInteger targetedBounces = new AtomicInteger();
+                AtomicInteger targetedLiveDrops = new AtomicInteger();
                 // Set by the bouncer while it lines up a targeted stop, read by the producer
                 // before each reset request: with requests paused, no planned teardown can
                 // close the connection the bouncer is about to kill.
@@ -280,7 +285,8 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                                 firstBatchAcked.await(60, TimeUnit.SECONDS));
                         for (int i = 0; i < restartTarget; i++) {
                             Os.sleep(40 + rnd.nextInt(160)); // 40..199ms uptime
-                            if ((i & 1) == 0) {
+                            final boolean targeted = (i & 1) == 0;
+                            if (targeted) {
                                 // Targeted bounce: pause the producer's reset requests, then
                                 // wait for one upgraded connection to stay live for 20 ms (a
                                 // recycle armed before the pause fires at its next barrier
@@ -294,7 +300,11 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                                         server.awaitStableLiveConnection(10_000, 20));
                                 targetedBounces.incrementAndGet();
                             }
-                            liveDrops.addAndGet(server.stop());
+                            final int killed = server.stop();
+                            liveDrops.addAndGet(killed);
+                            if (targeted) {
+                                targetedLiveDrops.addAndGet(killed);
+                            }
                             holdResets.set(false);
                             Os.sleep(15 + rnd.nextInt(60));  // 15..74ms downtime
                             server.start();
@@ -314,9 +324,9 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                 producer.start();
                 bouncer.start();
 
-                if (!bouncerDone.await(120, TimeUnit.SECONDS)) {
+                if (!bouncerDone.await(bouncerBudgetSeconds, TimeUnit.SECONDS)) {
                     stopProducer.set(true);
-                    throw new AssertionError("bouncer did not finish within 120s, restartsDone=" + restartsDone.get());
+                    throw new AssertionError("bouncer did not finish within " + bouncerBudgetSeconds + "s, restartsDone=" + restartsDone.get());
                 }
                 if (bouncerError.get() != null) {
                     stopProducer.set(true);
@@ -376,12 +386,14 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                 int unplanned = unplannedDisconnects.get();
                 int liveDropCount = liveDrops.get();
                 int targeted = targetedBounces.get();
+                int targetedLiveDropCount = targetedLiveDrops.get();
                 if (expected <= 0) {
                     throw new AssertionError("producer wrote zero rows");
                 }
                 LOG.info().$("fuzz run complete: rowsProduced=").$(expected)
                         .$(", serverRestarts=").$(restarts)
                         .$(", targetedBounces=").$(targeted)
+                        .$(", targetedLiveDrops=").$(targetedLiveDropCount)
                         .$(", liveDrops=").$(liveDropCount)
                         .$(", unplannedDisconnects=").$(unplanned)
                         .$(", symbolDictEpoch=").$(symbolDictEpoch).$();
@@ -392,10 +404,11 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                 // that had already carried a frame, with reset requests paused. The only way
                 // such a stop is not counted is a recycle armed before the pause firing inside
                 // the few milliseconds between the stability check and the worker halt; half
-                // is ample margin for that.
+                // is ample margin for that. Kills on blind bounces are not counted here, so a
+                // broken targeting path cannot pass on luck.
                 Assert.assertTrue("targeted bounces must land on live connections: targetedBounces=" + targeted
-                                + ", liveDrops=" + liveDropCount,
-                        liveDropCount >= (targeted + 1) / 2);
+                                + ", targetedLiveDrops=" + targetedLiveDropCount,
+                        targetedLiveDropCount >= (targeted + 1) / 2);
                 // Direct, isolated evidence that the ordinary (unplanned) reconnect path ran:
                 // DISCONNECTED fires only when the client's I/O loop observes a live connection
                 // drop and re-enters its own reconnect factory (see the setConnectionListener
