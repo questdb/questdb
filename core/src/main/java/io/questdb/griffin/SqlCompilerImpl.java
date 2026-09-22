@@ -3755,6 +3755,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final int selectTextPosition = createTableOp.getSelectTextPosition();
         try {
             final IQueryModel queryModel;
+            final boolean cacheable;
             try {
                 try {
                     final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
@@ -3778,6 +3779,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw e;
                 }
                 createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
+                // See compileUsingModel(): read before generation, so a throw here cannot orphan the generated
+                // factory tree, and the read cannot land on a model the retry path has already recycled. Inside
+                // this try on purpose -- a throw must still free the table factories optimise() left in flight.
+                cacheable = queryModel.isCacheable();
             } catch (Throwable th) {
                 // Rejecting the query after optimise() returned leaves the cursor functions it
                 // instantiated for FROM/JOIN table functions unowned: generation, which takes them over,
@@ -3789,7 +3794,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
             executionContext.setAllowNonDeterministicFunction(false);
             try {
-                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), queryModel.isCacheable());
+                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), cacheable);
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
@@ -4205,7 +4210,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try {
             executionModel = compileExecutionModel(executionContext);
             switch (executionModel.getModelType()) {
-                case ExecutionModel.QUERY:
+                case ExecutionModel.QUERY: {
+                    // Read the flag BEFORE generating. Arguments evaluate left to right, so reading it in the
+                    // argument list would run it on a model that generation may already have discarded --
+                    // generateSelectWithRetries() recompiles the execution model on a retry, and
+                    // clearExceptSqlText() recycles this one back into the model pool -- and any throw there
+                    // would orphan the generated factory tree, which is nobody's to close once the reference
+                    // is lost. Nothing in generation sets the flag (only the optimiser does, which has
+                    // already run), so hoisting it does not change the value.
+                    final boolean cacheable = ((IQueryModel) executionModel).isCacheable();
                     compiledQuery.ofSelect(
                             generateSelectWithRetries(
                                     (IQueryModel) executionModel,
@@ -4213,9 +4226,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     executionContext,
                                     generateProgressLogger
                             ),
-                            ((IQueryModel) executionModel).isCacheable()
+                            cacheable
                     );
                     break;
+                }
                 case ExecutionModel.CREATE_TABLE:
                     compiledQuery.ofCreateTable(((CreateTableOperationBuilder) executionModel)
                             .build(this, executionContext, sqlText));
@@ -4419,6 +4433,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final int selectTextPosition = createTableOp.getSelectTextPosition();
         try {
             final IQueryModel queryModel;
+            final boolean cacheable;
             try {
                 try {
                     final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
@@ -4431,6 +4446,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw e;
                 }
                 createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
+                // Same read-before-generation rule as compileMatViewQuery, and inside the same try for the
+                // same reason: a throw must free the table factories optimise() left in flight.
+                cacheable = queryModel.isCacheable();
             } catch (Throwable th) {
                 // Same ownership window as compileMatViewQuery: optimise() has attached the FROM/JOIN
                 // cursor functions to the model and generation has not taken them over yet.
@@ -4439,7 +4457,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
 
             try {
-                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), queryModel.isCacheable());
+                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), cacheable);
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
