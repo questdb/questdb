@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
@@ -79,22 +80,23 @@ import static io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory.
  * @see AsyncWindowJoinRecordCursorFactory for the multi-threaded variant
  */
 public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final WindowJoinRecordCursor cursor;
     private final int hiSign;
     private final char hiTimeUnit;
     private final boolean includePrevailing;
-    private final Function joinFilter;
-    private final JoinRecordMetadata joinMetadata;
     private final int loSign;
     private final char loTimeUnit;
-    private final RecordCursorFactory masterFactory;
-    private final RecordCursorFactory slaveFactory;
     private final @Nullable TimestampDriver timestampDriver;
-    private final SimpleMapValue value;
     private final long windowHi;
-    private final @Nullable Function windowHiFunc;
     private final long windowLo;
-    private final @Nullable Function windowLoFunc;
+    private WindowJoinRecordCursor cursor;
+    private ObjList<GroupByFunction> groupByFunctions;
+    private Function joinFilter;
+    private JoinRecordMetadata joinMetadata;
+    private RecordCursorFactory masterFactory;
+    private RecordCursorFactory slaveFactory;
+    private SimpleMapValue value;
+    private @Nullable Function windowHiFunc;
+    private @Nullable Function windowLoFunc;
 
     public WindowJoinRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -119,16 +121,25 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             @Nullable Function joinFilter
     ) {
         super(metadata);
-        assert slaveFactory.supportsTimeFrameCursor();
         try {
             this.masterFactory = masterFactory;
             this.slaveFactory = slaveFactory;
             this.joinMetadata = joinMetadata;
             this.joinFilter = joinFilter;
+            this.groupByFunctions = groupByFunctions;
             this.windowLo = windowLo;
             this.windowHi = windowHi;
             this.windowLoFunc = windowLoFunc;
             this.windowHiFunc = windowHiFunc;
+            // Adopted here, before the first statement that can throw: the cursor only clears this
+            // list (Mutable.clear(), not close()), so _close() is its sole release point and the
+            // generator has already nulled its own reference. GroupByFunctionsUpdaterFactory below
+            // can throw, and so can the assert.
+            this.groupByFunctions = groupByFunctions;
+            // Checked after the adopting assignments above, not at the top of the constructor: the
+            // generator transfers ownership of the filter and the window functions before it calls
+            // this, and the catch below frees the FIELDS, so an -ea failure any earlier leaks them.
+            assert slaveFactory.supportsTimeFrameCursor();
             this.loSign = loSign;
             this.hiSign = hiSign;
             this.loTimeUnit = loTimeUnit;
@@ -168,7 +179,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 );
             }
         } catch (Throwable th) {
-            close();
+            releaseAdoptedStateOnConstructorFailure();
             throw th;
         }
     }
@@ -189,6 +200,9 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         } catch (Throwable ex) {
             Misc.free(masterCursor);
             Misc.free(slaveCursor);
+            // of() binds the per-query tracker and reopens the allocator before it can throw;
+            // close() frees it under that tracker and resets isOpen so the factory stays reusable.
+            Misc.free(cursor);
             throw ex;
         }
         return cursor;
@@ -240,17 +254,90 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.child(slaveFactory);
     }
 
+    // A join reads externally if either input does. getBaseFactory() cannot express this because it
+    // returns a single child, so the two-child propagation is explicit here, mirroring
+    // AbstractJoinRecordCursorFactory. Guards against a null child during teardown.
+    @Override
+    public boolean usesExternalDataSource() {
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        if (masterFactory != null && masterFactory.usesExternalDataSource()) {
+            return true;
+        }
+        final RecordCursorFactory slaveFactory = this.slaveFactory;
+        return slaveFactory != null && slaveFactory.usesExternalDataSource();
+    }
+
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(cursor);
-        Misc.free(joinFilter);
-        Misc.free(joinMetadata);
-        Misc.free(value);
-        Misc.free(windowHiFunc);
-        Misc.free(windowLoFunc);
+        final RecordMetadata metadata = detachMetadata();
+        final WindowJoinRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final ObjList<GroupByFunction> groupByFunctions = this.groupByFunctions;
+        this.groupByFunctions = null;
+        final Function joinFilter = this.joinFilter;
+        this.joinFilter = null;
+        final JoinRecordMetadata joinMetadata = this.joinMetadata;
+        this.joinMetadata = null;
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        this.masterFactory = null;
+        final RecordCursorFactory slaveFactory = this.slaveFactory;
+        this.slaveFactory = null;
+        final SimpleMapValue value = this.value;
+        this.value = null;
+        final Function windowHiFunc = this.windowHiFunc;
+        this.windowHiFunc = null;
+        final Function windowLoFunc = this.windowLoFunc;
+        this.windowLoFunc = null;
+
+        Throwable failure = Misc.freeIfCloseableBestEffort(null, metadata);
+        failure = Misc.freeBestEffort(failure, masterFactory);
+        if (slaveFactory != masterFactory) {
+            failure = Misc.freeBestEffort(failure, slaveFactory);
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeObjListBestEffort(failure, groupByFunctions);
+        failure = Misc.freeBestEffort(failure, joinFilter);
+        if (joinMetadata != metadata) {
+            failure = Misc.freeBestEffort(failure, joinMetadata);
+        }
+        failure = Misc.freeBestEffort(failure, value);
+        if (windowHiFunc != joinFilter) {
+            failure = Misc.freeBestEffort(failure, windowHiFunc);
+        }
+        if (windowLoFunc != joinFilter && windowLoFunc != windowHiFunc) {
+            failure = Misc.freeBestEffort(failure, windowLoFunc);
+        }
+        // Last, defensively. The cursor's close() runs Misc.clearObjList(groupByFunctions), and
+        // clear() touches the very native buffers close() releases (StringDistinctAggGroupByFunction
+        // resets its sink capacity, which reallocs). Callers close the cursor before the factory and
+        // that close() is isOpen-guarded, so today the clear cannot follow the free -- ordering the
+        // free after the cursor keeps it that way if a caller ever closes the factory first.
+        failure = Misc.freeObjListBestEffort(failure, groupByFunctions);
+        CairoException.rethrowCleanupFailure(failure);
+    }
+
+    /**
+     * Releases what THIS constructor adopted, and only that.
+     * <p>
+     * The base factories and the join metadata belong to {@code SqlCodeGenerator} until the
+     * constructor returns - the contract the async siblings already honour, and the one the
+     * generator's own catch implements (it frees master, slave and the join metadata itself).
+     * Calling {@link #close()} here instead released them a second time. That is a no-op for an
+     * {@link io.questdb.cairo.AbstractRecordCursorFactory}, whose {@code close()} is flag-guarded,
+     * but not for a factory implementing {@code RecordCursorFactory} directly: for instance
+     * {@code CoveringIndexRecordCursorFactory.close()} frees its partition-frame factory and its
+     * functions unguarded, so a master of that shape was double freed. {@link JoinRecordMetadata}
+     * is reference counted, so the second close drove its count below zero as well.
+     * <p>
+     * Nulling the three fields before {@code close()} keeps the release of the adopted handles -
+     * the join filter, the window bound functions, the group-by functions, the cursor and the map
+     * value - in one place.
+     */
+    private void releaseAdoptedStateOnConstructorFailure() {
+        masterFactory = null;
+        slaveFactory = null;
+        joinMetadata = null;
+        close();
     }
 
     private class WindowJoinRecordCursor implements NoRandomAccessRecordCursor {
@@ -268,7 +355,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         private final ObjList<GroupByFunction> groupByFunctions;
         private final VirtualRecord groupByRecord;
         private final JoinRecord joinRecord;
-        private final WindowJoinSymbolTableSource joinSymbolTableSource;
+        private final JoinSymbolTableSource joinSymbolTableSource;
         private final Record record;
         protected SqlExecutionCircuitBreaker circuitBreaker;
         protected RecordCursor masterCursor;
@@ -291,13 +378,13 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             this.crossIndex = columnIndex;
             this.columnSplit = columnSplit;
             this.groupByFunctions = groupByFunctions;
-            this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
+            this.allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             GroupByUtils.setAllocator(groupByFunctions, allocator);
             this.groupByFunctionsUpdater = groupByFunctionsUpdater;
             this.value = value;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
-            isOpen = true;
+            isOpen = false;
             if (masterTimestampType == slaveTimestampType) {
                 masterTimestampScale = slaveTimestampScale = 1L;
             } else {
@@ -305,7 +392,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 slaveTimestampScale = ColumnType.getTimestampDriver(slaveTimestampType).toNanosScale();
             }
             this.slaveTimeFrameHelper = new WindowJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTimestampScale);
-            this.joinSymbolTableSource = new WindowJoinSymbolTableSource(columnSplit);
+            this.joinSymbolTableSource = new JoinSymbolTableSource(columnSplit);
 
             this.internalJoinRecord = new JoinRecord(columnSplit);
             this.groupByRecord = new VirtualRecord(groupByFunctions);
@@ -327,9 +414,9 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void close() {
-            Misc.free(allocator);
             if (isOpen) {
                 isOpen = false;
+                Misc.free(allocator);
                 Misc.clearObjList(groupByFunctions);
                 masterCursor = Misc.free(masterCursor);
                 slaveCursor = Misc.free(slaveCursor);
@@ -386,7 +473,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
             long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
             for (; ; ) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                 final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                 if (slaveTimestamp > slaveTimestampHi) {
@@ -448,10 +535,9 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
+                allocator.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 allocator.reopen();
             }
-            this.masterCursor = masterCursor;
-            this.slaveCursor = slaveCursor;
             this.masterRecord = masterCursor.getRecord();
             joinRecord.of(masterRecord, groupByRecord);
             slaveTimeFrameHelper.of(slaveCursor);
@@ -468,6 +554,10 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             }
             Function.init(groupByFunctions, joinSymbolTableSource, sqlExecutionContext, null);
             circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+
+            // Adopt master/slave last so an init() throw above can't double-free them via the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 
@@ -543,7 +633,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             // If so, we don't need to do backward scan to find the prevailing row.
             boolean needToFindPrevailing = true;
             for (; ; ) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (slaveRowIndex >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
                     if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
                         break;
@@ -584,7 +674,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
             // Aggregate the rows within the time window.
             for (; ; ) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (slaveRowIndex >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
                     if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
                         break;

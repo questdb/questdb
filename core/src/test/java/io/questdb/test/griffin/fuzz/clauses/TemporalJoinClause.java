@@ -66,7 +66,7 @@ public final class TemporalJoinClause {
     private TemporalJoinClause() {
     }
 
-    public static GeneratedQuery generate(Rnd rnd, FuzzSource leftSrc, FuzzSource rightSrc, BindContext ctx) {
+    public static GeneratedQuery generate(Rnd rnd, FuzzSource leftSrc, FuzzSource rightSrc, BindContext ctx, boolean injectFaultFn) {
         FuzzTable left = leftSrc.getTable();
         FuzzTable right = rightSrc.getTable();
         String joinKind = JOIN_KINDS[rnd.nextInt(JOIN_KINDS.length)];
@@ -104,11 +104,8 @@ public final class TemporalJoinClause {
             sql.put(" TOLERANCE ").put(TOLERANCES[rnd.nextInt(TOLERANCES.length)]);
         }
 
-        if (rnd.nextBoolean()) {
-            // WHERE can touch either side; use left.
-            String pred = new PredicateGenerator(rnd, 1).generate(left.getColumns(), leftAlias, ctx);
-            sql.put(" WHERE ").put(pred);
-        }
+        // WHERE can touch either side; use left.
+        PredicateGenerator.appendWhere(sql, rnd, left.getColumns(), leftAlias, 1, ctx, injectFaultFn);
 
         if (rnd.nextBoolean()) {
             int picks = 1 + rnd.nextInt(Math.min(2, n));

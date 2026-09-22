@@ -134,7 +134,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             isSorted = true;
         }
         if (currentAddr < endAddr) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             long chainOffset = Unsafe.getLong(currentAddr);
             currentAddr += entrySize;
             recordChain.recordAt(recordChain.getRecord(), chainOffset);
@@ -150,7 +150,17 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+        // The tracker is rebound unconditionally below (outside the !isOpen guard) because
+        // the ctor opens eagerly with isOpen=true, so an inside-guard bind would leave the
+        // first query untracked. A second of() without an intervening close() would then
+        // rebind onto still-charged backing and underflow the per-query counter on free.
+        // close()/forceClose() null baseCursor, so a null field here means fresh-or-closed.
+        assert this.baseCursor == null : "of() without intervening close(): rebinding the memory tracker would underflow the per-query counter";
         this.baseCursor = baseCursor;
+        // Wire only the row-count-scaled allocators; keyHeap stays global-counter only as it is
+        // bounded by maxEntryMemBytes (see the throwLimitOverflow check below).
+        entryMem.setMemoryTracker(executionContext.getMemoryTracker());
+        recordChain.setMemoryTracker(executionContext.getMemoryTracker());
         if (!isOpen) {
             isOpen = true;
             entryMem.reopen();
@@ -193,6 +203,8 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
     }
 
     private void buildAndSort() {
+        // Consult the breaker before consuming the base, so an empty base scan still observes cancellation.
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         final boolean isVariable = keyType.isVariable();
         long estimatedSize = baseCursor.size();
         long maxEntries = maxEntryMemBytes / entrySize;
@@ -209,7 +221,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
         if (isVariable) {
             keyHeap.close();
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 long chainOffset = recordChain.put(record, -1L);
                 entryMem.ensureCapacity(longsPerEntry);
                 long addr = entryMem.getAppendAddress();
@@ -222,7 +234,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             }
         } else if (estimatedSize > 0) {
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 long chainOffset = recordChain.put(record, -1L);
                 long addr = entryMem.getAppendAddress();
                 encoder.encode(record, addr, chainOffset);
@@ -231,7 +243,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             }
         } else {
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (count >= maxEntries) {
                     throwLimitOverflow();
                 }
@@ -254,7 +266,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             } else {
                 Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold);
             }
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
         }
         if (isVariable) {
             // emit reads only chain offsets; the key heap is not needed past the sort

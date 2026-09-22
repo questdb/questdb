@@ -154,7 +154,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         if (currentAddr >= emitEndAddr) {
             return false;
         }
-        circuitBreaker.statefulThrowExceptionIfTripped();
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         final long rowId = Unsafe.getLong(currentAddr);
         currentAddr += entrySize;
         baseCursor.recordAt(baseRecord, rowId);
@@ -168,10 +168,19 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
 
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+        // The tracker is rebound unconditionally below (outside the !isOpen guard) because
+        // the ctor opens eagerly with isOpen=true; binding inside the guard would leave the
+        // first query untracked. A second of() without an intervening close() would rebind
+        // onto still-charged backing and underflow the per-query counter on free. close()
+        // nulls baseCursor, so a null field here means fresh-or-closed.
+        assert this.baseCursor == null : "of() without intervening close(): rebinding the memory tracker would underflow the per-query counter";
         // Take ownership before reopen() can throw: on a reopen OOM, close()
         // must find baseCursor here to free it instead of leaking it.
         this.baseCursor = baseCursor;
         this.baseRecord = baseCursor.getRecord();
+        // Bind the tracker before any entry-buffer allocation: the first open grows the buffer
+        // lazily in beginAppend (reopen is skipped as isOpen starts true), a reuse re-allocates via reopen.
+        entries.setMemoryTracker(executionContext.getMemoryTracker());
         if (!isOpen) {
             isOpen = true;
             entries.reopen();
@@ -250,7 +259,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
             runBuild();
         }
         entries.sort();
-        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
         computeEmitWindow();
         toTop();
         if (emitStartAddr < emitEndAddr) {
@@ -286,7 +295,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
             return;
         }
         while (baseCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             encoder.encodeTopK(baseRecord, baseRecord.getRowId(), entries);
         }
     }
@@ -312,7 +321,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         long rowsInGroup = 1;
         long rowsSoFar = 0;
         while (baseCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             addr = encodeCurrentRow();
             final long currentKey = Unsafe.getLong(addr);
             if (groupKey == currentKey) {

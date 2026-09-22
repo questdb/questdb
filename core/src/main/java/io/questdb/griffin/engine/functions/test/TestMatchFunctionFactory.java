@@ -56,6 +56,10 @@ public class TestMatchFunctionFactory implements FunctionFactory {
         closeCount.set(0);
     }
 
+    public static int getOpenCounter() {
+        return openCounter.get();
+    }
+
     public static boolean isClosed() {
         return closeCount.get() == 1;
     }

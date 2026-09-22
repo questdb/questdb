@@ -115,6 +115,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         totalBytesSent = 0;
         headersSent = false;
         chunkedRequestDone = false;
+        deflateBeforeSend = false;
         simpleResponse.clear();
         resetZip();
     }
@@ -909,6 +910,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
     static {
         httpStatusMap.put(HTTP_OK, new Utf8String("OK"));
+        httpStatusMap.put(HTTP_ACCEPTED, new Utf8String("Accepted"));
         httpStatusMap.put(HTTP_NO_CONTENT, new Utf8String("OK"));
         httpStatusMap.put(HTTP_PARTIAL, new Utf8String("Partial content"));
         httpStatusMap.put(HTTP_MOVED_PERM, new Utf8String("Moved Permanently"));

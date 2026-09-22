@@ -13,10 +13,12 @@ use crate::parquet_read::decode::decimal::{
 use crate::parquet_read::decoders::int128::Int128ToUuidConverter;
 use crate::parquet_read::decoders::int96::{Int96Timestamp, Int96ToTimestampConverter};
 use crate::parquet_read::decoders::{
-    int32::DayToMillisConverter, BasePrimitiveDictDecoder, BaseVarDictDecoder,
-    ConvertablePrimitiveDictDecoder, DeltaBinaryPackedDecoder, DeltaLAVarcharSliceDecoder,
-    FixedDictDecoder, PlainBooleanDecoder, PlainPrimitiveDecoder, RleBooleanDecoder,
+    int32::DayToMillisConverter, int32::Int32ToDoubleConverter, BasePrimitiveDictDecoder,
+    BaseVarDictDecoder, ConvertablePrimitiveDictDecoder, DeltaBinaryPackedDecoder,
+    DeltaLAVarcharSliceDecoder, FixedDictDecoder, FloatToIntRangeCheckConverter,
+    PlainBooleanDecoder, PlainPrimitiveDecoder, PrimitiveConverter, RleBooleanDecoder,
     RleDictVarcharSliceDecoder, RleDictionaryDecoder, RleLocalIsGlobalSymbolDictDecoder,
+    F32_MAX_SAFE_FOR_I32, F32_MAX_SAFE_FOR_I64, F64_MAX_SAFE_FOR_I64,
 };
 use crate::parquet_read::page::{split_buffer, DataPage, DictPage};
 use crate::parquet_read::slicer::rle::RleDictionarySlicer;
@@ -24,7 +26,7 @@ use crate::parquet_read::slicer::{
     DataPageFixedSlicer, DataPageSlicer, DeltaBytesArraySlicer, DeltaLengthArraySlicer,
     PlainVarSlicer,
 };
-use crate::parquet_read::ColumnChunkBuffers;
+use crate::parquet_read::{ColumnChunkBuffers, PageBufferPool};
 use parquet2::deserialize::{HybridDecoderBitmapIter, HybridEncoded};
 
 use parquet2::encoding::hybrid_rle::HybridRleDecoder;
@@ -32,7 +34,7 @@ use parquet2::encoding::{hybrid_rle, Encoding};
 use parquet2::page::DataPageHeader;
 use parquet2::read::levels::get_bit_width;
 use parquet2::read::{SlicedDataPage, SlicedDictPage};
-use parquet2::schema::types::PhysicalType;
+use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
 use qdb_core::col_type::{nulls, ColumnType, ColumnTypeTag, Long128, Long256};
 use std::cmp::min;
 use std::ptr;
@@ -53,12 +55,18 @@ impl ColumnChunkBuffers {
             aux_size: 0,
             page_buffers_size: 0,
             page_buffers: Vec::new(),
+            column_top: 0,
+            page_buffers_capacity: 0,
+            page_buffers_charged: 0,
+            page_buffers_counted: 0,
         }
     }
 
     // Unconditional re-read so a hypothetical second call between resets cannot keep
-    // a stale ptr after a Vec reallocation.
-    pub fn refresh_ptrs(&mut self) {
+    // a stale ptr after a Vec reallocation. Production VarcharSlice decode paths
+    // reserve retained page bytes before allocating them; reconciliation remains a
+    // safety net for buffers installed by other callers.
+    pub fn refresh_ptrs(&mut self) -> ParquetResult<()> {
         // Always recompute the exposed pointer/size from the backing vectors.
         // Appending additional column chunks into the same buffer (see
         // decode_row_group_range, which decodes a run of row groups without
@@ -72,13 +80,126 @@ impl ColumnChunkBuffers {
         self.aux_ptr = self.aux_vec.as_mut_ptr();
 
         // Sum of decompressed page/dict buffer bytes referenced by VarcharSlice aux entries.
-        self.page_buffers_size = self.page_buffers.iter().map(Vec::len).sum();
+        // Appends only grow page_buffers (a multi-row-group decode concatenates into the same
+        // buffers without resetting), and already-counted entries are immutable, so add only
+        // the buffers appended since the last refresh instead of re-summing the whole vector
+        // -- otherwise a run of N row groups costs O(N^2). A shrink (truncate/partial drain)
+        // falls back to a full recompute; reset() zeroes both fields.
+        let (mut page_buffers_size, mut page_buffers_capacity, first_uncounted) =
+            if self.page_buffers.len() < self.page_buffers_counted {
+                (0usize, 0usize, 0usize)
+            } else {
+                (
+                    self.page_buffers_size,
+                    self.page_buffers_capacity,
+                    self.page_buffers_counted,
+                )
+            };
+        for buf in &self.page_buffers[first_uncounted..] {
+            page_buffers_size = page_buffers_size.checked_add(buf.len()).ok_or_else(|| {
+                fmt_err!(
+                    InvalidLayout,
+                    "retained VarcharSlice page-buffer size overflow"
+                )
+            })?;
+            page_buffers_capacity = page_buffers_capacity
+                .checked_add(buf.capacity())
+                .ok_or_else(|| {
+                    fmt_err!(
+                        InvalidLayout,
+                        "retained VarcharSlice page-buffer capacity overflow"
+                    )
+                })?;
+        }
+        self.page_buffers_size = page_buffers_size;
+        self.page_buffers_capacity = page_buffers_capacity;
+        self.page_buffers_counted = self.page_buffers.len();
+
+        // Reconcile the per-query tracker charge to the retained payload. Normal
+        // decode has already reserved growth before allocation, so this is usually
+        // just an equality check. A net growth from a non-decode caller is still
+        // checked, and a net shrink is always credited.
+        self.reconcile_page_buffers_charge()
     }
 
-    // Callers drain `page_buffers` (into a reuse pool) before invoking; this only clears
-    // the outer Vec and the inner data/aux vectors. The inner Vecs keep their capacity
-    // so the next decode can grow into them via realloc only when the new chunk exceeds
-    // the buffer's historical peak.
+    // Cancels bytes synchronously reserved for a retained VarcharSlice page when
+    // sizing or decompression fails before the page can be published. The caller
+    // must first drop the corresponding system-allocated Vec so the tracker never
+    // understates live native memory after the credit.
+    pub(crate) fn cancel_page_buffer_reservation(&mut self, bytes: usize) {
+        debug_assert!(self.page_buffers_charged >= bytes);
+        let released = bytes.min(self.page_buffers_charged);
+        self.data_vec.allocator().credit_tracked(released);
+        self.page_buffers_charged -= released;
+    }
+
+    // Charges or credits the per-query tracker so that exactly the allocated
+    // capacity of this chunk's retained payload stays reserved.
+    // The growth path can breach the limit and return an error; the shrink path
+    // never fails. On a breach `page_buffers_charged` is left at the prior value
+    // so `reset`/`Drop` later credit only what was actually charged.
+    fn reconcile_page_buffers_charge(&mut self) -> ParquetResult<()> {
+        let target = self.page_buffers_capacity;
+        if target > self.page_buffers_charged {
+            let delta = target - self.page_buffers_charged;
+            self.data_vec.allocator().charge_tracked(delta)?;
+            self.page_buffers_charged = target;
+        } else if target < self.page_buffers_charged {
+            let delta = self.page_buffers_charged - target;
+            self.data_vec.allocator().credit_tracked(delta);
+            self.page_buffers_charged = target;
+        }
+        Ok(())
+    }
+
+    // Releases the whole per-query tracker charge held for `page_buffers`. Used
+    // by `reset` and `Drop`, both of which empty (or hand off to the reuse pool)
+    // the retained payload.
+    fn release_page_buffers_charge(&mut self) {
+        if self.page_buffers_charged > 0 {
+            self.data_vec
+                .allocator()
+                .credit_tracked(self.page_buffers_charged);
+            self.page_buffers_charged = 0;
+        }
+    }
+
+    // Reserves a retained VarcharSlice page against the query -> group -> process
+    // hierarchy before its system Vec is allowed to grow. This closes the gap that
+    // a post-allocation refresh cannot close: a rejected page never materializes
+    // outside the hard ceiling. The counter update is committed only after the
+    // hierarchy accepts the reservation.
+    pub(crate) fn reserve_page_buffer(&mut self, bytes: usize) -> ParquetResult<()> {
+        let new_charge = self
+            .page_buffers_charged
+            .checked_add(bytes)
+            .ok_or_else(|| {
+                fmt_err!(
+                    InvalidLayout,
+                    "retained VarcharSlice page-buffer charge overflow: {} + {}",
+                    self.page_buffers_charged,
+                    bytes
+                )
+            })?;
+        self.data_vec.allocator().charge_tracked(bytes)?;
+        self.page_buffers_charged = new_charge;
+        Ok(())
+    }
+
+    // Fully charged page buffers move to the pool with their charge; buffers a failed decode
+    // left partially charged are dropped and credited by `reset`.
+    pub(crate) fn reset_for_decode(&mut self, page_buffer_pool: &mut PageBufferPool) {
+        if self.page_buffers_counted == self.page_buffers.len()
+            && self.page_buffers_charged == self.page_buffers_capacity
+        {
+            page_buffer_pool.park_all(self.data_vec.allocator(), &mut self.page_buffers);
+            self.page_buffers_charged = 0;
+        }
+        self.reset();
+    }
+
+    // The inner tracker-aware data/aux vectors keep their capacity so the next decode grows
+    // them via realloc only when the new chunk exceeds the historical peak.
     pub fn reset(&mut self) {
         self.data_vec.clear();
         self.data_size = 0;
@@ -88,8 +209,22 @@ impl ColumnChunkBuffers {
         self.aux_size = 0;
         self.aux_ptr = ptr::null_mut();
 
+        self.release_page_buffers_charge();
         self.page_buffers_size = 0;
+        self.page_buffers_capacity = 0;
         self.page_buffers.clear();
+        self.page_buffers_counted = 0;
+        self.column_top = 0;
+    }
+}
+
+impl Drop for ColumnChunkBuffers {
+    // The `data_vec` / `aux_vec` `AcVec`s credit the per-query tracker through
+    // their own allocator on drop; `page_buffers` is a system-allocated `Vec`,
+    // so its charge must be credited explicitly here to keep the tracker
+    // balanced when a cursor closes without a final `reset`.
+    fn drop(&mut self) {
+        self.release_page_buffers_charge();
     }
 }
 
@@ -361,6 +496,8 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     mode: DecodeModeContext<'_>,
 ) -> ParquetResult<bool> {
     let row_hi = mode.source_row_count();
+    let logical_type = page.descriptor.primitive_type.logical_type;
+    let converted_type = page.descriptor.primitive_type.converted_type;
     match (page.encoding(), dict, column_type.tag()) {
         (Encoding::Plain, _, ColumnTypeTag::Byte) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
@@ -724,7 +861,11 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::Plain, _, ColumnTypeTag::Date) => {
+        (Encoding::Plain, _, ColumnTypeTag::Date)
+            if matches!(logical_type, Some(PrimitiveLogicalType::Date))
+                || matches!(converted_type, Some(PrimitiveConvertedType::Date)) =>
+        {
+            // Parquet-native DATE column: Int32 stores days since epoch, convert to millis.
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -737,11 +878,21 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (
-            Encoding::RleDictionary | Encoding::PlainDictionary,
-            Some(dict_page),
-            ColumnTypeTag::Date,
-        ) => {
+        (Encoding::Plain, _, ColumnTypeTag::Date) => {
+            // Type conversion (e.g. INT to DATE): plain i32 to i64 widening.
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i32, i64>::new(values_buffer, bufs, nulls::TIMESTAMP),
+            )?;
+            Ok(true)
+        }
+        (Encoding::RleDictionary | Encoding::PlainDictionary, Some(_), ColumnTypeTag::Date)
+            if matches!(logical_type, Some(PrimitiveLogicalType::Date))
+                || matches!(converted_type, Some(PrimitiveConvertedType::Date)) =>
+        {
+            let dict_page = dict.unwrap();
+            // Parquet-native DATE column with dictionary encoding.
             let dict_decoder =
                 ConvertablePrimitiveDictDecoder::try_new(dict_page, DayToMillisConverter::new())?;
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
@@ -752,6 +903,186 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     dict_decoder,
                     row_hi,
                     nulls::TIMESTAMP,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Date,
+        ) => {
+            // Type conversion with dictionary encoding: plain i32→i64 widening.
+            let dict_decoder = ConvertablePrimitiveDictDecoder::<i32, i64, _>::try_new(
+                dict_page,
+                PrimitiveConverter::new(),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::TIMESTAMP,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (encoding, dict, ColumnTypeTag::Double) => {
+            let scale = match logical_type {
+                Some(PrimitiveLogicalType::Decimal(_, scale)) => scale,
+                _ => match converted_type {
+                    Some(PrimitiveConvertedType::Decimal(_, scale)) => scale,
+                    _ => 0,
+                },
+            };
+
+            match (encoding, dict) {
+                (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
+                    let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
+                        dict_page,
+                        Int32ToDoubleConverter::try_new(scale)?,
+                    )?;
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                        page,
+                        mode,
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            row_hi,
+                            nulls::DOUBLE,
+                            bufs,
+                        )?,
+                    )?;
+                    Ok(true)
+                }
+                (Encoding::Plain, _) => {
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                        page,
+                        mode,
+                        &mut PlainPrimitiveDecoder::new_with(
+                            values_buffer,
+                            bufs,
+                            nulls::DOUBLE,
+                            Int32ToDoubleConverter::try_new(scale)?,
+                        ),
+                    )?;
+                    Ok(true)
+                }
+                _ => Ok(false),
+            }
+        }
+        // -- Type conversion arms: Int32 physical to wider/different QDB type --
+        (Encoding::Plain, _, ColumnTypeTag::Long | ColumnTypeTag::Timestamp) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i32, i64>::new(values_buffer, bufs, nulls::LONG),
+            )?;
+            Ok(true)
+        }
+        (Encoding::DeltaBinaryPacked, _, ColumnTypeTag::Long | ColumnTypeTag::Timestamp) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut DeltaBinaryPackedDecoder::<i64, i32>::try_new(
+                    values_buffer,
+                    bufs,
+                    nulls::LONG,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Long | ColumnTypeTag::Timestamp,
+        ) => {
+            let dict_decoder = ConvertablePrimitiveDictDecoder::<i32, i64, _>::try_new(
+                dict_page,
+                PrimitiveConverter::new(),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::LONG,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, ColumnTypeTag::Float) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i32, f32>::new(values_buffer, bufs, nulls::FLOAT),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Float,
+        ) => {
+            let dict_decoder = ConvertablePrimitiveDictDecoder::<i32, f32, _>::try_new(
+                dict_page,
+                PrimitiveConverter::new(),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::FLOAT,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        // -- Type conversion: Int32 to Boolean (truncate to i8) --
+        (Encoding::Plain, _, ColumnTypeTag::Boolean) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i32, i8>::new(values_buffer, bufs, nulls::BYTE),
+            )?;
+            Ok(true)
+        }
+        (Encoding::DeltaBinaryPacked, _, ColumnTypeTag::Boolean) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut DeltaBinaryPackedDecoder::<i8, i32>::try_new(
+                    values_buffer,
+                    bufs,
+                    nulls::BYTE,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Boolean,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::BYTE,
                     bufs,
                 )?,
             )?;
@@ -891,6 +1222,185 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     dict_decoder,
                     row_hi,
                     nulls::GEOHASH_LONG,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        // -- Type conversion arms: Int64 physical to narrower/different QDB type --
+        (Encoding::Plain, _, ColumnTypeTag::Int) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i64, i32>::new(values_buffer, bufs, nulls::INT),
+            )?;
+            Ok(true)
+        }
+        (Encoding::DeltaBinaryPacked, _, ColumnTypeTag::Int) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut DeltaBinaryPackedDecoder::<i32, i64>::try_new(
+                    values_buffer,
+                    bufs,
+                    nulls::INT,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Int,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<i64, i32>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::INT,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, ColumnTypeTag::Short) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i64, i16>::new(values_buffer, bufs, nulls::SHORT),
+            )?;
+            Ok(true)
+        }
+        (Encoding::DeltaBinaryPacked, _, ColumnTypeTag::Short) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut DeltaBinaryPackedDecoder::<i16, i64>::try_new(
+                    values_buffer,
+                    bufs,
+                    nulls::SHORT,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Short,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<i64, i16>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::SHORT,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, ColumnTypeTag::Byte | ColumnTypeTag::Boolean) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i64, i8>::new(values_buffer, bufs, nulls::BYTE),
+            )?;
+            Ok(true)
+        }
+        (Encoding::DeltaBinaryPacked, _, ColumnTypeTag::Byte | ColumnTypeTag::Boolean) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut DeltaBinaryPackedDecoder::<i8, i64>::try_new(
+                    values_buffer,
+                    bufs,
+                    nulls::BYTE,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Byte | ColumnTypeTag::Boolean,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<i64, i8>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::BYTE,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, ColumnTypeTag::Double) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i64, f64>::new(values_buffer, bufs, nulls::DOUBLE),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Double,
+        ) => {
+            let dict_decoder = ConvertablePrimitiveDictDecoder::<i64, f64, _>::try_new(
+                dict_page,
+                PrimitiveConverter::new(),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::DOUBLE,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        // -- Type conversion: Int64 to Float (lossy widening) --
+        (Encoding::Plain, _, ColumnTypeTag::Float) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i64, f32>::new(values_buffer, bufs, nulls::FLOAT),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Float,
+        ) => {
+            let dict_decoder = ConvertablePrimitiveDictDecoder::<i64, f32, _>::try_new(
+                dict_page,
+                PrimitiveConverter::new(),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::FLOAT,
                     bufs,
                 )?,
             )?;
@@ -1462,6 +1972,225 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             decode_array_page_mode::<_, FILTERED, FILL_NULLS>(page, mode, &mut slicer, bufs)?;
             Ok(true)
         }
+        // -- Type conversion arms: Double physical → narrower QDB type --
+        (Encoding::Plain, _, ColumnTypeTag::Float) => {
+            clear_aux_buffers(bufs);
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<f64, f32>::new(values_buffer, bufs, nulls::FLOAT),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Float,
+        ) => {
+            clear_aux_buffers(bufs);
+            let dict_decoder = ConvertablePrimitiveDictDecoder::<f64, f32, _>::try_new(
+                dict_page,
+                PrimitiveConverter::new(),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::FLOAT,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::Plain,
+            _,
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+        ) => {
+            clear_aux_buffers(bufs);
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::new_with(
+                    values_buffer,
+                    bufs,
+                    nulls::LONG,
+                    FloatToIntRangeCheckConverter::<f64, i64, true>::new(
+                        nulls::LONG,
+                        F64_MAX_SAFE_FOR_I64,
+                        i64::MIN as f64,
+                    ),
+                ),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+        ) => {
+            clear_aux_buffers(bufs);
+            let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
+                dict_page,
+                FloatToIntRangeCheckConverter::<f64, i64, true>::new(
+                    nulls::LONG,
+                    F64_MAX_SAFE_FOR_I64,
+                    i64::MIN as f64,
+                ),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::LONG,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, ColumnTypeTag::Int) => {
+            clear_aux_buffers(bufs);
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::new_with(
+                    values_buffer,
+                    bufs,
+                    nulls::INT,
+                    FloatToIntRangeCheckConverter::<f64, i32, true>::new(
+                        nulls::INT,
+                        i32::MAX as f64,
+                        i32::MIN as f64,
+                    ),
+                ),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Int,
+        ) => {
+            clear_aux_buffers(bufs);
+            let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
+                dict_page,
+                FloatToIntRangeCheckConverter::<f64, i32, true>::new(
+                    nulls::INT,
+                    i32::MAX as f64,
+                    i32::MIN as f64,
+                ),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::INT,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        // -- Type conversion: Double → Short (range-checked) --
+        (Encoding::Plain, _, ColumnTypeTag::Short) => {
+            clear_aux_buffers(bufs);
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::new_with(
+                    values_buffer,
+                    bufs,
+                    nulls::SHORT,
+                    FloatToIntRangeCheckConverter::<f64, i16>::new(
+                        nulls::SHORT,
+                        i16::MAX as f64,
+                        i16::MIN as f64,
+                    ),
+                ),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Short,
+        ) => {
+            clear_aux_buffers(bufs);
+            let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
+                dict_page,
+                FloatToIntRangeCheckConverter::<f64, i16>::new(
+                    nulls::SHORT,
+                    i16::MAX as f64,
+                    i16::MIN as f64,
+                ),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::SHORT,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        // -- Type conversion: Double → Byte/Boolean (range-checked) --
+        (Encoding::Plain, _, ColumnTypeTag::Byte | ColumnTypeTag::Boolean) => {
+            clear_aux_buffers(bufs);
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::new_with(
+                    values_buffer,
+                    bufs,
+                    nulls::BYTE,
+                    FloatToIntRangeCheckConverter::<f64, i8>::new(
+                        nulls::BYTE,
+                        i8::MAX as f64,
+                        i8::MIN as f64,
+                    ),
+                ),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Byte | ColumnTypeTag::Boolean,
+        ) => {
+            clear_aux_buffers(bufs);
+            let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
+                dict_page,
+                FloatToIntRangeCheckConverter::<f64, i8>::new(
+                    nulls::BYTE,
+                    i8::MAX as f64,
+                    i8::MIN as f64,
+                ),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::BYTE,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
         _ => Ok(false),
     }
 }
@@ -1519,6 +2248,223 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 page,
                 mode,
                 &mut RleBooleanDecoder::try_new(values_buffer, row_hi, bufs, 0)?,
+            )?;
+            Ok(true)
+        }
+        // -- Type conversion arms: Float physical → wider/different QDB type --
+        (Encoding::Plain, _, PhysicalType::Float, ColumnTypeTag::Double) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<f32, f64>::new(values_buffer, bufs, nulls::DOUBLE),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            PhysicalType::Float,
+            ColumnTypeTag::Double,
+        ) => {
+            let dict_decoder = ConvertablePrimitiveDictDecoder::<f32, f64, _>::try_new(
+                dict_page,
+                PrimitiveConverter::new(),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::DOUBLE,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        // -- Type conversion: Float → Int (range-checked) --
+        (Encoding::Plain, _, PhysicalType::Float, ColumnTypeTag::Int) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::new_with(
+                    values_buffer,
+                    bufs,
+                    nulls::INT,
+                    FloatToIntRangeCheckConverter::<f32, i32, true>::new(
+                        nulls::INT,
+                        F32_MAX_SAFE_FOR_I32,
+                        i32::MIN as f32,
+                    ),
+                ),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            PhysicalType::Float,
+            ColumnTypeTag::Int,
+        ) => {
+            let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
+                dict_page,
+                FloatToIntRangeCheckConverter::<f32, i32, true>::new(
+                    nulls::INT,
+                    F32_MAX_SAFE_FOR_I32,
+                    i32::MIN as f32,
+                ),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::INT,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        // -- Type conversion: Float → Long/Date/Timestamp (range-checked) --
+        (
+            Encoding::Plain,
+            _,
+            PhysicalType::Float,
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+        ) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::new_with(
+                    values_buffer,
+                    bufs,
+                    nulls::LONG,
+                    FloatToIntRangeCheckConverter::<f32, i64, true>::new(
+                        nulls::LONG,
+                        F32_MAX_SAFE_FOR_I64,
+                        i64::MIN as f32,
+                    ),
+                ),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            PhysicalType::Float,
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+        ) => {
+            let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
+                dict_page,
+                FloatToIntRangeCheckConverter::<f32, i64, true>::new(
+                    nulls::LONG,
+                    F32_MAX_SAFE_FOR_I64,
+                    i64::MIN as f32,
+                ),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::LONG,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        // -- Type conversion: Float → Short (range-checked) --
+        (Encoding::Plain, _, PhysicalType::Float, ColumnTypeTag::Short) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::new_with(
+                    values_buffer,
+                    bufs,
+                    nulls::SHORT,
+                    FloatToIntRangeCheckConverter::<f32, i16>::new(
+                        nulls::SHORT,
+                        i16::MAX as f32,
+                        i16::MIN as f32,
+                    ),
+                ),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            PhysicalType::Float,
+            ColumnTypeTag::Short,
+        ) => {
+            let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
+                dict_page,
+                FloatToIntRangeCheckConverter::<f32, i16>::new(
+                    nulls::SHORT,
+                    i16::MAX as f32,
+                    i16::MIN as f32,
+                ),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::SHORT,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        // -- Type conversion: Float → Byte/Boolean (range-checked) --
+        (Encoding::Plain, _, PhysicalType::Float, ColumnTypeTag::Byte | ColumnTypeTag::Boolean) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::new_with(
+                    values_buffer,
+                    bufs,
+                    nulls::BYTE,
+                    FloatToIntRangeCheckConverter::<f32, i8>::new(
+                        nulls::BYTE,
+                        i8::MAX as f32,
+                        i8::MIN as f32,
+                    ),
+                ),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            PhysicalType::Float,
+            ColumnTypeTag::Byte | ColumnTypeTag::Boolean,
+        ) => {
+            let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
+                dict_page,
+                FloatToIntRangeCheckConverter::<f32, i8>::new(
+                    nulls::BYTE,
+                    i8::MAX as f32,
+                    i8::MIN as f32,
+                ),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::BYTE,
+                    bufs,
+                )?,
             )?;
             Ok(true)
         }
@@ -2188,9 +3134,19 @@ fn decode_null_bitmap<'a>(
 /// fill) thus keeps stale bytes from an earlier page of the same file in its tail;
 /// a caller needing a zeroed tail must `clear()` first (see
 /// `decompress_varchar_slice_dict`).
-pub(super) fn resize_decompress_buffer(buffer: &mut Vec<u8>, size: usize) -> ParquetResult<()> {
+pub(super) fn resize_decompress_buffer(
+    buffer: &mut Vec<u8>,
+    size: usize,
+    exact: bool,
+) -> ParquetResult<()> {
     if size > buffer.len() {
-        buffer.try_reserve(size - buffer.len()).map_err(|_| {
+        let additional = size - buffer.len();
+        let reserved = if exact {
+            buffer.try_reserve_exact(additional)
+        } else {
+            buffer.try_reserve(additional)
+        };
+        reserved.map_err(|_| {
             fmt_err!(
                 OutOfMemory(None),
                 "cannot allocate {} bytes for a decompressed page",
@@ -2207,7 +3163,7 @@ pub(super) fn decompress_sliced_dict<'a>(
     buffer: &'a mut Vec<u8>,
 ) -> ParquetResult<DictPage<'a>> {
     let buf = if page.compression != parquet2::compression::Compression::Uncompressed {
-        resize_decompress_buffer(buffer, page.uncompressed_size)?;
+        resize_decompress_buffer(buffer, page.uncompressed_size, false)?;
         parquet2::compression::decompress(page.compression, page.buffer, buffer)?;
         buffer
     } else {
@@ -2224,53 +3180,26 @@ pub(super) fn decompress_sliced_data<'a>(
     page: &'a SlicedDataPage<'a>,
     decompress_buffer: &'a mut Vec<u8>,
 ) -> ParquetResult<DataPage<'a>> {
-    let buffer = if page.compression != parquet2::compression::Compression::Uncompressed {
-        match &page.header {
-            DataPageHeader::V1(_) => {
-                resize_decompress_buffer(decompress_buffer, page.uncompressed_size)?;
-                parquet2::compression::decompress(
-                    page.compression,
-                    page.buffer,
-                    decompress_buffer,
-                )?;
-                decompress_buffer
-            }
-            DataPageHeader::V2(header) => {
-                let offset = (header.definition_levels_byte_length
-                    + header.repetition_levels_byte_length) as usize;
-                let can_decompress = header.is_compressed.unwrap_or(true);
-                if can_decompress {
-                    resize_decompress_buffer(decompress_buffer, page.uncompressed_size)?;
-                    if offset > decompress_buffer.len() || offset > page.buffer.len() {
-                        return Err(fmt_err!(
-                            Layout,
-                            "V2 Page Header reported incorrect offset to compressed data"
-                        ));
-                    }
-                    decompress_buffer[..offset].copy_from_slice(&page.buffer[..offset]);
-                    parquet2::compression::decompress(
-                        page.compression,
-                        &page.buffer[offset..],
-                        &mut decompress_buffer[offset..],
-                    )?;
-                    decompress_buffer
-                } else {
-                    // is_compressed=false: the page body is already uncompressed and
-                    // returned as-is, so the decompress buffer is never read. Compare
-                    // the header's uncompressed_size against the actual body directly
-                    // -- sizing (and zeroing) an i32::MAX-capable buffer only to read
-                    // back its length is pure waste with no decompression to amortize.
-                    if page.uncompressed_size != page.buffer.len() {
-                        return Err(fmt_err!(
-                            Layout,
-                            "V2 Page Header reported incorrect decompressed size"
-                        ));
-                    }
-                    page.buffer
-                }
-            }
-        }
+    let buffer = if sliced_data_requires_decompression(page) {
+        decompress_sliced_data_into(page, decompress_buffer, false)?;
+        decompress_buffer
     } else {
+        // A V2 page with is_compressed=false is already uncompressed even when
+        // the column codec is not `Uncompressed`. Validate the header without
+        // sizing a throwaway buffer. An `Uncompressed` column follows the prior
+        // fast path and trusts the slice reader's size validation.
+        if page.compression != parquet2::compression::Compression::Uncompressed
+            && matches!(
+                &page.header,
+                DataPageHeader::V2(header) if !header.is_compressed.unwrap_or(true)
+            )
+            && page.uncompressed_size != page.buffer.len()
+        {
+            return Err(fmt_err!(
+                Layout,
+                "V2 Page Header reported incorrect decompressed size"
+            ));
+        }
         page.buffer
     };
     Ok(DataPage {
@@ -2278,6 +3207,47 @@ pub(super) fn decompress_sliced_data<'a>(
         header: &page.header,
         descriptor: &page.descriptor,
     })
+}
+
+pub(super) fn decompress_sliced_data_into(
+    page: &SlicedDataPage<'_>,
+    decompress_buffer: &mut Vec<u8>,
+    exact: bool,
+) -> ParquetResult<()> {
+    debug_assert!(sliced_data_requires_decompression(page));
+    resize_decompress_buffer(decompress_buffer, page.uncompressed_size, exact)?;
+    match &page.header {
+        DataPageHeader::V1(_) => {
+            parquet2::compression::decompress(page.compression, page.buffer, decompress_buffer)?;
+        }
+        DataPageHeader::V2(header) => {
+            let offset = (header.definition_levels_byte_length
+                + header.repetition_levels_byte_length) as usize;
+            if offset > decompress_buffer.len() || offset > page.buffer.len() {
+                return Err(fmt_err!(
+                    Layout,
+                    "V2 Page Header reported incorrect offset to compressed data"
+                ));
+            }
+            decompress_buffer[..offset].copy_from_slice(&page.buffer[..offset]);
+            parquet2::compression::decompress(
+                page.compression,
+                &page.buffer[offset..],
+                &mut decompress_buffer[offset..],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn sliced_data_requires_decompression(page: &SlicedDataPage<'_>) -> bool {
+    if page.compression == parquet2::compression::Compression::Uncompressed {
+        return false;
+    }
+    match &page.header {
+        DataPageHeader::V1(_) => true,
+        DataPageHeader::V2(header) => header.is_compressed.unwrap_or(true),
+    }
 }
 
 pub(super) fn sliced_page_row_count(
@@ -2353,7 +3323,9 @@ mod tests {
     use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
     use crate::parquet::tests::ColumnTypeTagExt;
     use crate::parquet_read::page::{DataPage, DictPage};
-    use crate::parquet_read::{ColumnChunkBuffers, DecodeContext, ParquetDecoder, RowGroupBuffers};
+    use crate::parquet_read::{
+        ColumnChunkBuffers, DecodeContext, PageBufferPool, ParquetDecoder, RowGroupBuffers,
+    };
     use crate::parquet_write::array::{append_array_null, append_raw_array};
     use crate::parquet_write::decimal::{
         DECIMAL16_NULL, DECIMAL32_NULL, DECIMAL64_NULL, DECIMAL8_NULL,
@@ -2389,7 +3361,7 @@ mod tests {
         let mut bufs = ColumnChunkBuffers::new(allocator);
 
         // Fresh buffer: nothing retained.
-        bufs.refresh_ptrs();
+        bufs.refresh_ptrs().unwrap();
         assert_eq!(bufs.page_buffers_size, 0);
 
         // A VarcharSlice decode retains decompressed page/dict buffers here, with the
@@ -2397,13 +3369,84 @@ mod tests {
         // Java decode-cache budget counts the string bytes.
         bufs.page_buffers.push(vec![0u8; 100]);
         bufs.page_buffers.push(vec![0u8; 56]);
-        bufs.refresh_ptrs();
+        bufs.refresh_ptrs().unwrap();
         assert_eq!(bufs.page_buffers_size, 156);
 
         // reset() must zero it so a reused buffer does not carry stale bytes.
         bufs.reset();
         assert_eq!(bufs.page_buffers_size, 0);
         assert!(bufs.page_buffers.is_empty());
+    }
+
+    #[test]
+    fn page_buffers_charge_tracks_per_query_memory() {
+        let tas = TestAllocatorState::new().with_memory_tracker();
+        let allocator = tas.allocator();
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+
+        // The system-allocated page_buffers are otherwise invisible to the
+        // per-query tracker; refresh_ptrs charges their retained bytes so a wide
+        // VarcharSlice payload still counts against the limit.
+        let mut first = Vec::with_capacity(1200);
+        first.resize(1000, 0);
+        bufs.page_buffers.push(first);
+        bufs.page_buffers.push(vec![0u8; 24]);
+        bufs.refresh_ptrs().unwrap();
+        assert_eq!(bufs.page_buffers_size, 1024);
+        assert_eq!(bufs.page_buffers_capacity, 1224);
+        assert_eq!(tas.tracker_used(), 1224);
+
+        // A subsequent decode that retains fewer bytes credits the difference.
+        bufs.page_buffers.truncate(1);
+        bufs.refresh_ptrs().unwrap();
+        assert_eq!(bufs.page_buffers_size, 1000);
+        assert_eq!(bufs.page_buffers_capacity, 1200);
+        assert_eq!(tas.tracker_used(), 1200);
+
+        // A reset parks the buffer with its charge; the pool credits it on release.
+        let mut pool = PageBufferPool::default();
+        bufs.reset_for_decode(&mut pool);
+        assert_eq!(pool.len(), 1);
+        assert_eq!(tas.tracker_used(), 1200);
+        pool.release();
+        assert_eq!(tas.tracker_used(), 0);
+
+        // A retained charge still outstanding at drop is credited too.
+        bufs.page_buffers.push(vec![0u8; 512]);
+        bufs.refresh_ptrs().unwrap();
+        assert_eq!(tas.tracker_used(), 512);
+        drop(bufs);
+        assert_eq!(tas.tracker_used(), 0);
+    }
+
+    #[test]
+    fn page_buffers_charge_breaches_per_query_limit() {
+        let tas = TestAllocatorState::new().with_memory_tracker();
+        let allocator = tas.allocator();
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+        tas.set_tracker_limit(4096);
+
+        // Under the limit: charged and accepted.
+        bufs.page_buffers.push(vec![0u8; 2048]);
+        bufs.refresh_ptrs().unwrap();
+        assert_eq!(tas.tracker_used(), 2048);
+
+        // A wide payload pushes the retained bytes over the limit: refresh_ptrs
+        // breaches at the per-query scope and leaves the charge at its prior value.
+        // The "query" scope label in the message distinguishes a per-query breach
+        // from a global-RSS one.
+        bufs.page_buffers.push(vec![0u8; 8192]);
+        let err = bufs.refresh_ptrs().unwrap_err();
+        assert!(
+            err.to_string().contains("query memory limit exceeded"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(bufs.page_buffers_charged, 2048);
+
+        // The uncharged excess never reached the tracker; drop credits only the
+        // 2048 bytes that were charged, returning the counter to zero.
+        drop(bufs);
+        assert_eq!(tas.tracker_used(), 0);
     }
 
     #[test]
@@ -2437,8 +3480,8 @@ mod tests {
         let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
 
         // Simulate spare page buffers retained from a prior column-chunk decode.
-        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
-        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
+        ctx.varchar_slice_buf_pool.park(vec![0u8; 4096]);
+        ctx.varchar_slice_buf_pool.park(vec![0u8; 4096]);
 
         let column_type = decoder.columns[0].column_type.unwrap();
         decoder
@@ -2501,6 +3544,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             };
             for row_group_index in 0..row_group_count {
                 decoder
@@ -2560,6 +3604,7 @@ mod tests {
                         column_top: 0,
                         format: None,
                         ascii: None,
+                        id: None,
                     };
                     for row_group_index in 0..row_group_count {
                         decoder
@@ -2632,6 +3677,7 @@ mod tests {
                                 column_top: 0,
                                 format: None,
                                 ascii: None,
+                                id: None,
                             },
                         )
                         .unwrap();
@@ -2866,7 +3912,13 @@ mod tests {
                         0,
                         row_group_size,
                         column_index,
-                        QdbMetaCol { column_type, column_top: 0, format, ascii: None },
+                        QdbMetaCol {
+                            column_type,
+                            column_top: 0,
+                            format,
+                            ascii: None,
+                            id: None,
+                        },
                     )
                     .unwrap();
 
@@ -4022,6 +5074,124 @@ mod tests {
         assert_eq!(result, expected);
     }
 
+    // No-sentinel source (SHORT) widened to a sentinel target (LONG) on the filtered decode
+    // path: column-top rows that pass the filter must materialize as the target NULL sentinel
+    // (i64::MIN), not 0. Covers FILL_NULLS=false (compacted) and true (full scan order), with a
+    // partial window (row_group_lo > 0). Regression for the M1 "leading_nulls = 0" follow-up.
+    #[test]
+    fn test_decode_row_group_filtered_short_to_long_column_top() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let column_top = 8usize;
+        let data_row_count = 20usize;
+        let total_row_count = column_top + data_row_count;
+        let row_group_size = total_row_count;
+        let data_page_size = 10;
+        let version = Version::V2;
+
+        let data_values: Vec<i16> = (0..data_row_count).map(|i| (i as i16) * 10 + 1).collect();
+
+        let column = Column::from_raw_data(
+            0,
+            "short_col",
+            ColumnTypeTag::Short.into_type().code(),
+            column_top as i64,
+            total_row_count,
+            data_values.as_ptr() as *const u8,
+            std::mem::size_of_val(data_values.as_slice()),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .unwrap();
+
+        let file =
+            write_cols_to_parquet_file(row_group_size, data_page_size, version, vec![column]);
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+        // Decode the SHORT parquet column as LONG (lazy widening conversion).
+        let columns = vec![(0i32, ColumnTypeTag::Long.into_type())];
+
+        let row_group_lo = 5u32;
+        let row_group_hi = 23u32;
+        // Window-relative, ascending. abs_row = row_group_lo + entry; null iff abs_row < column_top.
+        let rows_filter: Vec<i64> = vec![0, 1, 2, 3, 5, 8, 10, 14, 17];
+
+        // FILL_NULLS=false: compacted output, one i64 per matched row.
+        let mut rgb = RowGroupBuffers::new(allocator.clone());
+        let count = decoder
+            .decode_row_group_filtered::<false>(
+                &mut ctx,
+                &mut rgb,
+                0,
+                &columns,
+                0,
+                row_group_lo,
+                row_group_hi,
+                &rows_filter,
+            )
+            .unwrap();
+        assert_eq!(count, rows_filter.len());
+        let result: Vec<i64> = rgb.column_bufs[0]
+            .data_vec
+            .chunks(std::mem::size_of::<i64>())
+            .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        let expected: Vec<i64> = rows_filter
+            .iter()
+            .map(|&row| {
+                let abs_row = row_group_lo as usize + row as usize;
+                if abs_row < column_top {
+                    i64::MIN
+                } else {
+                    data_values[abs_row - column_top] as i64
+                }
+            })
+            .collect();
+        assert_eq!(result, expected, "FILL_NULLS=false");
+
+        // FILL_NULLS=true: full scan order over [row_group_lo, row_group_hi). The late-
+        // materialization consumer reads ONLY matched positions (record.setRowIndex(rows.get(i))
+        // in AsyncWindowJoinRecordCursorFactory), so we assert just those. Unmatched positions
+        // are placeholders the consumer never reads; for a no-sentinel source they keep the
+        // source-null fill (0), which is irrelevant. Matched column-top rows must be i64::MIN.
+        let mut rgb_fill = RowGroupBuffers::new(allocator);
+        let count_fill = decoder
+            .decode_row_group_filtered::<true>(
+                &mut ctx,
+                &mut rgb_fill,
+                0,
+                &columns,
+                0,
+                row_group_lo,
+                row_group_hi,
+                &rows_filter,
+            )
+            .unwrap();
+        assert_eq!(count_fill, (row_group_hi - row_group_lo) as usize);
+        let result_fill: Vec<i64> = rgb_fill.column_bufs[0]
+            .data_vec
+            .chunks(std::mem::size_of::<i64>())
+            .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        for &row in &rows_filter {
+            let j = row as usize; // FILL_NULLS=true output is indexed by window-relative row
+            let abs_row = row_group_lo as usize + j;
+            let want = if abs_row < column_top {
+                i64::MIN
+            } else {
+                data_values[abs_row - column_top] as i64
+            };
+            assert_eq!(result_fill[j], want, "FILL_NULLS=true matched row {j}");
+        }
+    }
+
     #[test]
     fn test_decode_flba_decimal_sign_extended_unfiltered() {
         let tas = TestAllocatorState::new();
@@ -4056,6 +5226,7 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -4121,6 +5292,7 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, n).unwrap();
@@ -4201,6 +5373,7 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, n).unwrap();
@@ -4374,6 +5547,7 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         let err = decode_page(&page, None, &mut bufs, col_info, 0, n)
@@ -4456,6 +5630,7 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, row_hi).unwrap();
@@ -4586,6 +5761,7 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, row_hi).unwrap();
@@ -4668,6 +5844,7 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         let err = decode_page(
@@ -4717,6 +5894,7 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         let err = decode_page(&page, Some(&dict_page), &mut bufs, col_info, 0, 8)
@@ -4744,7 +5922,7 @@ mod tests {
         // allocation. Proves the sizing surfaces a clean error rather than the
         // process-aborting Vec::resize.
         let mut buf = Vec::new();
-        let err = resize_decompress_buffer(&mut buf, usize::MAX)
+        let err = resize_decompress_buffer(&mut buf, usize::MAX, false)
             .expect_err("an unsatisfiable decompressed size must error, not abort");
         assert!(
             err.to_string().contains("cannot allocate"),
@@ -4770,12 +5948,12 @@ mod tests {
         // tail), and shrinking truncates. A clear()-first implementation would
         // zero byte 0 here and fail this assertion.
         let mut buf = vec![0xAB_u8; 4];
-        resize_decompress_buffer(&mut buf, 8).unwrap();
+        resize_decompress_buffer(&mut buf, 8, false).unwrap();
         assert_eq!(buf.len(), 8);
         assert_eq!(&buf[..4], &[0xAB; 4], "grow must not memset existing bytes");
         assert_eq!(&buf[4..], &[0; 4], "grown tail must be zeroed");
 
-        resize_decompress_buffer(&mut buf, 2).unwrap();
+        resize_decompress_buffer(&mut buf, 2, false).unwrap();
         assert_eq!(buf.as_slice(), &[0xAB; 2], "shrink must truncate in place");
     }
 
@@ -5313,6 +6491,7 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         let rows_filter = vec![1i64];
@@ -5363,6 +6542,7 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, 1).unwrap();
@@ -5407,6 +6587,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             };
             decode_page(
                 &page,
@@ -5463,6 +6644,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             };
             decode_page_filtered::<true>(
                 &page,
@@ -5509,6 +6691,7 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -5556,6 +6739,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             };
             decode_page_filtered::<true>(
                 &page,
@@ -5594,6 +6778,7 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -5633,6 +6818,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             };
 
             decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -5683,6 +6869,7 @@ mod tests {
                     column_top: 0,
                     format: None,
                     ascii: None,
+                    id: None,
                 };
 
                 decode_page_filtered::<false>(
@@ -5741,6 +6928,7 @@ mod tests {
                     column_top: 0,
                     format: None,
                     ascii: None,
+                    id: None,
                 };
                 decode_page(
                     &page,
@@ -5795,6 +6983,7 @@ mod tests {
                     column_top: 0,
                     format: None,
                     ascii: None,
+                    id: None,
                 };
                 decode_page_filtered::<true>(
                     &page,
@@ -5859,6 +7048,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             };
 
             decode_page(
@@ -5910,6 +7100,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             };
 
             decode_page_filtered::<false>(
@@ -5968,6 +7159,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             };
 
             decode_page_filtered::<true>(

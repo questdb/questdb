@@ -53,6 +53,8 @@ mod tests {
                             distinct_count: Some(0),
                             max_value: Some(vec![]),
                             min_value: Some(vec![]),
+                            is_max_value_exact: None,
+                            is_min_value_exact: None,
                         }),
                         encoding_stats: Some(vec![PageEncodingStats {
                             page_type: PageType::DATA_PAGE,
@@ -119,6 +121,50 @@ mod tests {
         assert_eq!(result, metadata)
     }
 
+    #[test]
+    fn statistics_exact_flags_round_trip() {
+        let statistics = Statistics {
+            max: None,
+            min: None,
+            null_count: Some(0),
+            distinct_count: None,
+            max_value: Some(vec![2]),
+            min_value: Some(vec![1]),
+            is_max_value_exact: Some(false),
+            is_min_value_exact: Some(false),
+        };
+        let mut writer = vec![];
+        let mut protocol = thrift::protocol::TCompactOutputProtocol::new(&mut writer);
+        statistics.write_to_out_protocol(&mut protocol).unwrap();
+
+        let mut prot = thrift::protocol::TCompactInputProtocol::new(writer.as_slice(), usize::MAX);
+        let result = Statistics::read_from_in_protocol(&mut prot).unwrap();
+        assert_eq!(result, statistics);
+    }
+
+    #[test]
+    fn statistics_exact_flags_stay_absent_by_default() {
+        let statistics = Statistics {
+            max: None,
+            min: None,
+            null_count: Some(0),
+            distinct_count: None,
+            max_value: Some(vec![2]),
+            min_value: Some(vec![1]),
+            is_max_value_exact: None,
+            is_min_value_exact: None,
+        };
+        let mut writer = vec![];
+        let mut protocol = thrift::protocol::TCompactOutputProtocol::new(&mut writer);
+        statistics.write_to_out_protocol(&mut protocol).unwrap();
+
+        let mut prot = thrift::protocol::TCompactInputProtocol::new(writer.as_slice(), usize::MAX);
+        let result = Statistics::read_from_in_protocol(&mut prot).unwrap();
+        assert_eq!(result.is_max_value_exact, None);
+        assert_eq!(result.is_min_value_exact, None);
+        assert_eq!(result, statistics);
+    }
+
     fn page() -> PageHeader {
         PageHeader {
             type_: PageType::DATA_PAGE,
@@ -137,6 +183,8 @@ mod tests {
                     distinct_count: Some(0),
                     max_value: Some(vec![]),
                     min_value: Some(vec![]),
+                    is_max_value_exact: None,
+                    is_min_value_exact: None,
                 }),
             }),
             index_page_header: Some(IndexPageHeader {}),
@@ -160,6 +208,8 @@ mod tests {
                     distinct_count: Some(0),
                     max_value: Some(vec![]),
                     min_value: Some(vec![]),
+                    is_max_value_exact: None,
+                    is_min_value_exact: None,
                 }),
             }),
         }

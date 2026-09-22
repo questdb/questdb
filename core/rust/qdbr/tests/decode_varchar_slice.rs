@@ -207,7 +207,7 @@ fn encode_decode_and_verify_varchar_slice(
     // Set up allocator.
     let mem_tracking = Box::new(MemTracking::new());
     let tagged_used = Box::new(AtomicUsize::new(0));
-    let allocator = QdbAllocator::new(&*mem_tracking, &*tagged_used, 65);
+    let allocator = QdbAllocator::new(&*mem_tracking, std::ptr::null(), &*tagged_used, 65);
 
     let buf_len = buf.len() as u64;
     let mut reader = Cursor::new(&buf);
@@ -991,7 +991,7 @@ fn encode_decode_and_verify_varchar_slice_filtered(
 
     let mem_tracking = Box::new(MemTracking::new());
     let tagged_used = Box::new(AtomicUsize::new(0));
-    let allocator = QdbAllocator::new(&*mem_tracking, &*tagged_used, 65);
+    let allocator = QdbAllocator::new(&*mem_tracking, std::ptr::null(), &*tagged_used, 65);
 
     let buf_len = buf.len() as u64;
     let mut reader = Cursor::new(&buf);
@@ -1432,7 +1432,7 @@ fn encode_decode_and_verify_varchar_slice_filtered_fill_nulls(
 
     let mem_tracking = Box::new(MemTracking::new());
     let tagged_used = Box::new(AtomicUsize::new(0));
-    let allocator = QdbAllocator::new(&*mem_tracking, &*tagged_used, 65);
+    let allocator = QdbAllocator::new(&*mem_tracking, std::ptr::null(), &*tagged_used, 65);
 
     let buf_len = buf.len() as u64;
     let mut reader = Cursor::new(&buf);

@@ -26,4 +26,27 @@
     </mirror>
   </mirrors>
 
+  <servers>
+    <!--
+      Bound the connect/read timeouts for the cache mirror. The cache is a single private
+      IP fronted by nginx; under the CI fleet's connection bursts a fresh TCP connect can
+      occasionally have its SYN dropped and retransmitted. Wagon's default connect timeout
+      inherits the OS SYN-retransmit budget (~127s with tcp_syn_retries=6), so a single
+      black-holed connect rides that full window and kills the build. A short connectionTimeout
+      makes a stuck connect fail fast (in seconds) so the wagon retry handler can reconnect
+      on a fresh source port instead of hanging. The server id MUST match the mirror id above.
+    -->
+    <server>
+      <id>hetzner-reposilite</id>
+      <configuration>
+        <httpConfiguration>
+          <all>
+            <connectionTimeout>10000</connectionTimeout>
+            <readTimeout>120000</readTimeout>
+          </all>
+        </httpConfiguration>
+      </configuration>
+    </server>
+  </servers>
+
 </settings>

@@ -84,7 +84,7 @@ class LongTopKRecordCursor implements RecordCursor {
     public boolean hasNext() {
         setupTopK();
         if (rowIdCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             baseCursor.recordAt(baseRecord, rowIdCursor.index());
             return true;
         }
@@ -143,6 +143,8 @@ class LongTopKRecordCursor implements RecordCursor {
 
     private void setupTopK() {
         if (!initialized) {
+            // Consult the breaker before building, so an empty base scan still observes cancellation.
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             topK();
             initialized = true;
         }

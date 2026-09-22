@@ -159,7 +159,19 @@ abstract class AbstractLogRecord implements Log {
         // It's important to detect abandoned-record state BEFORE assigning the
         // new cursor/seq/ring/sink: the recovery path needs the previous chain's
         // sink and cursor to write the ABANDONED marker and release the stuck slot.
-        LogError logError = rec.detectAbandonedLogRecord();
+        final LogError logError;
+        try {
+            logError = rec.detectAbandonedLogRecord();
+        } catch (Throwable th) {
+            rec.isLogRecordInProgress = false;
+            // next()/nextBully() reserved this cursor before recovery. Publish an
+            // empty record so consumers can advance past the abandoned attempt.
+            final LogRecordUtf8Sink sink = ring.get(cursor);
+            sink.setLevel(level);
+            sink.clear();
+            seq.done(cursor);
+            throw th;
+        }
         rec.cursor = cursor;
         rec.seq = seq;
         rec.ring = ring;
@@ -170,11 +182,23 @@ abstract class AbstractLogRecord implements Log {
         if (logError == null) {
             return rec;
         }
-        logError.printStackTrace(System.out);
+        try {
+            logError.printStackTrace(System.out);
+        } catch (Throwable th) {
+            // The producer reserved this cursor before reporting the abandoned
+            // record. Publish the empty slot so consumers can keep advancing.
+            rec.isLogRecordInProgress = false;
+            seq.done(cursor);
+            throw th;
+        }
         if (LOG_PARANOIA_MODE != LOG_PARANOIA_MODE_NONE) {
             seq.done(cursor);
             throw logError;
         }
+        // detectAbandonedLogRecord() released the previous slot and cleared this
+        // flag. Production continues with the newly reserved record, so track it
+        // just like the clean-record branch does.
+        rec.isLogRecordInProgress = true;
         return rec;
     }
 

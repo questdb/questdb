@@ -116,7 +116,8 @@ public class WriterPool extends AbstractPool {
             if (owner == UNALLOCATED) {
                 count++;
             } else {
-                LOG.info().$("table is still busy [table=").$(e.writer.getTableToken())
+                final TableWriter w = e.writer;
+                LOG.info().$("table is still busy [table=").$(w != null ? w.getTableToken() : null)
                         .$(", owner=").$(owner)
                         .I$();
             }
@@ -126,6 +127,10 @@ public class WriterPool extends AbstractPool {
 
     public Map<CharSequence, Entry> entries() {
         return entries;
+    }
+
+    public void entries(ConcurrentHashMap.EntryCursor<Entry> cursor) {
+        cursor.of(entries);
     }
 
     /**
@@ -428,7 +433,7 @@ public class WriterPool extends AbstractPool {
             checkClosed();
             LOG.info().$("open [table=").$(tableToken)
                     .$(", thread=").$(thread).I$();
-            e.writer = new TableWriter(
+            final TableWriter w = new TableWriter(
                     configuration,
                     tableToken,
                     engine.getMessageBus(),
@@ -440,6 +445,7 @@ public class WriterPool extends AbstractPool {
                     engine
             );
             e.ownershipReason = lockReason;
+            Unsafe.putObjectVolatile(e, ENTRY_WRITER, w);
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
             final LogRecord record = ex.isCritical() ? LOG.critical() : LOG.error();
@@ -719,9 +725,16 @@ public class WriterPool extends AbstractPool {
                     iterator.remove();
                     removed = true;
                 }
-            } else if (e.lockFd != -1 && deadline == Long.MAX_VALUE) {
-                // do not release locks unless pool is shutting down, which is
-                // indicated via deadline to be Long.MAX_VALUE
+            } else if (e.lockFd != -1 && isClosed()) {
+                // Close a held .lock fd ONLY while the pool itself is shutting down. close()
+                // sets the closed flag before closePool() reaches this releaseAll(Long.MAX_VALUE),
+                // so genuine shutdown still releases the lock. A live-engine caller that passes
+                // Long.MAX_VALUE to force an idle reap (e.g. a role-switch drain) must NOT land
+                // here: closing the lock fd and removing the entry of an in-flight lock() holder
+                // would let the next get() build a second TableWriter on the same table,
+                // breaking the single-writer-per-table invariant. Gating on isClosed() instead
+                // of the deadline value keeps that hazard out of every live-engine path while
+                // leaving the shutdown release intact.
                 if (ff.close(e.lockFd)) {
                     e.lockFd = -1;
                     iterator.remove();
@@ -778,7 +791,8 @@ public class WriterPool extends AbstractPool {
         }
 
         public TableToken getTableToken() {
-            return writer != null ? writer.getTableToken() : null;
+            final TableWriter w = writer;
+            return w != null ? w.getTableToken() : null;
         }
 
         public TableWriter goodbye() {

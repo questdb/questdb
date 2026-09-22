@@ -142,7 +142,7 @@ impl<'a> FileHeader<'a> {
         }
 
         // Validate that name strings are in bounds.
-        let names_end = Self::compute_names_area_end(data, raw.column_count)?;
+        let names_end = Self::compute_names_area_end(data, raw.column_count, min_size)?;
 
         // Parse header feature sections (after name strings, in bit order).
         let mut cursor = names_end;
@@ -150,15 +150,18 @@ impl<'a> FileHeader<'a> {
         // Bit 0: BLOOM_FILTERS header section.
         let bloom_filter_columns = if raw.feature_flags.has_bloom_filters() {
             // Read bloom_col_count: u32.
-            if cursor + 4 > data.len() {
-                return Err(parquet_meta_err!(
-                    ParquetMetaErrorKind::Truncated,
-                    "bloom filter header section: missing bloom_col_count"
-                ));
-            }
-            // Unwrap: cursor + 4 <= data.len() checked above.
-            let bloom_col_count = u32::from_le_bytes(data[cursor..cursor + 4].try_into().unwrap());
-            cursor += 4;
+            let count_bytes = data
+                .get(cursor..)
+                .and_then(|remaining| remaining.get(..4))
+                .ok_or_else(|| {
+                    parquet_meta_err!(
+                        ParquetMetaErrorKind::Truncated,
+                        "bloom filter header section: missing bloom_col_count"
+                    )
+                })?;
+            // Unwrap: count_bytes is exactly four bytes.
+            let bloom_col_count = u32::from_le_bytes(count_bytes.try_into().unwrap());
+            cursor += count_bytes.len();
 
             if bloom_col_count == 0 {
                 return Err(parquet_meta_err!(
@@ -175,15 +178,19 @@ impl<'a> FileHeader<'a> {
                 ));
             }
 
-            let indices_bytes = (bloom_col_count as usize) * 4;
-            if cursor + indices_bytes > data.len() {
-                return Err(parquet_meta_err!(
-                    ParquetMetaErrorKind::Truncated,
-                    "bloom filter header section: indices truncated"
-                ));
-            }
-            let indices_slice = &data[cursor..cursor + indices_bytes];
-            cursor += indices_bytes;
+            let indices_bytes = (bloom_col_count as usize)
+                .checked_mul(4)
+                .expect("bloom count is bounded by the validated column descriptor area");
+            let indices_slice = data
+                .get(cursor..)
+                .and_then(|remaining| remaining.get(..indices_bytes))
+                .ok_or_else(|| {
+                    parquet_meta_err!(
+                        ParquetMetaErrorKind::Truncated,
+                        "bloom filter header section: indices truncated"
+                    )
+                })?;
+            cursor += indices_slice.len();
 
             // Validate: each index < column_count, sorted ascending, unique.
             let mut prev: Option<u32> = None;
@@ -219,14 +226,17 @@ impl<'a> FileHeader<'a> {
 
         // Bit 3: SQUASH_TRACKER header section (single i64).
         let squash_tracker = if raw.feature_flags.has_squash_tracker() {
-            if cursor + 8 > data.len() {
-                return Err(parquet_meta_err!(
-                    ParquetMetaErrorKind::Truncated,
-                    "squash tracker header section: missing i64 payload"
-                ));
-            }
-            // Unwrap: cursor + 8 <= data.len() checked above.
-            let value = i64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap());
+            let tracker_bytes = data
+                .get(cursor..)
+                .and_then(|remaining| remaining.get(..8))
+                .ok_or_else(|| {
+                    parquet_meta_err!(
+                        ParquetMetaErrorKind::Truncated,
+                        "squash tracker header section: missing i64 payload"
+                    )
+                })?;
+            // Unwrap: tracker_bytes is exactly eight bytes.
+            let value = i64::from_le_bytes(tracker_bytes.try_into().unwrap());
             Some(value)
         } else {
             None
@@ -258,25 +268,43 @@ impl<'a> FileHeader<'a> {
     }
 
     /// Computes the byte offset past the last name string entry.
-    fn compute_names_area_end(data: &[u8], column_count: u32) -> ParquetMetaResult<usize> {
-        let mut end = HEADER_FIXED_SIZE + (column_count as usize) * COLUMN_DESCRIPTOR_SIZE;
-        // We don't know sorting_column_count here from just column_count,
-        // but name_offsets are absolute, so we just find the max end.
+    fn compute_names_area_end(
+        data: &[u8],
+        column_count: u32,
+        names_start: usize,
+    ) -> ParquetMetaResult<usize> {
+        let mut end = names_start;
         for i in 0..column_count as usize {
             let offset = HEADER_FIXED_SIZE + i * COLUMN_DESCRIPTOR_SIZE;
             let ptr = data[offset..].as_ptr();
             debug_assert_eq!(ptr.align_offset(align_of::<ColumnDescriptorRaw>()), 0);
             let desc = unsafe { &*(ptr as *const ColumnDescriptorRaw) };
+            let entry_start = usize::try_from(desc.name_offset).map_err(|_| {
+                parquet_meta_err!(
+                    ParquetMetaErrorKind::Truncated,
+                    "name offset exceeds addressable range at column {}",
+                    i
+                )
+            })?;
             let entry_size = desc.name_length as usize;
-            let entry_end = (desc.name_offset as usize)
-                .checked_add(entry_size)
-                .ok_or_else(|| {
-                    parquet_meta_err!(
-                        ParquetMetaErrorKind::Truncated,
-                        "name entry overflow at column {}",
-                        i
-                    )
-                })?;
+            let entry_end = entry_start.checked_add(entry_size).ok_or_else(|| {
+                parquet_meta_err!(
+                    ParquetMetaErrorKind::Truncated,
+                    "name entry overflow at column {}",
+                    i
+                )
+            })?;
+            if entry_start < names_start || entry_end > data.len() {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::Truncated,
+                    "name entry out of bounds at column {}: offset {} length {}, names start {}, file size {}",
+                    i,
+                    entry_start,
+                    entry_size,
+                    names_start,
+                    data.len()
+                ));
+            }
             end = end.max(entry_end);
         }
         Ok(end)
@@ -336,7 +364,7 @@ impl<'a> FileHeader<'a> {
         let offset = HEADER_FIXED_SIZE + index * COLUMN_DESCRIPTOR_SIZE;
         let ptr = self.data[offset..].as_ptr();
         // Safety: ColumnDescriptorRaw is #[repr(C)] with 8-byte natural alignment.
-        // offset = 24 + index * 32, which is always 8-byte aligned.
+        // offset = 32 + index * 32, which is always 8-byte aligned.
         debug_assert_eq!(ptr.align_offset(align_of::<ColumnDescriptorRaw>()), 0);
         Ok(unsafe { &*(ptr as *const ColumnDescriptorRaw) })
     }
@@ -386,7 +414,7 @@ impl<'a> FileHeader<'a> {
         let end = offset + (self.raw.sorting_column_count as usize) * 4;
         debug_assert!(end <= self.data.len());
         let ptr = self.data[offset..end].as_ptr() as *const u32;
-        // Safety: u32 requires 4-byte alignment. offset = 24 + n*32 is always 4-byte aligned.
+        // Safety: u32 requires 4-byte alignment. offset = 32 + n*32 is always 4-byte aligned.
         // Bounds checked: min_size() validated offset + sorting_column_count * 4 <= data.len().
         debug_assert_eq!(ptr.align_offset(align_of::<u32>()), 0);
         unsafe { std::slice::from_raw_parts(ptr, self.raw.sorting_column_count as usize) }
@@ -822,20 +850,65 @@ mod tests {
     }
 
     #[test]
-    fn column_name_out_of_bounds() {
+    fn column_name_out_of_bounds_rejected_during_header_parse() {
+        let mut builder = FileHeaderBuilder::new(-1);
+        builder.add_column("ok", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.set_bloom_filter_columns(&[0]);
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        // Keep name_offset + name_length representable while making the resulting
+        // feature-section cursor non-addressable. Header parsing must reject the
+        // descriptor before attempting to read the bloom-filter section.
+        let desc_offset = HEADER_FIXED_SIZE;
+        let bad_name_offset = (usize::MAX - 3) as u64;
+        buf[desc_offset..desc_offset + 8].copy_from_slice(&bad_name_offset.to_le_bytes());
+        buf[desc_offset + 24..desc_offset + 28].copy_from_slice(&3u32.to_le_bytes());
+
+        let err = match FileHeader::new(&buf) {
+            Ok(_) => panic!("out-of-bounds column name must fail header parsing"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind, ParquetMetaErrorKind::Truncated);
+    }
+
+    #[test]
+    fn column_name_range_overflow_rejected_during_header_parse() {
         let mut builder = FileHeaderBuilder::new(-1);
         builder.add_column("ok", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         let mut buf = Vec::new();
         builder.write_to(&mut buf);
 
-        // Corrupt name_offset of the first descriptor to point far beyond file.
         let desc_offset = HEADER_FIXED_SIZE;
-        let bad_name_offset = 99999u64;
+        let bad_name_offset = (usize::MAX - 1) as u64;
         buf[desc_offset..desc_offset + 8].copy_from_slice(&bad_name_offset.to_le_bytes());
+        buf[desc_offset + 24..desc_offset + 28].copy_from_slice(&3u32.to_le_bytes());
 
-        let hdr = FileHeader::new(&buf).unwrap();
-        let desc = hdr.column_descriptor(0).unwrap();
-        assert!(hdr.column_name(desc).is_err());
+        let err = match FileHeader::new(&buf) {
+            Ok(_) => panic!("overflowing column name range must fail header parsing"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind, ParquetMetaErrorKind::Truncated);
+    }
+
+    #[test]
+    fn column_name_overlapping_sorting_columns_rejected() {
+        let mut builder = FileHeaderBuilder::new(-1);
+        builder.add_column("ok", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.add_sorting_column(0);
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        let desc_offset = HEADER_FIXED_SIZE;
+        let sorting_columns_start = HEADER_FIXED_SIZE + COLUMN_DESCRIPTOR_SIZE;
+        buf[desc_offset..desc_offset + 8]
+            .copy_from_slice(&(sorting_columns_start as u64).to_le_bytes());
+
+        let err = match FileHeader::new(&buf) {
+            Ok(_) => panic!("column name overlapping sorting metadata must fail header parsing"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind, ParquetMetaErrorKind::Truncated);
     }
 
     #[test]
@@ -967,6 +1040,22 @@ mod tests {
         builder.write_to(&mut buf);
 
         assert!(FileHeader::new(&buf).is_err());
+    }
+
+    #[test]
+    fn bloom_filter_indices_truncated_rejected() {
+        let mut builder = FileHeaderBuilder::new(-1);
+        builder.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.set_bloom_filter_columns(&[0]);
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+        buf.pop();
+
+        let err = match FileHeader::new(&buf) {
+            Ok(_) => panic!("truncated bloom-filter indices must fail header parsing"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind, ParquetMetaErrorKind::Truncated);
     }
 
     #[test]

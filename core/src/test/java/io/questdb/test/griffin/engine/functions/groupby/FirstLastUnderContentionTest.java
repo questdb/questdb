@@ -32,7 +32,9 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -76,7 +78,7 @@ public class FirstLastUnderContentionTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, 8);
 
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new WorkerPool(() -> 2)) {
+            try (WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR",
@@ -122,6 +124,7 @@ public class FirstLastUnderContentionTest extends AbstractCairoTest {
                             } catch (Throwable th) {
                                 errors.put(threadId, th);
                             } finally {
+                                Path.clearThreadLocals();
                                 latch.countDown();
                             }
                         }, "firstlast-" + threadId).start();

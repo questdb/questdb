@@ -25,7 +25,7 @@ use std::sync::atomic::AtomicUsize;
 fn make_allocator() -> (Box<MemTracking>, Box<AtomicUsize>, QdbAllocator) {
     let mem_tracking = Box::new(MemTracking::new());
     let tagged_used = Box::new(AtomicUsize::new(0));
-    let allocator = QdbAllocator::new(&*mem_tracking, &*tagged_used, 65);
+    let allocator = QdbAllocator::new(&*mem_tracking, std::ptr::null(), &*tagged_used, 65);
     (mem_tracking, tagged_used, allocator)
 }
 
@@ -154,8 +154,8 @@ fn test_column_type_mismatch() {
     let mut rgb = RowGroupBuffers::new(allocator.clone());
     let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
 
-    // Request it as Int (type mismatch: file has Long, we request Int)
-    let wrong_type = ColumnType::new(ColumnTypeTag::Int, 0);
+    // Request it as Uuid (no conversion path exists from Long to Uuid).
+    let wrong_type = ColumnType::new(ColumnTypeTag::Uuid, 0);
     let columns = vec![(0i32, wrong_type)];
 
     let err = decoder

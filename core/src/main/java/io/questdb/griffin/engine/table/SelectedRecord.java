@@ -49,6 +49,18 @@ public class SelectedRecord implements Record {
     }
 
     @Override
+    public int getArrayDimLen(int col, int columnType, int dim) {
+        // Forward, so a page-frame base keeps its direct shape-header read. Record's default would
+        // fall back to getArray() and materialize an ArrayView for every row.
+        return base.getArrayDimLen(getColumnIndex(col), columnType, dim);
+    }
+
+    @Override
+    public double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
+        return base.getArrayDouble1d2d(getColumnIndex(col), columnType, idx0, idx1);
+    }
+
+    @Override
     public BinarySequence getBin(int col) {
         return base.getBin(getColumnIndex(col));
     }
@@ -248,15 +260,19 @@ public class SelectedRecord implements Record {
         return base.getVarcharSize(getColumnIndex(col));
     }
 
+    // Public rather than package-private because the live view refresh path rebuilds the
+    // planner's mapping over WAL segment rows from its own package - see
+    // io.questdb.cairo.lv.MappingRecordCursor - and needs the base record back to
+    // delegate recordAt().
+    public Record getBaseRecord() {
+        return base;
+    }
+
     public void of(Record record) {
         this.base = record;
     }
 
     private int getColumnIndex(int columnIndex) {
         return columnCrossIndex.getQuick(columnIndex);
-    }
-
-    Record getBaseRecord() {
-        return base;
     }
 }

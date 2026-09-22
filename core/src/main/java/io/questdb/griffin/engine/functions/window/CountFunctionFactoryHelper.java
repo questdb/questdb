@@ -26,10 +26,15 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -39,24 +44,34 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 public class CountFunctionFactoryHelper {
     public static final ArrayColumnTypes COUNT_COLUMN_TYPES;
+    public static final ArrayColumnTypes COUNT_COLUMN_TYPES_LV;
     public static final ArrayColumnTypes COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES;
+    public static final ArrayColumnTypes COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV;
     public static final ArrayColumnTypes COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES;
+    public static final ArrayColumnTypes COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES_LV;
     static final String COUNT_NAME = "count";
 
     static Function newCountWindowFunction(AbstractWindowFunctionFactory factory,
@@ -101,10 +116,12 @@ public class CountFunctionFactoryHelper {
                     );
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            CountFunctionFactoryHelper.COUNT_COLUMN_TYPES
+                            liveView ? CountFunctionFactoryHelper.COUNT_COLUMN_TYPES_LV
+                                    : CountFunctionFactoryHelper.COUNT_COLUMN_TYPES
                     );
 
                     // same as for rows because calculation stops at current rows even if there are 'equal' following rows
@@ -113,7 +130,10 @@ public class CountFunctionFactoryHelper {
                             partitionByRecord,
                             partitionBySink,
                             args.get(0),
-                            isRecordNotNull
+                            isRecordNotNull,
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row], except unbounded preceding to current row
                 else {
@@ -123,13 +143,15 @@ public class CountFunctionFactoryHelper {
 
                     int timestampIndex = windowContext.getTimestampIndex();
 
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                CountFunctionFactoryHelper.COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES
+                                liveView ? CountFunctionFactoryHelper.COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV
+                                        : CountFunctionFactoryHelper.COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES
                         );
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -148,7 +170,10 @@ public class CountFunctionFactoryHelper {
                                 configuration.getSqlWindowInitialRangeBufferSize(),
                                 timestampIndex,
                                 args.get(0),
-                                isRecordNotNull
+                                isRecordNotNull,
+                                partitionByKeyTypes,
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -159,10 +184,12 @@ public class CountFunctionFactoryHelper {
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            CountFunctionFactoryHelper.COUNT_COLUMN_TYPES
+                            liveView ? CountFunctionFactoryHelper.COUNT_COLUMN_TYPES_LV
+                                    : CountFunctionFactoryHelper.COUNT_COLUMN_TYPES
                     );
 
                     return new CountOverUnboundedPartitionRowsFrameFunction(
@@ -170,7 +197,10 @@ public class CountFunctionFactoryHelper {
                             partitionByRecord,
                             partitionBySink,
                             args.get(0),
-                            isRecordNotNull
+                            isRecordNotNull,
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
@@ -193,12 +223,15 @@ public class CountFunctionFactoryHelper {
                 }
                 //between [unbounded | x] preceding and [x preceding | current row]
                 else {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                CountFunctionFactoryHelper.COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES
+                                liveView
+                                        ? CountFunctionFactoryHelper.COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES_LV
+                                        : CountFunctionFactoryHelper.COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES
                         );
                         MemoryARW mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -214,7 +247,9 @@ public class CountFunctionFactoryHelper {
                                 rowsHi,
                                 args.get(0),
                                 mem,
-                                isRecordNotNull
+                                isRecordNotNull,
+                                partitionByKeyTypes,
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -322,6 +357,14 @@ public class CountFunctionFactoryHelper {
     static class CountOverPartitionFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
 
         private final IsRecordNotNull isNotNullFunc;
+        // See CountOverUnboundedPartitionRowsFrameFunction's field of the same name: true while
+        // the plan bound this call onto a row-count component, which happens only for a count
+        // over the window's own partition key.
+        private boolean isWindowStatePartitionKeyGuarded;
+        // What this output projects out of the group's shared component, materialized by
+        // projectWindowState in the pass-2 traversal and written to the row by pass2 a moment
+        // later. Untouched while the function owns its own map.
+        private long windowStateResult;
 
         public CountOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, IsRecordNotNull isNotNullFunc) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -329,8 +372,26 @@ public class CountFunctionFactoryHelper {
         }
 
         @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            if (isWindowStatePartitionKeyGuarded || isNotNullFunc.isNotNull(arg, record)) {
+                value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.isWindowStatePartitionKeyGuarded = projection != null && projection.isPartitionKeyGuarded();
+        }
+
+        @Override
         public String getName() {
             return CountFunctionFactoryHelper.COUNT_NAME;
+        }
+
+        @Override
+        public Map getPartitionMap() {
+            return map;
         }
 
         @Override
@@ -341,6 +402,11 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one counter before the bucket's pass-1
+                // loop reached this function, and nothing reads an output until pass 2.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -359,6 +425,12 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
+            if (isWindowStateOwned()) {
+                // The group's projection loop ran over this row's entry immediately before
+                // this call, so the write is all that is left to do.
+                Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), windowStateResult);
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -366,23 +438,87 @@ public class CountFunctionFactoryHelper {
             long val = value != null ? value.getLong(0) : 0;
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), val);
         }
+
+        /**
+         * Reads the counter the group keeps, correcting for a {@code count(k)} over the
+         * window's own partition key exactly as the cumulative reading does - see
+         * {@link CountOverUnboundedPartitionRowsFrameFunction#projectWindowState}. The key is
+         * constant across a partition, so the test on this row answers for the whole of it.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            windowStateResult = isWindowStatePartitionKeyGuarded && !isNotNullFunc.isNotNull(arg, record)
+                    ? 0
+                    : value.getLong(windowStateNonNullCountSlot);
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putLong(0, 0L);
+            }
+        }
+
+        /**
+         * Null for {@code count(*)} over a whole partition, which this class also serves.
+         */
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * One contributing-row counter, under the family that says which rows contribute -
+         * the same split {@link CountOverUnboundedPartitionRowsFrameFunction} makes, over the
+         * whole partition rather than up to the current row.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return arg == null
+                    ? WindowAccumulatorDescriptor.FAMILY_ROW_COUNT
+                    : WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_COUNT;
+        }
     }
 
     // Handles count(arg) over (partition by x order by ts range between [unbounded | y] preceding and [z preceding | current row])
     public static class CountOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
 
         private static final int RECORD_SIZE = Long.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        private final CairoConfiguration configuration;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
         private final IsRecordNotNull isNotNullFunc;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final long maxDiff;
         private final MemoryARW memory;
         private final AbstractWindowFunctionFactory.RingBufferDesc memoryDesc = new AbstractWindowFunctionFactory.RingBufferDesc();
         private final long minDiff;
+        private final RingRestoreSink ringRestore = new RingRestoreSink();
         private final int timestampIndex;
         private long count;
+        // The four ring slots of the group's fused map value, or -1 when this function owns its
+        // state. Installed by bindWindowStateSlots and cleared the same way. A RANGE ring is
+        // resizable, so its geometry is two more slots than a ROWS one's: the address and the read
+        // cursor, plus how many timestamps it holds and how many it can hold.
+        private int windowStateRingCapacitySlot = -1;
+        private int windowStateRingIndexSlot = -1;
+        private int windowStateRingOffsetSlot = -1;
+        private int windowStateRingSizeSlot = -1;
 
         public CountOverPartitionRangeFrameFunction(
                 Map map,
@@ -394,9 +530,13 @@ public class CountFunctionFactoryHelper {
                 int initialBufferSize,
                 int timestampIdx,
                 Function arg,
-                IsRecordNotNull isNotNullFunc
+                IsRecordNotNull isNotNullFunc,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
+            this.configuration = configuration;
             frameLoBounded = rangeLo != Long.MIN_VALUE;
             maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
             minDiff = Math.abs(rangeHi);
@@ -405,38 +545,55 @@ public class CountFunctionFactoryHelper {
             this.timestampIndex = timestampIdx;
             frameIncludesCurrentValue = rangeHi == 0;
             this.isNotNullFunc = isNotNullFunc;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 5;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
+        /**
+         * Absorbs one row into the group's bounded RANGE frame, leaving the frame's own count in
+         * the slice.
+         * <p>
+         * The arithmetic is {@link #computeNext(Record)}'s, operation for operation and in the same
+         * order, against the group's slots instead of this function's own five. No schedule moves,
+         * unlike the bounded ROWS family's: a RANGE row already ends with the frame's own count in
+         * its slots, because what leaves the frame is decided by the timestamps at the top of the
+         * row rather than by a position at the bottom of it.
+         * <p>
+         * The ring is this function's own arena and this method is the only thing that writes to
+         * it: a component has exactly one contributor, so the group's other projections read the
+         * slice and never the frame.
+         */
         @Override
-        public void close() {
-            super.close();
-            memory.close();
-            freeList.clear();
-        }
+        public void accumulateWindowState(Record record, MapValue value) {
+            final long timestamp = record.getTimestamp(timestampIndex);
 
-        @Override
-        public void computeNext(Record record) {
-            // map stores
-            // 0 - current counter number
-            // 1 - native array start offset (relative to memory address)
-            // 2 - size of ring buffer (number of ts stored in it; not all of them need to belong to frame)
-            // 3 - capacity of ring buffer
-            // 4 - index of first (the oldest) valid buffer element
-            // actual frame data [ts] stored in mem at [ offset + first_idx*8, offset + last_idx*8]
-            // if frameLoBounded == false ring buffer store only suffix of the window with ts > current_ts + rangeHi (rangeHi is negative),
-            // because all ts on remained prefix will always be accumulated, and we don't need to store them in the buffer
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mapValue = key.createValue();
             long frameSize;
-            long startOffset;
+            long startOffset = value.getLong(windowStateRingOffsetSlot);
             long size;
             long capacity;
             long firstIdx;
-            long timestamp = record.getTimestamp(timestampIndex);
 
-            if (mapValue.isNew()) {
+            if (startOffset == WindowAccumulatorDescriptor.RING_STATE_UNALLOCATED) {
+                // The group put the slice to identity and the ring's address is the one field it
+                // could not fill, so this is the partition's first row and the ring is ours to
+                // allocate. Nothing initializes the cells: a RANGE ring holds only the rows that
+                // contributed, and the length slot is what says how many that is.
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -455,18 +612,17 @@ public class CountFunctionFactoryHelper {
                     frameSize = 0;
                 }
             } else {
-                frameSize = mapValue.getLong(0);
-                startOffset = mapValue.getLong(1);
-                size = mapValue.getLong(2);
-                capacity = mapValue.getLong(3);
-                firstIdx = mapValue.getLong(4);
+                frameSize = value.getLong(windowStateNonNullCountSlot);
+                size = value.getLong(windowStateRingSizeSlot);
+                capacity = value.getLong(windowStateRingCapacitySlot);
+                firstIdx = value.getLong(windowStateRingIndexSlot);
                 long newFirstIdx = firstIdx;
 
                 if (frameLoBounded) {
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             // if rangeHi < 0, some elements from the window can be not in the frame
                             if (frameSize > 0) {
                                 frameSize--;
@@ -499,7 +655,7 @@ public class CountFunctionFactoryHelper {
                     for (long i = frameSize; i < size; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
+                        long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                         if (diff <= maxDiff && diff >= minDiff) {
                             frameSize++;
@@ -512,7 +668,193 @@ public class CountFunctionFactoryHelper {
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
+                            frameSize++;
+                            newFirstIdx = (idx + 1) % capacity;
+                            size--;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    firstIdx = newFirstIdx;
+                }
+            }
+
+            value.putLong(windowStateNonNullCountSlot, frameSize);
+            value.putLong(windowStateRingIndexSlot, firstIdx);
+            value.putLong(windowStateRingOffsetSlot, startOffset);
+            value.putLong(windowStateRingSizeSlot, size);
+            value.putLong(windowStateRingCapacitySlot, capacity);
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateRingIndexSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_INDEX);
+            this.windowStateRingOffsetSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_OFFSET);
+            this.windowStateRingSizeSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_SIZE);
+            this.windowStateRingCapacitySlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_CAPACITY);
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            memory.close();
+            freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The value layout the two
+         * indices name is the one {@link #computeNext(Record)} documents: slot 1 is the ring's
+         * start offset, slot 3 its capacity.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 1, 3, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one accumulator and materialized the
+                // projection before the cursor got here.
+                return;
+            }
+            // map stores
+            // 0 - current counter number
+            // 1 - native array start offset (relative to memory address)
+            // 2 - size of ring buffer (number of ts stored in it; not all of them need to belong to frame)
+            // 3 - capacity of ring buffer
+            // 4 - index of first (the oldest) valid buffer element
+            // actual frame data [ts] stored in mem at [ offset + first_idx*8, offset + last_idx*8]
+            // if frameLoBounded == false ring buffer store only suffix of the window with ts > current_ts + rangeHi (rangeHi is negative),
+            // because all ts on remained prefix will always be accumulated, and we don't need to store them in the buffer
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.createValue();
+            long frameSize;
+            long startOffset;
+            long size;
+            long capacity;
+            long firstIdx;
+            long timestamp = record.getTimestamp(timestampIndex);
+
+            if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
+                capacity = initialBufferSize;
+                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                firstIdx = 0;
+
+                if (isNotNullFunc.isNotNull(arg, record)) {
+                    memory.putLong(startOffset, timestamp);
+                    if (frameIncludesCurrentValue) {
+                        frameSize = 1;
+                        size = frameLoBounded ? 1 : 0;
+                    } else {
+                        frameSize = 0;
+                        size = 1;
+                    }
+                } else {
+                    size = 0;
+                    frameSize = 0;
+                }
+            } else {
+                frameSize = mapValue.getLong(0);
+                startOffset = mapValue.getLong(1);
+                size = mapValue.getLong(2);
+                capacity = mapValue.getLong(3);
+                firstIdx = mapValue.getLong(4);
+                long newFirstIdx = firstIdx;
+
+                if (frameLoBounded) {
+                    for (long i = 0, n = size; i < n; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
+                            // if rangeHi < 0, some elements from the window can be not in the frame
+                            if (frameSize > 0) {
+                                frameSize--;
+                            }
+                            newFirstIdx = (idx + 1) % capacity;
+                            size--;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                firstIdx = newFirstIdx;
+
+                if (isNotNullFunc.isNotNull(arg, record)) {
+                    if (size == capacity) { // buffer full
+                        memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
+                        AbstractWindowFunctionFactory.expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
+                        capacity = memoryDesc.capacity;
+                        startOffset = memoryDesc.startOffset;
+                        firstIdx = memoryDesc.firstIdx;
+                    }
+
+                    // add ts element to buffer
+                    memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
+                    size++;
+                }
+
+                // find new top border of range frame and add new elements
+                if (frameLoBounded) {
+                    for (long i = frameSize; i < size; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        long diff = Numbers.saturatedAbsDiff(ts, timestamp);
+
+                        if (diff <= maxDiff && diff >= minDiff) {
+                            frameSize++;
+                        } else {
+                            break;
+                        }
+                    }
+                } else {
+                    newFirstIdx = firstIdx;
+                    for (long i = 0, n = size; i < n; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             frameSize++;
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
@@ -548,6 +890,46 @@ public class CountFunctionFactoryHelper {
             return WindowFunction.ZERO_PASS;
         }
 
+        /**
+         * Reads the frame the group's contributor left in the slice - the count of its
+         * contributing rows, which is exact and never NULL, exactly as a cumulative
+         * {@code count}'s is.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            count = value.getLong(windowStateNonNullCountSlot);
+        }
+
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The per-partition state is a ring of the timestamps inside [t - W, t] and the
+            // count of them, both rebuilt exactly by replaying the frame's own rows.
+            return true;
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
+            freeList.clear();
+        }
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
@@ -560,6 +942,7 @@ public class CountFunctionFactoryHelper {
             super.reopen();
             // memory will allocate on first use
             this.count = 0;
+            tombstoneCount = 0;
         }
 
         @Override
@@ -567,6 +950,166 @@ public class CountFunctionFactoryHelper {
             super.reset();
             memory.close();
             freeList.clear();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset (see Avg/Sum RANGE for context). Drop the
+            // partition's frame to empty; ring slot stays allocated.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putLong(0, 0L);
+                // slot 1 (startOffset) stays.
+                value.putLong(2, 0L);
+                // slot 3 (capacity) stays.
+                value.putLong(4, 0L);
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset);
+            source.forEachTimestamp(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint count RANGE ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            value.putLong(0, source.getFrameSize());
+            value.putLong(1, newStartOffset);
+            value.putLong(2, size);
+            value.putLong(3, capacity);
+            value.putLong(4, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+        }
+
+        /**
+         * The in-RAM whole-state form, used to clone a partition into an out-of-order
+         * repair's scratch overlay. The durable checkpoint uses the chunked ring form
+         * instead, which shares pages across roots - a scratch clone has nothing to
+         * share with. Both carry the same five map slots, so a state-layout change
+         * must move both together.
+         */
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            final long frameSize = source.getLong(offset);
+            offset += Long.BYTES;
+            final long size = source.getLong(offset);
+            offset += Long.BYTES;
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            for (long i = 0; i < size; i++) {
+                memory.putLong(newStartOffset + i * RECORD_SIZE, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+            value.putLong(0, frameSize);
+            value.putLong(1, newStartOffset);
+            value.putLong(2, size);
+            value.putLong(3, capacity);
+            value.putLong(4, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int checkpointRingValueKind() {
+            // count buffers a timestamp per in-window row and nothing else, so its ring
+            // is valueless and a chunk is the timestamp page alone.
+            return LiveViewCheckpointRangeRingStateReader.VALUE_KIND_NONE;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            // The frame count is the whole of count's continuation state, and it rides
+            // in the scalar's frameSize slot; the scalar value slot goes unused and
+            // stores 0. The ring holds one timestamp per buffered non-null row.
+            sink.putScalarState(0L, value.getLong(0));
+            final long startOffset = value.getLong(1);
+            final long size = value.getLong(2);
+            final long capacity = value.getLong(3);
+            final long firstIdx = value.getLong(4);
+            for (long i = 0; i < size; i++) {
+                final long idx = (firstIdx + i) % capacity;
+                sink.putRow(memory.getLong(startOffset + idx * RECORD_SIZE));
+            }
+        }
+
+        /**
+         * The in-RAM whole-state form. See
+         * {@link #restoreCheckpointState(LiveViewStatePageReader, long, MapValue)}
+         * for why it stands beside the chunked ring form.
+         */
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            final long startOffset = value.getLong(1);
+            final long size = value.getLong(2);
+            final long capacity = value.getLong(3);
+            final long firstIdx = value.getLong(4);
+            sink.putLong(size);
+            for (long i = 0; i < size; i++) {
+                final long idx = (firstIdx + i) % capacity;
+                sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE));
+            }
+        }
+
+        @Override
+        public boolean supportsCheckpointRingState() {
+            return supportsCheckpointState();
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+        }
+
+        /**
+         * Writes restored ring timestamps straight into the partition's freshly sized
+         * slab. Reused across partitions so a restore that walks thousands of them
+         * allocates nothing per partition.
+         */
+        private class RingRestoreSink implements LiveViewCheckpointRingStateSource.TimestampConsumer {
+            private long rows;
+            private long startOffset;
+
+            @Override
+            public void accept(long timestamp) {
+                memory.putLong(startOffset + rows * RECORD_SIZE, timestamp);
+                rows++;
+            }
+
+            private void of(long startOffset) {
+                this.startOffset = startOffset;
+                this.rows = 0;
+            }
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
         }
 
         @Override
@@ -598,8 +1141,33 @@ public class CountFunctionFactoryHelper {
         @Override
         public void toTop() {
             super.toTop();
+            // Bound or not, the arena goes back to the start: the group's map is cleared by the
+            // same toTop, so every partition allocates a ring again on its first row and nothing
+            // addresses what this drops.
             memory.truncate();
             freeList.clear();
+            tombstoneCount = 0;
+        }
+
+        /**
+         * The counted column, or null for a {@code count(*)}. A null argument is what declines the
+         * family: this class serves both calls, and a {@code count(*)} over a bounded RANGE frame
+         * counts rows rather than a column's non-null values, so its state is not the one
+         * {@link WindowAccumulatorDescriptor#FAMILY_RANGE_NON_NULL_COUNT} describes.
+         */
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_RANGE_NON_NULL_COUNT;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_COUNT;
         }
     }
 
@@ -613,10 +1181,30 @@ public class CountFunctionFactoryHelper {
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
+        // Where the flag of the row entering the frame sits, counted from the ring's oldest cell,
+        // when the frame's high bound lags the current row. One more than the unfused reading for
+        // a bounded low bound, because the fused ring holds one cell more - see fusedRingSize.
+        // Always below fusedRingSize: a frame is at most as long as the buffer it is read out of,
+        // and validate() admits no high bound above the current row here, so
+        // accumulateWindowState wraps with a compare rather than a modulo.
+        private final int fusedEnteringOffset;
+        // The fused ring's length: the unfused bufferSize plus the one cell a deferred
+        // subtraction needs. A bound contributor leaves the current frame's count in the map
+        // value and gives back the row leaving the frame on the row that actually drops it, so
+        // that row's flag has to survive one row longer than the unfused ring keeps it. Only
+        // where the low bound is bounded - nothing ever leaves an unbounded one.
+        private final int fusedRingSize;
         private final IsRecordNotNull isRecordNotNull;
         // holds fixed-size ring buffers of boolean values
         private final MemoryARW memory;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         protected long count;
+        // The two ring slots of the group's fused map value, or -1 when this function owns its
+        // state. Installed by bindWindowStateSlots and cleared the same way.
+        private int windowStateRingIndexSlot = -1;
+        private int windowStateRingOffsetSlot = -1;
 
         public CountOverPartitionRowsFrameFunction(
                 Map map,
@@ -626,7 +1214,9 @@ public class CountFunctionFactoryHelper {
                 long rowsHi,
                 Function arg,
                 MemoryARW memory,
-                IsRecordNotNull isRecordNotNull
+                IsRecordNotNull isRecordNotNull,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
 
@@ -640,9 +1230,104 @@ public class CountFunctionFactoryHelper {
                 frameLoBounded = false;
             }
             frameIncludesCurrentValue = rowsHi == 0;
+            fusedRingSize = bufferSize + (frameLoBounded ? 1 : 0);
+            fusedEnteringOffset = frameSize - 1 + (frameLoBounded ? 1 : 0);
 
             this.memory = memory;
             this.isRecordNotNull = isRecordNotNull;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 3;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        /**
+         * Absorbs one row into the group's bounded frame, leaving the frame's own count in the
+         * slice.
+         * <p>
+         * The arithmetic is {@link #computeNext(Record)}'s with the subtraction moved: where the
+         * unfused row ends by giving back the row that leaves the frame <b>next</b>, this one
+         * starts by giving back the row that has just left. The price is one extra ring cell, so
+         * that a departing row's flag survives the row it is needed on.
+         * <p>
+         * The ring is this function's own arena and this method is the only thing that writes to
+         * it: a component has exactly one contributor, so the group's other projections read the
+         * slice and never the frame.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            final boolean isNotNull = isRecordNotNull.isNotNull(arg, record);
+            long ringOffset = value.getLong(windowStateRingOffsetSlot);
+            final long loIdx;
+            long count;
+            if (ringOffset == WindowAccumulatorDescriptor.RING_STATE_UNALLOCATED) {
+                // The group put the slice to identity and the ring's address is the one field it
+                // could not fill, so this is the partition's first row and the ring is ours to
+                // allocate. A false flag in every cell is "no row here yet", which is what the
+                // rows before a partition's first one contribute.
+                ringOffset = memory.appendAddressFor(fusedRingSize) - memory.getPageAddress(0);
+                for (int i = 0; i < fusedRingSize; i++) {
+                    memory.putBool(ringOffset + i, false);
+                }
+                value.putLong(windowStateRingOffsetSlot, ringOffset);
+                loIdx = 0;
+                count = frameIncludesCurrentValue && isNotNull ? 1 : 0;
+            } else {
+                loIdx = value.getLong(windowStateRingIndexSlot);
+                assert loIdx >= 0 && loIdx < fusedRingSize;
+                count = value.getLong(windowStateNonNullCountSlot);
+                if (frameLoBounded && memory.getBool(ringOffset + loIdx)) {
+                    // The oldest cell holds the row the frame dropped between the previous row and
+                    // this one. Nothing leaves an unbounded low bound, which is why such a frame
+                    // needs no extra cell either.
+                    count--;
+                }
+                // A compare and a subtract rather than a divide, on a row's own path. Both terms
+                // are below fusedRingSize, so one wrap is the most the sum can need: the slot is
+                // written reduced below and by nothing else, and a frame whose high bound lags
+                // the current row by fusedEnteringOffset rows is at most as long as the ring it
+                // is buffered in - which is what the extra cell of a bounded low bound leaves
+                // room for. An unbounded low bound reads the oldest cell itself, at offset zero.
+                long enteringIdx = loIdx + fusedEnteringOffset;
+                if (enteringIdx >= fusedRingSize) {
+                    enteringIdx -= fusedRingSize;
+                }
+                if (frameIncludesCurrentValue ? isNotNull : memory.getBool(ringOffset + enteringIdx)) {
+                    count++;
+                }
+            }
+            value.putLong(windowStateNonNullCountSlot, count);
+            // The current row's flag takes the cell the departing one has now been accounted for,
+            // and the oldest cell moves on to what the next row will drop. Stored reduced, which
+            // is what lets the reads above skip the divide.
+            memory.putBool(ringOffset + loIdx, isNotNull);
+            final long nextLoIdx = loIdx + 1;
+            value.putLong(windowStateRingIndexSlot, nextLoIdx == fusedRingSize ? 0 : nextLoIdx);
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateRingIndexSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_INDEX);
+            this.windowStateRingOffsetSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_RING_OFFSET);
         }
 
         @Override
@@ -653,6 +1338,11 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one accumulator and materialized the
+                // projection before the cursor got here.
+                return;
+            }
             // map stores:
             // 0 - count, current number of non-null rows in frame
             // 1 - (0-based) index of oldest value [0, bufferSize]
@@ -668,6 +1358,9 @@ public class CountFunctionFactoryHelper {
             boolean isNotNull = isRecordNotNull.isNotNull(arg, record);
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 startOffset = memory.appendAddressFor(bufferSize) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && isNotNull) {
@@ -716,6 +1409,47 @@ public class CountFunctionFactoryHelper {
             return WindowFunction.ZERO_PASS;
         }
 
+        /**
+         * Reads the frame the group's contributor left in the slice - the count of its
+         * contributing rows, which is exact and never NULL, exactly as a cumulative
+         * {@code count}'s is.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            count = value.getLong(windowStateNonNullCountSlot);
+        }
+
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds one null/not-null flag per row of the frame and the count runs
+            // over exactly those flags, so a warm-up of N predecessors rebuilds both. Only
+            // the ring's rotation differs from a whole-history recompute's, which changes no
+            // value this emits.
+            return true;
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
+        }
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
@@ -726,6 +1460,7 @@ public class CountFunctionFactoryHelper {
         @Override
         public void reopen() {
             super.reopen();
+            tombstoneCount = 0;
             // memory will allocate on first use
         }
 
@@ -733,6 +1468,78 @@ public class CountFunctionFactoryHelper {
         public void reset() {
             super.reset();
             memory.close();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Zero the count + loIdx; refill the boolean
+            // ring with false so the new anchor bucket starts with an empty
+            // frame.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                final long startOffset = value.getLong(2);
+                value.putLong(0, 0L);
+                value.putLong(1, 0L);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putBool(startOffset + i, false);
+                }
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            final long partitionCountVal = source.getLong(offset);
+            offset += Long.BYTES;
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor(bufferSize) - memory.getPageAddress(0);
+            for (int i = 0; i < bufferSize; i++) {
+                memory.putBool(newStartOffset + i, source.getBool(offset));
+                offset += 1;
+            }
+            value.putLong(0, partitionCountVal);
+            value.putLong(1, loIdx);
+            value.putLong(2, newStartOffset);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            sink.putLong(value.getLong(1));
+            final long startOffset = value.getLong(2);
+            for (int i = 0; i < bufferSize; i++) {
+                sink.putBool(memory.getBool(startOffset + i));
+            }
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -765,7 +1572,32 @@ public class CountFunctionFactoryHelper {
         @Override
         public void toTop() {
             super.toTop();
+            // Bound or not, the ring goes back to the start of the arena: the group's map is
+            // cleared by the same toTop, so every partition allocates a ring again on its first
+            // row and nothing addresses what this drops.
             memory.truncate();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The bounded-ROWS counter over the frame's own rows. Separate from the cumulative
+         * counting family for the reason its javadoc gives - the state continues into a ring of
+         * flags this function owns - and from the row count for the reason the cumulative one is:
+         * this counter skips the rows where its argument is absent.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_ROWS_NON_NULL_COUNT;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_COUNT;
         }
     }
 
@@ -808,7 +1640,7 @@ public class CountFunctionFactoryHelper {
             minDiff = Math.abs(rangeHi);
             timestampIndex = timestampIdx;
             capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             count = 0;
         }
@@ -829,7 +1661,7 @@ public class CountFunctionFactoryHelper {
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         // if rangeHi < 0, some elements from the window can be not in the frame
                         if (count > 0) {
                             count--;
@@ -874,7 +1706,7 @@ public class CountFunctionFactoryHelper {
                 for (long i = count, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
+                    long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                     if (diff <= maxDiff && diff >= minDiff) {
                         count++;
@@ -887,7 +1719,7 @@ public class CountFunctionFactoryHelper {
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         count++;
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
@@ -934,6 +1766,11 @@ public class CountFunctionFactoryHelper {
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         @Override
@@ -995,12 +1832,6 @@ public class CountFunctionFactoryHelper {
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
             this.isRecordNotNull = isRecordNotNull;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
 
         }
 
@@ -1120,16 +1951,89 @@ public class CountFunctionFactoryHelper {
     // count(arg) over (partition by x order by ts range between unbounded preceding and current row)
 // Doesn't require ts buffering.
     static class CountOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
+        private final CairoConfiguration configuration;
         private final IsRecordNotNull isRecordNotNull;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (including tombstone slot) for the
+        // newCompactionScratch() scratch Map used by the frontier sweep. Null
+        // outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
+        // Value-slot index of the per-partition tombstone byte; -1 outside LV.
         private long count;
+        // True while the plan bound this call onto a row-count component, which happens
+        // only for a count over the window's own partition key. It changes what the bound
+        // slot means: every row rather than the argument's non-null ones, corrected at
+        // projection time by the test on the key. Installed by bindWindowStateSlots and
+        // cleared the same way, both on the refresh worker.
+        private boolean isWindowStatePartitionKeyGuarded;
+        // Single-writer (refresh worker), not volatile.
 
-        public CountOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, IsRecordNotNull isRecordNotNull) {
+        public CountOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                IsRecordNotNull isRecordNotNull,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.isRecordNotNull = isRecordNotNull;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = COUNT_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(COUNT_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 1;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
+        }
+
+        /**
+         * Absorbs the row into the counter the plan bound, which is not always this call's
+         * own: a {@code count(k)} over the window's own partition key reads a row count,
+         * and a row count admits every row whatever the argument says. The plan never
+         * makes such a projection its component's contributor - an unguarded reading of
+         * the same row count always outranks it - so this arm exists to keep the two
+         * readings of {@code windowStateNonNullCountSlot} consistent rather than because
+         * it is reached.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            if (isWindowStatePartitionKeyGuarded || isRecordNotNull.isNotNull(arg, record)) {
+                value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.isWindowStatePartitionKeyGuarded = projection != null && projection.isPartitionKeyGuarded();
         }
 
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The window absorbed this row into the group's one accumulator and
+                // materialized the projection before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -1137,6 +2041,8 @@ public class CountFunctionFactoryHelper {
             long count = 0;
             if (!value.isNew()) {
                 count = value.getLong(0);
+            } else if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
             }
             if (isRecordNotNull.isNotNull(arg, record)) {
                 count++;
@@ -1160,11 +2066,139 @@ public class CountFunctionFactoryHelper {
             return WindowFunction.ZERO_PASS;
         }
 
+        /**
+         * Reads the counter the window keeps, which is this function's own component only
+         * while the plan did not fold it onto a wider one: a {@code count(x)} beside a
+         * {@code sum(x)} projects the counter inside that sum's accumulator, and the slot
+         * the plan bound is what says which.
+         * <p>
+         * A {@code count(k)} over the window's own partition key reads a slot that counts
+         * every row instead, and corrects it here. The key is constant across a partition,
+         * so the test on the current row answers for the whole of it: present, and the
+         * partition's row count is its count; absent, and its count is zero however many
+         * rows the partition has.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            count = isWindowStatePartitionKeyGuarded && !isRecordNotNull.isNotNull(arg, record)
+                    ? 0
+                    : value.getLong(windowStateNonNullCountSlot);
+        }
+
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : COUNT_COLUMN_TYPES.getColumnCount();
+        }
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), count);
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            if (isWindowStateOwned()) {
+                // The window zeroes the component in the fused value it has already
+                // loaded, so the crossing costs no probe of this function's own.
+                return;
+            }
+            // ANCHOR-driven reset. Zero the count slot.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putLong(0, 0L);
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            value.putLong(0, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        /**
+         * Null for {@code count(*)}, which this class also serves: that call counts rows
+         * rather than an argument's non-null values, so its component is keyed by nothing
+         * but the row-count family it declares below.
+         */
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * One contributing-row counter, under the family that says which rows contribute.
+         * <p>
+         * {@code count(*)} keeps a row count, shared with anything else that counts every
+         * row of the same window - a partitioned {@code row_number()} being the other one
+         * today. {@code count(x)} keeps a non-null count, and which rows that admits is the
+         * argument type's own business ({@code Numbers.isFinite} for DOUBLE, a null test
+         * elsewhere), so the component identity carries the argument too: two counters over
+         * one window disagree on exactly the rows where one argument is null and the other
+         * is not.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return arg == null
+                    ? WindowAccumulatorDescriptor.FAMILY_ROW_COUNT
+                    : WindowAccumulatorDescriptor.FAMILY_NON_NULL_COUNT;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_COUNT;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -1179,6 +2213,12 @@ public class CountFunctionFactoryHelper {
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            tombstoneCount = 0;
         }
     }
 
@@ -1303,9 +2343,27 @@ public class CountFunctionFactoryHelper {
         COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG);  // native buffer capacity
         COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG);  // index of first buffered element
 
+        COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG);  // current frame count
+        COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG);  // native array start offset
+        COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG);  // native buffer size
+        COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG);  // native buffer capacity
+        COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG);  // index of first buffered element
+        COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.BYTE);  // tombstone (anchor-driven compaction)
+
         COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES = new ArrayColumnTypes();
         COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);  // count
         COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);  // position of current oldest element
         COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);  // start offset of native array
+
+        COUNT_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        COUNT_COLUMN_TYPES_LV.add(ColumnType.LONG);  // count(*) currentSize
+        COUNT_COLUMN_TYPES_LV.add(ColumnType.BYTE);  // tombstone (anchor-driven compaction)
+
+        COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG);  // count
+        COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG);  // position of current oldest element
+        COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG);  // start offset of native array
+        COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.BYTE);  // tombstone (anchor-driven compaction)
     }
 }

@@ -31,6 +31,12 @@ import io.questdb.std.ObjHashSet;
 
 public interface HttpServerConfiguration extends IODispatcherConfiguration, WorkerPoolConfiguration {
 
+    default ObjHashSet<String> getContextPathLifecycle() {
+        return new ObjHashSet<>() {{
+            add("/lifecycle");
+        }};
+    }
+
     default ObjHashSet<String> getContextPathMetrics() {
         return new ObjHashSet<>() {{
             add("/metrics");
@@ -50,6 +56,14 @@ public interface HttpServerConfiguration extends IODispatcherConfiguration, Work
     byte getRequiredAuthType();
 
     WaitProcessorConfiguration getWaitProcessorConfiguration();
+
+    /**
+     * Enables fiber execution for this HTTP server when its resolved worker pool also
+     * uses {@link io.questdb.mp.WorkerPoolMode#FIBER_HOST}.
+     */
+    default boolean isFiberEnabled() {
+        return true;
+    }
 
     boolean isPessimisticHealthCheckEnabled();
 

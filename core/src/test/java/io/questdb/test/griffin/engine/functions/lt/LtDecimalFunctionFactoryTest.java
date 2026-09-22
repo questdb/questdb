@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.functions.lt;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.columns.DecimalColumn;
 import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal16Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal256Constant;
@@ -40,7 +41,11 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.math.BigDecimal;
+
 public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
+    // widest precision of each decimal storage width
+    private static final int[] WIDTH_PRECISIONS = {2, 4, 9, 18, 38, 76};
     private static final LtDecimalFunctionFactory factory = new LtDecimalFunctionFactory();
     private final ObjList<Function> args = new ObjList<>();
 
@@ -929,6 +934,17 @@ public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLtFastPathSameTagDifferentPrecision() throws Exception {
+        // operands sharing a storage tag and a scale compare unscaled, whatever their precisions
+        assertFastPathAtWidths(1, 2, 0, "UnscaledDecimal8Func");
+        assertFastPathAtWidths(3, 4, 1, "UnscaledDecimal16Func");
+        assertFastPathAtWidths(5, 9, 2, "UnscaledDecimal32Func");
+        assertFastPathAtWidths(10, 18, 2, "UnscaledDecimal64Func");
+        assertFastPathAtWidths(19, 38, 2, "UnscaledDecimal128Func");
+        assertFastPathAtWidths(39, 76, 2, "UnscaledDecimal256Func");
+    }
+
+    @Test
     public void testLtRandomValues() {
         for (int i = 1; i < 50; i++) {
             long val = i * 13;
@@ -947,6 +963,127 @@ public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testLtScaleAlignmentAcrossWidths() throws Exception {
+        for (int leftPrecision : WIDTH_PRECISIONS) {
+            for (int rightPrecision : WIDTH_PRECISIONS) {
+                assertOrderingAtWidths(leftPrecision, rightPrecision);
+            }
+        }
+    }
+
+    @Test
+    public void testLtScaleAlignmentMaxPrecisionOrderBy() throws Exception {
+        assertQuery("select a from lt_order order by a")
+                .ddl(
+                        "create table lt_order (a decimal(76,0), b decimal(76,1))",
+                        "insert into lt_order values " +
+                                "(1m, 1.0m)," +
+                                "(" + nines(76) + "m, " + nines(75) + ".9m)," +
+                                "(-" + nines(76) + "m, -" + nines(75) + ".9m)"
+                )
+                .expectSize()
+                .returns("a\n" +
+                        "-" + nines(76) + "\n" +
+                        "1\n" +
+                        nines(76) + "\n");
+        assertQuery("select a from lt_order where a < b order by a")
+                .returns("a\n" +
+                        "-" + nines(76) + "\n");
+    }
+
+    @Test
+    public void testLtScaleAlignmentNulls() throws Exception {
+        assertQuery("select a < b lt, a <= b le, a > b gt, a >= b ge from lt_nulls order by id")
+                .ddl(
+                        "create table lt_nulls (id int, a decimal(18,0), b decimal(18,1))",
+                        "insert into lt_nulls values " +
+                                "(1, null, " + nines(17) + ".9m)," +
+                                "(2, " + nines(18) + "m, null)," +
+                                "(3, null, null)"
+                )
+                .expectSize()
+                .returns("lt\tle\tgt\tge\n" +
+                        "false\tfalse\tfalse\tfalse\n" +
+                        "false\tfalse\tfalse\tfalse\n" +
+                        "false\ttrue\tfalse\ttrue\n");
+    }
+
+    @Test
+    public void testLtSlowPathComparatorWidth() {
+        // the comparator width follows the wider operand; mixed scales never widen it
+        assertSelectedFunction(ColumnType.getDecimalType(18, 0), ColumnType.getDecimalType(18, 1), "Decimal64Func");
+        assertSelectedFunction(ColumnType.getDecimalType(38, 0), ColumnType.getDecimalType(38, 1), "Decimal128Func");
+        assertSelectedFunction(ColumnType.getDecimalType(76, 0), ColumnType.getDecimalType(76, 1), "Decimal256Func");
+    }
+
+    private static String literal(BigDecimal value) {
+        return value == null ? "null" : value.toPlainString() + "m";
+    }
+
+    private static BigDecimal maxValue(int precision, int scale) {
+        return new BigDecimal(nines(precision)).movePointLeft(scale);
+    }
+
+    private static String nines(int count) {
+        final StringBuilder sb = new StringBuilder(count);
+        for (int i = 0; i < count; i++) {
+            sb.append('9');
+        }
+        return sb.toString();
+    }
+
+    private void assertFastPathAtWidths(int leftPrecision, int rightPrecision, int scale, String expectedFunc) throws Exception {
+        final int leftType = ColumnType.getDecimalType(leftPrecision, scale);
+        final int rightType = ColumnType.getDecimalType(rightPrecision, scale);
+        Assert.assertEquals(ColumnType.tagOf(leftType), ColumnType.tagOf(rightType));
+        assertSelectedFunction(leftType, rightType, expectedFunc);
+
+        final BigDecimal unit = BigDecimal.ONE.movePointLeft(scale);
+        final BigDecimal maxLeft = maxValue(leftPrecision, scale);
+        final BigDecimal maxRight = maxValue(rightPrecision, scale);
+        final BigDecimal[][] rows = {
+                {maxLeft, maxLeft},
+                {maxLeft, maxLeft.subtract(unit)},
+                {maxLeft.subtract(unit), maxLeft},
+                {maxLeft.negate(), maxRight},
+                {maxLeft, maxRight.negate()},
+                {null, unit},
+                {unit, null},
+                {null, null}
+        };
+
+        final String table = "lt_fast_" + leftPrecision + "_" + rightPrecision + "_" + scale;
+        final StringBuilder insert = new StringBuilder("INSERT INTO ").append(table).append(" VALUES ");
+        final StringBuilder expected = new StringBuilder("lt\tle\tgt\tge\n");
+        for (int i = 0; i < rows.length; i++) {
+            final BigDecimal a = rows[i][0];
+            final BigDecimal b = rows[i][1];
+            if (i > 0) {
+                insert.append(',');
+            }
+            insert.append('(').append(i).append(", ").append(literal(a)).append(", ").append(literal(b)).append(')');
+            if (a == null || b == null) {
+                // two NULLs compare equal, a one-sided NULL is neither below nor above
+                final boolean bothNull = a == null && b == null;
+                expected.append("false\t").append(bothNull).append("\tfalse\t").append(bothNull).append('\n');
+            } else {
+                final int cmp = a.compareTo(b);
+                expected.append(cmp < 0).append('\t').append(cmp <= 0).append('\t')
+                        .append(cmp > 0).append('\t').append(cmp >= 0).append('\n');
+            }
+        }
+
+        assertQuery("SELECT a < b lt, a <= b le, a > b gt, a >= b ge FROM " + table + " ORDER BY id")
+                .ddl(
+                        "CREATE TABLE " + table + " (id INT, a DECIMAL(" + leftPrecision + "," + scale + ")"
+                                + ", b DECIMAL(" + rightPrecision + "," + scale + "))",
+                        insert.toString()
+                )
+                .expectSize()
+                .returns(expected);
+    }
+
     private void assertNegated(Function left, Function right, boolean expected) {
         args.clear();
         args.add(left);
@@ -954,6 +1091,55 @@ public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
         try (Function func = factory.newInstance(-1, args, null, configuration, sqlExecutionContext)) {
             ((NegatableBooleanFunction) func).setNegated();
             Assert.assertEquals(expected, func.getBool(null));
+        }
+    }
+
+    private void assertOrderingAtWidths(int leftPrecision, int rightPrecision) throws Exception {
+        final String table = "lt_cmp_" + leftPrecision + "_" + rightPrecision;
+        // a holds max(leftPrecision) integer digits, b one fractional digit: aligning them needs
+        // leftPrecision + 1 digits, which no longer fits the operand width
+        final String maxA = nines(leftPrecision);
+        final String maxB = nines(rightPrecision - 1) + ".9";
+        final BigDecimal[][] rows = {
+                {new BigDecimal(maxA), new BigDecimal(maxB)},
+                {new BigDecimal(maxA).negate(), new BigDecimal(maxB).negate()},
+                {new BigDecimal(maxA), new BigDecimal(maxB).negate()},
+                {new BigDecimal(maxA).negate(), new BigDecimal(maxB)},
+                {BigDecimal.ONE, BigDecimal.ONE}
+        };
+        final StringBuilder expected = new StringBuilder("lt\tle\tgt\tge\n");
+        for (BigDecimal[] row : rows) {
+            final int cmp = row[0].compareTo(row[1]);
+            expected.append(cmp < 0).append('\t')
+                    .append(cmp <= 0).append('\t')
+                    .append(cmp > 0).append('\t')
+                    .append(cmp >= 0).append('\n');
+        }
+        assertQuery("select a < b lt, a <= b le, a > b gt, a >= b ge from " + table + " order by id")
+                .ddl(
+                        "create table " + table + " (id int, a decimal(" + leftPrecision + ",0), b decimal(" + rightPrecision + ",1))",
+                        "insert into " + table + " values " +
+                                "(1, " + maxA + "m, " + maxB + "m)," +
+                                "(2, -" + maxA + "m, -" + maxB + "m)," +
+                                "(3, " + maxA + "m, -" + maxB + "m)," +
+                                "(4, -" + maxA + "m, " + maxB + "m)," +
+                                "(5, 1m, 1.0m)"
+                )
+                .expectSize()
+                .returns(expected);
+    }
+
+    /**
+     * Pins the implementation the factory picks for a type pair, in both operand orders.
+     */
+    private void assertSelectedFunction(int leftType, int rightType, String expectedFunc) {
+        for (int swap = 0; swap < 2; swap++) {
+            args.clear();
+            args.add(DecimalColumn.newInstance(0, swap == 0 ? leftType : rightType));
+            args.add(DecimalColumn.newInstance(1, swap == 0 ? rightType : leftType));
+            try (Function func = factory.newInstance(-1, args, null, configuration, sqlExecutionContext)) {
+                Assert.assertEquals(expectedFunc, func.getClass().getSimpleName());
+            }
         }
     }
 

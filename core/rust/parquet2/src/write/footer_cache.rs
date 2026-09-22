@@ -436,6 +436,8 @@ mod tests {
             Some(999i64),                                               // distinct_count
             None::<Vec<u8>>,                                            // max_value
             None::<Vec<u8>>,                                            // min_value
+            None::<bool>,                                               // is_max_value_exact
+            None::<bool>,                                               // is_min_value_exact
         );
 
         let meta = ColumnMetaData::new(

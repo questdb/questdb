@@ -66,6 +66,9 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
 
     @Override
     public ReaderPool.R get(TableToken tableToken) {
+        // Live views are WAL-backed tables backed by a real on-disk _meta + WAL;
+        // queries route through the standard TableReader machinery, and their
+        // tokens are not flagged isView(). Regular SQL views remain rejected here.
         checkNotView(tableToken);
         return super.get(tableToken);
     }

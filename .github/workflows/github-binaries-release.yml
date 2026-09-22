@@ -9,7 +9,7 @@ on:
 jobs:
   # ---------------------------------------------------------------------------
   # Validate the release tag up-front so a malformed tag fails in seconds
-  # rather than after the 5 Rust builds and both packaging jobs have run. The
+  # rather than after the 4 Rust builds and both packaging jobs have run. The
   # trigger glob is loose (it lets through e.g. pre-release suffixes), so this
   # is the real gate. Numeric x.y.z and x.y.z.w (or more components) are
   # accepted, matching ci/docker-release-pipeline.yml. Skipped on
@@ -29,7 +29,7 @@ jobs:
           echo "Tag '${GITHUB_REF_NAME}' is a valid release tag"
 
   # ---------------------------------------------------------------------------
-  # Build Rust libraries for all platforms (5 parallel jobs)
+  # Build Rust libraries for all supported platforms (4 parallel jobs)
   # ---------------------------------------------------------------------------
   build-rust-linux-x64:
     needs: validate-tag
@@ -103,24 +103,6 @@ jobs:
           name: rust-macos-arm64
           path: core/rust/qdbr/target/release/libquestdbr.dylib
 
-  build-rust-macos-x64:
-    needs: validate-tag
-    runs-on: macos-15-intel
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          submodules: false
-      - name: Build Rust
-        run: |
-          export MACOSX_DEPLOYMENT_TARGET=13.0
-          cd core/rust/qdbr
-          cargo build --release
-      - uses: actions/upload-artifact@v6
-        with:
-          name: rust-macos-x64
-          path: core/rust/qdbr/target/release/libquestdbr.dylib
-
   build-rust-windows:
     needs: validate-tag
     runs-on: windows-latest
@@ -140,14 +122,13 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Package QuestDB (Linux) — produces no-jre + rt-linux-x86-64
-  # The no-jre JAR contains Rust binaries for ALL platforms.
+  # The no-jre JAR contains Rust binaries for all supported platforms.
   # ---------------------------------------------------------------------------
   package-linux:
     needs:
       - build-rust-linux-x64
       - build-rust-linux-arm64
       - build-rust-macos-arm64
-      - build-rust-macos-x64
       - build-rust-windows
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -191,10 +172,6 @@ jobs:
         with:
           name: rust-macos-arm64
           path: core/target/classes/io/questdb/bin/darwin-aarch64/
-      - uses: actions/download-artifact@v7
-        with:
-          name: rust-macos-x64
-          path: core/target/classes/io/questdb/bin/darwin-x86-64/
       - uses: actions/download-artifact@v7
         with:
           name: rust-windows

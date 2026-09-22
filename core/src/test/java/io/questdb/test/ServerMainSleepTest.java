@@ -26,20 +26,15 @@ package io.questdb.test;
 
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.security.AllowAllSecurityContext;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.client.cutlass.http.client.Fragment;
 import io.questdb.client.cutlass.http.client.HttpClient;
 import io.questdb.client.cutlass.http.client.HttpClientFactory;
 import io.questdb.client.cutlass.http.client.Response;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.QueryRegistry;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.continuation.TimerCont;
+import io.questdb.std.Chars;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -49,6 +44,11 @@ import org.junit.Before;
 import org.junit.Test;
 import org.postgresql.util.PSQLException;
 
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -56,6 +56,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -68,9 +69,9 @@ import static io.questdb.test.tools.TestUtils.unchecked;
 
 /**
  * Exercises the {@code sleep(D)} SQL function over PGWire and HTTP. The function
- * parks its worker continuation through {@link TimerCont} for the
- * requested duration, freeing the carrier to serve concurrent traffic, and resumes
- * to return the current server timestamp. These tests verify:
+ * parks its fiber on a timer-backed wait for the requested duration, freeing
+ * the carrier to serve concurrent traffic, and resumes to return the current server
+ * timestamp. These tests verify:
  *
  * <ul>
  *     <li>basic timing correctness (slept for at least the requested duration);</li>
@@ -96,11 +97,251 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                 PropertyKey.SHARED_WORKER_COUNT + "=1",
                 PropertyKey.PG_WORKER_COUNT + "=1",
                 // Tighter than the 1s production default: tests rely on a wake
-                // cycle to observe timeout/cancel/connection-drop and should not
+                // cycle to observe timeout/connection-drop and should not
                 // wait a full second per cycle.
                 PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL + "=100"
         ));
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testServerCloseAbandonsParkedSleep() throws Exception {
+        assertMemoryLeak(() -> {
+            // Composition guard: sleep() parks a fiber on a timer wait, then the server
+            // shuts down underneath it. Close must abandon the parked fiber and disconnect
+            // the client instead of waiting out the sleep. query.timeout sits far above
+            // the close bound so a timeout cannot fake a prompt close.
+            final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "120s");
+                put(PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL.getEnvVarName(), "100");
+            }});
+            boolean isServerClosed = false;
+            try {
+                serverMain.start();
+
+                final QueryRegistry registry = serverMain.getEngine().getQueryRegistry();
+                final String sleepSql = "sleep(3600)";
+                final long timerShardsBefore = serverMain.getEngine().getTimerShards().size();
+                final AtomicLong sleepQueryId = new AtomicLong(Long.MIN_VALUE);
+                registry.setListener((query, queryId, executionContext) -> {
+                    if (Chars.contains(query, sleepSql)) {
+                        sleepQueryId.compareAndSet(Long.MIN_VALUE, queryId);
+                    }
+                });
+
+                final CountDownLatch clientDone = new CountDownLatch(1);
+                final AtomicReference<Throwable> clientOutcome = new AtomicReference<>();
+                final Thread sleeper = new Thread(() -> {
+                    try (
+                            Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                            Statement stmt = conn.createStatement()
+                    ) {
+                        stmt.executeQuery(sleepSql);
+                    } catch (Throwable th) {
+                        clientOutcome.set(th);
+                    } finally {
+                        clientDone.countDown();
+                    }
+                }, "sleep-at-shutdown");
+                sleeper.setDaemon(true);
+                sleeper.start();
+
+                TestUtils.assertEventually(
+                        () -> Assert.assertTrue("sleep did not register", sleepQueryId.get() != Long.MIN_VALUE),
+                        10
+                );
+                TestUtils.assertEventually(
+                        () -> Assert.assertTrue("sleep continuation never parked",
+                                serverMain.getEngine().getTimerShards().size() > timerShardsBefore),
+                        10
+                );
+
+                final long closeStartMs = System.currentTimeMillis();
+                serverMain.close();
+                isServerClosed = true;
+                final long closeMs = System.currentTimeMillis() - closeStartMs;
+                Assert.assertTrue(
+                        "server close blocked on a parked sleep(3600): took " + closeMs + " ms",
+                        closeMs < 30_000
+                );
+                Assert.assertTrue("sleeping client did not observe shutdown", clientDone.await(10, TimeUnit.SECONDS));
+                sleeper.join(5_000);
+                Assert.assertFalse("sleeper thread did not terminate", sleeper.isAlive());
+                Assert.assertNotNull("client completed sleep(3600) against a closed server", clientOutcome.get());
+            } finally {
+                if (!isServerClosed) {
+                    serverMain.close();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSleepAbortedWhenClientClosesConnection() throws Exception {
+        assertMemoryLeak(() -> {
+            // Regression guard for a runtime resource-pin bug: a parked sleep() did
+            // not observe a clean client disconnect. JDBC conn.close() sends a PG
+            // Terminate ('X') byte then FIN; the old recv(MSG_PEEK) probe saw the
+            // buffered 'X', reported the socket alive, and the parked sleep kept
+            // running and pinned the connection until query.timeout fired.
+            //
+            // query.timeout is set well above the 100ms wake interval so the two
+            // outcomes are far apart: prompt disconnect detection ends the query
+            // within a few wake intervals; the masked-disconnect bug ends it only
+            // when the timeout trips.
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "8s");
+                put(PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL.getEnvVarName(), "100");
+            }})) {
+                serverMain.start();
+
+                final QueryRegistry registry = serverMain.getEngine().getQueryRegistry();
+                final String sleepSql = "sleep(3600)";
+                final long timerShardsBefore = serverMain.getEngine().getTimerShards().size();
+                // Capture the sleep's query id at registration; the text is stable at
+                // that instant, so we avoid reading the pooled query sink concurrently
+                // during the poll loop.
+                final AtomicLong sleepQueryId = new AtomicLong(Long.MIN_VALUE);
+                registry.setListener((query, queryId, executionContext) -> {
+                    if (Chars.contains(query, sleepSql)) {
+                        sleepQueryId.compareAndSet(Long.MIN_VALUE, queryId);
+                    }
+                });
+                try {
+                    CountDownLatch sleepStarted = new CountDownLatch(1);
+                    AtomicReference<Connection> connRef = new AtomicReference<>();
+                    Thread sleeper = new Thread(() -> {
+                        try {
+                            Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                            connRef.set(conn);
+                            try (Statement stmt = conn.createStatement()) {
+                                sleepStarted.countDown();
+                                stmt.executeQuery(sleepSql);
+                            }
+                        } catch (Throwable ignored) {
+                            // executeQuery throws when the socket is torn down -- expected.
+                        }
+                    }, "sleep-conn-close");
+                    sleeper.setDaemon(true);
+                    sleeper.start();
+
+                    Assert.assertTrue("sleep thread did not start", sleepStarted.await(5, TimeUnit.SECONDS));
+                    // Wait until the server has registered (and parked) the sleep.
+                    TestUtils.assertEventually(
+                            () -> Assert.assertTrue("sleep did not register", sleepQueryId.get() != Long.MIN_VALUE),
+                            10
+                    );
+                    final long queryId = sleepQueryId.get();
+                    TestUtils.assertEventually(
+                            () -> Assert.assertTrue("sleep continuation never parked",
+                                    serverMain.getEngine().getTimerShards().size() > timerShardsBefore),
+                            10
+                    );
+                    // Pin against a vacuous pass: a breaker false-positive that killed the
+                    // healthy query before the disconnect would make awaitQueryEnded return
+                    // ~0ms below and satisfy the prompt-abort assertion.
+                    Assert.assertNotNull("sleep ended before the client disconnected", registry.getEntry(queryId));
+
+                    connRef.get().close();
+
+                    // Measure how long the server keeps the parked sleep alive after the
+                    // client left. The entry drops from the registry when the query ends.
+                    // The deadline sits above query.timeout so the wait always terminates,
+                    // whether the query ends via disconnect detection (fast) or via
+                    // query.timeout (slow).
+                    long closeMs = System.currentTimeMillis();
+                    long endedAfterMs = awaitQueryEnded(registry, queryId, closeMs);
+                    sleeper.join(5_000);
+                    Assert.assertFalse("sleeper thread did not terminate", sleeper.isAlive());
+
+                    Assert.assertTrue(
+                            "sleep(3600) never ended within 20s of the client closing the connection",
+                            endedAfterMs >= 0
+                    );
+                    Assert.assertTrue(
+                            "parked sleep did not abort promptly after the client closed its connection: ended "
+                                    + endedAfterMs + " ms later. The server only stopped it when query.timeout fired, "
+                                    + "proving it did not detect the client disconnect (masked by the buffered PG Terminate byte).",
+                            endedAfterMs < 3_000
+                    );
+                } finally {
+                    registry.setListener(null);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSleepAbortedWhenHttpClientClosesConnection() throws Exception {
+        // HTTP counterpart to testSleepAbortedWhenClientClosesConnection. Unlike PG,
+        // an HTTP client closes with a bare FIN (no protocol "goodbye" byte), so the
+        // breaker's connection probe on the next wake sees the hangup and aborts the
+        // parked sleep within a wake interval -- detected by the old peek probe too, so
+        // HTTP is NOT masked; this test locks in that prompt detection.
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "30s");
+                put(PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL.getEnvVarName(), "100");
+            }})) {
+                serverMain.start();
+
+                final QueryRegistry registry = serverMain.getEngine().getQueryRegistry();
+                final String sleepSql = "sleep(3600)";
+                final long timerShardsBefore = serverMain.getEngine().getTimerShards().size();
+                final AtomicLong sleepQueryId = new AtomicLong(Long.MIN_VALUE);
+                registry.setListener((query, queryId, executionContext) -> {
+                    if (Chars.contains(query, sleepSql)) {
+                        sleepQueryId.compareAndSet(Long.MIN_VALUE, queryId);
+                    }
+                });
+                try {
+                    try (Socket sock = new Socket()) {
+                        sock.connect(new InetSocketAddress("127.0.0.1", HTTP_PORT), 5_000);
+                        // Raw GET so the close below is a plain FIN with nothing buffered
+                        // on the server side -- the clean-close shape a well-behaved HTTP
+                        // client produces (no PG-style Terminate byte to mask the EOF).
+                        final String request = "GET /exec?query=" + URLEncoder.encode(sleepSql, StandardCharsets.UTF_8)
+                                + " HTTP/1.1\r\nHost: localhost\r\n\r\n";
+                        OutputStream os = sock.getOutputStream();
+                        os.write(request.getBytes(StandardCharsets.US_ASCII));
+                        os.flush();
+
+                        // Wait until the server has registered (and parked) the sleep.
+                        TestUtils.assertEventually(
+                                () -> Assert.assertTrue("sleep did not register", sleepQueryId.get() != Long.MIN_VALUE),
+                                10
+                        );
+                        final long queryId = sleepQueryId.get();
+                        TestUtils.assertEventually(
+                                () -> Assert.assertTrue("sleep continuation never parked",
+                                        serverMain.getEngine().getTimerShards().size() > timerShardsBefore),
+                                10
+                        );
+                        Assert.assertNotNull("sleep ended before the client disconnected", registry.getEntry(queryId));
+
+                        // Bare FIN: the server has not written a response yet, so the
+                        // client's receive buffer is empty and close() sends a graceful
+                        // FIN, not RST.
+                        sock.close();
+
+                        long closeMs = System.currentTimeMillis();
+                        long endedAfterMs = awaitQueryEnded(registry, queryId, closeMs);
+
+                        Assert.assertTrue(
+                                "sleep(3600) never ended within 20s of the HTTP client closing the connection",
+                                endedAfterMs >= 0
+                        );
+                        Assert.assertTrue(
+                                "parked sleep did not abort promptly after the HTTP client closed its connection: ended "
+                                        + endedAfterMs + " ms later.",
+                                endedAfterMs < 3_000
+                        );
+                    }
+                } finally {
+                    registry.setListener(null);
+                }
+            }
+        });
     }
 
     @Test
@@ -109,8 +350,8 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             // Two-phase test on a single-worker pool with sleep(60) parked:
             //   1. While sleep is parked but the connection is still alive, a
             //      concurrent SELECT 1 on a fresh connection must complete
-            //      promptly -- proves the carrier is freed (TimerCont, not
-            //      Os.sleep).
+            //      promptly -- proves suspension frees the carrier instead of
+            //      calling Os.sleep.
             //   2. After force-closing the sleeping connection from outside the
             //      executing thread, the sleep thread must exit within a
             //      wake-interval window -- proves the server-side breaker detects
@@ -214,10 +455,8 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
     @Test
     public void testSleepCancelledByStatementCancel() throws Exception {
         assertMemoryLeak(() -> {
-            // Statement.cancel() sends a PG CancelRequest. The server trips the
-            // circuit breaker, the parked cont resumes on the next wake interval,
-            // observes the trip on the breaker probe, and throws.
             try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL.getEnvVarName(), "30s");
                 put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "120s");
             }})) {
                 serverMain.start();
@@ -226,11 +465,15 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                         Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
                         Statement stmt = conn.createStatement()
                 ) {
-                    CountDownLatch sleepStarted = new CountDownLatch(1);
+                    CountDownLatch queryStarted = new CountDownLatch(1);
+                    serverMain.getEngine().getQueryRegistry().setListener((query, queryId, executionContext) -> {
+                        if (Chars.contains(query, "sleep(60")) {
+                            queryStarted.countDown();
+                        }
+                    });
                     AtomicReference<Throwable> outcome = new AtomicReference<>();
                     Thread sleeper = new Thread(() -> {
                         try {
-                            sleepStarted.countDown();
                             stmt.executeQuery("sleep(60)");
                             outcome.set(new AssertionError("expected cancellation"));
                         } catch (PSQLException expected) {
@@ -242,22 +485,25 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                     sleeper.setDaemon(true);
                     sleeper.start();
 
-                    Assert.assertTrue("sleep did not start", sleepStarted.await(5, TimeUnit.SECONDS));
-                    Thread.sleep(300);
+                    try {
+                        Assert.assertTrue("sleep query did not start", queryStarted.await(5, TimeUnit.SECONDS));
 
-                    long t0 = System.currentTimeMillis();
-                    stmt.cancel();
-                    sleeper.join(5_000);
-                    long elapsed = System.currentTimeMillis() - t0;
+                        long t0 = System.currentTimeMillis();
+                        stmt.cancel();
+                        sleeper.join(5_000);
+                        long elapsed = System.currentTimeMillis() - t0;
 
-                    Assert.assertFalse("sleep thread did not exit after cancel", sleeper.isAlive());
-                    if (outcome.get() != null) {
-                        throw new AssertionError("sleep cancellation failed", outcome.get());
+                        Assert.assertFalse("sleep thread did not exit after cancel", sleeper.isAlive());
+                        if (outcome.get() != null) {
+                            throw new AssertionError("sleep cancellation failed", outcome.get());
+                        }
+                        Assert.assertTrue(
+                                "cancel took too long to take effect: " + elapsed + " ms",
+                                elapsed < 2_000
+                        );
+                    } finally {
+                        serverMain.getEngine().getQueryRegistry().setListener(null);
                     }
-                    Assert.assertTrue(
-                            "cancel took too long to take effect: " + elapsed + " ms",
-                            elapsed < 2_000
-                    );
                 }
             }
         });
@@ -269,7 +515,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             // Single-worker pool. Issuing sleep(2) on one connection must not pin the
             // worker; a concurrent SELECT on a different connection must return well
             // inside the sleep window. This is the load-bearing behaviour test for
-            // TimerCont vs. Os.sleep.
+            // timer-backed suspension vs. Os.sleep.
             try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "30s");
             }})) {
@@ -319,6 +565,16 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testHttpSleepsOnFiberWhilePgFiberDisabled() throws Exception {
+        assertProtocolSleepsOnFiberWhilePeerOptedOut(true);
+    }
+
+    @Test
+    public void testPgSleepsOnFiberWhileHttpFiberDisabled() throws Exception {
+        assertProtocolSleepsOnFiberWhilePeerOptedOut(false);
     }
 
     @Test
@@ -420,7 +676,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             //   - zero-second sleep (no shard registration; instant return)
             //   - fractional sub-wake-interval sleep (single timer chunk)
             //   - multi-wake-interval sleep (chunked re-arm path)
-            //   - statement.cancel() mid-sleep (breaker trip via PG cancel request)
+            //   - statement.cancel() mid-sleep (direct cancellation wait signal)
             //   - connection close mid-sleep (breaker trip via broken FD)
             //   - HTTP /exec sleep
             //   - tight loop of many short sleeps on a single connection
@@ -438,11 +694,19 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             final int timerShardCount = 2;
             // Many more client threads than workers (>>workerCount) so the
             // parallelism check has a wide margin: with carriers pinned by
-            // Os.sleep, ratio is bounded by workerCount; with TimerCont, ratio
-            // can approach clientThreads. The bigger the gap, the less
-            // ambiguous the failure mode.
-            final int clientThreads = 64;
-            final int iterationsPerThread = 8;
+            // Os.sleep, ratio is bounded by workerCount; with fiber suspension,
+            // ratio can approach clientThreads. Keep the random coverage in the
+            // iteration count, not the thread count: the rarer interleavings
+            // come from concurrency, not from raw client threads, and 16 is
+            // already 8x the worker count -- a wide enough margin for the
+            // parallelism gap. Cranking the thread count higher only
+            // oversubscribes small and heavily loaded CI agents (Windows in
+            // particular), starving the PG accept/dispatch path badly enough
+            // that a cancel request can miss the 20s
+            // registration / 30s join windows runStatementCancelFuzz asserts.
+            final int totalIterations = 512;
+            final int clientThreads = 16;
+            final int iterationsPerThread = (totalIterations + clientThreads - 1) / clientThreads;
 
             try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.SHARED_WORKER_COUNT.getEnvVarName(), String.valueOf(workerCount));
@@ -459,135 +723,245 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                 final CyclicBarrier startGate = new CyclicBarrier(clientThreads);
                 final CountDownLatch doneLatch = new CountDownLatch(clientThreads);
                 final AtomicInteger happyCount = new AtomicInteger();
-                final AtomicInteger cancelledCount = new AtomicInteger();
+                final AtomicInteger cancelAttemptCount = new AtomicInteger();
+                final AtomicInteger cancelNormalBeforeDeadlineCount = new AtomicInteger();
+                final AtomicInteger cancelNormalReturnCount = new AtomicInteger();
+                final AtomicInteger cancelObservedCount = new AtomicInteger();
                 final AtomicInteger droppedCount = new AtomicInteger();
                 // Sum of sleep durations actually completed on the server (only happy
                 // scenarios; cancelled/dropped contribute nothing reliable). Compared
                 // against the busy-section wall-clock to prove sleeps did NOT execute
-                // serially: with proper TimerCont semantics workers are freed during
-                // the sleep, so the sum of slept time grows faster than wall time.
+                // serially: suspension frees workers during the sleep, so the sum of
+                // slept time grows faster than wall time.
                 final AtomicLong totalSleptMillis = new AtomicLong();
                 final ConcurrentLinkedQueue<Throwable> failures = new ConcurrentLinkedQueue<>();
                 final AtomicLong busyStartMillis = new AtomicLong();
+                final ConcurrentHashMap<String, CancelProbe> cancelProbes = new ConcurrentHashMap<>();
+                final AtomicLong maxCancelRegistrationLatencyNs = new AtomicLong();
+                final AtomicLong maxCancelToExitLatencyNs = new AtomicLong();
 
-                for (int i = 0; i < clientThreads; i++) {
-                    final long threadSeed1 = rnd.nextLong();
-                    final long threadSeed2 = rnd.nextLong();
-                    final int threadId = i;
-                    Thread t = new Thread(() -> {
-                        Rnd tr = new Rnd(threadSeed1, threadSeed2);
-                        try {
-                            startGate.await();
-                            // First thread past the gate stamps the busy section start.
-                            busyStartMillis.compareAndSet(0L, System.currentTimeMillis());
-                            for (int j = 0; j < iterationsPerThread; j++) {
-                                int scenario = tr.nextInt(8);
-                                try {
-                                    switch (scenario) {
-                                        case 0:
-                                            runHappyPgSleep(tr.nextDouble() * 0.3, happyCount, totalSleptMillis);
-                                            break;
-                                        case 1:
-                                            runHappyPgSleep(0.0, happyCount, totalSleptMillis);
-                                            break;
-                                        case 2:
-                                            // Sub-wake-interval (under 100ms): single timer chunk.
-                                            runHappyPgSleep(0.05 + tr.nextDouble() * 0.04, happyCount, totalSleptMillis);
-                                            break;
-                                        case 3:
-                                            // Multi-wake-interval: chunked re-arm path.
-                                            runHappyPgSleep(0.25 + tr.nextDouble() * 0.25, happyCount, totalSleptMillis);
-                                            break;
-                                        case 4:
-                                            runStatementCancelFuzz(serverMain.getEngine(), cancelledCount);
-                                            break;
-                                        case 5:
-                                            runConnectionDropFuzz(tr, droppedCount);
-                                            break;
-                                        case 6:
-                                            runHttpHappySleep(tr.nextDouble() * 0.3, happyCount, totalSleptMillis);
-                                            break;
-                                        case 7:
-                                            runRepeatedShortSleeps(tr, happyCount, totalSleptMillis);
-                                            break;
+                serverMain.getEngine().getQueryRegistry().setListener((query, queryId, executionContext) -> {
+                    final CancelProbe probe = cancelProbes.get(query.toString());
+                    if (probe != null) {
+                        probe.register(queryId);
+                    }
+                });
+
+                try {
+                    for (int i = 0; i < clientThreads; i++) {
+                        final long threadSeed1 = rnd.nextLong();
+                        final long threadSeed2 = rnd.nextLong();
+                        final int threadId = i;
+                        Thread t = new Thread(() -> {
+                            Rnd tr = new Rnd(threadSeed1, threadSeed2);
+                            try {
+                                startGate.await();
+                                // First thread past the gate stamps the busy section start.
+                                busyStartMillis.compareAndSet(0L, System.currentTimeMillis());
+                                for (int j = 0; j < iterationsPerThread; j++) {
+                                    int scenario = tr.nextInt(8);
+                                    try {
+                                        switch (scenario) {
+                                            case 0:
+                                                runHappyPgSleep(tr.nextDouble() * 0.3, happyCount, totalSleptMillis);
+                                                break;
+                                            case 1:
+                                                runHappyPgSleep(0.0, happyCount, totalSleptMillis);
+                                                break;
+                                            case 2:
+                                                // Sub-wake-interval (under 100ms): single timer chunk.
+                                                runHappyPgSleep(0.05 + tr.nextDouble() * 0.04, happyCount, totalSleptMillis);
+                                                break;
+                                            case 3:
+                                                // Multi-wake-interval: chunked re-arm path.
+                                                runHappyPgSleep(0.25 + tr.nextDouble() * 0.25, happyCount, totalSleptMillis);
+                                                break;
+                                            case 4:
+                                                runStatementCancelFuzz(
+                                                        cancelProbes,
+                                                        cancelAttemptCount,
+                                                        cancelObservedCount,
+                                                        cancelNormalReturnCount,
+                                                        cancelNormalBeforeDeadlineCount,
+                                                        maxCancelRegistrationLatencyNs,
+                                                        maxCancelToExitLatencyNs
+                                                );
+                                                break;
+                                            case 5:
+                                                runConnectionDropFuzz(tr, droppedCount);
+                                                break;
+                                            case 6:
+                                                runHttpHappySleep(tr.nextDouble() * 0.3, happyCount, totalSleptMillis);
+                                                break;
+                                            case 7:
+                                                runRepeatedShortSleeps(tr, happyCount, totalSleptMillis);
+                                                break;
+                                        }
+                                    } catch (Throwable iterError) {
+                                        failures.add(new AssertionError(
+                                                "thread=" + threadId + " iter=" + j + " scenario=" + scenario
+                                                        + "; " + iterError.getMessage(),
+                                                iterError
+                                        ));
                                     }
-                                } catch (Throwable iterError) {
-                                    failures.add(new AssertionError(
-                                            "thread=" + threadId + " iter=" + j + " scenario=" + scenario
-                                                    + "; " + iterError.getMessage(),
-                                            iterError
-                                    ));
                                 }
+                            } catch (Throwable outer) {
+                                failures.add(outer);
+                            } finally {
+                                doneLatch.countDown();
                             }
-                        } catch (Throwable outer) {
-                            failures.add(outer);
-                        } finally {
-                            doneLatch.countDown();
-                        }
-                    }, "sleep-fuzz-" + threadId);
-                    // Platform threads (not virtual): isolates the framework under
-                    // test from JEP 491 / virtual-thread monitor-handoff
-                    // interactions, so any stall surfaces against the worker/timer
-                    // hot paths and is not contaminated by carrier-pool semantics
-                    // on the client side.
-                    t.setDaemon(true);
-                    t.start();
-                }
+                        }, "sleep-fuzz-" + threadId);
+                        // Platform threads (not virtual): isolates the framework under
+                        // test from JEP 491 / virtual-thread monitor-handoff
+                        // interactions, so any stall surfaces against the worker/timer
+                        // hot paths and is not contaminated by carrier-pool semantics
+                        // on the client side.
+                        t.setDaemon(true);
+                        t.start();
+                    }
 
-                // Hard upper bound: 12 threads * 25 iters * worst-case ~600ms = ~3 min.
-                // Allow plenty of headroom; the test timeout still bounds the run.
-                Assert.assertTrue(
-                        "fuzz did not complete in time, seeds=" + seed0 + "L, " + seed1 + "L",
-                        doneLatch.await(150, TimeUnit.SECONDS)
-                );
-                long busyEndMillis = System.currentTimeMillis();
-                long busyWallMillis = busyEndMillis - busyStartMillis.get();
-
-                if (!failures.isEmpty()) {
-                    Throwable head = failures.peek();
-                    AssertionError summary = new AssertionError(
-                            "fuzz produced " + failures.size() + " failures (seeds=" + seed0 + "L, " + seed1 + "L; first: "
-                                    + head.getMessage()
+                    // Hard upper bound with plenty of headroom for slow CI scheduling;
+                    // the test timeout still bounds the run.
+                    Assert.assertTrue(
+                            "fuzz did not complete in time, seeds=" + seed0 + "L, " + seed1 + "L, clientThreads="
+                                    + clientThreads + ", iterationsPerThread=" + iterationsPerThread,
+                            doneLatch.await(150, TimeUnit.SECONDS)
                     );
-                    summary.initCause(head);
-                    throw summary;
+                    long busyEndMillis = System.currentTimeMillis();
+                    long busyWallMillis = busyEndMillis - busyStartMillis.get();
+
+                    if (!failures.isEmpty()) {
+                        Throwable head = failures.peek();
+                        AssertionError summary = new AssertionError(
+                                "fuzz produced " + failures.size() + " failures (seeds=" + seed0 + "L, " + seed1 + "L"
+                                        + ", clientThreads=" + clientThreads + ", iterationsPerThread=" + iterationsPerThread + "; first: "
+                                        + head.getMessage()
+                        );
+                        summary.initCause(head);
+                        throw summary;
+                    }
+
+                    // Final liveness check: the server must still serve a query promptly
+                    // after a load of cancellations, drops and concurrent sleeps.
+                    long probeStart = System.currentTimeMillis();
+                    try (
+                            Connection probeConn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                            Statement probeStmt = probeConn.createStatement();
+                            ResultSet rs = probeStmt.executeQuery("SELECT 1")
+                    ) {
+                        Assert.assertTrue(rs.next());
+                        Assert.assertEquals(1, rs.getInt(1));
+                    }
+                    long probeElapsed = System.currentTimeMillis() - probeStart;
+                    Assert.assertTrue(
+                            "post-fuzz SELECT 1 took too long: " + probeElapsed + " ms (seeds=" + seed0 + "L, " + seed1 + "L)",
+                            probeElapsed < 2_000
+                    );
+
+                    long sumSleptMillis = totalSleptMillis.get();
+                    LOG.info().$("sleep fuzz completed [happy=").$(happyCount.get())
+                            .$(", cancelAttempts=").$(cancelAttemptCount.get())
+                            .$(", cancelObserved=").$(cancelObservedCount.get())
+                            .$(", cancelNormal=").$(cancelNormalReturnCount.get())
+                            .$(", cancelNormalBeforeDeadline=").$(cancelNormalBeforeDeadlineCount.get())
+                            .$(", dropped=").$(droppedCount.get())
+                            .$(", failures=").$(failures.size())
+                            .$(", busyWallMs=").$(busyWallMillis)
+                            .$(", sumSleptMs=").$(sumSleptMillis)
+                            .$(", parallelism=").$((double) sumSleptMillis / Math.max(1, busyWallMillis))
+                            .$(", cancelMaxRegistrationMs=").$(TimeUnit.NANOSECONDS.toMillis(maxCancelRegistrationLatencyNs.get()))
+                            .$(", cancelMaxExitMs=").$(TimeUnit.NANOSECONDS.toMillis(maxCancelToExitLatencyNs.get()))
+                            .$(", clientThreads=").$(clientThreads)
+                            .$(", iterationsPerThread=").$(iterationsPerThread)
+                            .$(", seeds=").$(seed0).$("L, ").$(seed1).$("L")
+                            .$(']').$();
+
+                    // Did we actually exercise each path? Probabilistic but at >=512
+                    // scenario selections with 8 buckets we should hit each at least a few times.
+                    Assert.assertTrue("no happy sleeps ran (seeds=" + seed0 + "L, " + seed1 + "L)", happyCount.get() > 0);
+                    Assert.assertTrue("no statement cancel attempts ran (seeds=" + seed0 + "L, " + seed1 + "L)", cancelAttemptCount.get() > 0);
+                    Assert.assertTrue("no dropped sleeps ran (seeds=" + seed0 + "L, " + seed1 + "L)", droppedCount.get() > 0);
+                } finally {
+                    serverMain.getEngine().getQueryRegistry().setListener(null);
+                    cancelProbes.clear();
                 }
-
-                // Final liveness check: the server must still serve a query promptly
-                // after a load of cancellations, drops and concurrent sleeps.
-                long probeStart = System.currentTimeMillis();
-                try (
-                        Connection probeConn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
-                        Statement probeStmt = probeConn.createStatement();
-                        ResultSet rs = probeStmt.executeQuery("SELECT 1")
-                ) {
-                    Assert.assertTrue(rs.next());
-                    Assert.assertEquals(1, rs.getInt(1));
-                }
-                long probeElapsed = System.currentTimeMillis() - probeStart;
-                Assert.assertTrue(
-                        "post-fuzz SELECT 1 took too long: " + probeElapsed + " ms (seeds=" + seed0 + "L, " + seed1 + "L)",
-                        probeElapsed < 2_000
-                );
-
-                long sumSleptMillis = totalSleptMillis.get();
-                LOG.info().$("sleep fuzz completed [happy=").$(happyCount.get())
-                        .$(", cancelled=").$(cancelledCount.get())
-                        .$(", dropped=").$(droppedCount.get())
-                        .$(", failures=").$(failures.size())
-                        .$(", busyWallMs=").$(busyWallMillis)
-                        .$(", sumSleptMs=").$(sumSleptMillis)
-                        .$(", parallelism=").$((double) sumSleptMillis / Math.max(1, busyWallMillis))
-                        .$(", seeds=").$(seed0).$("L, ").$(seed1).$("L")
-                        .$(']').$();
-
-                // Did we actually exercise each path? Probabilistic but at 12*25=300
-                // iterations with 8 buckets we should hit each at least a few times.
-                Assert.assertTrue("no happy sleeps ran (seeds=" + seed0 + "L, " + seed1 + "L)", happyCount.get() > 0);
-                Assert.assertTrue("no cancelled sleeps ran (seeds=" + seed0 + "L, " + seed1 + "L)", cancelledCount.get() > 0);
-                Assert.assertTrue("no dropped sleeps ran (seeds=" + seed0 + "L, " + seed1 + "L)", droppedCount.get() > 0);
             }
         });
+    }
+
+    private void assertProtocolSleepsOnFiberWhilePeerOptedOut(boolean isSleepOverHttp) throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(PropertyKey.HTTP_WORKER_FIBER_ENABLED.getEnvVarName(), Boolean.toString(isSleepOverHttp));
+                put(PropertyKey.HTTP_WORKER_COUNT.getEnvVarName(), "0");
+                put(PropertyKey.PG_WORKER_FIBER_ENABLED.getEnvVarName(), Boolean.toString(!isSleepOverHttp));
+                put(PropertyKey.PG_WORKER_COUNT.getEnvVarName(), "0");
+                put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "30s");
+                put(PropertyKey.SHARED_NETWORK_WORKER_COUNT.getEnvVarName(), "1");
+            }})) {
+                serverMain.start();
+
+                final CountDownLatch queryStarted = new CountDownLatch(1);
+                serverMain.getEngine().getQueryRegistry().setListener((query, queryId, executionContext) -> {
+                    if (Chars.contains(query, "sleep(2")) {
+                        queryStarted.countDown();
+                    }
+                });
+
+                final AtomicReference<Throwable> sleepOutcome = new AtomicReference<>();
+                final AtomicInteger completedCount = new AtomicInteger();
+                final AtomicLong totalSleptMillis = new AtomicLong();
+                final Thread sleeper = new Thread(() -> {
+                    try {
+                        if (isSleepOverHttp) {
+                            runHttpHappySleep(2, completedCount, totalSleptMillis);
+                        } else {
+                            runHappyPgSleep(2, completedCount, totalSleptMillis);
+                        }
+                    } catch (Throwable th) {
+                        sleepOutcome.set(th);
+                    }
+                }, "shared-network-sleep");
+                sleeper.setDaemon(true);
+                sleeper.start();
+
+                try {
+                    Assert.assertTrue("sleep query did not start", queryStarted.await(5, TimeUnit.SECONDS));
+                    final long probeStart = System.currentTimeMillis();
+                    try (
+                            Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                            Statement stmt = conn.createStatement();
+                            ResultSet rs = stmt.executeQuery("SELECT 1")
+                    ) {
+                        Assert.assertTrue(rs.next());
+                        Assert.assertEquals(1, rs.getInt(1));
+                    }
+                    final long probeElapsed = System.currentTimeMillis() - probeStart;
+                    Assert.assertTrue("shared network worker was pinned for " + probeElapsed + " ms", probeElapsed < 1_000);
+
+                    sleeper.join(10_000);
+                    Assert.assertFalse("sleep thread did not finish", sleeper.isAlive());
+                    if (sleepOutcome.get() != null) {
+                        throw new AssertionError("sleep thread failed", sleepOutcome.get());
+                    }
+                    Assert.assertEquals(1, completedCount.get());
+                    Assert.assertEquals(2_000, totalSleptMillis.get());
+                } finally {
+                    serverMain.getEngine().getQueryRegistry().setListener(null);
+                }
+            }
+        });
+    }
+
+    private static long awaitQueryEnded(QueryRegistry registry, long queryId, long closeMs) {
+        long deadlineMs = closeMs + 20_000;
+        while (System.currentTimeMillis() < deadlineMs) {
+            if (registry.getEntry(queryId) == null) {
+                return System.currentTimeMillis() - closeMs;
+            }
+            Os.sleep(50);
+        }
+        return -1;
     }
 
     private static void drainResponse(Response response, StringSink sink) {
@@ -690,8 +1064,8 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
     }
 
     private static void runRepeatedShortSleeps(Rnd tr, AtomicInteger counter, AtomicLong totalSleptMillis) throws SQLException {
-        // Tight loop on one connection; each iteration goes through TimerCont +
-        // suspend + resume. Verifies the per-call entry lifecycle is clean.
+        // Tight loop on one connection; each iteration goes through timer
+        // registration, suspend, and resume. Verifies the per-call lifecycle.
         try (
                 Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
                 Statement stmt = conn.createStatement()
@@ -712,38 +1086,49 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
         }
     }
 
-    private static void runStatementCancelFuzz(CairoEngine engine, AtomicInteger counter) throws Exception {
-        // Per-call unique sleep argument: query_activity() exposes the SQL text
-        // verbatim, so this lets us pick out exactly our own in-flight call.
-        // An integer literal keeps the lexical form stable across locales.
+    private static void runStatementCancelFuzz(
+            ConcurrentHashMap<String, CancelProbe> cancelProbes,
+            AtomicInteger cancelAttemptCount,
+            AtomicInteger cancelObservedCount,
+            AtomicInteger cancelNormalReturnCount,
+            AtomicInteger cancelNormalBeforeDeadlineCount,
+            AtomicLong maxRegistrationLatencyNs,
+            AtomicLong maxCancelToExitLatencyNs
+    ) throws Exception {
+        // Per-call unique sleep argument: QueryRegistry exposes the SQL text
+        // verbatim to the test listener, so this lets us pick out exactly our
+        // own in-flight call. An integer literal keeps the lexical form stable
+        // across locales.
         final long uniqId = cancelFuzzSeq.incrementAndGet();
         final String sleepSql = "sleep(2." + (1_000_000 + uniqId) + ")";
-        final String activitySql = "select query_id from query_activity() where query = '" + sleepSql + "'";
-
-        // Thread-owned SQL context: the fuzz worker drives observation through
-        // the engine's published SQL surface (CairoEngine.select +
-        // query_activity()) instead of touching the QueryRegistry's pooled
-        // StringSink directly. Going through SQL keeps us off the entry pool's
-        // recycle path and matches how an operator would inspect activity.
-        final SqlExecutionContextImpl observerCtx = new SqlExecutionContextImpl(engine, 1)
-                .with(AllowAllSecurityContext.INSTANCE);
-        observerCtx.with(new AtomicBooleanCircuitBreaker(engine));
+        final CancelProbe probe = new CancelProbe(sleepSql);
+        if (cancelProbes.putIfAbsent(sleepSql, probe) != null) {
+            throw new AssertionError("duplicate cancel fuzz SQL [sql=" + sleepSql + "]");
+        }
 
         try (
                 Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
-                Statement stmt = conn.createStatement();
-                SqlCompiler compiler = engine.getSqlCompiler();
-                RecordCursorFactory activityFactory = CairoEngine.select(compiler, activitySql, observerCtx)
+                Statement stmt = conn.createStatement()
         ) {
             CountDownLatch started = new CountDownLatch(1);
             AtomicReference<Throwable> outcome = new AtomicReference<>();
             Thread runner = new Thread(() -> {
+                probe.runnerStartNs = System.nanoTime();
+                probe.runnerOutcome.set("running");
                 try {
                     started.countDown();
-                    stmt.executeQuery(sleepSql);
+                    try (ResultSet ignored = stmt.executeQuery(sleepSql)) {
+                        // Unexpected before cancellation unless the test thread
+                        // was descheduled long enough for natural completion.
+                    }
+                    probe.runnerExitNs = System.nanoTime();
+                    probe.runnerOutcome.set("normal");
                 } catch (PSQLException expected) {
-                    // good: cancel landed and the body unwound
+                    probe.runnerExitNs = System.nanoTime();
+                    probe.runnerOutcome.set("cancelled");
                 } catch (Throwable t) {
+                    probe.runnerExitNs = System.nanoTime();
+                    probe.runnerOutcome.set("unexpected: " + t.getClass().getName() + ": " + t.getMessage());
                     outcome.set(t);
                 }
             }, "sleep-fuzz-cancel-runner");
@@ -751,39 +1136,84 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             runner.start();
             Assert.assertTrue(started.await(5, TimeUnit.SECONDS));
 
-            // QueryRegistry.register() is the moment that wires the
-            // cancelledFlag through to the circuit breaker. A PG CancelRequest
-            // that arrives before this point is silently dropped. Waiting
-            // until our sleep is visible in query_activity() means the next
-            // wake-interval breaker probe (within ~100ms) will see the cancel.
-            final long pollDeadlineNs = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
-            boolean observed = false;
-            while (!observed && System.nanoTime() < pollDeadlineNs) {
-                try (RecordCursor cursor = activityFactory.getCursor(observerCtx)) {
-                    if (cursor.hasNext()) {
-                        observed = true;
-                    }
-                }
-                if (!observed) {
-                    Thread.sleep(2);
-                }
-            }
+            // The listener observes exact registration without retaining the
+            // registry's pooled query sink or polling query_activity(). It does
+            // not prove that the circuit breaker flag is already bound or that
+            // the PG CancelRequest will be delivered.
             Assert.assertTrue(
-                    "sleep was not registered within 20s [sql=" + sleepSql + "]",
-                    observed
+                    cancelProbeDiagnostics("sleep was not registered within 20s", probe),
+                    probe.registered.await(20, TimeUnit.SECONDS)
             );
+            updateMax(maxRegistrationLatencyNs, probe.registeredAtNs.get() - probe.runnerStartNs);
 
+            probe.cancelCallNs = System.nanoTime();
+            cancelAttemptCount.incrementAndGet();
             stmt.cancel();
-            // With the breaker bound, the runner exit is gated only by one
-            // wake-interval probe + response RTT; the long join is slack for
-            // slow CI hardware, not cover for a missed cancel.
+            // The runner must still make forward progress after a cancel
+            // attempt. A normal return is recorded as missed-cancel evidence,
+            // but this fuzz test keeps master-equivalent strictness and does
+            // not fail solely on that outcome.
             runner.join(30_000);
-            Assert.assertFalse("cancelled sleep runner did not exit [sql=" + sleepSql + "]", runner.isAlive());
+            Assert.assertFalse(cancelProbeDiagnostics("cancelled sleep runner did not exit", probe), runner.isAlive());
+            updateMax(maxCancelToExitLatencyNs, probe.runnerExitNs - probe.cancelCallNs);
             if (outcome.get() != null) {
-                throw new AssertionError("statement cancel scenario failed", outcome.get());
+                throw new AssertionError(cancelProbeDiagnostics("statement cancel scenario failed", probe), outcome.get());
+            }
+            if ("cancelled".equals(probe.runnerOutcome.get())) {
+                cancelObservedCount.incrementAndGet();
+            } else if ("normal".equals(probe.runnerOutcome.get())) {
+                cancelNormalReturnCount.incrementAndGet();
+                if (isCancelBeforeNaturalDeadline(probe)) {
+                    cancelNormalBeforeDeadlineCount.incrementAndGet();
+                }
+            } else {
+                throw new AssertionError(cancelProbeDiagnostics("statement cancel scenario ended without terminal outcome", probe));
+            }
+        } finally {
+            cancelProbes.remove(sleepSql, probe);
+        }
+    }
+
+    private static String cancelProbeDiagnostics(String reason, CancelProbe probe) {
+        final long registeredAtNs = probe.registeredAtNs.get();
+        return reason
+                + " [sql=" + probe.sleepSql
+                + ", queryId=" + probe.queryId.get()
+                + ", registered=" + (registeredAtNs > 0)
+                + ", registrationMs=" + nanosToMillisIfKnown(registeredAtNs - probe.runnerStartNs)
+                + ", cancelToExitMs=" + nanosToMillisIfKnown(probe.runnerExitNs - probe.cancelCallNs)
+                + ", cancelBeforeNaturalDeadline=" + isCancelBeforeNaturalDeadline(probe)
+                + ", outcome=" + probe.runnerOutcome.get()
+                + ']';
+    }
+
+    private static boolean isCancelBeforeNaturalDeadline(CancelProbe probe) {
+        final long registeredAtNs = probe.registeredAtNs.get();
+        final long cancelCallNs = probe.cancelCallNs;
+        if (registeredAtNs <= 0 || cancelCallNs <= 0) {
+            return false;
+        }
+        final long naturalCompletionNs = registeredAtNs + parseSleepDurationNanos(probe.sleepSql);
+        final long marginNs = TimeUnit.MILLISECONDS.toNanos(250);
+        return cancelCallNs + marginNs < naturalCompletionNs;
+    }
+
+    private static long nanosToMillisIfKnown(long nanos) {
+        return nanos > 0 ? TimeUnit.NANOSECONDS.toMillis(nanos) : -1;
+    }
+
+    private static long parseSleepDurationNanos(String sleepSql) {
+        final String seconds = sleepSql.substring("sleep(".length(), sleepSql.length() - 1);
+        return (long) (Double.parseDouble(seconds) * 1_000_000_000d);
+    }
+
+    private static void updateMax(AtomicLong max, long value) {
+        while (true) {
+            final long current = max.get();
+            if (value <= current || max.compareAndSet(current, value)) {
+                return;
             }
         }
-        counter.incrementAndGet();
     }
 
     private static String formatSeconds(double seconds) {
@@ -791,5 +1221,27 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
         // so commas don't sneak in on machines with German/French locales and
         // turn the decimal into a SQL parse error.
         return String.format(java.util.Locale.ROOT, "%.6f", seconds);
+    }
+
+    private static final class CancelProbe {
+        private final CountDownLatch registered = new CountDownLatch(1);
+        private final AtomicLong queryId = new AtomicLong(Long.MIN_VALUE);
+        private final AtomicLong registeredAtNs = new AtomicLong();
+        private final AtomicReference<String> runnerOutcome = new AtomicReference<>("not-started");
+        private final String sleepSql;
+        private volatile long cancelCallNs;
+        private volatile long runnerExitNs;
+        private volatile long runnerStartNs;
+
+        private CancelProbe(String sleepSql) {
+            this.sleepSql = sleepSql;
+        }
+
+        private void register(long queryId) {
+            if (this.queryId.compareAndSet(Long.MIN_VALUE, queryId)) {
+                registeredAtNs.set(System.nanoTime());
+                registered.countDown();
+            }
+        }
     }
 }

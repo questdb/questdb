@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
@@ -43,9 +44,11 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Optimized ASOF JOIN implementation for single symbol column joins that uses memoization
@@ -82,11 +85,11 @@ import io.questdb.std.Rows;
 public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private static final ArrayColumnTypes TYPES_KEY = new ArrayColumnTypes();
     private static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
-    private final AsOfJoinMemoizedRecordCursor cursor;
     private final boolean driveByCaching;
     private final int slaveSymbolColumnIndex;
     private final SymbolJoinKeyMapping symbolJoinKeyMapping;
     private final long toleranceInterval;
+    private AsOfJoinMemoizedRecordCursor cursor;
 
     public AsOfJoinMemoizedRecordCursorFactory(
             CairoConfiguration configuration,
@@ -133,12 +136,16 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         TimeFrameCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            // Bind before of(), which reopens rememberedSymbols before adopting the cursors.
+            cursor.setMemoryTracker(executionContext.getMemoryTracker());
             slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            // of() reopens rememberedSymbols before adopting the cursors, so close() here frees only the partial heap.
+            Misc.free(cursor);
             throw e;
         }
     }
@@ -164,10 +171,11 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(cursor);
+        final AsOfJoinMemoizedRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class AsOfJoinMemoizedRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
@@ -205,7 +213,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     slaveTimestampType,
                     configuration.getSqlAsOfJoinLookAhead()
             );
-            this.rememberedSymbols = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
+            this.rememberedSymbols = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE, false, false);
         }
 
         @Override
@@ -216,17 +224,23 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
 
         @Override
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            super.of(masterCursor, slaveCursor, circuitBreaker);
+            // Reopen rememberedSymbols before super.of() adopts the cursors so an open-time breach frees it exactly once.
             rememberedSymbols.reopen();
             rememberedSymbols.clear();
+            super.of(masterCursor, slaveCursor, circuitBreaker);
             symbolJoinKeyMapping.of(slaveCursor);
             earliestRowId = Long.MIN_VALUE;
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            // Bound lazily before of() reopens it; map malloc/free nets on the per-query counter.
+            rememberedSymbols.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toTop() {
             super.toTop();
-            // toTop() is called from super.of(), so we may end up here before we have reopened rememberedSymbols
             if (rememberedSymbols.isOpen()) {
                 rememberedSymbols.clear();
             }
@@ -490,7 +504,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     rowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi() - 1);
                 }
                 slaveTimeFrameCursor.recordAt(slaveRecB, rowId);
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             }
         }
     }

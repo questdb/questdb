@@ -37,13 +37,32 @@ import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.ServerConfiguration;
 import io.questdb.ServerMain;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.window.WindowMapState;
+import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.metrics.QueryTracingJob;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberTask;
+import io.questdb.mp.continuation.FiberWaitCoordinator;
+import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerWorkload;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
@@ -71,6 +90,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static org.junit.Assert.assertFalse;
@@ -131,6 +151,105 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
                 int capacity = serverMain.getConfiguration().getCairoConfiguration().getSqlAsOfJoinShortCircuitCacheCapacity();
                 Assert.assertEquals(1000, capacity);
+            }
+        });
+    }
+
+    @Test
+    public void testCairoMemoryLimitsReload() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                CairoConfiguration cairoConfig = serverMain.getConfiguration().getCairoConfiguration();
+                // All three workloads default to unlimited.
+                Assert.assertEquals(0, cairoConfig.getQueryMemoryLimitBytes());
+                Assert.assertEquals(0, cairoConfig.getMatViewRefreshMemoryLimitBytes());
+                Assert.assertEquals(0, cairoConfig.getWalApplyMemoryLimitBytes());
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.query.memory.limit.bytes=1000000\n");
+                    w.write("cairo.mat.view.refresh.memory.limit.bytes=2000000\n");
+                    w.write("cairo.wal.apply.memory.limit.bytes=3000000\n");
+                }
+
+                assertReloadConfigEventually();
+
+                // The reloaded limits are visible through the config getters...
+                Assert.assertEquals(1_000_000, cairoConfig.getQueryMemoryLimitBytes());
+                Assert.assertEquals(2_000_000, cairoConfig.getMatViewRefreshMemoryLimitBytes());
+                Assert.assertEquals(3_000_000, cairoConfig.getWalApplyMemoryLimitBytes());
+
+                // ...and through a tracker freshly acquired after the reload, since the provider
+                // reads the configured limit on each acquisition.
+                assertTrackerLimit(serverMain, MemoryTrackerWorkload.QUERY, 1_000_000);
+                assertTrackerLimit(serverMain, MemoryTrackerWorkload.MAT_VIEW_REFRESH, 2_000_000);
+                assertTrackerLimit(serverMain, MemoryTrackerWorkload.WAL_APPLY, 3_000_000);
+            }
+        });
+    }
+
+    @Test
+    public void testQueryMemoryLimitReloadUnblocksQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                // Seed two tables whose hash join build map needs far more tracked memory
+                // than the low limit configured below. Seeding runs under the default
+                // unlimited limit, so it is never constrained. A hash join drives the breach
+                // because its build map fails at a single deterministic site with the
+                // per-query OOM message intact, keeping the client-visible error stable.
+                try (Connection conn = getConnection("admin", "quest")) {
+                    try (PreparedStatement stmt = conn.prepareStatement(
+                            "CREATE TABLE master AS (SELECT cast(x AS varchar) k FROM long_sequence(100_000))")) {
+                        stmt.execute();
+                    }
+                    try (PreparedStatement stmt = conn.prepareStatement(
+                            "CREATE TABLE slave AS (SELECT cast(x AS varchar) k, x AS v FROM long_sequence(100_000))")) {
+                        stmt.execute();
+                    }
+                }
+
+                final String query = "SELECT count(*) AS c FROM (SELECT master.k, slave.v FROM master JOIN slave ON k)";
+
+                // Configure a too-low per-query memory limit and reload it in.
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.query.memory.limit.bytes=65536\n");
+                }
+                assertReloadConfigEventually();
+                Assert.assertEquals(65_536, serverMain.getConfiguration().getCairoConfiguration().getQueryMemoryLimitBytes());
+
+                // The aggregation's hash map blows past 64 KiB, so the query fails with an
+                // out-of-memory error tagged with the QUERY workload.
+                try (
+                        Connection conn = getConnection("admin", "quest");
+                        PreparedStatement stmt = conn.prepareStatement(query)
+                ) {
+                    stmt.executeQuery();
+                    Assert.fail("expected out-of-memory error under the low query memory limit");
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "query memory limit exceeded");
+                    TestUtils.assertContains(e.getMessage(), "workload=QUERY");
+                }
+
+                // Bump the limit to unlimited and reload it in.
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.query.memory.limit.bytes=0\n");
+                }
+                assertReloadConfigEventually();
+                Assert.assertEquals(0, serverMain.getConfiguration().getCairoConfiguration().getQueryMemoryLimitBytes());
+
+                // The very same query now runs to completion: a freshly acquired tracker reads
+                // the reloaded (unlimited) limit.
+                try (
+                        Connection conn = getConnection("admin", "quest");
+                        PreparedStatement stmt = conn.prepareStatement(query);
+                        ResultSet rs = stmt.executeQuery()
+                ) {
+                    Assert.assertTrue(rs.next());
+                    Assert.assertEquals(100_000, rs.getLong(1));
+                }
             }
         });
     }
@@ -207,6 +326,130 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 // [5] Should we re-register, we'll get a different ID.
                 final long watchId2 = serverMain.getEngine().getConfigReloader().watch(listener);
                 Assert.assertNotEquals("re-register should return a new watchId", watchId, watchId2);
+            }
+        });
+    }
+
+    @Test
+    public void testFiberLimitsReloadIntoExistingRuntime() throws Exception {
+        assertFiberLimitsReloadIntoExistingRuntime(
+                "shared.network.worker",
+                DynamicPropServerConfiguration::getSharedWorkerPoolNetworkConfiguration
+        );
+    }
+
+    @Test
+    public void testFiberLimitsReloadIntoExistingRuntimeForHttp() throws Exception {
+        assertFiberLimitsReloadIntoExistingRuntime(
+                "http.worker",
+                DynamicPropServerConfiguration::getHttpServerConfiguration
+        );
+    }
+
+    @Test
+    public void testFiberLimitsReloadIntoExistingRuntimeForMatViewRefresh() throws Exception {
+        assertFiberLimitsReloadIntoExistingRuntime(
+                "mat.view.refresh.worker",
+                DynamicPropServerConfiguration::getMatViewRefreshPoolConfiguration
+        );
+    }
+
+    @Test
+    public void testFiberLimitsReloadIntoExistingRuntimeForPg() throws Exception {
+        assertFiberLimitsReloadIntoExistingRuntime(
+                "pg.worker",
+                DynamicPropServerConfiguration::getPGWireConfiguration
+        );
+    }
+
+    @Test
+    public void testFiberLimitsReloadIntoExistingRuntimeForSharedQuery() throws Exception {
+        assertFiberLimitsReloadIntoExistingRuntime(
+                "shared.query.worker",
+                DynamicPropServerConfiguration::getSharedWorkerPoolQueryConfiguration
+        );
+    }
+
+    private void assertFiberLimitsReloadIntoExistingRuntime(
+            String keyPrefix,
+            Function<DynamicPropServerConfiguration, WorkerPoolConfiguration> poolConfiguration
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter writer = new FileWriter(serverConf)) {
+                writer.write(keyPrefix + ".fiber.enabled=true\n");
+                writer.write(keyPrefix + ".fiber.max.live=2\n");
+                writer.write(keyPrefix + ".fiber.max.retained=1\n");
+                writer.write(keyPrefix + ".fiber.mount.budget=3\n");
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                final DynamicPropServerConfiguration configuration =
+                        (DynamicPropServerConfiguration) serverMain.getConfiguration();
+                try (WorkerPool pool = new WorkerPool(poolConfiguration.apply(configuration))) {
+                    final FiberRuntime runtime = pool.getFiberRuntime();
+
+                    try (FileWriter writer = new FileWriter(serverConf)) {
+                        writer.write(keyPrefix + ".fiber.enabled=true\n");
+                        writer.write(keyPrefix + ".fiber.max.live=5\n");
+                        writer.write(keyPrefix + ".fiber.max.retained=4\n");
+                        writer.write(keyPrefix + ".fiber.mount.budget=7\n");
+                    }
+
+                    Assert.assertTrue(configuration.reload());
+                    Assert.assertSame(runtime, pool.getFiberRuntime());
+                    Assert.assertEquals(5, runtime.getMaxLiveFiberCount());
+                    Assert.assertEquals(4, runtime.getMaxRetainedFiberCount());
+                    Assert.assertEquals(7, runtime.getMountBudget());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFiberMaxLiveIncreaseWakesCapacityWaiter() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter writer = new FileWriter(serverConf)) {
+                writer.write("shared.network.worker.fiber.max.live=2\n");
+                writer.write("shared.network.worker.fiber.max.retained=2\n");
+                writer.write("shared.network.worker.fiber.mount.budget=1\n");
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                final DynamicPropServerConfiguration configuration =
+                        (DynamicPropServerConfiguration) serverMain.getConfiguration();
+                try (WorkerPool pool = new WorkerPool(configuration.getSharedWorkerPoolNetworkConfiguration())) {
+                    final FiberRuntime runtime = pool.getFiberRuntime();
+                    final Fiber reservedFiber = runtime.tryReserveFiber();
+                    Assert.assertNotNull(reservedFiber);
+                    final AtomicLong wakeReason = new AtomicLong(FiberWaitCoordinator.REASON_NONE);
+                    final FiberTask waiter = new FiberTask() {
+                        @Override
+                        protected boolean runStep() {
+                            wakeReason.set(runtime.awaitCapacity());
+                            return true;
+                        }
+                    };
+                    try {
+                        Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(waiter));
+                        Assert.assertEquals(1, runtime.drain(1));
+                        Assert.assertFalse(waiter.isDone());
+                        Assert.assertEquals(1, runtime.getParkedFiberCount());
+
+                        try (FileWriter writer = new FileWriter(serverConf)) {
+                            writer.write("shared.network.worker.fiber.max.live=3\n");
+                            writer.write("shared.network.worker.fiber.max.retained=2\n");
+                            writer.write("shared.network.worker.fiber.mount.budget=1\n");
+                        }
+
+                        Assert.assertTrue(configuration.reload());
+                        Assert.assertEquals(1, runtime.drain(1));
+                        Assert.assertTrue(waiter.isDone());
+                        Assert.assertEquals(FiberWaitCoordinator.REASON_CAPACITY, wakeReason.get());
+                    } finally {
+                        runtime.releaseReservedFiber(reservedFiber, reservedFiber.getReservationEpoch());
+                        runtime.beginQuiesce();
+                        runtime.drain(64);
+                        runtime.awaitClosed();
+                    }
+                }
             }
         });
     }
@@ -1025,6 +1268,27 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testQwpBrowserTlsTerminationEnabled() throws Exception {
+        // The QWP upgrade processors read this flag off the object
+        // ServerConfiguration.getHttpServerConfiguration() returns, which is
+        // HttpServerConfigurationWrapper and not the PropServerConfiguration
+        // behind it. Asserting through PropServerConfiguration alone passes
+        // even when the wrapper drops the property on the floor.
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath() + "=true\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                Assert.assertTrue(
+                        serverMain.getConfiguration().getHttpServerConfiguration().isQwpBrowserTlsTerminationEnabled()
+                );
+            }
+        });
+    }
+
+    @Test
     public void testReloadDisabled() throws Exception {
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {
@@ -1521,6 +1785,74 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
         });
     }
 
+    @Test
+    public void testWindowMapFusionReload() throws Exception {
+        // The switch is read once per compile rather than held anywhere, so what the reload has
+        // to reach is the next compile - not the value alone. The assertion is therefore the
+        // binding a fresh compile produces, which is the only thing the two settings differ in:
+        // the results and the EXPLAIN plan are identical either way.
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                final CairoEngine engine = serverMain.getEngine();
+                try (SqlExecutionContext executionContext = new SqlExecutionContextImpl(engine, 1)
+                        .with(AllowAllSecurityContext.INSTANCE)) {
+                    engine.execute(
+                            "CREATE TABLE t (ts TIMESTAMP, k SYMBOL, x DOUBLE, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                            executionContext
+                    );
+                    Assert.assertTrue(serverMain.getConfiguration().getCairoConfiguration().isSqlWindowMapFusionEnabled());
+                    assertWindowMapFusion(engine, executionContext, true);
+
+                    try (FileWriter w = new FileWriter(serverConf)) {
+                        w.write("cairo.sql.window.map.fusion.enabled=false\n");
+                    }
+
+                    assertReloadConfigEventually();
+
+                    assertFalse(serverMain.getConfiguration().getCairoConfiguration().isSqlWindowMapFusionEnabled());
+                    assertWindowMapFusion(engine, executionContext, false);
+
+                    // And back, because an escape hatch a reload cannot undo is half of one.
+                    try (FileWriter w = new FileWriter(serverConf)) {
+                        w.write("cairo.sql.window.map.fusion.enabled=true\n");
+                    }
+
+                    assertReloadConfigEventually();
+
+                    Assert.assertTrue(serverMain.getConfiguration().getCairoConfiguration().isSqlWindowMapFusionEnabled());
+                    assertWindowMapFusion(engine, executionContext, true);
+                }
+            }
+        });
+    }
+
+    private static void assertWindowMapFusion(
+            CairoEngine engine,
+            SqlExecutionContext executionContext,
+            boolean expectedFused
+    ) throws SqlException {
+        final String sql = "SELECT ts, sum(x) OVER w, count(y) OVER w FROM t "
+                + "WINDOW w AS (PARTITION BY k ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)";
+        try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
+            // A projection wrapper can sit above the window factory, so the search walks the
+            // whole chain rather than unwrapping one known level.
+            RecordCursorFactory root = factory;
+            while (root != null && !(root instanceof WindowRecordCursorFactory)) {
+                root = root.getBaseFactory();
+            }
+            Assert.assertNotNull("no window factory in the tree", root);
+            final ObjList<WindowMapState> states = ((WindowRecordCursorFactory) root).getWindowMapStates();
+            if (expectedFused) {
+                Assert.assertNotNull("the compile bound no window map group", states);
+                Assert.assertEquals(1, states.size());
+            } else {
+                Assert.assertNull("the compile bound a window map group with fusion off", states);
+            }
+        }
+    }
+
     private static Connection getConnection(String user, String pass) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", user);
@@ -1563,6 +1895,19 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             }
             Os.sleep(nextSleepingTimeMillis);
             nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
+        }
+    }
+
+    private void assertTrackerLimit(ServerMain serverMain, MemoryTrackerWorkload workload, long expectedLimit) {
+        MemoryTracker tracker = serverMain.getEngine().getMemoryTrackerProvider().acquire(
+                AllowAllSecurityContext.INSTANCE,
+                1,
+                workload
+        );
+        try {
+            Assert.assertEquals(expectedLimit, tracker.getLimit());
+        } finally {
+            tracker.close();
         }
     }
 

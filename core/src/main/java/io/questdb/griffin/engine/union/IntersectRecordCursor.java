@@ -29,9 +29,9 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 class IntersectRecordCursor extends AbstractSetRecordCursor {
@@ -47,7 +47,7 @@ class IntersectRecordCursor extends AbstractSetRecordCursor {
         this.mapA = mapA;
         this.mapB = mapB;
         this.recordSink = recordSink;
-        this.isOpen = true;
+        this.isOpen = false;
     }
 
     @Override
@@ -92,7 +92,7 @@ class IntersectRecordCursor extends AbstractSetRecordCursor {
                     return true;
                 }
             }
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         }
         return false;
     }
@@ -128,7 +128,7 @@ class IntersectRecordCursor extends AbstractSetRecordCursor {
             MapKey keyB = mapB.withKey();
             keyB.put(recordB, recordSink);
             keyB.createValue();
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         }
         // this is an optimisation to release TableReader in case "this"
         // cursor lingers around. If there is exception or circuit breaker fault
@@ -136,14 +136,16 @@ class IntersectRecordCursor extends AbstractSetRecordCursor {
         cursorB = Misc.free(cursorB);
     }
 
-    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionContext executionContext) throws SqlException {
         if (!isOpen) {
             isOpen = true;
+            mapA.setMemoryTracker(executionContext.getMemoryTracker());
+            mapB.setMemoryTracker(executionContext.getMemoryTracker());
             mapA.reopen();
             mapB.reopen();
         }
 
-        super.of(cursorA, cursorB, circuitBreaker);
+        super.of(cursorA, cursorB, executionContext);
         recordA = cursorA.getRecord();
         recordB = cursorB.getRecord();
         isCursorBHashed = false;

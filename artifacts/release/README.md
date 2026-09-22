@@ -106,9 +106,9 @@ git checkout tags/7.1.1
 mvn clean package -DskipTests -P build-web-console,build-binaries
 ```
 
-The cross-platform `no-jre` JAR, however, must bundle the Rust library for **all** platforms. A
+The cross-platform `no-jre` JAR, however, must bundle the Rust library for **all supported** platforms. A
 single-host `mvn clean package` produces a `no-jre` JAR missing the other platforms' Rust libraries,
-and QuestDB will fail to start on them. To assemble it by hand, download the five `build-rust-*`
+and QuestDB will fail to start on them. To assemble it by hand, download the four `build-rust-*`
 artifacts from the workflow run (those jobs usually succeed even when packaging fails), drop each into
 the matching `core/target/classes/io/questdb/bin/<platform>/` directory, then package with `-DskipNative`
 and no `clean` (which would delete the libraries you just placed):
@@ -121,7 +121,6 @@ git checkout tags/7.1.1
 #   core/target/classes/io/questdb/bin/linux-x86-64/libquestdbr.so      (artifact rust-linux-x64)
 #   core/target/classes/io/questdb/bin/linux-aarch64/libquestdbr.so     (artifact rust-linux-arm64)
 #   core/target/classes/io/questdb/bin/darwin-aarch64/libquestdbr.dylib (artifact rust-macos-arm64)
-#   core/target/classes/io/questdb/bin/darwin-x86-64/libquestdbr.dylib  (artifact rust-macos-x64)
 #   core/target/classes/io/questdb/bin/windows-x86-64/questdbr.dll      (artifact rust-windows)
 
 mvn package -DskipTests -DskipNative -P build-web-console,build-binaries

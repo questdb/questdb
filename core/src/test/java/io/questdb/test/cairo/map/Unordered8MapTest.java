@@ -231,6 +231,34 @@ public class Unordered8MapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClearOnLazyMapDoesNotCrash() throws Exception {
+        // A lazily constructed map (openOnInit=false) keeps memStart == 0 until reopen(),
+        // so clear() must skip the backing memset instead of writing to address 0.
+        TestUtils.assertMemoryLeak(() -> {
+            SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+            try (Unordered8Map map = new Unordered8Map(ColumnType.LONG, valueTypes, 64, 0.8, 24, false)) {
+                Assert.assertFalse(map.isOpen());
+                map.clear();
+                Assert.assertFalse(map.isOpen());
+                Assert.assertEquals(0, map.size());
+
+                // The map remains usable after a real reopen().
+                map.reopen();
+                Assert.assertTrue(map.isOpen());
+                MapKey key = map.withKey();
+                key.putLong(42);
+                MapValue value = key.createValue();
+                Assert.assertTrue(value.isNew());
+                value.putLong(0, 1);
+                Assert.assertEquals(1, map.size());
+
+                map.clear();
+                Assert.assertEquals(0, map.size());
+            }
+        });
+    }
+
+    @Test
     public void testFuzz() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {

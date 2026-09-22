@@ -84,7 +84,7 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     ) {
         try {
             this.timestampIndex = metadata.getTimestampIndex();
-            this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetCacheMemorySize());
+            this.frameMemoryPool = new PageFrameMemoryPool(configuration);
             this.frameTimestampCache = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);
         } catch (Throwable th) {
             close();
@@ -165,6 +165,7 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
         this.sharedState = sharedState;
         this.frameCursor = frameCursor;
         this.timestampIndex = timestampIndex;
+        frameMemoryPool.setMemoryTracker(sharedState.getMemoryTracker());
         frameMemoryPool.of(sharedState.getAddressCache());
         record.of(frameCursor);
         // Initialize timestamp cache (2 entries per frame: tsLo, tsHi)

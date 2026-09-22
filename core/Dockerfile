@@ -6,7 +6,7 @@ ARG TARGETARCH
 # Pinned cargo-deny version used to regenerate THIRD_PARTY_LICENSES.txt.
 ARG CARGO_DENY_VERSION=0.19.8
 
-ENV GOSU_VERSION=1.19-go1.25.10
+ENV GOSU_VERSION=1.19-go1.25.14
 ENV DEBIAN_FRONTEND=noninteractive
 
 # 1) Base tools + Maven + build-essential (for native compilation)

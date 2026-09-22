@@ -48,7 +48,8 @@ import org.junit.Test;
 /**
  * Java-level regression guard for the CRC32 verification that
  * {@link ParquetMetaFileReader#resolveFooter(long)} performs on first open
- * (the {@code verifyChecksum0} call at the top of the method). Each test
+ * (the verified {@code createNativeReader} parse at the top of the method,
+ * whose handle is kept as the cached native reader). Each test
  * flips a single byte in a real on-disk {@code _pm}, opens it through the
  * production JNI path, and asserts a clean {@link CairoException} surfaces.
  * Without that wiring, the same flip would pass structural validation and be
@@ -120,7 +121,7 @@ public class ParquetMetaCrcCorruptionTest extends AbstractCairoTest {
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
                     reader.of(addr, size);
-                    Assert.assertTrue(reader.resolveFooter(Long.MAX_VALUE));
+                    Assert.assertTrue(reader.resolveLastFooter());
                     reader.clear();
                 } finally {
                     ff.munmap(addr, size, MemoryTag.MMAP_DEFAULT);
@@ -161,7 +162,7 @@ public class ParquetMetaCrcCorruptionTest extends AbstractCairoTest {
             Assert.assertNotEquals("openAndMapRO should not skip the file", 0L, addr);
             long size = reader.getFileSize();
             try {
-                reader.resolveFooter(Long.MAX_VALUE);
+                reader.resolveLastFooter();
                 Assert.fail("expected CairoException from CRC verification");
             } catch (CairoException e) {
                 Assert.assertTrue(e.getMessage(), e.getMessage().contains("checksum"));

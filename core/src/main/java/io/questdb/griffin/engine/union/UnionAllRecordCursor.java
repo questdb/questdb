@@ -24,15 +24,18 @@
 
 package io.questdb.griffin.engine.union;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAccessRecordCursor {
+class UnionAllRecordCursor extends AbstractUnionSymbolSourceCursor implements NoRandomAccessRecordCursor {
     private final NextMethod nextB = this::nextB;
     private final AbstractUnionRecord record;
     private NextMethod nextMethod;
@@ -54,6 +57,21 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
     }
 
     @Override
+    public void close() {
+        final RecordCursor cursorA = this.cursorA;
+        this.cursorA = null;
+        final RecordCursor cursorB = this.cursorB;
+        this.cursorB = null;
+        this.circuitBreaker = null;
+
+        Throwable failure = Misc.freeBestEffort(null, cursorA);
+        if (cursorB != cursorA) {
+            failure = Misc.freeBestEffort(failure, cursorB);
+        }
+        CairoException.rethrowCleanupFailure(failure);
+    }
+
+    @Override
     public Record getRecord() {
         return record;
     }
@@ -70,12 +88,7 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
 
     @Override
     public long size() {
-        final long sizeA = cursorA.size();
-        final long sizeB = cursorB.size();
-        if (sizeA == -1 || sizeB == -1) {
-            return -1;
-        }
-        return sizeA + sizeB;
+        return sumBranchSizes();
     }
 
     @Override
@@ -88,13 +101,16 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
         cursorA.skipRows(rowCount, maxRowsAfterSkip);
         if (rowCount.get() > 0) {
             cursorB.skipRows(rowCount, maxRowsAfterSkip);
+            isUsingCursorA = false;
             record.setAb(false);
             nextMethod = nextB;
+            updateSymbolSource();
         }
     }
 
     @Override
     public void toTop() {
+        isUsingCursorA = true;
         record.setAb(true);
         nextMethod = nextA;
         cursorA.toTop();
@@ -110,13 +126,15 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
     }
 
     private boolean switchToSlaveCursor() {
+        isUsingCursorA = false;
         record.setAb(false);
         nextMethod = nextB;
+        updateSymbolSource();
         return nextMethod.next();
     }
 
-    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
-        super.of(cursorA, cursorB, circuitBreaker);
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionContext executionContext) throws SqlException {
+        super.of(cursorA, cursorB, executionContext);
         record.of(cursorA.getRecord(), cursorB.getRecord());
         toTop();
     }

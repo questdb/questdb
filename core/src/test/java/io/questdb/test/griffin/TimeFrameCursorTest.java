@@ -61,6 +61,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.fuzz.FailureFileFacade;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -133,7 +134,8 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                             pageFrameCursor,
                             sqlExecutionContext.getPageFrameMinRows(),
                             sqlExecutionContext.getPageFrameMaxRows(),
-                            1
+                            1,
+                            sqlExecutionContext.getMemoryTracker()
                     );
 
                     Assert.assertEquals(0, reader.getOpenPartitionCount());
@@ -182,7 +184,8 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                             pageFrameCursor.isExternal(),
                             sqlExecutionContext.getPageFrameMinRows(),
                             sqlExecutionContext.getPageFrameMaxRows(),
-                            sqlExecutionContext.getSharedQueryWorkerCount()
+                            sqlExecutionContext.getSharedQueryWorkerCount(),
+                            sqlExecutionContext.getMemoryTracker()
                     );
 
                     int partitionCount = sharedState.getPartitionCount();
@@ -268,7 +271,8 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                             pageFrameCursor.isExternal(),
                             sqlExecutionContext.getPageFrameMinRows(),
                             sqlExecutionContext.getPageFrameMaxRows(),
-                            sqlExecutionContext.getSharedQueryWorkerCount()
+                            sqlExecutionContext.getSharedQueryWorkerCount(),
+                            sqlExecutionContext.getMemoryTracker()
                     );
                     cursor.of(sharedState, pageFrameCursor, metadata.getTimestampIndex());
 
@@ -339,7 +343,8 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                             pageFrameCursor.isExternal(),
                             sqlExecutionContext.getPageFrameMinRows(),
                             sqlExecutionContext.getPageFrameMaxRows(),
-                            sqlExecutionContext.getSharedQueryWorkerCount()
+                            sqlExecutionContext.getSharedQueryWorkerCount(),
+                            sqlExecutionContext.getMemoryTracker()
                     );
                     cursor.of(sharedState, pageFrameCursor, metadata.getTimestampIndex());
 
@@ -852,7 +857,8 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                             pageFrameCursor,
                             sqlExecutionContext.getPageFrameMinRows(),
                             sqlExecutionContext.getPageFrameMaxRows(),
-                            1
+                            1,
+                            sqlExecutionContext.getMemoryTracker()
                     );
                     cursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
 
@@ -903,7 +909,8 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                             pageFrameCursor,
                             sqlExecutionContext.getPageFrameMinRows(),
                             sqlExecutionContext.getPageFrameMaxRows(),
-                            1
+                            1,
+                            sqlExecutionContext.getMemoryTracker()
                     );
                     cursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
                     int frameCount = countFrames(cursor);
@@ -962,7 +969,8 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                             pageFrameCursor,
                             sqlExecutionContext.getPageFrameMinRows(),
                             sqlExecutionContext.getPageFrameMaxRows(),
-                            1
+                            1,
+                            sqlExecutionContext.getMemoryTracker()
                     );
                     cursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
 
@@ -1137,7 +1145,8 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                             pageFrameCursor,
                             sqlExecutionContext.getPageFrameMinRows(),
                             sqlExecutionContext.getPageFrameMaxRows(),
-                            1
+                            1,
+                            sqlExecutionContext.getMemoryTracker()
                     );
                     cursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
 
@@ -1188,7 +1197,8 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                             pageFrameCursor,
                             sqlExecutionContext.getPageFrameMinRows(),
                             sqlExecutionContext.getPageFrameMaxRows(),
-                            1
+                            1,
+                            sqlExecutionContext.getMemoryTracker()
                     );
                     cursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
 
@@ -1239,7 +1249,8 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                             pageFrameCursor,
                             sqlExecutionContext.getPageFrameMinRows(),
                             sqlExecutionContext.getPageFrameMaxRows(),
-                            1
+                            1,
+                            sqlExecutionContext.getMemoryTracker()
                     );
                     cursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
 
@@ -1869,7 +1880,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                     return 1000;
                 }
             };
-            WorkerPool pool = new WorkerPool(() -> 2);
+            WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(pool, runnable, configuration, LOG);
         });
     }
@@ -1930,7 +1941,8 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                     pageFrameCursor.isExternal(),
                     sqlExecutionContext.getPageFrameMinRows(),
                     sqlExecutionContext.getPageFrameMaxRows(),
-                    sqlExecutionContext.getSharedQueryWorkerCount()
+                    sqlExecutionContext.getSharedQueryWorkerCount(),
+                    sqlExecutionContext.getMemoryTracker()
             );
 
             cursor.of(sharedState, pageFrameCursor, metadata.getTimestampIndex());

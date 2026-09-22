@@ -24,16 +24,19 @@
 
 package io.questdb.tasks;
 
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.griffin.engine.groupby.PostAggregationCircuitBreaker;
 import io.questdb.griffin.engine.table.GroupByShardingContext;
 import io.questdb.mp.CountDownLatchSPI;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberDispatchContext;
 import io.questdb.std.Mutable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class GroupByMergeShardTask implements Mutable {
     private GroupByShardingContext shardingCtx;
-    private AtomicBooleanCircuitBreaker circuitBreaker;
+    private PostAggregationCircuitBreaker circuitBreaker;
+    private FiberDispatchContext dispatchContext;
     private CountDownLatchSPI doneLatch;
     private int shardIndex = -1;
     private AtomicInteger startedCounter;
@@ -43,6 +46,7 @@ public class GroupByMergeShardTask implements Mutable {
         shardIndex = -1;
         shardingCtx = null;
         circuitBreaker = null;
+        dispatchContext = null;
         doneLatch = null;
         startedCounter = null;
     }
@@ -51,12 +55,16 @@ public class GroupByMergeShardTask implements Mutable {
         return shardingCtx;
     }
 
-    public AtomicBooleanCircuitBreaker getCircuitBreaker() {
+    public PostAggregationCircuitBreaker getCircuitBreaker() {
         return circuitBreaker;
     }
 
     public CountDownLatchSPI getDoneLatch() {
         return doneLatch;
+    }
+
+    public FiberDispatchContext getDispatchContext() {
+        return dispatchContext;
     }
 
     public int getShardIndex() {
@@ -68,13 +76,14 @@ public class GroupByMergeShardTask implements Mutable {
     }
 
     public void of(
-            AtomicBooleanCircuitBreaker circuitBreaker,
+            PostAggregationCircuitBreaker circuitBreaker,
             AtomicInteger startedCounter,
             CountDownLatchSPI doneLatch,
             GroupByShardingContext shardingCtx,
             int shardIndex
     ) {
         this.circuitBreaker = circuitBreaker;
+        this.dispatchContext = Fiber.captureParallelDispatchContext();
         this.startedCounter = startedCounter;
         this.doneLatch = doneLatch;
         this.shardingCtx = shardingCtx;

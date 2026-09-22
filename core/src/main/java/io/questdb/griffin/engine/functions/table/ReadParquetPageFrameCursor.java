@@ -133,6 +133,11 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
+    public boolean hasActivePushdownFilter() {
+        return pushdownFilterConditions != null && pushdownFilterConditions.size() > 0;
+    }
+
+    @Override
     public boolean isExternal() {
         return true;
     }
@@ -189,7 +194,9 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
                     decoder.metadata(),
                     pushdownFilterConditions,
                     filterList,
-                    filterValues
+                    filterValues,
+                    // read_parquet() projects external files by name; resolve by name too.
+                    false
             );
             if (isFilterListPrepared) {
                 filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();

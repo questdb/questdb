@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -33,6 +34,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 
 /**
  * Factory for {@link EncodedSortLightRecordCursor} that sorts multiple columns
@@ -42,9 +44,9 @@ import io.questdb.griffin.SqlExecutionContext;
  * 16-byte prefix inline. This replaces the red-black tree approach.
  */
 public class EncodedSortLightRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
-    private final EncodedSortLightRecordCursor cursor;
     private final ListColumnFilter sortColumnFilter;
+    private RecordCursorFactory base;
+    private EncodedSortLightRecordCursor cursor;
 
     public EncodedSortLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -110,7 +112,12 @@ public class EncodedSortLightRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     protected void _close() {
-        base.close();
-        cursor.close();
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final EncodedSortLightRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

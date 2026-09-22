@@ -391,7 +391,7 @@ public class Bootstrap {
     }
 
     public CairoEngine newCairoEngine() {
-        return new CairoEngine(getConfiguration().getCairoConfiguration());
+        return new CairoEngine(getConfiguration().getCairoConfiguration(), new io.questdb.cairo.wal.QdbrWalLocker(), true);
     }
 
     private static void copyInputStream(boolean force, byte[] buffer, File out, InputStream is, Log log) throws IOException {

@@ -569,6 +569,38 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
     }
 
     /**
+     * Configures a single path-based LONG cover named {@code coverCol} at writer
+     * index 1, the fixed-width sibling of {@link #configurePathBinCover}.
+     */
+    private static void configurePathLongCover(PostingIndexWriter writer, String coverCol) {
+        ObjList<CharSequence> names = new ObjList<>();
+        names.add(coverCol);
+        LongList nameTxns = new LongList();
+        nameTxns.add(COLUMN_NAME_TXN_NONE);
+        LongList tops = new LongList();
+        tops.add(0L);
+        IntList shifts = new IntList();
+        shifts.add(Long.numberOfTrailingZeros(Long.BYTES));
+        IntList indices = new IntList();
+        indices.add(1);
+        IntList types = new IntList();
+        types.add(ColumnType.LONG);
+        writer.configureCovering(names, nameTxns, tops, shifts, indices, types, -1);
+    }
+
+    private static long coverValueAt(long row) {
+        return 1_000 + row * 7;
+    }
+
+    private static RecordMetadata coveringLongMetadata() {
+        GenericRecordMetadata m = new GenericRecordMetadata();
+        for (int i = 0; i <= 2; i++) {
+            m.add(new TableColumnMetadata("c" + i, ColumnType.LONG, IndexType.NONE, 0, false, null, i, false));
+        }
+        return m;
+    }
+
+    /**
      * Drives a rollback under a small RSS headroom so the pre-flight refuses,
      * and parses the required-bytes figure from the
      * "posting index rollback needs N bytes ..." diagnostic. The headroom is
@@ -626,6 +658,150 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    /**
+     * Writes a real LONG column on disk: {@code <col>.d} holds one 8-byte value per
+     * row, {@link #coverValueAt} of the row number, so a read-back can tell a real
+     * value from the LONG NULL sentinel and from a neighbouring row's value.
+     */
+    private void writeLongCoverFile(Path dir, String colName, int totalRows) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path p = new Path()) {
+            p.of(dir);
+            try (MemoryCMARWImpl data = new MemoryCMARWImpl(
+                    ff, TableUtils.dFile(p, colName, COLUMN_NAME_TXN_NONE),
+                    ff.getPageSize(), -1, MemoryTag.MMAP_DEFAULT, 0)) {
+                for (int i = 0; i < totalRows; i++) {
+                    data.putLong(coverValueAt(i));
+                }
+            }
+        }
+    }
+
+    /**
+     * A full seal that takes the per-key streaming path maps each path-based cover
+     * column into the writer's read-map arrays one column at a time and clears the
+     * slot again, but the arrays themselves outlive the loop unless the seal drops
+     * them. {@code ensureCoveredColumnReadMaps} treats a non-null array as "already
+     * mapped", so a LATER incremental seal on the same writer would then read
+     * address 0 for every cover column and write the NULL sentinel for every
+     * covered value in the strides it rebuilds. The fast-path twin
+     * ({@code writeSidecarsPerColumn}) is pinned at the SQL level by
+     * {@code CoveringIndexTest#testAlterTableAddIndexLastPartitionIncrementalSealKeepsIncludeValues};
+     * this drives the streaming twin ({@code writeSidecarsPerColumnStreaming}),
+     * which needs an RSS headroom below the fast path's peak for the first seal and
+     * a dirty-stride subset for the second.
+     */
+    @Test
+    public void testSealIncrementalAfterStreamingSealKeepsIncludeValues() throws Exception {
+        // > 256 keys so there are two strides; phase 2 dirties only stride 0, which
+        // keeps the second seal on the sealIncremental branch.
+        final int hotKeys = 256;
+        final int numKeys = 300;
+        final int phase1RowsPerHotKey = 256;
+        final int phase2Keys = 8;
+        final int phase2RowsPerKey = 64;
+        final int totalRows = hotKeys * phase1RowsPerHotKey + (numKeys - hotKeys) + phase2Keys * phase2RowsPerKey;
+
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final String name = "incremental_after_streaming";
+                final String coverCol = "covered_long";
+                writeLongCoverFile(path.trimTo(plen), coverCol, totalRows);
+
+                final ObjList<LongList> expected = new ObjList<>();
+                for (int k = 0; k < numKeys; k++) {
+                    expected.add(new LongList());
+                }
+
+                long savedLimit = Unsafe.getRssMemLimit();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    configurePathLongCover(writer, coverCol);
+
+                    // Phase 1: stride 0 holds 256 keys x 256 rows, stride 1 one row
+                    // per key. Sealed into a single dense gen 0 through the streaming
+                    // path.
+                    long row = 0;
+                    for (int r = 0; r < phase1RowsPerHotKey; r++) {
+                        for (int k = 0; k < hotKeys; k++) {
+                            writer.add(k, row);
+                            expected.getQuick(k).add(row);
+                            row++;
+                        }
+                    }
+                    for (int k = hotKeys; k < numKeys; k++) {
+                        writer.add(k, row);
+                        expected.getQuick(k).add(row);
+                        row++;
+                    }
+                    writer.setMaxValue(row - 1);
+                    writer.commit();
+                    // 256 KiB headroom: the fast path wants the whole stride's decode
+                    // buffers plus a stride-sized sidecar buffer (~2 MiB for 65k
+                    // values), streaming only the worst single key's (~20 KiB).
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 256L * 1024L);
+                    try {
+                        writer.seal();
+                    } finally {
+                        Unsafe.setRssMemLimit(savedLimit);
+                    }
+                    Assert.assertTrue("the tight headroom must force the per-key streaming seal path",
+                            writer.isLastSealStreamingForTesting());
+                    Assert.assertEquals("phase 1 seal should leave a single dense gen 0",
+                            1, writer.getGenCount());
+
+                    // Phase 2: more rows on a few stride-0 keys, committed into a
+                    // sparse gen 1, then sealed incrementally with full headroom.
+                    for (int r = 0; r < phase2RowsPerKey; r++) {
+                        for (int k = 0; k < phase2Keys; k++) {
+                            writer.add(k, row);
+                            expected.getQuick(k).add(row);
+                            row++;
+                        }
+                    }
+                    writer.setMaxValue(row - 1);
+                    writer.commit();
+                    Assert.assertEquals("phase 2 commit should append a sparse gen 1",
+                            2, writer.getGenCount());
+                    writer.seal();
+                    Assert.assertTrue("the second seal must take the incremental branch, not a full seal",
+                            writer.isLastSealIncrementalForTesting());
+                    Assert.assertEquals("incremental seal should compact into one dense gen 0",
+                            1, writer.getGenCount());
+                }
+
+                // Every covered value reads back from covered_long.d, the rebuilt
+                // stride 0 included: a NULL here means the incremental seal read
+                // address 0 for the cover column.
+                RecordMetadata meta = coveringLongMetadata();
+                try (ColumnVersionReader emptyCvr = new ColumnVersionReader();
+                     PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                             meta, emptyCvr, 0)) {
+                    for (int k = 0; k < numKeys; k++) {
+                        LongList rows = expected.getQuick(k);
+                        try (RowCursor c = reader.getCursor(k, 0, Long.MAX_VALUE, new int[]{0})) {
+                            Assert.assertTrue("expected CoveringRowCursor for key=" + k, c instanceof CoveringRowCursor);
+                            CoveringRowCursor cc = (CoveringRowCursor) c;
+                            int idx = 0;
+                            while (cc.hasNext()) {
+                                long rowId = cc.next();
+                                Assert.assertTrue("key " + k + " extra row at " + idx, idx < rows.size());
+                                Assert.assertEquals("key " + k + " rowid " + idx, rows.getQuick(idx), rowId);
+                                Assert.assertEquals("covered LONG [key=" + k + ", rowId=" + rowId + ']',
+                                        coverValueAt(rowId), cc.getCoveredLong(0));
+                                idx++;
+                            }
+                            Assert.assertEquals("key " + k + " short-count", rows.size(), idx);
+                        }
+                    }
+                }
+            }
+        });
     }
 
     /**
@@ -824,6 +1000,130 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
                         Misc.free(c);
                     }
                 }
+            }
+        });
+    }
+
+    /**
+     * Regression for the production WAL fast-lag commit OOM that PR #7236's
+     * streaming fallback did NOT close: "posting-index fast-lag commit failed
+     * ... global RSS memory limit exceeded ... memoryTag=62" thrown from
+     * PostingIndexWriter.seal() at the covered-column sidecar SNAPSHOT
+     * (Unsafe.malloc(sealedLen, NATIVE_INDEX_READER)), not at the stride-merge
+     * buffers the new pre-flight already guards.
+     * <p>
+     * The incremental seal snapshots each covered column's entire sealed sidecar
+     * into a native buffer BEFORE sealIncremental's RSS pre-flight runs. On a
+     * skewed symbol a single cover's sidecar is multi-GB, so the unguarded malloc
+     * trips the global RSS limit and suspends the table -- even though sealFull
+     * (which streams sidecars per-key from the column files and needs no
+     * snapshot) would have fit. Here a dense gen 0 covering 300 keys with a fixed
+     * LONG cover builds a ~14 MiB sealed sidecar; phase 2 dirties stride 0 alone
+     * to trigger the incremental seal. Under a 4 MiB headroom -- below the
+     * snapshot but far above the per-key streaming peak -- the unfixed seal OOMs
+     * at the snapshot malloc; the fixed seal defers to a full (streaming) seal,
+     * completes, and round-trips.
+     */
+    @Test
+    public void testSealIncrementalDefersToFullSealWhenSnapshotExceedsRssHeadroom() throws Exception {
+        final int strideKeys = 256;     // keys 0..255 -> stride 0
+        final int cleanKeys = 44;       // keys 256..299 -> stride 1, kept clean
+        final int numKeys = strideKeys + cleanKeys;
+        final int phase1PerKey = 6_000; // dense gen 0: 300 * 6000 = 1.8M LONGs -> ~14 MiB sidecar
+        final int phase2PerKey = 64;    // sparse gen 1 on stride-0 keys only
+
+        final long totalRows = (long) numKeys * phase1PerKey + (long) strideKeys * phase2PerKey;
+        final long coverBytes = totalRows * Long.BYTES;
+
+        assertMemoryLeak(() -> {
+            long coverAddr = Unsafe.malloc(coverBytes, MemoryTag.NATIVE_DEFAULT);
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final String name = "incremental_snapshot_defer";
+                final ObjList<LongList> oracle = new ObjList<>();
+                for (int k = 0; k < numKeys; k++) {
+                    oracle.add(new LongList());
+                }
+                // Covered LONG value for row r is r itself: distinct values so the
+                // fixed-stride sidecar is genuinely ~totalRows * 8 bytes (no FSST).
+                for (long r = 0; r < totalRows; r++) {
+                    Unsafe.putLong(coverAddr + r * Long.BYTES, r);
+                }
+
+                long savedLimit = Unsafe.getRssMemLimit();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    long[] addrs = {coverAddr};
+                    long[] tops = {0L};
+                    int[] shifts = {3}; // fixed 8-byte (LONG)
+                    int[] indices = {1};
+                    int[] types = {ColumnType.LONG};
+                    writer.configureCovering(addrs, tops, shifts, indices, types, 1);
+
+                    long row = 0;
+                    // Phase 1: every key (both strides) -> dense gen 0 with a large
+                    // covered sidecar.
+                    for (int r = 0; r < phase1PerKey; r++) {
+                        for (int k = 0; k < numKeys; k++) {
+                            writer.add(k, row);
+                            oracle.getQuick(k).add(row);
+                            row++;
+                        }
+                    }
+                    writer.setMaxValue(row - 1);
+                    writer.commit();
+                    writer.seal();
+                    Assert.assertEquals(1, writer.getGenCount());
+
+                    // Phase 2: only stride-0 keys -> sparse gen 1 dirties stride 0
+                    // alone (dirtyCount < strideCount keeps it incremental).
+                    for (int r = 0; r < phase2PerKey; r++) {
+                        for (int k = 0; k < strideKeys; k++) {
+                            writer.add(k, row);
+                            oracle.getQuick(k).add(row);
+                            row++;
+                        }
+                    }
+                    writer.setMaxValue(row - 1);
+                    writer.commit();
+                    Assert.assertEquals(2, writer.getGenCount());
+
+                    // 4 MiB headroom: well below the ~14 MiB covered-sidecar
+                    // snapshot the incremental seal copies, but far above the
+                    // per-key streaming peak (max single key ~6k LONGs). Pre-fix
+                    // the snapshot malloc trips the RSS limit; post-fix the seal
+                    // defers to a full streaming seal.
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 4L * 1024L * 1024L);
+                    try {
+                        writer.seal();
+                    } finally {
+                        Unsafe.setRssMemLimit(savedLimit);
+                    }
+                    Assert.assertEquals("snapshot-deferred full seal should leave one dense gen 0",
+                            1, writer.getGenCount());
+                    Assert.assertFalse("the snapshot headroom guard must have deferred to a full seal",
+                            writer.isLastSealIncrementalForTesting());
+                    Assert.assertTrue("the deferral must be the snapshot-headroom guard, not the stride pre-flight",
+                            writer.isLastSealSnapshotDeferredForTesting());
+                }
+
+                // Read-back: every key returns exactly its indexed rowids in order.
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    for (int k = 0; k < numKeys; k++) {
+                        LongList expected = oracle.getQuick(k);
+                        RowCursor c = reader.getCursor(k, 0, Long.MAX_VALUE);
+                        int idx = 0;
+                        while (c.hasNext()) {
+                            Assert.assertTrue("key " + k + " extra row at " + idx, idx < expected.size());
+                            Assert.assertEquals("key " + k + " rowid " + idx, expected.getQuick(idx), c.next());
+                            idx++;
+                        }
+                        Assert.assertEquals("key " + k + " short-count", expected.size(), idx);
+                        Misc.free(c);
+                    }
+                }
+            } finally {
+                Unsafe.free(coverAddr, coverBytes, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }

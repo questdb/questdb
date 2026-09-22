@@ -115,9 +115,17 @@ public class QueryRegistryTest extends AbstractTest {
                     "{\"query\":\"explain tab\"," +
                             "\"columns\":[{\"name\":\"QUERY PLAN\",\"type\":\"STRING\"}]," +
                             "\"timestamp\":-1," +
-                            "\"dataset\":[[\"PageFrame\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: tab\"]]," +
+                            "\"dataset\":[[\"PageFrame\"],[\"    Row forward scan\"],[\"    Frame forward scan on: tab\"]]," +
                             "\"count\":3}",
                     "explain tab"
+            );
+            assertGet(
+                    "{\"query\":\"explain select '&nbsp;', '&lt;', '&gt;', '<', '>'\"," +
+                            "\"columns\":[{\"name\":\"QUERY PLAN\",\"type\":\"STRING\"}]," +
+                            "\"timestamp\":-1," +
+                            "\"dataset\":[[\"VirtualRecord\"],[\"  functions: ['&nbsp;','&lt;','&gt;','<','>']\"],[\"    long_sequence count: 1\"]]," +
+                            "\"count\":3}",
+                    "explain select '&nbsp;', '&lt;', '&gt;', '<', '>'"
             );
             assertQueryRegistry();
         }));

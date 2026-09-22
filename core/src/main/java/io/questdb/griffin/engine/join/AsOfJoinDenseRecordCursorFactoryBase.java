@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
@@ -41,9 +42,11 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Dense ASOF JOIN cursor is an improvement over the Light cursor for the case where
@@ -107,12 +110,18 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
         TimeFrameCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            // Bind the per-query tracker before of(); the cursor's of()
+            // reopens its SingleRecordSinks (in the keyed variants), so the
+            // first malloc lands under the bound tracker.
+            cursor.setMemoryTracker(executionContext.getMemoryTracker());
             slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            // of() reopens the sinks/maps before adopting the cursors, so close() here frees only the partial heap.
+            Misc.free(cursor);
             throw e;
         }
     }
@@ -137,9 +146,11 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
+        final AsOfJoinDenseRecordCursorBase cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     protected abstract void putFactoryType(PlanSink sink);
@@ -179,6 +190,8 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
 
         @Override
         public boolean hasNext() {
+            // Consult the breaker at the top, so an empty master still observes cancellation.
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (!masterCursor.hasNext()) {
                 return false;
             }
@@ -272,7 +285,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                     frameRowLo = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());
                     backwardRowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi() - 1);
                 }
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             }
             record.hasSlave(false);
             return true;
@@ -280,12 +293,20 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
 
         @Override
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            super.of(masterCursor, slaveCursor, circuitBreaker);
+            // Reopen the scan maps before super.of() adopts the cursors so an open-time breach frees each exactly once.
             fwdScanKeyToRowId.reopen();
             fwdScanKeyToRowId.clear();
             bwdScanKeyToRowId.reopen();
             bwdScanKeyToRowId.clear();
             resetScanState();
+            super.of(masterCursor, slaveCursor, circuitBreaker);
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            // Bound lazily before of() reopens them; map malloc/free nets on the per-query counter.
+            fwdScanKeyToRowId.setMemoryTracker(tracker);
+            bwdScanKeyToRowId.setMemoryTracker(tracker);
         }
 
         @Override
@@ -335,7 +356,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                     frameRowHi = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi());
                     forwardRowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());
                 }
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             }
         }
 

@@ -118,7 +118,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                         .createTable(sqlExecutionContext);
             }
 
-            this.writer = engine.getWriter(tableToken, "QuestDB system");
+            this.writer = engine.getWriter(tableToken, TableUtils.SYSTEM_WRITER_LOCK_REASON);
             this.columnPurgeOperator = new ColumnPurgeOperator(
                     engine,
                     this.writer,

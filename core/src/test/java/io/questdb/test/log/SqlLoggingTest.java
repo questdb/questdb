@@ -1,5 +1,6 @@
 package io.questdb.test.log;
 
+import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.griffin.engine.QueryProgress;
@@ -10,6 +11,8 @@ import io.questdb.test.tools.LogCapture;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.Map;
 
 public class SqlLoggingTest extends AbstractCairoTest {
     private static final LogCapture capture = new LogCapture();
@@ -31,9 +34,39 @@ public class SqlLoggingTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSimple() throws Exception {
+    public void testCreateLiveView() throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+
+                try (TestHttpClient httpClient = new TestHttpClient(HttpClientFactory.newPlainTextInstance())) {
+                    final int port = serverMain.getHttpServerPort();
+                    exec(httpClient, "{\"ddl\":\"OK\"}", "create table trades(symbol symbol, price double, ts timestamp) timestamp(ts) partition by hour wal", port);
+                    waitForRegex("fin.*?create table trades");
+                    exec(
+                            httpClient,
+                            "{\"ddl\":\"OK\"}",
+                            "create live view lv flush every 1s start from now as select symbol, price, ts, row_number() over w as rn"
+                                    + " from trades window w as (partition by symbol order by ts anchor daily '00:00')",
+                            port
+                    );
+                    waitForRegex("fin.*?create live view lv");
+                }
+            }
+            assertOnlyOnce("fin.*?create live view lv");
+        });
+    }
+
+    @Test
+    public void testSimple() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(
+                    root,
+                    Map.of(
+                            PropertyKey.HTTP_BIND_TO.getEnvVarName(), "127.0.0.1:0",
+                            PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "true"
+                    )
+            )) {
                 serverMain.start();
 
                 // HTTP JSON test
@@ -58,8 +91,17 @@ public class SqlLoggingTest extends AbstractCairoTest {
                 }
             }
             assertOnlyOnce("fin.*?create table x");
+            // CREATE TABLE used to log "fin" twice: once from the keyword-executor's premature
+            // completion log at compile time (id=-1, before the table exists), and once from
+            // executeCreateTable() with the real query-registry id once the table is actually
+            // created. The assertion above is the double-log guard; this one only pins WHICH
+            // line survived. It cannot catch a double-log regression on its own -- \d+ never
+            // matches the id=-1 sentinel, so it stays green whenever both lines are present.
+            // It fails only if a fix dropped the real line and kept the sentinel.
+            assertOnlyOnce("fin \\[id=\\d+, sql=`create table x");
             assertOnlyOnce("fin.*?insert into x values");
             assertOnlyOnce("fin.*?select count\\(\\) from x");
+            assertOnlyOnce("fin.*?sql=`select count\\(\\) from x`,.*?, client_wait=-?\\d+, ttfr=-?\\d+");
             assertOnlyOnce("fin.*?alter table x add");
             assertOnlyOnce("fin.*?update x set c");
             assertOnlyOnce("fin.*?rename table x to y");

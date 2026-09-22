@@ -507,6 +507,94 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getLiveViewCheckpointCompactionInterval() {
+        return 0;
+    }
+
+    @Override
+    public long getLiveViewCheckpointMaxDurationMicros() {
+        return 5L * Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public long getLiveViewCheckpointPurgeInterval() {
+        return 1;
+    }
+
+    @Override
+    public long getLiveViewCheckpointRepairReplayMaxRows() {
+        return 1_000_000L;
+    }
+
+    @Override
+    public long getLiveViewCheckpointRepairScanMaxKeys() {
+        return 100_000L;
+    }
+
+    @Override
+    public long getLiveViewCheckpointRepairScanMaxRows() {
+        return 1_000_000L;
+    }
+
+    @Override
+    public long getLiveViewCheckpointRows() {
+        return 1_000_000L;
+    }
+
+    @Override
+    public int getLiveViewFlushRetryMax() {
+        return 5;
+    }
+
+    @Override
+    public long getLiveViewFlushRetryMaxDurationMicros() {
+        return 60L * Micros.SECOND_MICROS;
+    }
+
+    @Override
+    public long getLiveViewInMemoryBufferGrowthBytes() {
+        return 16L * 1024L * 1024L;
+    }
+
+    @Override
+    public long getLiveViewInMemoryBufferInitialBytes() {
+        return 64L * 1024L;
+    }
+
+    @Override
+    public long getLiveViewInMemoryMaxMicros() {
+        return 60L * Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public int getLiveViewPartitionCompactThreshold() {
+        return 100_000;
+    }
+
+    @Override
+    public long getLiveViewRefreshMemoryLimitBytes() {
+        return 0;
+    }
+
+    @Override
+    public int getLiveViewRefreshTurnMaxCommits() {
+        return 64;
+    }
+
+    @Override
+    public long getLiveViewRefreshTurnMaxDurationMicros() {
+        return 50_000L;
+    }
+
+    @Override
+    public int getLiveViewRefreshWorkerCount() {
+        // Positive so an embedded engine that drives LiveViewRefreshJob itself keeps
+        // registering views and pinning their base WAL floor. PropServerConfiguration
+        // derives the real pool size from the CPU count.
+        return 1;
+    }
+
+    @Override
     public boolean getLogLevelVerbose() {
         return false;
     }
@@ -557,6 +645,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewRefreshBusyRetryLimit() {
+        return 10;
+    }
+
+    @Override
+    public long getMatViewRefreshBusyRetryTimeout() {
+        return 1000;
+    }
+
+    @Override
     public long getMatViewRefreshIntervalsUpdatePeriod() {
         return 15_000;
     }
@@ -567,8 +665,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getMatViewRefreshOomRetryTimeout() {
-        return 200;
+    public long getMatViewRefreshMemoryLimitBytes() {
+        return 0;
     }
 
     @Override
@@ -843,6 +941,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getQueryContinuationWakeIntervalMillis() {
         return 1_000L;
+    }
+
+    @Override
+    public long getQueryMemoryLimitBytes() {
+        return 0;
     }
 
     @Override
@@ -1309,6 +1412,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSubsampleMaxRows() {
+        return 100_000_000L;
+    }
+
+    @Override
+    public int getSymbolPatternIndexThreshold() {
+        return 100;
+    }
+
+    @Override
     public long getSymbolTableMaxAllocationPageSize() {
         return 8 * 1024 * 1024;
     }
@@ -1406,6 +1519,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getWalApplyLookAheadTransactionCount() {
         return 20;
+    }
+
+    @Override
+    public long getWalApplyMemoryLimitBytes() {
+        return 0;
     }
 
     @Override
@@ -1573,6 +1691,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isLiveViewEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isMatViewCoveringIndexEnabled() {
         return false;
     }
@@ -1648,6 +1771,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlDistinctGroupByRewriteEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlJitDebugEnabled() {
         return false;
     }
@@ -1694,6 +1822,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlWindowCachedLightEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlWindowMapFusionEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSymbolPatternIndexEnabled() {
         return true;
     }
 

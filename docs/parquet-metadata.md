@@ -109,9 +109,16 @@ header is. A reader mmaps the 32-byte header prefix, reads `PARQUET_META_FILE_SI
                  |  entry 0: offset --------------+--> ROW GROUP BLOCK 0
                  |  entry 1: offset --------------+--> ROW GROUP BLOCK 1
                  |  ...                           |
-                 | FOOTER FEATURE SECTIONS        |
+                 | HEADER-FLAG FEATURE SECTIONS   |
                  |  bloom filter offsets          |
                  |  (if BLOOM_FILTERS set)        |
+                 | FOOTER-FLAG FEATURE SECTIONS   |
+                 |  payload per set optional bit, |
+                 |  ascending bit order; fixed-   |
+                 |  size sections advance by a    |
+                 |  hardcoded width, variable-    |
+                 |  size sections by an on-disk   |
+                 |  size header                   |
                  |  CRC32                         |
                  |  FOOTER_LENGTH (4B)            |  <-- trailer at parquet_meta_file_size - 4
   _txn field 3:  +================================+
@@ -172,15 +179,29 @@ Both fields share the same bit policy:
 - **Bits 0-31**: optional - unknown bits may be ignored.
 - **Bits 32-63**: required - unknown bits must cause the reader to reject the file (or, for footer flags, the specific footer the reader is about to use).
 
-Feature sections appear in bit order. Header-gated sections live at the end of
-the header (after name strings); footer-gated sections live at the end of the
-footer (after row group entries, before the CRC). The footer-trailer's
-`FOOTER_LENGTH` bounds all footer sections so readers can locate the CRC
-without recognizing every bit.
+Header-flag sections live at the end of the header (after name strings),
+in bit order.
+
+Inside the footer, sections appear in two groups: header-flag-gated
+sections first (currently just the bloom filter section, sized from
+header info), then footer-flag-gated sections in ascending bit order.
+The walker starts at `entries_end + bloom_section_size` and steps
+forward over each set known bit. Fixed-size sections (e.g. `SEQ_TXN`)
+advance by a hardcoded byte width determined by the bit; variable-size
+sections (e.g. `SCRATCHPAD`) parse a length header on disk to advance.
+
+An older reader that doesn't recognize a footer-flag bit ignores it
+entirely. Bloom is at its unchanged offset (right after row group
+entries), so old readers find it correctly regardless of which
+footer-flag bits are set. New footer-flag bits live in the optional
+range (0-31), so old readers tolerate the bits and skip the trailing
+bytes (still CRC-covered).
+
+`FOOTER_LENGTH` from the trailer bounds the whole region.
 
 #### Defined feature flags
 
-No footer flag bits are defined yet. Header flag bits:
+**Header flag bits:**
 
 | bit | name                   | dependency | header section                                                                                                           | footer section                                                                                                                                 |
 | --- | ---------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -190,6 +211,13 @@ No footer flag bits are defined yet. Header flag bits:
 
 Bit 0 is only set when at least one column has a bloom filter. Bit 1 cannot be set without bit 0; the reader rejects the
 file otherwise. Feature sections are ordered by bit position.
+
+**Footer flag bits:**
+
+| bit | name       | footer section                                                                                                                                   |
+| --- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0   | SEQ_TXN    | 8 bytes: `i64` per-snapshot apply-time `seqTxn`. Set when ≠ -1.                                                                                  |
+| 1   | SCRATCHPAD | Variable size: `[u32 entry_count][(u32 code, u32 length, u8[length] content)*]`. Opaque TLV. Capped at `MAX_SCRATCHPAD_SIZE` (1 MiB) per footer. |
 
 Bit 2 indicates that the partition's sorting order is implicitly the designated timestamp column in ascending order. The
 on-disk `SORTING_COLUMN_COUNT` is 0 and the SORTING_COLUMNS section is absent, but readers treat the partition as sorted
@@ -324,14 +352,14 @@ Inline placement is gated purely by stat byte width: stats whose `min_value`/`ma
 inline into the u64 slot, longer payloads spill out-of-line. The QuestDB column type does not constrain placement, so a
 short variable-length stat (e.g., a 4-byte `VARCHAR` min) can occupy the slot the same way a primitive stat does.
 
-| parquet physical type | inline width | placement in u64 slot                                  |
-| --------------------- | ------------ | ------------------------------------------------------ |
-| BOOLEAN               | 1 byte       | low byte holds 0 or 1; remaining 7 bytes are zero      |
-| INT32 / FLOAT         | 4 bytes      | low 4 bytes hold the LE value; high 4 bytes are zero   |
-| INT64 / DOUBLE        | 8 bytes      | the full u64 holds the LE value                        |
-| FIXED_LEN_BYTE_ARRAY  | `fixed_byte_len` bytes when `<= 8` | low `fixed_byte_len` bytes; rest zero       |
-| BYTE_ARRAY            | up to 8 bytes when the stat payload fits | low `STAT_SIZES.min/max_size` bytes; rest zero |
-| INT96                 | always out-of-line (12 bytes)        | u64 slot holds the OOL reference            |
+| parquet physical type | inline width                             | placement in u64 slot                                |
+| --------------------- | ---------------------------------------- | ---------------------------------------------------- |
+| BOOLEAN               | 1 byte                                   | low byte holds 0 or 1; remaining 7 bytes are zero    |
+| INT32 / FLOAT         | 4 bytes                                  | low 4 bytes hold the LE value; high 4 bytes are zero |
+| INT64 / DOUBLE        | 8 bytes                                  | the full u64 holds the LE value                      |
+| FIXED_LEN_BYTE_ARRAY  | `fixed_byte_len` bytes when `<= 8`       | low `fixed_byte_len` bytes; rest zero                |
+| BYTE_ARRAY            | up to 8 bytes when the stat payload fits | low `STAT_SIZES.min/max_size` bytes; rest zero       |
+| INT96                 | always out-of-line (12 bytes)            | u64 slot holds the OOL reference                     |
 
 When stats are stored out-of-line (`MIN_STAT_INLINED` / `MAX_STAT_INLINED` clear), the u64 slot encodes a reference into
 the row group block's out-of-line region as `(offset << 16) | length`. The OOL bytes are the same parquet stat bytes,
@@ -392,6 +420,41 @@ row-major. Entry `[rg_idx * BLOOM_COL_COUNT + pos]` where `pos` is the column's 
 | 0      | 4    | LENGTH | i32  | length of the bloom filter bitset in bytes (not bits) |
 | 4      | ..   | BITSET |      | bloom filter bitset                                   |
 
+### Scratchpad
+
+Opaque TLV section gated by footer flag bit 1 (`SCRATCHPAD`). Variable
+size, written after `SEQ_TXN` and before the CRC.
+
+| offset                         | size | field       | type | description                                |
+| ------------------------------ | ---- | ----------- | ---- | ------------------------------------------ |
+| 0                              | 4    | ENTRY_COUNT | u32  | number of entries; > 0 when the bit is set |
+| 4 + Σ(8 + length\[i\] for i<n) | 4    | CODE        | u32  | consumer-defined magic                     |
+| .. + 4                         | 4    | LENGTH      | u32  | length of `CONTENT` in bytes               |
+| .. + 4                         | ..   | CONTENT     |      | opaque bytes, no padding/alignment         |
+
+The reader walks entries in insertion order. `scratchpad_entry(code)`
+returns the first entry whose code matches; duplicate codes are not
+rejected.
+
+**Validation:**
+
+- `ENTRY_COUNT == 0` with the bit set → `InvalidValue` (writer omits
+  the bit when no entries are present).
+- Any entry header or content extending past the CRC offset →
+  `Truncated`.
+- Total payload (4 + Σ(8 + length\[i\])) > `MAX_SCRATCHPAD_SIZE` (1
+  MiB) → `InvalidValue`. The cap is a defensive guard; real entries
+  are tens to hundreds of bytes. Writers also `debug_assert!` the cap.
+
+**MVCC semantics.** Each footer carries its own scratchpad. The update
+writer silently inherits the prior footer's entries when its
+`set_scratchpad_entries` setter is not called (unlike `SEQ_TXN`, where
+forgetting the setter triggers a `debug_assert!`). Stale-entry impact
+is bounded — the worst case is a stale etag that surfaces loudly as
+`412 Precondition Failed` on the next backend GET. Walking the chain
+back via `PREV_PARQUET_META_FILE_SIZE` returns each footer's
+scratchpad as it was at that snapshot.
+
 ### Footer
 
 The parquet file size is stored in `_txn` field 3. The reader locates the latest footer via the trailer at
@@ -404,18 +467,19 @@ The CRC covers all bytes after `PARQUET_META_FILE_SIZE`: `[8, CRC_field)`. This 
 descriptors, row group blocks, and footer content, while excluding the mutable `PARQUET_META_FILE_SIZE` field at
 offset 0. It is located via `FOOTER_LENGTH`: `CRC offset = footer_start + FOOTER_LENGTH - 4`.
 
-| offset | size | field                       | type | description                                                                                          |
-| ------ | ---- | --------------------------- | ---- | ---------------------------------------------------------------------------------------------------- |
-| 0      | 8    | PARQUET_FOOTER_OFFSET       | u64  | byte offset in the parquet file where the parquet footer starts                                      |
-| 8      | 4    | PARQUET_FOOTER_LENGTH       | u32  | length of the parquet footer in bytes                                                                |
-| 12     | 4    | ROW_GROUP_COUNT             | u32  |                                                                                                      |
-| 16     | 8    | UNUSED_BYTES                | u64  | accumulated dead bytes in the parquet file (old footers + replaced row group data)                   |
-| 24     | 8    | PREV_PARQUET_META_FILE_SIZE | u64  | committed `_pm` file size at the previous snapshot (0 if first); walk back via trailer at `prev - 4` |
-| 32     | 8    | FOOTER_FEATURE_FLAGS        | u64  | per-footer feature flags; independent of the header's FEATURE_FLAGS                                  |
-| 40     | ..   | ROW_GROUP_ENTRIES           |      | ROW_GROUP_COUNT * Row group entry (4B each)                                                          |
-| ..     | ..   | FOOTER_FEATURE_SECTIONS     |      | Feature-flag-gated sections, in bit order (may be empty)                                             |
-| ..     | 4    | CHECKSUM                    | u32  | CRC32 over bytes `[8, this field)` — all content after `PARQUET_META_FILE_SIZE`                      |
-| ..     | 4    | FOOTER_LENGTH               | u32  | total bytes from footer start through CHECKSUM (inclusive); NOT covered by CHECKSUM                  |
+| offset | size | field                        | type | description                                                                                                                                            |
+| ------ | ---- | ---------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0      | 8    | PARQUET_FOOTER_OFFSET        | u64  | byte offset in the parquet file where the parquet footer starts                                                                                        |
+| 8      | 4    | PARQUET_FOOTER_LENGTH        | u32  | length of the parquet footer in bytes                                                                                                                  |
+| 12     | 4    | ROW_GROUP_COUNT              | u32  |                                                                                                                                                        |
+| 16     | 8    | UNUSED_BYTES                 | u64  | accumulated dead bytes in the parquet file (old footers + replaced row group data)                                                                     |
+| 24     | 8    | PREV_PARQUET_META_FILE_SIZE  | u64  | committed `_pm` file size at the previous snapshot (0 if first); walk back via trailer at `prev - 4`                                                   |
+| 32     | 8    | FOOTER_FEATURE_FLAGS         | u64  | per-footer feature flags; independent of the header's FEATURE_FLAGS                                                                                    |
+| 40     | ..   | ROW_GROUP_ENTRIES            |      | ROW_GROUP_COUNT * Row group entry (4B each)                                                                                                            |
+| ..     | ..   | HEADER_FLAG_FEATURE_SECTIONS |      | Header-flag-gated sections (currently: bloom filter offsets if `BLOOM_FILTERS` set), in bit order                                                      |
+| ..     | ..   | FOOTER_FLAG_FEATURE_SECTIONS |      | Footer-flag-gated sections in ascending bit order: fixed-size (SEQ_TXN, 8B) or variable-size with an on-disk length header (SCRATCHPAD). May be empty. |
+| ..     | 4    | CHECKSUM                     | u32  | CRC32 over bytes `[8, this field)` — all content after `PARQUET_META_FILE_SIZE`                                                                        |
+| ..     | 4    | FOOTER_LENGTH                | u32  | total bytes from footer start through CHECKSUM (inclusive); NOT covered by CHECKSUM                                                                    |
 
 The parquet file size is derived from the footer metadata:
 `parquet_file_size = PARQUET_FOOTER_OFFSET + PARQUET_FOOTER_LENGTH + 8` (4B parquet footer length field + 4B PAR1

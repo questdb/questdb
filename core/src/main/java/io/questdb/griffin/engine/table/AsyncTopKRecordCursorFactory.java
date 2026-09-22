@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
@@ -61,6 +62,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
@@ -71,12 +73,12 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final UnorderedPageFrameReducer FILTER_AND_FIND_TOP_K = AsyncTopKRecordCursorFactory::filterAndFindTopK;
     private static final UnorderedPageFrameReducer FIND_TOP_K = AsyncTopKRecordCursorFactory::findTopK;
-    private final RecordCursorFactory base;
-    private final AsyncTopKRecordCursor cursor;
-    private final UnorderedPageFrameSequence<AsyncTopKAtom> frameSequence;
     private final long lo;
     private final ListColumnFilter orderByFilter;
     private final int workerCount;
+    private RecordCursorFactory base;
+    private AsyncTopKRecordCursor cursor;
+    private UnorderedPageFrameSequence<AsyncTopKAtom> frameSequence;
 
     public AsyncTopKRecordCursorFactory(
             @NotNull CairoEngine engine,
@@ -133,16 +135,31 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    @TestOnly
+    public AsyncTopKAtom getAtom() {
+        return frameSequence.getAtom();
+    }
+
+    @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        // Consult the breaker at open, so a scan over an empty table still observes cancellation.
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         final int order = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         frameSequence.of(base, executionContext, order);
-        cursor.of(frameSequence);
-        return cursor;
+        try {
+            cursor.of(frameSequence);
+            return cursor;
+        } catch (Throwable th) {
+            // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
+            // so the cached factory stays reusable.
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -204,20 +221,22 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
         final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
         final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
-        final PageFrameMemory frameMemory;
-        if (useLateMaterialization) {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex);
-        }
-
-        record.init(frameMemory);
         final DirectLongList rows = filterCtx.getFilteredRows(slotId);
         rows.clear();
         final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
         final Function filter = filterCtx.getFilter(slotId);
+        // navigateTo() can throw, so it must sit inside the try that releases the slot: the locks
+        // have no reset and the atom outlives the query, so a leaked slot starves the pool.
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            final PageFrameMemory frameMemory;
+            if (useLateMaterialization) {
+                frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            }
+            record.init(frameMemory);
+
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
                 AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
             } else {
@@ -265,9 +284,13 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
         } finally {
-            recordB.clear();
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
+            // Release the slot even if buffer cleanup throws; a stranded slot never returns (PerWorkerLocks has no reset).
+            try {
+                recordB.clear();
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
         }
     }
 
@@ -312,16 +335,27 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
         } finally {
-            recordB.clear();
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
+            // Release the slot even if buffer cleanup throws; a stranded slot never returns (PerWorkerLocks has no reset).
+            try {
+                recordB.clear();
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
         }
     }
 
     @Override
     protected void _close() {
-        Misc.free(base);
-        Misc.free(cursor);
-        Misc.free(frameSequence);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final AsyncTopKRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final UnorderedPageFrameSequence<AsyncTopKAtom> frameSequence = this.frameSequence;
+        this.frameSequence = null;
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, frameSequence);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

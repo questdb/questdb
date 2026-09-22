@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Function;
@@ -47,14 +48,14 @@ import org.jetbrains.annotations.Nullable;
  * Same as SortedLightRecordCursorFactory but using LimitedSizeLongTreeChain instead.
  */
 public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
     private final RecordComparator comparator;
     private final CairoConfiguration configuration;
     private final Function hiFunction;
     private final Function loFunction;
-    private final ListColumnFilter sortColumnFilter;
     private final ObjList<DirectIntList> rankMaps;
+    private final ListColumnFilter sortColumnFilter;
     private final int timestampIndex;
+    private RecordCursorFactory base;
     // factory does not own the chain, just keeps the reference to enable updating of the limits
     private LimitedSizeLongTreeChain chain;
     // initialization delayed to getCursor() because lo/hi need to be evaluated
@@ -88,6 +89,30 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
+    }
+
+    // Stable iff the limit expressions (which may be arbitrary functions) and the base are stable;
+    // sorting itself introduces no value sources.
+    @Override
+    public boolean isNonDeterministic() {
+        if (loFunction != null && loFunction.isNonDeterministic()) {
+            return true;
+        }
+        if (hiFunction != null && hiFunction.isNonDeterministic()) {
+            return true;
+        }
+        return base.isNonDeterministic();
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        if (loFunction != null && !loFunction.isStableWithinExecution()) {
+            return false;
+        }
+        if (hiFunction != null && !hiFunction.isStableWithinExecution()) {
+            return false;
+        }
+        return base.isStableWithinExecution();
     }
 
     @Override
@@ -133,13 +158,18 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
      */
     public void initializeLimitedSizeCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
         computeLimits(baseCursor, executionContext);
+        // Lazy variant: the chain skeleton is constructed but the key/value heaps
+        // are not allocated until the first cursor's of() binds a MemoryTracker
+        // and calls reopen(). This keeps malloc/free symmetric on the per-query
+        // counter from the very first cursor.
         this.chain = new LimitedSizeLongTreeChain(
                 configuration.getSqlSortKeyPageSize(),
                 configuration.getSqlSortKeyMaxBytes(),
                 configuration.getSqlSortLightValuePageSize(),
                 configuration.getSqlSortLightValueMaxBytes(),
                 PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
-                PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
+                PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath(),
+                false
         );
 
         if (timestampIndex == -1 || !isFirstN) {
@@ -148,7 +178,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
             this.cursor = new LimitedSizePartiallySortedLightRecordCursor(chain, comparator, timestampIndex, rankMaps);
         }
         chain.updateLimits(isFirstN, limit);
-        ((DynamicLimitCursor) cursor).updateLimits(limit, skipFirst, skipLast);
+        ((DynamicLimitCursor) cursor).updateLimits(isFirstN, limit, skipFirst, skipLast);
     }
 
     @Override
@@ -244,8 +274,10 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         if (isInitialized()) {
             if (chain != null && cursor instanceof DynamicLimitCursor) {
                 computeLimits(baseCursor, executionContext);
+                // The cursor implementation was picked once, off the first execution's isFirstN;
+                // it has to re-gate any first-N-only behaviour on the value we just re-derived.
                 chain.updateLimits(isFirstN, limit);
-                ((DynamicLimitCursor) cursor).updateLimits(limit, skipFirst, skipLast);
+                ((DynamicLimitCursor) cursor).updateLimits(isFirstN, limit, skipFirst, skipLast);
             }
             return;
         }
@@ -259,7 +291,12 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
 
     @Override
     protected void _close() {
-        Misc.free(base);
-        Misc.free(cursor);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final DelegatingRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

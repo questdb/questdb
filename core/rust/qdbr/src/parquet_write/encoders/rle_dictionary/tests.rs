@@ -94,7 +94,8 @@ fn dict_global_uniqueness_int() {
         .map(|d| make_column_with_top("col", ColumnTypeTag::Int, d, 0, 0))
         .collect();
     let pt = primitive_type_for(ColumnTypeTag::Int);
-    let pages = encode_simd::<i32>(&columns, 0, 2, &pt, write_options(), None).expect("encode");
+    let pages =
+        encode_simd::<i32, false>(&columns, 0, 2, &pt, write_options(), None).expect("encode");
 
     let dicts = dict_pages(&pages);
     assert_eq!(dicts.len(), 1);
@@ -125,12 +126,42 @@ fn dict_chunk_stats_int() {
         .map(|d| make_column_with_top("col", ColumnTypeTag::Int, d, 0, 0))
         .collect();
     let pt = primitive_type_for(ColumnTypeTag::Int);
-    let pages = encode_simd::<i32>(&columns, 0, 11, &pt, write_options(), None).expect("encode");
+    let pages =
+        encode_simd::<i32, false>(&columns, 0, 11, &pt, write_options(), None).expect("encode");
 
     let datas = data_pages(&pages);
     assert_eq!(datas.len(), 1);
     let (min, max) = page_i32_min_max(datas[0]);
     assert_eq!((min, max), (1, 10_010));
+}
+
+#[test]
+fn dict_chunk_stats_ipv4_unsigned() {
+    use crate::parquet_write::IPv4;
+    // IPs straddling the i32 sign bit. Signed ordering would sort the high IP
+    // (stored as a negative i32) below the low one and emit bounds that
+    // unsigned-comparing readers prune against. The IPv4 dict path must use
+    // unsigned ordering, so high becomes max, low becomes min.
+    let low = 0x0100_0000_i32; // 1.0.0.0
+    let mid = 0x4000_0000_i32; // 64.0.0.0
+    let high = 0xC800_0000_u32 as i32; // 200.0.0.0 (negative i32)
+    let data: Vec<i32> = vec![low, 0 /* IPv4 null sentinel */, high, mid];
+    let col = make_column_with_top("col", ColumnTypeTag::IPv4, &data, 0, 0);
+    let pt = primitive_type_for(ColumnTypeTag::IPv4);
+    let pages =
+        encode_int_nullable::<IPv4, i32, true>(&[col], 0, data.len(), &pt, write_options(), None)
+            .expect("encode");
+
+    let (min, max) = page_i32_min_max(data_pages(&pages)[0]);
+    assert_eq!(min, low, "unsigned min must be the smallest IP");
+    assert_eq!(
+        max, high,
+        "unsigned max must be the sign-straddling high IP"
+    );
+    assert!(
+        min > 0 && max < 0,
+        "low IP is positive i32, high IP negative"
+    );
 }
 
 #[test]
@@ -234,7 +265,8 @@ fn dict_chunk_null_counts() {
         .map(|d| make_column_with_top("col", ColumnTypeTag::Int, d, 0, 0))
         .collect();
     let pt = primitive_type_for(ColumnTypeTag::Int);
-    let pages = encode_simd::<i32>(&columns, 0, 5, &pt, write_options(), None).expect("encode");
+    let pages =
+        encode_simd::<i32, false>(&columns, 0, 5, &pt, write_options(), None).expect("encode");
 
     let datas = data_pages(&pages);
     assert_eq!(datas.len(), 1);
@@ -250,7 +282,8 @@ fn dict_exactly_one_dict_page() {
         .map(|d| make_column_with_top("col", ColumnTypeTag::Int, d, 0, 0))
         .collect();
     let pt = primitive_type_for(ColumnTypeTag::Int);
-    let pages = encode_simd::<i32>(&columns, 0, 2, &pt, write_options(), None).expect("encode");
+    let pages =
+        encode_simd::<i32, false>(&columns, 0, 2, &pt, write_options(), None).expect("encode");
     assert_eq!(pages.len(), 2);
     assert!(matches!(pages[0], Page::Dict(_)));
     assert!(matches!(pages[1], Page::Data(_)));
@@ -265,7 +298,7 @@ fn dict_bloom_hashes_from_all_partitions() {
         .collect();
     let pt = primitive_type_for(ColumnTypeTag::Int);
     let bloom = Arc::new(Mutex::new(HashSet::new()));
-    let _ = encode_simd::<i32>(&columns, 0, 2, &pt, write_options(), Some(bloom.clone()))
+    let _ = encode_simd::<i32, false>(&columns, 0, 2, &pt, write_options(), Some(bloom.clone()))
         .expect("encode");
 
     let set = bloom.lock().expect("lock");
@@ -277,8 +310,8 @@ fn dict_int_round_trip() {
     let data: Vec<i32> = vec![1, 2, 3, 1, 2, 3, i32::MIN, 1];
     let col = make_column_with_top("col", ColumnTypeTag::Int, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Int);
-    let pages =
-        encode_simd::<i32>(&[col], 0, data.len(), &pt, write_options(), None).expect("encode");
+    let pages = encode_simd::<i32, false>(&[col], 0, data.len(), &pt, write_options(), None)
+        .expect("encode");
     assert!(matches!(pages[0], Page::Dict(_)));
     let datas = data_pages(&pages);
     assert_eq!(datas.len(), 1);
@@ -292,8 +325,8 @@ fn dict_long_round_trip() {
     let data: Vec<i64> = vec![100, 200, 100, 300, 200];
     let col = make_column_with_top("col", ColumnTypeTag::Long, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Long);
-    let pages =
-        encode_simd::<i64>(&[col], 0, data.len(), &pt, write_options(), None).expect("encode");
+    let pages = encode_simd::<i64, false>(&[col], 0, data.len(), &pt, write_options(), None)
+        .expect("encode");
     let dicts = dict_pages(&pages);
     assert_eq!(dicts.len(), 1);
     assert_eq!(dicts[0].num_values, 3);
@@ -305,8 +338,8 @@ fn dict_double_round_trip() {
     let data: Vec<f64> = vec![1.5, 2.5, 1.5, 3.5, 2.5];
     let col = make_column_with_top("col", ColumnTypeTag::Double, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Double);
-    let pages =
-        encode_simd::<f64>(&[col], 0, data.len(), &pt, write_options(), None).expect("encode");
+    let pages = encode_simd::<f64, false>(&[col], 0, data.len(), &pt, write_options(), None)
+        .expect("encode");
     let dicts = dict_pages(&pages);
     assert_eq!(dicts.len(), 1);
     assert_eq!(dicts[0].num_values, 3);
@@ -317,8 +350,9 @@ fn dict_byte_notnull_round_trip() {
     let data: Vec<i8> = vec![1, 2, 3, 1, 2, 3];
     let col = make_column_with_top("col", ColumnTypeTag::Byte, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Byte);
-    let pages = encode_int_notnull::<i8, i32>(&[col], 0, data.len(), &pt, write_options(), None)
-        .expect("encode");
+    let pages =
+        encode_int_notnull::<i8, i32, false>(&[col], 0, data.len(), &pt, write_options(), None)
+            .expect("encode");
     let dicts = dict_pages(&pages);
     assert_eq!(dicts.len(), 1);
     assert_eq!(dicts[0].num_values, 3);
@@ -333,8 +367,8 @@ fn dict_byte_notnull_with_column_top() {
     let data: Vec<i8> = vec![5, 6, 7];
     let col = make_column_with_top("col", ColumnTypeTag::Byte, &data, 4, 0);
     let pt = primitive_type_for(ColumnTypeTag::Byte);
-    let pages =
-        encode_int_notnull::<i8, i32>(&[col], 0, 7, &pt, write_options(), None).expect("encode");
+    let pages = encode_int_notnull::<i8, i32, false>(&[col], 0, 7, &pt, write_options(), None)
+        .expect("encode");
     let dicts = dict_pages(&pages);
     assert_eq!(dicts.len(), 1);
     assert_eq!(dicts[0].num_values, 4);
@@ -349,8 +383,9 @@ fn dict_byte_notnull_null_in_slice_errors() {
     let data: Vec<i8> = vec![i8::MIN, i8::MAX, 0];
     let col = make_column_with_top("col", ColumnTypeTag::Byte, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Byte);
-    let pages = encode_int_notnull::<i8, i32>(&[col], 0, data.len(), &pt, write_options(), None)
-        .expect("encode");
+    let pages =
+        encode_int_notnull::<i8, i32, false>(&[col], 0, data.len(), &pt, write_options(), None)
+            .expect("encode");
     let dicts = dict_pages(&pages);
     assert_eq!(dicts[0].num_values, 3);
 }
@@ -443,7 +478,8 @@ fn dict_empty_input_yields_empty_dict() {
     let data: Vec<i32> = vec![];
     let col = make_column_with_top("col", ColumnTypeTag::Int, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Int);
-    let pages = encode_simd::<i32>(&[col], 0, 0, &pt, write_options(), None).expect("encode");
+    let pages =
+        encode_simd::<i32, false>(&[col], 0, 0, &pt, write_options(), None).expect("encode");
     assert!(pages.is_empty());
 }
 
@@ -452,8 +488,8 @@ fn dict_single_value_partition() {
     let data: Vec<i32> = vec![42, 42, 42, 42];
     let col = make_column_with_top("col", ColumnTypeTag::Int, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Int);
-    let pages =
-        encode_simd::<i32>(&[col], 0, data.len(), &pt, write_options(), None).expect("encode");
+    let pages = encode_simd::<i32, false>(&[col], 0, data.len(), &pt, write_options(), None)
+        .expect("encode");
     let dicts = dict_pages(&pages);
     assert_eq!(dicts[0].num_values, 1);
     let (min, max) = page_i32_min_max(data_pages(&pages)[0]);
@@ -466,7 +502,7 @@ fn dict_keeps_single_data_page_per_chunk() {
     let col = make_column_with_top("col", ColumnTypeTag::Int, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Int);
     let opts = WriteOptions { data_page_size: Some(64), ..write_options() };
-    let pages = encode_simd::<i32>(&[col], 0, data.len(), &pt, opts, None).expect("encode");
+    let pages = encode_simd::<i32, false>(&[col], 0, data.len(), &pt, opts, None).expect("encode");
 
     assert_eq!(dict_pages(&pages).len(), 1);
     let datas = data_pages(&pages);
@@ -479,8 +515,8 @@ fn dict_all_nulls_partition() {
     let data: Vec<i32> = vec![i32::MIN; 10];
     let col = make_column_with_top("col", ColumnTypeTag::Int, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Int);
-    let pages =
-        encode_simd::<i32>(&[col], 0, data.len(), &pt, write_options(), None).expect("encode");
+    let pages = encode_simd::<i32, false>(&[col], 0, data.len(), &pt, write_options(), None)
+        .expect("encode");
     let dicts = dict_pages(&pages);
     assert_eq!(dicts[0].num_values, 0);
     let datas = data_pages(&pages);
@@ -816,7 +852,7 @@ fn encode_primitive_required_with_null_in_slice_errors() {
     let col = make_column_with_top("col", ColumnTypeTag::Byte, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Byte);
 
-    let result = encode_primitive::<i8, i32, _, _>(
+    let result = encode_primitive::<i8, i32, _, _, false>(
         &[col],
         0,
         data.len(),
@@ -850,7 +886,7 @@ fn encode_primitive_required_with_column_top_no_default_errors() {
     let col = make_column_with_top("col", ColumnTypeTag::Byte, &data, 4, 0);
     let pt = primitive_type_for(ColumnTypeTag::Byte);
 
-    let result = encode_primitive::<i8, i32, _, _>(
+    let result = encode_primitive::<i8, i32, _, _, false>(
         &[col],
         0,
         7, // 4 column-top rows + 3 data rows

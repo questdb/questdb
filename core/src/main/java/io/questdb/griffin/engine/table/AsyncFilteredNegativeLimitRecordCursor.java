@@ -62,7 +62,7 @@ import org.jetbrains.annotations.NotNull;
  *        \/              row 4 ] <- frame 1 end             |
  * </pre>
  */
-class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
+class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCursorFactory.RecordFreer, RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncFilteredNegativeLimitRecordCursor.class);
     private final int dispatchLimit;
     // Used for random access: we may have to deserialize Parquet page frame.
@@ -89,7 +89,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         PageFrameMemoryPool frameMemoryPool = null;
         try {
             record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-            frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetCacheMemorySize());
+            frameMemoryPool = new PageFrameMemoryPool(configuration);
         } catch (Throwable th) {
             Misc.free(record);
             Misc.free(frameMemoryPool);
@@ -123,6 +123,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         }
     }
 
+    @Override
     public void freeRecords() {
         Misc.free(record);
         Misc.free(recordB);
@@ -200,6 +201,10 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         rowIndex = rows.getCapacity() - rowCount;
     }
 
+    private CairoException buildInterruptionException() {
+        return frameSequence.buildInterruptionException();
+    }
+
     private void fetchAllFrames() {
         if (frameLimit == -1) {
             frameSequence.prepareForDispatch();
@@ -258,7 +263,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
             LOG.error().$("negative limit filter error [ex=").$(e).I$();
             if (e instanceof CairoException ce) {
                 if (ce.isInterruption()) {
-                    throwTimeoutException();
+                    throw buildInterruptionException();
                 } else {
                     throw ce;
                 }
@@ -272,15 +277,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         }
 
         if (!allFramesActive) {
-            throwTimeoutException();
-        }
-    }
-
-    private void throwTimeoutException() {
-        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-            throw CairoException.queryCancelled();
-        } else {
-            throw CairoException.queryTimedOut();
+            throw buildInterruptionException();
         }
     }
 
@@ -293,6 +290,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         this.rows = negativeLimitRows;
         this.rowIndex = negativeLimitRows.getCapacity();
         this.rowCount = 0;
+        frameMemoryPool.setMemoryTracker(frameSequence.getMemoryTracker());
         ((AsyncFilterAtom) frameSequence.getAtom()).setParentUsedColumns(null);
         frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         record.of(frameSequence.getSymbolTableSource());

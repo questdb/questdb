@@ -52,7 +52,10 @@ class AsyncTopKRecordCursor implements RecordCursor, RecordCursor.RowIdSource {
     private PageFrameMemoryPool frameMemoryPool;
     private UnorderedPageFrameSequence<AsyncTopKAtom> frameSequence;
     private boolean isChainBuilt;
-    private boolean isOpen = true;
+    // Starts closed so the first of() call triggers atom.reopen(), which binds
+    // the per-query MemoryTracker on each chain before allocating their backing.
+    // Keeps the very first cursor's malloc/free symmetric on the tracker.
+    private boolean isOpen = false;
     private PageFrameMemoryRecord recordA;
     private PageFrameMemoryRecord recordB;
 
@@ -180,7 +183,7 @@ class AsyncTopKRecordCursor implements RecordCursor, RecordCursor.RowIdSource {
 
     private void buildChain() {
         frameSequence.prepareForDispatch();
-        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), ParquetDecodeHint.SCATTERED);
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker(), ParquetDecodeHint.SCATTERED);
         frameSequence.dispatchAndAwait();
 
         // merge the per-worker results into the owner buffer (encoded) or chain (tree)
@@ -198,14 +201,14 @@ class AsyncTopKRecordCursor implements RecordCursor, RecordCursor.RowIdSource {
         final AsyncTopKAtom atom = frameSequence.getAtom();
         if (atom.isEncoded()) {
             final SqlExecutionCircuitBreaker circuitBreaker = frameSequence.getCircuitBreaker();
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
             final EncodedTopKBuffer ownerTopK = atom.getTopK(-1);
             for (int i = 0, n = atom.getWorkerCount(); i < n; i++) {
                 ownerTopK.mergeFrom(atom.getTopK(i));
             }
             atom.freePerWorkerChainsAndPools();
             ownerTopK.sort();
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
             final SortKeyType keyType = atom.getKeyType();
             entrySize = keyType.entrySize();
             final long emitCount = Math.min(ownerTopK.getCount(), atom.getLo());
@@ -241,11 +244,12 @@ class AsyncTopKRecordCursor implements RecordCursor, RecordCursor.RowIdSource {
 
     void of(UnorderedPageFrameSequence<AsyncTopKAtom> frameSequence) {
         final AsyncTopKAtom atom = frameSequence.getAtom();
+        // Assign before reopen() so close() can drain a partially reopened atom on a breach.
+        this.frameSequence = frameSequence;
         if (!isOpen) {
             isOpen = true;
             atom.reopen();
         }
-        this.frameSequence = frameSequence;
         this.frameMemoryPool = atom.getFilterContext().getOwnerMemoryPool();
         this.recordA = atom.getOwnerRecordA();
         this.recordB = atom.getOwnerRecordB();

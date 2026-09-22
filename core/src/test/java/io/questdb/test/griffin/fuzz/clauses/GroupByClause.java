@@ -50,10 +50,21 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  */
 public final class GroupByClause {
 
+    // The GROUP BY key-kind option list, biased towards the keys real workloads
+    // use. The null at index 5 is the identifier slot: pickGroupableKind
+    // fills it from ExpressionGenerator.pickIdentifierKind only when the index
+    // draw lands there, so the picker's column scans and its rnd draw cost
+    // nothing on the six draws in seven that discard it.
+    private static final ColumnKind[] GROUPABLE_KINDS = {
+            ColumnKind.STRING_LIKE, ColumnKind.NUMERIC, ColumnKind.TEMPORAL,
+            ColumnKind.BOOLEAN, ColumnKind.CHAR, null /* identifier */,
+            ColumnKind.DECIMAL
+    };
+
     private GroupByClause() {
     }
 
-    public static GeneratedQuery generate(Rnd rnd, FuzzSource source, BindContext ctx) {
+    public static GeneratedQuery generate(Rnd rnd, FuzzSource source, BindContext ctx, boolean injectFaultFn) {
         FuzzTable table = source.getTable();
         boolean useAlias = rnd.nextBoolean();
         String alias = useAlias ? "t0" : null;
@@ -66,7 +77,7 @@ public final class GroupByClause {
         if (rnd.nextBoolean()) {
             int nKeys = 1 + rnd.nextInt(2);
             for (int i = 0; i < nKeys; i++) {
-                keys.add(exprGen.generateOfKind(pickGroupableKind(rnd)));
+                keys.add(exprGen.generateOfKind(pickGroupableKind(rnd, exprGen)));
             }
         }
         Aggregate agg = pickAggregate(rnd, exprGen);
@@ -87,10 +98,7 @@ public final class GroupByClause {
             sql.put(' ').put(alias);
         }
 
-        if (rnd.nextBoolean()) {
-            String pred = new PredicateGenerator(rnd, 2).generate(table.getColumns(), qualifier, ctx);
-            sql.put(" WHERE ").put(pred);
-        }
+        PredicateGenerator.appendWhere(sql, rnd, table.getColumns(), qualifier, 2, ctx, injectFaultFn);
 
         // Explicit GROUP BY for roughly half of the queries. Each key can
         // be written as the projection alias, the re-emitted expression,
@@ -150,6 +158,35 @@ public final class GroupByClause {
         return new GeneratedQuery(sql.toString(), deterministic);
     }
 
+    /**
+     * Draws the kind of one GROUP BY key slot. Everything except ARRAY is
+     * groupable; the option list biases towards the keys real workloads use.
+     * <p>
+     * The identifier slot asks {@code exprGen} which of UUID, IPv4 and LONG256
+     * the table carries instead of drawing one of the three blind, so the slot
+     * lands on a real column as often as it did while the three shared a kind.
+     * A blind draw picks a kind the table has no column of most of the time,
+     * and the generator fills such a slot with a literal constant -- and
+     * {@code GROUP BY <constant>} buckets the whole table into one row.
+     * {@link #GROUPABLE_KINDS} carries a {@code null} in that slot and this
+     * method resolves it only when the index draw wins it, which keeps the draw
+     * distribution unchanged and spares the six calls in seven that discard the
+     * identifier both column scans and an {@code rnd} draw.
+     * <p>
+     * Public rather than private so that
+     * {@code FilterShapeCoverageTest#testIdentifierKeySlotDrawFollowsTheTable}
+     * drives THIS picker rather than re-deriving what it does. A pin that
+     * called {@link ExpressionGenerator#pickIdentifierKind} on its own stayed
+     * green when the identifier slot of {@link #GROUPABLE_KINDS} went back to
+     * {@link ColumnKind#randomIdentifier} -- which orphans the table-aware
+     * picker and restores the whole defect. That pin sits in the enclosing
+     * package, so package-private access would not reach it.
+     */
+    public static ColumnKind pickGroupableKind(Rnd rnd, ExpressionGenerator exprGen) {
+        ColumnKind kind = GROUPABLE_KINDS[rnd.nextInt(GROUPABLE_KINDS.length)];
+        return kind != null ? kind : exprGen.pickIdentifierKind();
+    }
+
     private static void appendOrderBy(StringSink sink, Rnd rnd, int numKeys) {
         int total = numKeys + 1; // eN keys + a0
         int picks = 1 + rnd.nextInt(Math.min(2, total));
@@ -203,17 +240,6 @@ public final class GroupByClause {
             case 5 -> Aggregate.withArg("count_distinct", gen.generateAnyKind());
             default -> Aggregate.withArg("approx_count_distinct", gen.generateAnyKind());
         };
-    }
-
-    private static ColumnKind pickGroupableKind(Rnd rnd) {
-        // Everything except ARRAY is groupable; bias towards the common
-        // keys seen in real workloads.
-        ColumnKind[] options = {
-                ColumnKind.STRING_LIKE, ColumnKind.NUMERIC, ColumnKind.TEMPORAL,
-                ColumnKind.BOOLEAN, ColumnKind.CHAR, ColumnKind.IDENTIFIER,
-                ColumnKind.DECIMAL
-        };
-        return options[rnd.nextInt(options.length)];
     }
 
     private static final class Aggregate {

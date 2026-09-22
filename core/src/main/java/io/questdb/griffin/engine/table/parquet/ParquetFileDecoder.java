@@ -214,6 +214,11 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
         return metadata.getColumnId(columnIndex);
     }
 
+    @Override
+    public int getColumnType(int columnIndex) {
+        return metadata.getColumnType(columnIndex);
+    }
+
     public long getFileAddr() {
         return fileAddr;
     }

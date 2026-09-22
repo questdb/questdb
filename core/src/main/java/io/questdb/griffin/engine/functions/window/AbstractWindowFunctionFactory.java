@@ -24,6 +24,11 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
@@ -31,19 +36,145 @@ import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
 
     @Override
     public boolean isWindow() {
         return true;
+    }
+
+    // Snapshots the partition key types. The code generator hands out a reusable buffer it clears and
+    // rebuilds for each window column's PARTITION BY, so a partitioned function that reads the types
+    // back later (e.g. when it builds its map lazily in initRecordComparator) must copy them up front.
+    static ArrayColumnTypes copyKeyTypes(ColumnTypes keyTypes) {
+        final ArrayColumnTypes copy = new ArrayColumnTypes();
+        for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+            copy.add(keyTypes.getColumnType(i));
+        }
+        return copy;
+    }
+
+    /**
+     * Copies one partition's whole ring slab from {@code srcArena} into {@code dstArena} and
+     * writes the slab's new start offset into {@code dstValue}. Used by the live-view frontier
+     * sweep to re-home the partitions that survive so the arena can be compacted down to them;
+     * see {@code BasePartitionedWindowFunction.copyRingSlab}.
+     * <p>
+     * The whole slab moves, not just the live records: {@code firstIdx} and {@code size} address
+     * positions WITHIN the capacity, so preserving the slab's internal geometry is what lets the
+     * caller leave every other slot of the copied value alone. Compacting the ring itself would
+     * mean rewriting those two as well, and the sweep has no reason to - the arena's waste is
+     * the dead partitions, not the slack inside a live one's ring.
+     * <p>
+     * {@code appendAddressFor} can reallocate {@code dstArena}, so the destination address is
+     * taken from its return value and the new offset derived from the page address only after
+     * that; reading either earlier can name a buffer that has already moved.
+     */
+    static void copyRingSlab(
+            MapValue srcValue,
+            MapValue dstValue,
+            MemoryARW srcArena,
+            MemoryARW dstArena,
+            int startOffsetValueIndex,
+            int capacityValueIndex,
+            int recordSize
+    ) {
+        final long capacity = srcValue.getLong(capacityValueIndex);
+        final long startOffset = srcValue.getLong(startOffsetValueIndex);
+        final long bytes = capacity * recordSize;
+        // Range-check the pair before trusting it, because the failure this guards against is
+        // otherwise SILENT. The two indices are declared per concrete class against a layout that
+        // differs between the RANGE and ROWS shapes of the same aggregate and shifts again in
+        // subclasses that add a leading slot; naming the wrong pair reads some neighbouring
+        // counter as a geometry, copies the wrong bytes (or, when the misread capacity is zero,
+        // copies none and leaves the entry naming the arena as it was before the truncate) and
+        // corrupts results only later and elsewhere. An existing entry always has a slab - the
+        // first row of a partition allocates one, and resetPartition zeroes the accumulator slots
+        // without touching the geometry - so a non-positive capacity or an out-of-range extent
+        // means the caller named the wrong slots, and that is worth failing the refresh over.
+        if (capacity <= 0 || startOffset < 0 || startOffset + bytes > srcArena.getAppendOffset()) {
+            throw CairoException.critical(0)
+                    .put("window ring slab out of range, check the (startOffset, capacity) value indices [startOffset=")
+                    .put(startOffset)
+                    .put(", capacity=").put(capacity)
+                    .put(", recordSize=").put(recordSize)
+                    .put(", arenaUsed=").put(srcArena.getAppendOffset())
+                    .put(']');
+        }
+        final long dstAddress = dstArena.appendAddressFor(bytes);
+        Vect.memcpy(dstAddress, srcArena.getPageAddress(0) + startOffset, bytes);
+        dstValue.putLong(startOffsetValueIndex, dstAddress - dstArena.getPageAddress(0));
+    }
+
+    // Mirrors SqlCodeGenerator's private coerceRuntimeConstantType and preserves the former SUBSAMPLE
+    // target/stride validation contract: resolve a still-UNDEFINED bind-variable arg to `type`, otherwise
+    // require the arg to already be a constant/runtime-constant whose type is convertible to `type`
+    // (message/pos on mismatch). Shared by the keep-flag window factories
+    // (uniform/cadence/m4/minmax/lttb/lttb-gap).
+    static void coerceRuntimeConstantType(Function func, int type, SqlExecutionContext context, CharSequence message, int pos) throws SqlException {
+        if (ColumnType.isUndefined(func.getType())) {
+            func.assignType(type, context.getBindVariableService());
+        } else if ((!func.isConstant() && !func.isRuntimeConstant()) || !ColumnType.isConvertibleFrom(func.getType(), type)) {
+            throw SqlException.$(pos, message);
+        }
+    }
+
+    static long validateStride(long stride, int position) throws SqlException {
+        if (stride == Numbers.LONG_NULL) {
+            throw SqlException.$(position, "stride must be set");
+        }
+        if (stride < 1) {
+            throw SqlException.$(position, "stride must be at least 1");
+        }
+        if (stride > Integer.MAX_VALUE) {
+            throw SqlException.$(position, "stride exceeds maximum of ").put(Integer.MAX_VALUE);
+        }
+        return stride;
+    }
+
+    static long validateTarget(long target, int position) throws SqlException {
+        if (target == Numbers.LONG_NULL) {
+            throw SqlException.$(position, "target point count must be set");
+        }
+        if (target < 2) {
+            throw SqlException.$(position, "target points must be at least 2");
+        }
+        if (target > Integer.MAX_VALUE) {
+            throw SqlException.$(position, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
+        }
+        return target;
+    }
+
+    // The downsampling window functions (m4/minmax/lttb/sdt) bucket or corridor-walk their input
+    // in pass1 traversal order and require that order to be ascending. Called from
+    // initRecordComparator with the pass1 traversal directions: SqlCodeGenerator flips the
+    // as-written directions first for Pass1ScanDirection.BACKWARD functions, and the downsampling
+    // functions all scan forward, so these are the directions exactly as written in the OVER
+    // clause. A null list (no ORDER BY reached this path) validates nothing here; the factories
+    // separately require ORDER BY, and getOrderByScanDirection() covers the order-dismissed path.
+    static void validateAscendingOrder(@Nullable IntList orderByDirections, int position, String name) throws SqlException {
+        if (orderByDirections == null) {
+            return;
+        }
+        for (int i = 0, n = orderByDirections.size(); i < n; i++) {
+            if (orderByDirections.getQuick(i) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
+                throw SqlException.$(position, name).put("() requires ascending ORDER BY");
+            }
+        }
     }
 
     static void expandRingBuffer(MemoryARW memory, RingBufferDesc desc, int recordSize) {
@@ -368,6 +499,12 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         TimestampNullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, long zeroValue) {
             super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
             this.zeroValue = zeroValue;
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            // zeroValue is always LONG_NULL, which is the NULL sentinel for both DATE and TIMESTAMP results.
+            return zeroValue;
         }
 
         @Override

@@ -20,7 +20,9 @@ use crate::parquet_write::encoders::helpers::{
 use crate::parquet_write::encoders::numeric::{build_statistics, SimdEncodable, StatsUpdater};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::{Column, TimestampValues};
-use crate::parquet_write::util::{build_plain_page, MaxMin, SimdMaxMin};
+use crate::parquet_write::util::{
+    build_plain_page, encode_primitive_def_levels, MaxMin, SimdMaxMin,
+};
 use crate::parquet_write::Nullable;
 
 use super::encode_column_chunk;
@@ -302,6 +304,102 @@ pub fn encode_boolean(
     )
 }
 
+/// Encode a BOOLEAN column chunk as Optional parquet pages. BOOLEAN has no in-band null
+/// sentinel, so the only nulls are the column-top prefix, written as def-level=0 rows; the
+/// bit-packed value stream stores the non-null (data) booleans only. Used for files written
+/// with the current Optional schema; legacy Required files take `encode_boolean`.
+pub fn encode_boolean_nullable(
+    columns: &[Column],
+    first_partition_start: usize,
+    last_partition_end: usize,
+    primitive_type: &PrimitiveType,
+    options: WriteOptions,
+    _bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
+) -> ParquetResult<Vec<Page>> {
+    let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type);
+    encode_column_chunk(
+        columns,
+        first_partition_start,
+        last_partition_end,
+        rows_per_page,
+        None,
+        |window, _bloom| {
+            boolean_nullable_segments_to_page(
+                columns,
+                first_partition_start,
+                last_partition_end,
+                window,
+                options,
+                primitive_type.clone(),
+            )
+        },
+    )
+}
+
+fn boolean_nullable_segments_to_page(
+    columns: &[Column],
+    first_partition_start: usize,
+    last_partition_end: usize,
+    window: PageRowWindow,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+) -> ParquetResult<Page> {
+    if primitive_type.field_info.repetition != Repetition::Optional {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "nullable boolean encoder requires Optional repetition, got {:?} for column {}",
+            primitive_type.field_info.repetition,
+            primitive_type.field_info.name
+        ));
+    }
+    let num_rows = window.row_count;
+    let mut stats = MaxMin::new();
+    // SAFETY: Column data originates from JNI/Java memory-mapped buffers.
+    let views: Vec<_> = unsafe {
+        page_chunk_views::<u8>(columns, first_partition_start, last_partition_end, window)
+    }
+    .collect();
+    // Booleans never report an in-band null, so every non-column-top row is def-level=1.
+    let total_column_top: usize = views.iter().map(|v| v.adjusted_column_top).sum();
+    let data_count = num_rows - total_column_top;
+
+    let mut buffer = vec![];
+    let def_levels_iter = views.iter().flat_map(|v| {
+        std::iter::repeat_n(false, v.adjusted_column_top)
+            .chain(std::iter::repeat_n(true, v.slice.len()))
+    });
+    encode_primitive_def_levels(&mut buffer, def_levels_iter, num_rows, options.version)?;
+    let definition_levels_byte_length = buffer.len();
+
+    let value_iter = views
+        .iter()
+        .flat_map(|v| v.slice.iter().copied())
+        .map(|value| {
+            stats.update(value as i32);
+            value != 0
+        });
+    bitpacked_encode(&mut buffer, value_iter, data_count)?;
+
+    let statistics = if options.write_statistics {
+        Some(boolean_statistics(stats, total_column_top))
+    } else {
+        None
+    };
+
+    build_plain_page(
+        buffer,
+        num_rows,
+        total_column_top,
+        definition_levels_byte_length,
+        statistics,
+        primitive_type,
+        options,
+        Encoding::Plain,
+        false,
+    )
+    .map(Page::Data)
+}
+
 fn simd_segments_to_page<T: SimdEncodable>(
     columns: &[Column],
     first_partition_start: usize,
@@ -311,7 +409,14 @@ fn simd_segments_to_page<T: SimdEncodable>(
     primitive_type: PrimitiveType,
     bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    if primitive_type.field_info.repetition != Repetition::Optional {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "plain nullable encoder requires Optional repetition, got {:?} for column {}",
+            primitive_type.field_info.repetition,
+            primitive_type.field_info.name
+        ));
+    }
 
     // SAFETY: Column data originates from JNI/Java memory-mapped buffers.
     let mut views = unsafe {
@@ -495,7 +600,14 @@ where
     P: NativeType + num_traits::AsPrimitive<i64>,
     T: Default + num_traits::AsPrimitive<P> + Debug + 'static,
 {
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Required);
+    if primitive_type.field_info.repetition != Repetition::Required {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "plain notnull encoder requires Required repetition, got {:?} for column {}",
+            primitive_type.field_info.repetition,
+            primitive_type.field_info.name
+        ));
+    }
 
     let num_rows = window.row_count;
     let default_bytes = {
@@ -565,7 +677,14 @@ where
     T: Nullable + num_traits::AsPrimitive<P> + Debug + 'static,
     MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
 {
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    if primitive_type.field_info.repetition != Repetition::Optional {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "plain nullable encoder requires Optional repetition, got {:?} for column {}",
+            primitive_type.field_info.repetition,
+            primitive_type.field_info.name
+        ));
+    }
 
     let num_rows = window.row_count;
     let mut validity = FlatValidity::new();
@@ -653,7 +772,14 @@ fn decimal_segments_to_page<T>(
 where
     T: Nullable + NativeType + Debug + 'static,
 {
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    if primitive_type.field_info.repetition != Repetition::Optional {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "plain nullable native encoder requires Optional repetition, got {:?} for column {}",
+            primitive_type.field_info.repetition,
+            primitive_type.field_info.name
+        ));
+    }
 
     let num_rows = window.row_count;
     let mut validity = FlatValidity::new();
@@ -757,7 +883,7 @@ fn boolean_segments_to_page(
     bitpacked_encode(&mut buffer, iter, num_rows)?;
 
     let statistics = if options.write_statistics {
-        Some(boolean_statistics(stats))
+        Some(boolean_statistics(stats, 0))
     } else {
         None
     };
@@ -799,7 +925,7 @@ pub fn boolean_to_page(
     bitpacked_encode(&mut buffer, iter, num_rows)?;
 
     let statistics = if options.write_statistics {
-        Some(boolean_statistics(stats))
+        Some(boolean_statistics(stats, 0))
     } else {
         None
     };
@@ -818,9 +944,9 @@ pub fn boolean_to_page(
     .map(Page::Data)
 }
 
-fn boolean_statistics(bool_stats: MaxMin<i32>) -> ParquetStatistics {
+fn boolean_statistics(bool_stats: MaxMin<i32>, null_count: usize) -> ParquetStatistics {
     let statistics = &BooleanStatistics {
-        null_count: Some(0),
+        null_count: Some(null_count as i64),
         distinct_count: None,
         max_value: bool_stats.max.map(|x| x != 0),
         min_value: bool_stats.min.map(|x| x != 0),

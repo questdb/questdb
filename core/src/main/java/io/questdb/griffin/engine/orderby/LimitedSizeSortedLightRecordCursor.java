@@ -62,7 +62,10 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
         this.chain = chain;
         this.comparator = comparator;
         this.chainCursor = chain.getCursor();
-        this.isOpen = true;
+        // Lazy variant: the chain skeleton is constructed but the key/value heaps
+        // are not allocated yet. The first of() call binds the MemoryTracker and
+        // calls chain.reopen() to allocate the initial backing under it.
+        this.isOpen = false;
         this.rankMaps = rankMaps;
     }
 
@@ -98,7 +101,7 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
             isChainBuilt = true;
         }
         if (rowsLeft-- > 0 && chainCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             baseCursor.recordAt(baseRecord, chainCursor.next());
             return true;
         }
@@ -117,6 +120,7 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
         baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
         if (!isOpen) {
             isOpen = true;
+            chain.setMemoryTracker(executionContext.getMemoryTracker());
             chain.reopen();
         }
         SortKeyEncoder.buildRankMaps(baseCursor, rankMaps, comparator);
@@ -159,17 +163,21 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     }
 
     @Override
-    public void updateLimits(long limit, long skipFirst, long skipLast) {
+    public void updateLimits(boolean isFirstN, long limit, long skipFirst, long skipLast) {
+        // This cursor drains the whole base cursor either way, so isFirstN only steers the
+        // chain's eviction end, which the factory sets on the chain directly.
         this.limit = limit;
         this.skipFirst = skipFirst;
         this.skipLast = skipLast;
     }
 
     private void buildChain() {
+        // Consult the breaker before consuming the base, so an empty base scan still observes cancellation.
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         final Record placeHolderRecord = baseCursor.getRecordB();
         if (limit != 0) {
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 // Tree chain is liable to re-position record to
                 // other rows to do record comparison. We must use our
                 // own record instance in case base cursor keeps

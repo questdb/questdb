@@ -39,10 +39,12 @@ import io.questdb.griffin.engine.orderby.SortKeyType;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 final class EncodedWindowSortBuffer implements WindowSortBuffer {
     private final SortKeyEncoder encoder;
@@ -122,7 +124,7 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
             } else {
                 Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold);
             }
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
         }
         startAddr = entryMem.getAddress() + rowIdOffset;
         toTop();
@@ -193,9 +195,24 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
     }
 
     @Override
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        // entryMem grows in of()/put() after this binding. Mirrors EncodedTopKBuffer.
+        entryMem.setMemoryTracker(tracker);
+    }
+
+    @Override
     public void toTop() {
         currentAddr = startAddr;
         endAddr = startAddr + count * entrySize;
+    }
+
+    // Valid after finishPut(). Index the retained sorted entries without moving the sequential
+    // traversal cursor; the LIGHT selector needs only its selected ordinals, not a full replay.
+    long getRowIdAt(long ordinal) {
+        if (ordinal < 0 || ordinal >= count) {
+            throw CairoException.nonCritical().put("row-selecting traversal index out of bounds");
+        }
+        return Unsafe.getLong(startAddr + ordinal * entrySize);
     }
 
     private CairoException windowSortOverflow() {

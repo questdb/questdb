@@ -9,7 +9,11 @@ steps:
         IDEA_ROOT="$(Build.SourcesDirectory)/.ci/intellij"
         rm -rf "$IDEA_ROOT"
         mkdir -p "$IDEA_ROOT"
-        wget "https://download.jetbrains.com/product?code=IIU&latest&distribution=linux" -O intellij.tar.gz
+        # Pinned: an unpinned "latest" download reformats the whole repo whenever
+        # JetBrains ships a formatter change (2026.2 changed nested-ternary
+        # continuation indents and turned every lint run red). Bump this pin and
+        # reformat the repo in the same PR when moving to a newer IDEA
+        wget "https://download.jetbrains.com/idea/idea-2026.1.4.tar.gz" -O intellij.tar.gz
         tar xzf intellij.tar.gz -C "$IDEA_ROOT"
         rm intellij.tar.gz
         cd "$IDEA_ROOT"

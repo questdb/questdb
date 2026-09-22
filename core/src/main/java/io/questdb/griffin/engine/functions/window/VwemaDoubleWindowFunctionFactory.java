@@ -30,14 +30,18 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -84,7 +88,8 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
     private static final String NAME = "avg";
     private static final String SIGNATURE = NAME + "(DSDD)";
     // Column types for partition-based functions: numerator, denominator, prevTimestamp, hasValue
-    private static final ArrayColumnTypes VWEMA_COLUMN_TYPES;
+    static final ArrayColumnTypes VWEMA_COLUMN_TYPES;
+    static final ArrayColumnTypes VWEMA_COLUMN_TYPES_LV;
 
     @Override
     public String getSignature() {
@@ -167,10 +172,11 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
 
         // Create appropriate function based on partitioning
         if (partitionByRecord != null) {
+            final boolean liveView = windowContext.isLiveView();
             Map map = MapFactory.createUnorderedMap(
                     configuration,
                     partitionByKeyTypes,
-                    VWEMA_COLUMN_TYPES
+                    liveView ? VWEMA_COLUMN_TYPES_LV : VWEMA_COLUMN_TYPES
             );
 
             if (mode == MODE_TIME_WEIGHTED) {
@@ -183,7 +189,10 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                         timestampIndex,
                         tau,
                         kind,
-                        paramValue
+                        paramValue,
+                        partitionByKeyTypes,
+                        liveView,
+                        configuration
                 );
             } else {
                 return new VwemaOverPartitionFunction(
@@ -194,7 +203,10 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                         volumeArg,
                         alpha,
                         mode == MODE_ALPHA ? "alpha" : "period",
-                        paramValue
+                        paramValue,
+                        partitionByKeyTypes,
+                        liveView,
+                        configuration
                 );
             }
         } else {
@@ -249,7 +261,11 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
     static class VwemaOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
         private final double alpha;
+        private final CairoConfiguration configuration;
+        private final ArrayColumnTypes keyColumnTypes;
         private final String kindStr;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final double paramValue;
         private final Function volumeArg;
         private double vwema;
@@ -262,19 +278,46 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                 Function volumeArg,
                 double alpha,
                 String kindStr,
-                double paramValue
+                double paramValue,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, valueArg);
             this.volumeArg = volumeArg;
             this.alpha = alpha;
             this.kindStr = kindStr;
             this.paramValue = paramValue;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = VWEMA_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(VWEMA_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 4;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
         public void close() {
             super.close();
             volumeArg.close();
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -294,6 +337,9 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
             double volume = volumeArg.getDouble(record);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 // First value for this partition
                 if (Numbers.isFinite(price) && Numbers.isFinite(volume) && volume > 0) {
                     double numerator = price * volume;
@@ -346,6 +392,12 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            volumeArg.cursorClosed();
+        }
+
+        @Override
         public double getDouble(Record rec) {
             return vwema;
         }
@@ -361,9 +413,106 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : VWEMA_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            volumeArg.init(symbolTableSource, executionContext);
+        }
+
+        @Override
+        public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.initPartitionBy(symbolTableSource, executionContext);
+            // volumeArg is a plain Function, so it rebinds via init() - as
+            // BaseBivariateWindowFunction does for its second argument.
+            volumeArg.init(symbolTableSource, executionContext);
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), vwema);
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putDouble(0, 0.0);
+                value.putDouble(1, 0.0);
+                value.putLong(2, 0L);
+                value.putLong(3, 0L);
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            value.putDouble(0, source.getDouble(offset));
+            offset += Double.BYTES;
+            value.putDouble(1, source.getDouble(offset));
+            offset += Double.BYTES;
+            value.putLong(2, source.getLong(offset));
+            offset += Long.BYTES;
+            value.putLong(3, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putDouble(value.getDouble(0));
+            sink.putDouble(value.getDouble(1));
+            sink.putLong(value.getLong(2));
+            sink.putLong(value.getLong(3));
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -374,6 +523,13 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            volumeArg.toTop();
+            tombstoneCount = 0;
         }
     }
 
@@ -431,6 +587,12 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            volumeArg.cursorClosed();
+        }
+
+        @Override
         public double getDouble(Record rec) {
             // When hasValue is true, denominator is guaranteed finite and positive
             // (set from volume > 0 and updated with positive arithmetic)
@@ -445,6 +607,20 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            volumeArg.init(symbolTableSource, executionContext);
+        }
+
+        @Override
+        public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.initPartitionBy(symbolTableSource, executionContext);
+            // volumeArg is a plain Function, so it rebinds via init() - as
+            // BaseBivariateWindowFunction does for its second argument.
+            volumeArg.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -471,6 +647,7 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         @Override
         public void toTop() {
             super.toTop();
+            volumeArg.toTop();
             numerator = Double.NaN;
             denominator = Double.NaN;
             hasValue = false;
@@ -480,7 +657,11 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
     // Time-weighted VWEMA with partition by
     static class VwemaTimeWeightedOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
+        private final CairoConfiguration configuration;
+        private final ArrayColumnTypes keyColumnTypes;
         private final CharSequence kindStr;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final double paramValue;
         private final long tau;
         private final int timestampIndex;
@@ -496,7 +677,10 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                 int timestampIndex,
                 long tau,
                 CharSequence kindStr,
-                double paramValue
+                double paramValue,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, valueArg);
             this.volumeArg = volumeArg;
@@ -504,12 +688,36 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
             this.tau = tau;
             this.kindStr = kindStr;
             this.paramValue = paramValue;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = VWEMA_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(VWEMA_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 4;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
         public void close() {
             super.close();
             volumeArg.close();
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -530,6 +738,9 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
             long timestamp = record.getTimestamp(timestampIndex);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 // First value for this partition
                 if (Numbers.isFinite(price) && Numbers.isFinite(volume) && volume > 0) {
                     double numerator = price * volume;
@@ -592,6 +803,12 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            volumeArg.cursorClosed();
+        }
+
+        @Override
         public double getDouble(Record rec) {
             return vwema;
         }
@@ -607,9 +824,106 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : VWEMA_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            volumeArg.init(symbolTableSource, executionContext);
+        }
+
+        @Override
+        public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.initPartitionBy(symbolTableSource, executionContext);
+            // volumeArg is a plain Function, so it rebinds via init() - as
+            // BaseBivariateWindowFunction does for its second argument.
+            volumeArg.init(symbolTableSource, executionContext);
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), vwema);
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putDouble(0, 0.0);
+                value.putDouble(1, 0.0);
+                value.putLong(2, 0L);
+                value.putLong(3, 0L);
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            value.putDouble(0, source.getDouble(offset));
+            offset += Double.BYTES;
+            value.putDouble(1, source.getDouble(offset));
+            offset += Double.BYTES;
+            value.putLong(2, source.getLong(offset));
+            offset += Long.BYTES;
+            value.putLong(3, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putDouble(value.getDouble(0));
+            sink.putDouble(value.getDouble(1));
+            sink.putLong(value.getLong(2));
+            sink.putLong(value.getLong(3));
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -620,6 +934,13 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            volumeArg.toTop();
+            tombstoneCount = 0;
         }
     }
 
@@ -691,6 +1012,12 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            volumeArg.cursorClosed();
+        }
+
+        @Override
         public double getDouble(Record rec) {
             // When hasValue is true, denominator is guaranteed finite and positive
             // (set from volume > 0 and updated with positive arithmetic)
@@ -705,6 +1032,20 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            volumeArg.init(symbolTableSource, executionContext);
+        }
+
+        @Override
+        public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.initPartitionBy(symbolTableSource, executionContext);
+            // volumeArg is a plain Function, so it rebinds via init() - as
+            // BaseBivariateWindowFunction does for its second argument.
+            volumeArg.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -732,6 +1073,7 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         @Override
         public void toTop() {
             super.toTop();
+            volumeArg.toTop();
             numerator = Double.NaN;
             denominator = Double.NaN;
             hasValue = false;
@@ -745,5 +1087,12 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         VWEMA_COLUMN_TYPES.add(ColumnType.DOUBLE); // denominator
         VWEMA_COLUMN_TYPES.add(ColumnType.LONG);   // prevTimestamp
         VWEMA_COLUMN_TYPES.add(ColumnType.LONG);   // hasValue (0 or 1)
+
+        VWEMA_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        VWEMA_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // numerator
+        VWEMA_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // denominator
+        VWEMA_COLUMN_TYPES_LV.add(ColumnType.LONG);   // prevTimestamp
+        VWEMA_COLUMN_TYPES_LV.add(ColumnType.LONG);   // hasValue (0 or 1)
+        VWEMA_COLUMN_TYPES_LV.add(ColumnType.BYTE);   // tombstone (anchor-driven compaction)
     }
 }

@@ -26,6 +26,7 @@ package io.questdb.cutlass.qwp.server;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
@@ -51,6 +52,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -64,6 +66,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     protected static final int DATAGRAM_LEFT_UNCOMMITTED_ROWS = 1;
     protected static final int DATAGRAM_TRIGGERED_COMMIT = 2;
 
+    protected final AtomicBoolean acceptOpen;
     protected final int bufLen;
     protected final long commitInterval;
     protected final int maxUncommittedDatagrams;
@@ -88,6 +91,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     private long droppedBadMagicCount;
     private long droppedBadVersionCount;
     private long droppedParseErrorCount;
+    private long droppedStaleTableCount;
     private long droppedTooShortCount;
     private long droppedTruncatedCount;
 
@@ -96,6 +100,11 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     }
 
     public QwpUdpReceiver(QwpUdpReceiverConfiguration configuration, CairoEngine engine, @Nullable WorkerPool workerPool) {
+        this(configuration, engine, workerPool, new AtomicBoolean(true));
+    }
+
+    public QwpUdpReceiver(QwpUdpReceiverConfiguration configuration, CairoEngine engine, @Nullable WorkerPool workerPool, AtomicBoolean acceptOpen) {
+        this.acceptOpen = acceptOpen;
         this.configuration = configuration;
         this.nf = configuration.getNetworkFacade();
         this.bufLen = configuration.getMsgBufferSize();
@@ -213,11 +222,28 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
 
             fd = -1;
 
-            tudCache.commitAllBestEffort();
-            Misc.free(tudCache);
-            Misc.free(walAppender);
-            Unsafe.free(buf, bufLen, MemoryTag.NATIVE_ILP_RSS);
+            try {
+                // commitAllBestEffort is throw-free by contract (its eviction
+                // frees are per-entry guarded), so the rethrow at the end of
+                // the finally cannot mask a commit failure.
+                tudCache.commitAllBestEffort();
+            } finally {
+                Throwable cleanupFailure = Misc.freeBestEffort(null, tudCache);
+                cleanupFailure = Misc.freeBestEffort(cleanupFailure, walAppender);
+                // Unsafe.free cannot throw; it runs last so the buffer is
+                // reclaimed even when a writer close above failed.
+                Unsafe.free(buf, bufLen, MemoryTag.NATIVE_ILP_RSS);
+                CairoException.rethrowCleanupFailure(cleanupFailure);
+            }
         }
+    }
+
+    /**
+     * Number of tables currently held in the update-details cache. Exposed for
+     * monitoring and tests (e.g. verifying dropped tables are evicted).
+     */
+    public int getCachedTableCount() {
+        return tudCache.size();
     }
 
     public long getDroppedBadMagicCount() {
@@ -230,6 +256,18 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
 
     public long getDroppedParseErrorCount() {
         return droppedParseErrorCount;
+    }
+
+    /**
+     * Number of datagrams dropped because a target table's update details could
+     * not be acquired -- almost always a table that was DROPped concurrently
+     * (its stale cached writer, possibly still holding buffered rows, is evicted
+     * and the datagram is dropped so the sender heals on the next one). Kept
+     * separate from {@link #getDroppedParseErrorCount()} so a concurrent-drop
+     * data event is not mistaken for a malformed-payload parse error.
+     */
+    public long getDroppedStaleTableCount() {
+        return droppedStaleTableCount;
     }
 
     public long getDroppedTooShortCount() {
@@ -246,7 +284,23 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
 
     public long getTotalDroppedCount() {
         return droppedBadMagicCount + droppedBadVersionCount + droppedParseErrorCount
-                + droppedTooShortCount + droppedTruncatedCount;
+                + droppedStaleTableCount + droppedTooShortCount + droppedTruncatedCount;
+    }
+
+    @Override
+    public boolean run(@NotNull WorkerContext workerContext) {
+        // Close-acknowledgment path: once closed=true, close() spins this.run()
+        // until runSerially() executes under the SyncJob lock and checkClosed()
+        // sets closedAcknowledged. Bypass the acceptOpen short-circuit in that
+        // case so the spin can make progress. The receiver is already closed,
+        // so no ingestion can happen even if super.run() is invoked.
+        if (closed) {
+            return super.run(workerContext);
+        }
+        if (!acceptOpen.get()) {
+            return false;
+        }
+        return super.run(workerContext);
     }
 
     @Override
@@ -254,10 +308,20 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         if (checkClosed()) {
             return false;
         }
+        if (!acceptOpen.get()) {
+            // Mirror the worker-path acceptOpen gate so the own-thread driver
+            // also quiesces after switchRole publishes acceptOpen=false. Placed
+            // AFTER checkClosed() so close()'s acknowledgment spin (which sets
+            // closedAcknowledged inside checkClosed()) can still progress.
+            return false;
+        }
         boolean ran = false;
         int count;
         while ((count = nf.recvRaw(fd, buf, bufLen)) > 0) {
             ran = true;
+            if (!acceptOpen.get()) {
+                return true;
+            }
             int datagramState = processDatagram(buf, count);
             if ((datagramState & DATAGRAM_DROPPED) == 0) {
                 processedCount++;
@@ -355,13 +419,33 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
             messageCursor.of(address, (int) totalLength, null);
             while (messageCursor.hasNextTable()) {
                 QwpTableBlockCursor tableBlock = messageCursor.nextTable();
-                WalTableUpdateDetails tud = tudCache.getTableUpdateDetails(
-                        AllowAllSecurityContext.INSTANCE,
-                        tableBlock.getTableNameUtf8(),
-                        tableBlock.getSchema(),
-                        tableBlock,
-                        configuration.getMaxTablesPerConnection()
-                );
+                final WalTableUpdateDetails tud;
+                try {
+                    tud = tudCache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE,
+                            tableBlock.getTableNameUtf8(),
+                            tableBlock.getSchema(),
+                            tableBlock,
+                            configuration.getMaxTablesPerConnection()
+                    );
+                } catch (CairoException e) {
+                    // The table could not be acquired -- almost always because
+                    // it was DROPped concurrently and its stale cached writer
+                    // (possibly still holding buffered rows) was evicted. It
+                    // now also covers a concurrent RENAME: the rename-window
+                    // refusal from applyPendingStructureChanges, and a stale
+                    // entry whose buffered rows could not be salvaged, both
+                    // surface here the same way. There is no ack on the UDP
+                    // path, so count the datagram dropped and heal on the next
+                    // one. Rows already appended for earlier table blocks stay
+                    // buffered and commit through the normal paths, so keep
+                    // their state bits alongside DATAGRAM_DROPPED. Counted
+                    // separately from parse errors.
+                    droppedStaleTableCount++;
+                    LOG.error().$("dropping datagram, table update details unavailable: ")
+                            .$(e.getFlyweightMessage()).$();
+                    return datagramState | DATAGRAM_DROPPED;
+                }
                 if (tud == null) {
                     LOG.error().$("failed to get table update details for: ").$(tableBlock.getTableName()).$();
                     continue;
@@ -380,7 +464,10 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         } catch (Throwable t) {
             droppedParseErrorCount++;
             LOG.error().$("datagram processing error: ").$(t.getMessage()).$();
-            return DATAGRAM_DROPPED;
+            // Keep the bits earlier table blocks accumulated: their appended
+            // rows stay buffered and must still count toward the forced-commit
+            // threshold.
+            return datagramState | DATAGRAM_DROPPED;
         }
         return datagramState;
     }

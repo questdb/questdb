@@ -558,6 +558,17 @@ public final class ColumnType {
         return columnType == NULL;
     }
 
+    /**
+     * Returns true for fixed-size types that have no dedicated NULL sentinel value, i.e. every
+     * bit pattern is a valid value (BOOLEAN, BYTE, SHORT, CHAR). Such columns cannot represent
+     * NULL on the data vector, so a column top over them reads as leading default values rather
+     * than NULLs.
+     */
+    public static boolean isNoNullSentinelFixedType(int columnType) {
+        final int tag = tagOf(columnType);
+        return tag == BOOLEAN || tag == BYTE || tag == SHORT || tag == CHAR;
+    }
+
     public static boolean isParseableType(int colType) {
         return isTimestamp(colType) || colType == LONG256;
     }
@@ -884,12 +895,12 @@ public final class ColumnType {
         //
         // All types must be mentioned at all times.
         //
-        /// Note that the overload rule here must align with the corresponding function implementation, or specific
-        /// rules specified by {@link io.questdb.griffin.FunctionParser}, which add explicit cast function(like uuid -> string).
-        /// For instance, in {@link io.questdb.griffin.engine.functions.SymbolFunction},
-        /// apart from getChar(), getStr(), getTimestamp(), getVarchar(), and getInt(),
-        /// all other getxxx methods throw an UnSupportException. Therefore, the Symbol datatype only supports
-        /// overloading by STRING, VARCHAR, CHAR, INT, and TIMESTAMP.
+        // Note that the overload rule here must align with the corresponding function implementation, or specific
+        // rules specified by {@link io.questdb.griffin.FunctionParser}, which add explicit cast function(like uuid -> string).
+        // For instance, in {@link io.questdb.griffin.engine.functions.SymbolFunction},
+        // apart from getChar(), getStr(), getTimestamp(), getVarchar(), and getInt(),
+        // all other getxxx methods throw an UnSupportException. Therefore, the Symbol datatype only supports
+        // overloading by STRING, VARCHAR, CHAR, INT, and TIMESTAMP.
 
         OVERLOAD_PRIORITY = new short[][]{
                 /* 0 UNDEFINED   */  {DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
@@ -952,6 +963,11 @@ public final class ColumnType {
         OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + STRING] = OVERLOAD_FULL;
         // Do the same for symbol -> avoids weird null behaviour
         OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + SYMBOL] = OVERLOAD_FULL;
+        // A NULL literal is a scalar, never a cursor (scalar sub-query). Without this a bare
+        // `null` matches a CURSOR argument at distance 0, so `col <= null` (i.e. not(col > null))
+        // binds to a `>(?C)` cursor-comparison factory and blows up calling getRecordCursorFactory()
+        // on the NULL constant. Force no overload so scalar null-comparison factories are used.
+        OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + CURSOR] = OVERLOAD_NONE;
 
         GEO_TYPE_SIZE_POW2 = new int[GEOLONG_MAX_BITS + 1];
         for (int bits = 1; bits <= GEOLONG_MAX_BITS; bits++) {

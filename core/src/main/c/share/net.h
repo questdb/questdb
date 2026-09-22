@@ -102,6 +102,14 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isDead
         (JNIEnv *, jclass, jint);
 
 /*
+ * Class:     io_questdb_network_Net
+ * Method:    isPeerDisconnected
+ * Signature: (I)Z
+ */
+JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isPeerDisconnected
+        (JNIEnv *, jclass, jint);
+
+/*
  * Class:     com_questdb_network_Net
  * Method:    join
  * Signature: (III)Z

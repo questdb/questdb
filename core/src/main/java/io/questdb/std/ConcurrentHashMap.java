@@ -954,6 +954,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         for (Node<V>[] tab = table; ; ) {
             Node<V> f;
             int n, i, fh;
+            CharSequence fk;
+            V fv;
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
@@ -974,6 +976,10 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                     break;
             } else if ((fh = f.hash) == MOVED)
                 tab = helpTransfer(tab, f);
+            else if (fh == h    // check first node without acquiring lock
+                    && ((fk = f.key) == key || (fk != null && keyEquals(key, fk)))
+                    && (fv = f.val) != null)
+                return fv;
             else {
                 boolean added = false;
                 synchronized (f) {
@@ -1055,6 +1061,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         for (Node<V>[] tab = table; ; ) {
             Node<V> f;
             int n, i, fh;
+            CharSequence fk;
+            V fv;
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
@@ -1075,6 +1083,10 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                     break;
             } else if ((fh = f.hash) == MOVED)
                 tab = helpTransfer(tab, f);
+            else if (fh == h    // check first node without acquiring lock
+                    && ((fk = f.key) == key || (fk != null && keyEquals(key, fk)))
+                    && (fv = f.val) != null)
+                return fv;
             else {
                 boolean added = false;
                 synchronized (f) {
@@ -2551,6 +2563,50 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         }
     }
 
+    public static class EntryCursor<V> extends Traverser<V> implements Mutable {
+        private ConcurrentHashMap<V> map;
+
+        @Override
+        public final void clear() {
+            map = null;
+            reset(null);
+        }
+
+        public final CharSequence getKey() {
+            return next.key;
+        }
+
+        public final V getValue() {
+            return next.val;
+        }
+
+        public boolean hasNext() {
+            return advance() != null;
+        }
+
+        public final void of(ConcurrentHashMap<V> map) {
+            this.map = map;
+            reset(map.table);
+        }
+
+        public void toTop() {
+            reset(map != null ? map.table : null);
+        }
+
+        private void reset(Node<V>[] tab) {
+            // A partial traversal may retain resize frames belonging to the previous table.
+            while (stack != null) {
+                final TableStack<V> saved = stack;
+                stack = saved.next;
+                saved.tab = null;
+                saved.next = spare;
+                spare = saved;
+            }
+            final int size = tab != null ? tab.length : 0;
+            of(tab, size, size);
+        }
+    }
+
     static final class EntryIterator<V> extends BaseIterator<V>
             implements Iterator<Map.Entry<CharSequence, V>> {
 
@@ -3160,21 +3216,32 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          * Possibly blocks awaiting root lock.
          */
         private void contendedLock() {
-            boolean waiting = false;
-            for (int s; ; ) {
-                if (((s = lockState) & ~WAITER) == 0) {
-                    if (Unsafe.cas(this, LOCKSTATE, s, WRITER)) {
-                        if (waiting)
-                            waiter = null;
-                        return;
+            boolean isInterrupted = false;
+            boolean isWaiting = false;
+            try {
+                for (int s; ; ) {
+                    if (((s = lockState) & ~WAITER) == 0) {
+                        if (Unsafe.cas(this, LOCKSTATE, s, WRITER)) {
+                            if (isWaiting)
+                                waiter = null;
+                            return;
+                        }
+                    } else if ((s & WAITER) == 0) {
+                        if (Unsafe.cas(this, LOCKSTATE, s, s | WAITER)) {
+                            isWaiting = true;
+                            waiter = Thread.currentThread();
+                        }
+                    } else if (isWaiting) {
+                        // The bin monitor admits one writer, so only this thread can own WAITER.
+                        LockSupport.park(this);
+                        // Consume interrupts so the next park can block; restore the flag on exit.
+                        isInterrupted |= Thread.interrupted();
                     }
-                } else if ((s & WAITER) == 0) {
-                    if (Unsafe.cas(this, LOCKSTATE, s, s | WAITER)) {
-                        waiting = true;
-                        waiter = Thread.currentThread();
-                    }
-                } else if (waiting)
-                    LockSupport.park(this);
+                }
+            } finally {
+                if (isInterrupted) {
+                    Thread.currentThread().interrupt();
+                }
             }
         }
 
@@ -3182,6 +3249,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          * Acquires write lock for tree restructuring.
          */
         private void lockRoot() {
+            assert Thread.holdsLock(this) : "TreeBin writer must hold the bin monitor";
             if (!Unsafe.cas(this, LOCKSTATE, 0, WRITER))
                 contendedLock(); // offload to separate method
         }

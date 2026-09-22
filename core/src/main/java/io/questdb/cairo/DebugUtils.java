@@ -62,14 +62,15 @@ public class DebugUtils {
     // Useful debugging method
     public static boolean reconcileColumnTops(int partitionsSlotSize, LongList openPartitionInfo, ColumnVersionReader columnVersionReader, TableReader reader) {
         int partitionCount = reader.getPartitionCount();
-        TimestampDriver driver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
+        final TableReaderMetadata metadata = reader.getMetadata();
+        TimestampDriver driver = ColumnType.getTimestampDriver(metadata.getTimestampType());
         for (int p = 0; p < partitionCount; p++) {
             long partitionRowCount = reader.getPartitionRowCount(p);
             if (partitionRowCount != -1) {
                 long partitionTimestamp = openPartitionInfo.getQuick(p * partitionsSlotSize);
                 for (int c = 0; c < reader.getColumnCount(); c++) {
                     long colTop = Math.min(reader.getColumnTop(reader.getColumnBase(p), c), partitionRowCount);
-                    long columnTopRaw = columnVersionReader.getColumnTop(partitionTimestamp, c);
+                    long columnTopRaw = columnVersionReader.getColumnTop(partitionTimestamp, metadata.getWriterIndex(c));
                     long columnTop = Math.min(columnTopRaw == -1 ? partitionRowCount : columnTopRaw, partitionRowCount);
                     if (columnTop != colTop) {
                         LOG.critical().$("failed to reconcile column top [partition=").$ts(driver, partitionTimestamp)

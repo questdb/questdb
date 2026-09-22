@@ -15,6 +15,8 @@ pub struct BinaryStatistics {
     pub distinct_count: Option<i64>,
     pub max_value: Option<Vec<u8>>,
     pub min_value: Option<Vec<u8>>,
+    pub is_max_value_exact: Option<bool>,
+    pub is_min_value_exact: Option<bool>,
 }
 
 impl Statistics for BinaryStatistics {
@@ -29,6 +31,14 @@ impl Statistics for BinaryStatistics {
     fn null_count(&self) -> Option<i64> {
         self.null_count
     }
+
+    fn has_min_value(&self) -> bool {
+        self.min_value.is_some()
+    }
+
+    fn has_max_value(&self) -> bool {
+        self.max_value.is_some()
+    }
 }
 
 pub fn read(v: &ParquetStatistics, primitive_type: PrimitiveType) -> Result<Arc<dyn Statistics>> {
@@ -38,6 +48,8 @@ pub fn read(v: &ParquetStatistics, primitive_type: PrimitiveType) -> Result<Arc<
         distinct_count: v.distinct_count,
         max_value: v.max_value.clone(),
         min_value: v.min_value.clone(),
+        is_max_value_exact: v.is_max_value_exact,
+        is_min_value_exact: v.is_min_value_exact,
     }))
 }
 
@@ -49,5 +61,7 @@ pub fn write(v: &BinaryStatistics) -> ParquetStatistics {
         min_value: v.min_value.clone(),
         min: None,
         max: None,
+        is_max_value_exact: v.is_max_value_exact,
+        is_min_value_exact: v.is_min_value_exact,
     }
 }

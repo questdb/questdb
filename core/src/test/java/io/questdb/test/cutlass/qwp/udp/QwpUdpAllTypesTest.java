@@ -989,7 +989,6 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     private static void sendTableBuffer(QwpTableBuffer tb) {
         // Encode using QwpWebSocketEncoder (public API) then send via raw UDP
         try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-            encoder.setGorillaEnabled(false);
             int len = encoder.encode(tb);
 
             long fd = Net.socketUdp();

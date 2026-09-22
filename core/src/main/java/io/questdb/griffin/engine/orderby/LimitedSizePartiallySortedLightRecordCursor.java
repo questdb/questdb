@@ -53,6 +53,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
     private SqlExecutionCircuitBreaker circuitBreaker;
     private long groupTimestamp;
     private boolean isChainBuilt;
+    private boolean isEarlyStopEnabled;
     private boolean isOpen;
     private long limit; // <0 - limit disabled; =0 means don't fetch any rows; >0 - apply limit
     private long rowsInGroup;
@@ -71,7 +72,10 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
         this.chain = chain;
         this.comparator = comparator;
         this.chainCursor = chain.getCursor();
-        this.isOpen = true;
+        // Lazy variant: the chain skeleton is constructed but the key/value heaps
+        // are not allocated yet. The first of() call binds the MemoryTracker and
+        // calls chain.reopen() to allocate the initial backing under it.
+        this.isOpen = false;
         this.timestampIndex = timestampIndex;
         this.rankMaps = rankMaps;
     }
@@ -108,7 +112,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
             isChainBuilt = true;
         }
         if (rowsLeft-- > 0 && chainCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             baseCursor.recordAt(baseRecord, chainCursor.next());
             return true;
         }
@@ -123,11 +127,17 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) {
         this.baseCursor = baseCursor;
-        baseCursor.expectLimitedIteration();
+        // updateLimits() runs ahead of every of(), so the flag is already re-derived here. Only a
+        // first-N scan stops early; a last-N re-bind drains the base in full, and telling it to
+        // throttle would cap an async filter's in-flight dispatch for a read that never stops short.
+        if (isEarlyStopEnabled) {
+            baseCursor.expectLimitedIteration();
+        }
         baseRecord = baseCursor.getRecord();
         baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
         if (!isOpen) {
             isOpen = true;
+            chain.setMemoryTracker(executionContext.getMemoryTracker());
             chain.reopen();
         }
         SortKeyEncoder.buildRankMaps(baseCursor, rankMaps, comparator);
@@ -174,13 +184,19 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
     }
 
     @Override
-    public void updateLimits(long limit, long skipFirst, long skipLast) {
+    public void updateLimits(boolean isFirstN, long limit, long skipFirst, long skipLast) {
         this.limit = limit;
         this.skipFirst = skipFirst;
         this.skipLast = skipLast;
+        // The factory picks this cursor once, on the first execution's isFirstN, but re-derives
+        // isFirstN from the bind variables on every execution. Stopping the scan early is only
+        // sound for first-N; for last-N the tail of the base cursor holds the answer.
+        this.isEarlyStopEnabled = isFirstN;
     }
 
     private void buildChain() {
+        // Consult the breaker before consuming the base, so an empty base scan still observes cancellation.
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         final Record placeHolderRecord = baseCursor.getRecordB();
         if (limit != 0) {
             // first record ever, we've to find the timestamp value
@@ -199,7 +215,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
             }
 
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 long currentTimestamp = baseRecord.getTimestamp(timestampIndex);
                 if (groupTimestamp == currentTimestamp) {
@@ -208,7 +224,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
                     rowsSoFar += rowsInGroup;
                     // A negative limit (e.g. lo >= 0, hi < 0 re-bound on a cached plan) disables the
                     // early stop: every timestamp group must be scanned so toTop() can apply the skips.
-                    if (limit >= 0 && rowsSoFar > limit) {
+                    if (isEarlyStopEnabled && limit >= 0 && rowsSoFar > limit) {
                         break;
                     }
 

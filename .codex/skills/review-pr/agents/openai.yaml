@@ -1,4 +1,4 @@
 interface:
-  display_name: "QuestDB PR Review"
-  short_description: "Review QuestDB GitHub pull requests"
-  default_prompt: "Use $review-pr to review a QuestDB GitHub pull request."
+  display_name: "Review PR"
+  short_description: "Review QuestDB PRs or local Git ranges"
+  default_prompt: "Use $review-pr to review PR 1234 or --range=<base>..<head> at level 0."

@@ -33,6 +33,7 @@ import org.jetbrains.annotations.Nullable;
 public class TableColumnMetadata implements Plannable {
     @Nullable
     private final RecordMetadata metadata;
+    private final int originalWriterIndex;
     private final int replacingIndex;
     private final int symbolCapacity;
     private final boolean symbolTableStatic;
@@ -41,10 +42,10 @@ public class TableColumnMetadata implements Plannable {
     private int columnType;
     private IntList coveringColumnIndices;
     private boolean dedupKeyFlag;
+    private byte indexType;
     private int indexValueBlockCapacity;
     private int parquetEncodingConfig;
     private boolean symbolCacheFlag;
-    private byte indexType;
 
     public TableColumnMetadata(String columnName, int columnType) {
         this(columnName, columnType, null);
@@ -130,6 +131,24 @@ public class TableColumnMetadata implements Plannable {
             boolean symbolCacheFlag,
             int symbolCapacity
     ) {
+        this(columnName, columnType, indexType, indexValueBlockCapacity, symbolTableStatic,
+                metadata, writerIndex, dedupKeyFlag, replacingIndex, symbolCacheFlag, symbolCapacity, -1);
+    }
+
+    public TableColumnMetadata(
+            String columnName,
+            int columnType,
+            byte indexType,
+            int indexValueBlockCapacity,
+            boolean symbolTableStatic,
+            @Nullable RecordMetadata metadata,
+            int writerIndex,
+            boolean dedupKeyFlag,
+            int replacingIndex,
+            boolean symbolCacheFlag,
+            int symbolCapacity,
+            int originalWriterIndex
+    ) {
         this.columnName = columnName;
         this.columnType = columnType;
         this.indexType = indexType;
@@ -141,6 +160,7 @@ public class TableColumnMetadata implements Plannable {
         this.replacingIndex = replacingIndex;
         this.symbolCacheFlag = symbolCacheFlag;
         this.symbolCapacity = symbolCapacity;
+        this.originalWriterIndex = originalWriterIndex >= 0 ? originalWriterIndex : writerIndex;
     }
 
     public String getColumnName() {
@@ -168,6 +188,10 @@ public class TableColumnMetadata implements Plannable {
         return metadata;
     }
 
+    public int getOriginalWriterIndex() {
+        return originalWriterIndex;
+    }
+
     public int getParquetEncodingConfig() {
         return parquetEncodingConfig;
     }
@@ -184,6 +208,10 @@ public class TableColumnMetadata implements Plannable {
         return writerIndex;
     }
 
+    public boolean isCovering() {
+        return coveringColumnIndices != null && coveringColumnIndices.size() > 0;
+    }
+
     public boolean isDedupKeyFlag() {
         return dedupKeyFlag;
     }
@@ -192,16 +220,12 @@ public class TableColumnMetadata implements Plannable {
         return columnType < 0;
     }
 
-    public boolean isCovering() {
-        return coveringColumnIndices != null && coveringColumnIndices.size() > 0;
+    public boolean isIndexed() {
+        return IndexType.isIndexed(indexType);
     }
 
     public boolean isSymbolCacheFlag() {
         return symbolCacheFlag;
-    }
-
-    public boolean isIndexed() {
-        return IndexType.isIndexed(indexType);
     }
 
     public boolean isSymbolTableStatic() {

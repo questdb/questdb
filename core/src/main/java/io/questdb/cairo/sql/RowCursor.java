@@ -35,8 +35,13 @@ import io.questdb.std.QuietCloseable;
  * exactly once by whoever acquired it — the reader does not track outstanding
  * cursors and will not free them on its own.
  * <p>
- * Most implementations (BITMAP-based, wrapper, singleton) have a no-op
- * {@code close()}; POSTING cursors return to their reader's free list.
+ * Pool-backed cursors (POSTING and BITMAP index readers, plus the all-null
+ * index readers) return themselves to their reader's free list on
+ * {@code close()} -- but only on the reader's operating thread. An off-thread
+ * close skips pooling: a POSTING cursor releases its native buffers directly,
+ * while BITMAP and all-null cursors (which hold no native memory) simply drop to
+ * GC. Only wrapper and singleton cursors (e.g. {@code EmptyRowCursor}) have a
+ * genuinely no-op {@code close()}.
  */
 public interface RowCursor extends QuietCloseable {
 

@@ -48,7 +48,7 @@ import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class AsyncFilteredRecordCursor implements RecordCursor {
+class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.RecordFreer, RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
     private final int defaultDispatchLimit;
     private final Function filter;
@@ -80,7 +80,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         PageFrameMemoryPool frameMemoryPool = null;
         try {
             record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-            frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetCacheMemorySize());
+            frameMemoryPool = new PageFrameMemoryPool(configuration);
         } catch (Throwable th) {
             Misc.free(record);
             Misc.free(frameMemoryPool);
@@ -97,7 +97,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
         if (frameIndex == -1) {
             fetchNextFrame(dispatchLimit, true);
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         }
 
         if (rowsRemaining < 1) {
@@ -137,10 +137,10 @@ class AsyncFilteredRecordCursor implements RecordCursor {
             }
 
             if (!allFramesActive) {
-                throwTimeoutException();
+                throw buildInterruptionException();
             }
 
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         }
     }
 
@@ -176,6 +176,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         dispatchLimit = defaultDispatchLimit;
     }
 
+    @Override
     public void freeRecords() {
         Misc.free(record);
         Misc.free(recordB);
@@ -236,7 +237,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         }
 
         if (!allFramesActive) {
-            throwTimeoutException();
+            throw buildInterruptionException();
         }
         return false;
     }
@@ -320,7 +321,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
             collectCursor(false);
 
             if (!allFramesActive) {
-                throwTimeoutException();
+                throw buildInterruptionException();
             }
         }
     }
@@ -336,6 +337,10 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         frameRowIndex = -1;
         frameRowCount = -1;
         allFramesActive = true;
+    }
+
+    private CairoException buildInterruptionException() {
+        return frameSequence.buildInterruptionException();
     }
 
     private boolean checkLimit() {
@@ -411,7 +416,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
             if (th instanceof CairoException ce) {
                 if (ce.isInterruption() || ce.isCancellation()) {
                     LOG.error().$("filter error [ex=").$safe(ce.getFlyweightMessage()).I$();
-                    throwTimeoutException();
+                    throw buildInterruptionException();
                 } else {
                     LOG.error().$("filter error [ex=").$(th).I$();
                     throw ce;
@@ -431,14 +436,6 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         return hasDescendingOrder ? (frameRowCount - frameRowIndex - 1) : frameRowIndex;
     }
 
-    private void throwTimeoutException() {
-        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-            throw CairoException.queryCancelled();
-        } else {
-            throw CairoException.queryTimedOut();
-        }
-    }
-
     void of(PageFrameSequence<?> frameSequence, long rowsRemaining) {
         this.isOpen = true;
         this.frameSequence = frameSequence;
@@ -451,6 +448,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         this.frameRowIndex = -1;
         this.frameRowCount = -1;
         this.allFramesActive = true;
+        frameMemoryPool.setMemoryTracker(frameSequence.getMemoryTracker());
         ((AsyncFilterAtom) frameSequence.getAtom()).setParentUsedColumns(null);
         frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         record.of(frameSequence.getSymbolTableSource());

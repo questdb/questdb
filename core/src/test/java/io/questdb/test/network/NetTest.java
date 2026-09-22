@@ -119,6 +119,134 @@ public class NetTest {
     }
 
     @Test
+    public void testIsPeerDisconnected() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            long acceptFd = Net.socketTcp(true);
+            Assert.assertTrue(acceptFd > 0);
+            // Hoisted so a failed assertion in any block still reclaims the open fds and buffer in
+            // the finally rather than leaking them.
+            long sockAddr = 0;
+            long clientFd = -1;
+            long serverFd = -1;
+            long buf = 0;
+            try {
+                int port = assertCanBind(acceptFd);
+                Net.listen(acceptFd, 1024);
+                sockAddr = Net.sockaddr("127.0.0.1", port);
+                // Idle, both ends open: no hangup on any platform.
+                clientFd = Net.socketTcp(true);
+                TestUtils.assertConnect(clientFd, sockAddr);
+                serverFd = Net.accept(acceptFd);
+                Net.configureNonBlocking(serverFd);
+                Assert.assertFalse(Net.isPeerDisconnected(serverFd));
+                // Probe-resource churn: a probe that leaks a descriptor per call (instead of
+                // reusing the per-thread kqueue) would exhaust the fd table during this loop
+                // (macOS default ulimit 10240). The probe fails open on kqueue() failure, so the
+                // in-loop assertFalse cannot catch it -- the headroom check below does.
+                for (int i = 0; i < 12_000; i++) {
+                    Assert.assertFalse(Net.isPeerDisconnected(serverFd));
+                }
+                final long[] headroomFds = new long[64];
+                try {
+                    for (int i = 0; i < headroomFds.length; i++) {
+                        headroomFds[i] = Net.socketTcp(true);
+                        Assert.assertTrue("fd table exhausted after probe churn -- the probe leaks descriptors",
+                                headroomFds[i] > 0);
+                    }
+                } finally {
+                    for (int i = 0; i < headroomFds.length; i++) {
+                        if (headroomFds[i] > 0) {
+                            Net.close(headroomFds[i]);
+                        }
+                    }
+                }
+                clientFd = closeFd(clientFd);
+                serverFd = closeFd(serverFd);
+
+                // Live socket, readable inbound data, NO FIN: must stay false on every platform. This
+                // is the dangerous false-positive to guard -- misreading merely-readable bytes (e.g. a
+                // pipelined follow-up request during a running query) as a hangup would abort live
+                // queries. Distinct from the FIN-behind-a-byte block below, which couples data WITH a
+                // FIN; here the peer never shuts down.
+                clientFd = Net.socketTcp(true);
+                TestUtils.assertConnect(clientFd, sockAddr);
+                serverFd = Net.accept(acceptFd);
+                Net.configureNonBlocking(serverFd);
+                buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.getUnsafe().putByte(buf, (byte) 'x');
+                Assert.assertEquals(1, Net.send(clientFd, buf, 1));
+                // Wait until the byte is actually buffered on the server so the probe faces
+                // readable-but-no-FIN data rather than an empty socket.
+                boolean isBuffered = false;
+                for (int i = 0; i < 1000 && !isBuffered; i++) {
+                    if (Net.peek(serverFd, buf, 1) == 1) {
+                        isBuffered = true;
+                    } else {
+                        Os.sleep(1);
+                    }
+                }
+                Assert.assertTrue("test byte did not arrive on the server side", isBuffered);
+                Assert.assertFalse("readable data without a FIN must not read as a disconnect",
+                        Net.isPeerDisconnected(serverFd));
+                buf = Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
+                clientFd = closeFd(clientFd);
+                serverFd = closeFd(serverFd);
+
+                // Error branch (not a bare FIN): SO_LINGER 0 makes the client's close send an RST
+                // instead of a FIN. The probe must still report a disconnect, via the error/hangup
+                // side of the mask (Linux/Windows POLLERR|POLLHUP, macOS kqueue EV_EOF) -- the arm
+                // the POLLRDHUP / EV_EOF FIN cases below never exercise. Detected on every
+                // platform, so it also pins the running OS's error path (a bad/closed fd would trip
+                // the fd-cache paranoia guard, so a live reset is used instead).
+                clientFd = Net.socketTcp(true);
+                TestUtils.assertConnect(clientFd, sockAddr);
+                serverFd = Net.accept(acceptFd);
+                Net.configureNonBlocking(serverFd);
+                Net.configureNoLinger(clientFd);
+                clientFd = closeFd(clientFd);
+                awaitPeerDisconnected(serverFd);
+                serverFd = closeFd(serverFd);
+
+                // FIN behind a buffered byte: the whole point of the probe. Linux poll,
+                // macOS kqueue, and Windows WSAPoll report the peer's FIN even with the
+                // byte still buffered.
+                clientFd = Net.socketTcp(true);
+                TestUtils.assertConnect(clientFd, sockAddr);
+                serverFd = Net.accept(acceptFd);
+                Net.configureNonBlocking(serverFd);
+                buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.getUnsafe().putByte(buf, (byte) 'x');
+                Assert.assertEquals(1, Net.send(clientFd, buf, 1));
+                Net.shutdown(clientFd, Net.SHUT_WR);
+                awaitPeerDisconnected(serverFd);
+                buf = Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
+                clientFd = closeFd(clientFd);
+                serverFd = closeFd(serverFd);
+
+                // Bare FIN, empty buffer: detected on every platform.
+                clientFd = Net.socketTcp(true);
+                TestUtils.assertConnect(clientFd, sockAddr);
+                serverFd = Net.accept(acceptFd);
+                Net.configureNonBlocking(serverFd);
+                Net.shutdown(clientFd, Net.SHUT_WR);
+                awaitPeerDisconnected(serverFd);
+                clientFd = closeFd(clientFd);
+                serverFd = closeFd(serverFd);
+            } finally {
+                if (buf != 0) {
+                    Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
+                }
+                closeFd(clientFd);
+                closeFd(serverFd);
+                if (sockAddr != 0) {
+                    Net.freeSockAddr(sockAddr);
+                }
+                Net.close(acceptFd);
+            }
+        });
+    }
+
+    @Test
     public void testLeakyAddrInfo() throws Exception {
         NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
         boolean leakDetected = false;
@@ -354,6 +482,16 @@ public class NetTest {
         return port;
     }
 
+    private void awaitPeerDisconnected(long fd) {
+        for (int i = 0; i < 1000; i++) {
+            if (Net.isPeerDisconnected(fd)) {
+                return;
+            }
+            Os.sleep(5);
+        }
+        Assert.fail("peer disconnect was not detected");
+    }
+
     private void bindAcceptConnectClose() throws InterruptedException, BrokenBarrierException {
         long fd = Net.socketTcp(true);
         Assert.assertTrue(fd > 0);
@@ -417,5 +555,12 @@ public class NetTest {
         Assert.assertEquals(0, Net.setReusePort(fd));
         Assert.assertTrue(Net.bindUdp(fd, 0, 18215));
         Assert.assertTrue(Net.join(fd, "0.0.0.0", "224.0.0.125"));
+    }
+
+    private long closeFd(long fd) {
+        if (fd > 0) {
+            Net.close(fd);
+        }
+        return -1;
     }
 }

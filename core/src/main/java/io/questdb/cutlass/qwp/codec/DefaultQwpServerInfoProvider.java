@@ -42,7 +42,7 @@ public final class DefaultQwpServerInfoProvider implements QwpServerInfoProvider
 
     @Override
     public int getCapabilities() {
-        return 0;
+        return QwpEgressMsgKind.CAP_QUERY_FLAGS;
     }
 
     @Override

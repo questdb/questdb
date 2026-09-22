@@ -29,13 +29,16 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.async.AsyncQueryProgressState;
+import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
+import io.questdb.cairo.sql.async.QueryParallelOwnerLoop;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
+import io.questdb.griffin.engine.groupby.PostAggregationCircuitBreaker;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MCSequence;
@@ -43,6 +46,7 @@ import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -74,11 +78,18 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     private final ColumnTypes keyTypes;
     private final GroupByMapStats lastOwnerStats;
     private final ObjList<GroupByMapStats> lastShardStats;
+    // Per-query native memory tracker propagated to every fragment and destination
+    // shard. Null when no per-query limit applies (the shared horizon-join path never
+    // binds one), leaving allocations on the global counter only.
+    @Nullable
+    private MemoryTracker memoryTracker;
     private final GroupByMapFragment ownerFragment;
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
+    private final QueryParallelOwnerLoop ownerLoop = new QueryParallelOwnerLoop();
     private final ObjList<GroupByMapFragment> perWorkerFragments;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final PerWorkerLocks perWorkerLocks;
+    private final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
     private final ColumnTypes valueTypes;
     volatile boolean sharded;
     boolean shardedHint;
@@ -132,9 +143,18 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
 
     @Override
     public void close() {
+        // Free the fragments and destination shards under the still-bound per-query tracker
+        // (setMemoryTracker() is never nulled here): each map free debits the same tracker
+        // that charged its (re)open, so the per-query counter balances. AsyncGroupByAtom.close()
+        // frees this context before it nulls and frees its pooled allocators, preserving that
+        // ordering.
         Misc.free(ownerFragment);
         Misc.freeObjList(perWorkerFragments);
         Misc.freeObjList(destShards);
+    }
+
+    public AsyncQueryProgressState getProgressState() {
+        return progressState;
     }
 
     public int maybeAcquire(int carrierId, boolean owner, ExecutionCircuitBreaker circuitBreaker) {
@@ -253,12 +273,17 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     private Map reopenDestShard(int shardIndex) {
         Map destMap = destShards.getQuick(shardIndex);
         if (destMap == null) {
-            destMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
+            // Lazy variant: the destination shard starts closed so its backing allocates
+            // under the bound tracker on the reopen() below, matching the free at clear().
+            destMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, false, false);
             destShards.set(shardIndex, destMap);
+            destMap.setMemoryTracker(memoryTracker);
+            destMap.reopen();
         } else if (!destMap.isOpen()) {
             GroupByMapStats stats = lastShardStats.getQuick(shardIndex);
             int keyCapacity = GroupByMapFragment.targetKeyCapacity(configuration, perWorkerFragments.size(), stats, true);
             long heapSize = GroupByMapFragment.targetHeapSize(configuration, perWorkerFragments.size(), stats, true);
+            destMap.setMemoryTracker(memoryTracker);
             destMap.reopen(keyCapacity, heapSize);
         }
         return destMap;
@@ -351,7 +376,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             MessageBus messageBus,
             WorkStealingStrategy workStealingStrategy,
             SqlExecutionCircuitBreaker circuitBreaker,
-            AtomicBooleanCircuitBreaker postAggregationCircuitBreaker,
+            PostAggregationCircuitBreaker postAggregationCircuitBreaker,
             SOUnboundedCountDownLatch postAggregationDoneLatch,
             AtomicInteger postAggregationStartedCounter
     ) {
@@ -367,6 +392,18 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         final MPSequence pubSeq = messageBus.getGroupByMergeShardPubSeq();
         final MCSequence subSeq = messageBus.getGroupByMergeShardSubSeq();
         final WorkStealingStrategy strategy = workStealingStrategy.of(postAggregationStartedCounter);
+        final QueryParallelFiberDispatcher dispatcher = messageBus.getQueryParallelFiberDispatcher();
+        ownerLoop.of(dispatcher, circuitBreaker, progressState);
+        ownerLoop.tryAcquirePublication();
+
+        if (!ownerLoop.hasPublication()) {
+            for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
+                ownerLoop.checkBeforeHelping();
+                mergeShard(-1, shardIndex);
+            }
+            finalizeShardStats();
+            return destShards;
+        }
 
         int queuedCount = 0;
         int ownCount = 0;
@@ -377,16 +414,19 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         try {
             for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
                 while (true) {
+                    ownerLoop.observeProgress();
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
-                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-
                         if (strategy.shouldSteal(mergedCount)) {
+                            ownerLoop.checkBeforeHelping();
                             mergeShard(-1, shardIndex);
                             ownCount++;
                             total++;
                             mergedCount = postAggregationDoneLatch.getCount();
                             break;
+                        }
+                        if (!ownerLoop.awaitProgress()) {
+                            Os.pause();
                         }
                         mergedCount = postAggregationDoneLatch.getCount();
                     } else {
@@ -408,28 +448,42 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             postAggregationCircuitBreaker.cancel();
             throw th;
         } finally {
-            while (!postAggregationDoneLatch.done(queuedCount)) {
-                if (circuitBreaker.checkIfTripped()) {
-                    postAggregationCircuitBreaker.cancel();
-                }
+            try {
+                ownerLoop.releasePublication();
+            } finally {
+                while (true) {
+                    ownerLoop.observeProgress();
+                    if (postAggregationDoneLatch.done(queuedCount)) {
+                        break;
+                    }
+                    final boolean isOwnerTripped = circuitBreaker.checkIfTrippedOrYield();
+                    if (isOwnerTripped) {
+                        postAggregationCircuitBreaker.cancel();
+                    }
 
-                if (strategy.shouldSteal(mergedCount)) {
-                    long cursor = subSeq.next();
-                    if (cursor > -1) {
-                        GroupByMergeShardTask task = queue.get(cursor);
-                        GroupByMergeShardJob.run(-1, task, subSeq, cursor, this);
-                        reclaimed++;
-                    } else {
+                    if (!ownerLoop.isOwnerParkable() && strategy.shouldSteal(mergedCount)) {
+                        long cursor = subSeq.next();
+                        if (cursor > -1) {
+                            GroupByMergeShardTask task = queue.get(cursor);
+                            // run() releases the slot
+                            if (dispatcher != null) {
+                                GroupByMergeShardJob.run(-1, task, subSeq, cursor, this, dispatcher);
+                            } else {
+                                GroupByMergeShardJob.run(-1, task, subSeq, cursor, this);
+                            }
+                            reclaimed++;
+                        } else {
+                            Os.pause();
+                        }
+                    } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
                         Os.pause();
                     }
-                } else {
-                    Os.pause();
+                    mergedCount = postAggregationDoneLatch.getCount();
                 }
-                mergedCount = postAggregationDoneLatch.getCount();
             }
         }
 
-        if (!postAggregationCircuitBreaker.checkIfTripped()) {
+        if (!postAggregationCircuitBreaker.checkIfTrippedOrYield()) {
             finalizeShardStats();
         }
 
@@ -446,6 +500,14 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         if (shardedHint) {
             // Looks like we had to shard during previous execution, so let's do it ahead of time.
             sharded = true;
+        }
+    }
+
+    void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        memoryTracker = tracker;
+        ownerFragment.setMemoryTracker(tracker);
+        for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
+            perWorkerFragments.getQuick(i).setMemoryTracker(tracker);
         }
     }
 

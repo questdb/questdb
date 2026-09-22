@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.EmptyRowCursor;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
@@ -34,6 +35,8 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFactory {
@@ -69,6 +72,15 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
     }
 
     @Override
+    public void init(PageFrameCursor pageFrameCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        // Rebind symbolFunc to the executing statement's bind variable service. Without this
+        // a cached factory keeps the bind variable function of whichever execution compiled
+        // it, so prepareCursor() below resolves a stale value into symbolKey and the query
+        // returns the latest row of some previously queried key.
+        symbolFunc.init(pageFrameCursor, sqlExecutionContext);
+    }
+
+    @Override
     public boolean isEntity() {
         return false;
     }
@@ -81,10 +93,14 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
     @Override
     public void prepareCursor(PageFrameCursor pageFrameCursor) {
         final CharSequence symbol = symbolFunc.getStrA(null);
-        symbolKey = pageFrameCursor.getSymbolTable(columnIndex).keyOf(symbol);
-        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-            symbolKey++;
-        }
+        final int key = pageFrameCursor.getSymbolTable(columnIndex).keyOf(symbol);
+        // Index keys are not symbol keys plus one: keyOf() answers VALUE_IS_NULL for a null
+        // value, which is Integer.MIN_VALUE, and the NULL key's index key is 0. toIndexKey()
+        // is what knows that, and every sibling factory resolves through it. Incrementing
+        // here instead sent a bound NULL key to an index key nothing matches, so
+        // "sym = $1 LATEST ON ts" with $1 bound to NULL silently returned no rows while the
+        // literal "sym = null" returned them.
+        symbolKey = key != SymbolTable.VALUE_NOT_FOUND ? TableUtils.toIndexKey(key) : SymbolTable.VALUE_NOT_FOUND;
     }
 
     @Override

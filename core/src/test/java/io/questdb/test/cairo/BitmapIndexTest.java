@@ -160,6 +160,38 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCursorNotRepooledWhenClosedOffOperatingThread() throws Exception {
+        // Genuine regression test for the M1 operating-thread re-pool gate on the
+        // default (bitmap) index reader: pooling reuses the same cursor instance, so
+        // whether an off-thread close re-pools is observable through object identity.
+        TestUtils.assertMemoryLeak(() -> {
+            create(configuration, path.trimTo(plen), "x", 4);
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
+                writer.add(256, 1234);
+                writer.add(256, 5567);
+            }
+            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                // Positive control: an on-thread close re-pools the cursor, so the
+                // next getCursor() on the operating thread hands back the same one.
+                final RowCursor c1 = reader.getCursor(256, 0, Long.MAX_VALUE);
+                c1.close();
+                final RowCursor c2 = reader.getCursor(256, 0, Long.MAX_VALUE);
+                Assert.assertSame("on-thread close should re-pool the cursor", c1, c2);
+
+                // Close c2 off the operating thread: the gate must skip re-pooling
+                // (getCursor() stamped the reader to this thread), so the next
+                // getCursor() allocates a fresh instance instead of handing back a
+                // cursor still being torn down elsewhere. Without the gate the
+                // off-thread close would re-pool c2 and getCursor() would return it.
+                closeOffThread(c2);
+                final RowCursor c3 = reader.getCursor(256, 0, Long.MAX_VALUE);
+                Assert.assertNotSame("off-thread close must not re-pool the cursor", c2, c3);
+                c3.close();
+            }
+        });
+    }
+
+    @Test
     public void testAdd1MValues() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
@@ -1733,6 +1765,12 @@ public class BitmapIndexTest extends AbstractCairoTest {
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), contains);
         }
+    }
+
+    private void closeOffThread(RowCursor cursor) throws InterruptedException {
+        final Thread t = new Thread(cursor::close);
+        t.start();
+        t.join();
     }
 
     private MemoryA openKey() {

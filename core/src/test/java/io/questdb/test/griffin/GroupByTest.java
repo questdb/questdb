@@ -838,6 +838,43 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountStarInExpressions() throws Exception {
+        assertQuery("SELECT count(*) + count(*) AS s, coalesce(count(*), 5) AS c, 2 * count(*) AS d FROM t")
+                .ddl("CREATE TABLE t AS (SELECT x AS v FROM long_sequence(3))")
+                .expectSize()
+                .noRandomAccess()
+                .returns("""
+                        s\tc\td
+                        6\t3\t6
+                        """);
+    }
+
+    @Test
+    public void testCountStarInWindowSpec() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x AS a, x AS b FROM long_sequence(3))");
+            assertExceptionNoLeakCheck(
+                    "SELECT row_number() OVER (PARTITION BY count(*)) FROM t",
+                    7,
+                    "aggregate functions in partition by are not supported",
+                    false
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT row_number() OVER (PARTITION BY 2 * count(*)) FROM t",
+                    43,
+                    "Aggregate function cannot be passed as an argument",
+                    false
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT row_number() OVER w FROM t WINDOW w AS (PARTITION BY 2 * count(*))",
+                    64,
+                    "Aggregate function cannot be passed as an argument",
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testGroupByAliasInDifferentOrder1() throws Exception {
         assertQuery("select key1 as k1, key2 as k2, count(*) from t group by k2, k1 order by 1, 2")
                 .ddl("create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ")
@@ -1064,6 +1101,44 @@ public class GroupByTest extends AbstractCairoTest {
                         1\t0\t0\t50
                         2\t1\t1\t50
                         """);
+    }
+
+    @Test
+    public void testDistinctSymbolOptimizationOnQuoteProtectedAlias() throws Exception {
+        // SELECT DISTINCT over an indexed SYMBOL takes the distinct-symbol optimization in
+        // generateSelectGroupBy, which builds the result metadata name via toColumnName. A
+        // compiler-protected alias (dotted or operator token) must surface clean, not quoted.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX)");
+            execute("INSERT INTO t VALUES ('x'), ('y'), ('x')");
+            assertQuery("SELECT DISTINCT s AS \"a.b\" FROM t ORDER BY 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a.b\nx\ny\n");
+            assertQuery("SELECT DISTINCT s AS \"in\" FROM t ORDER BY 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("in\nx\ny\n");
+        });
+    }
+
+    @Test
+    public void testGroupByKeyOnQuoteProtectedAlias() throws Exception {
+        // A GROUP BY key that is a compiler-protected alias (dotted or operator token), referenced
+        // through the qualified subquery form, must resolve (the key-index strip-retry) and surface a
+        // clean column name (the GroupByUtils keep-alias metadata path via toColumnName).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (g INT, v DOUBLE)");
+            execute("INSERT INTO t VALUES (1, 10.0), (1, 20.0), (2, 30.0)");
+            assertQuery("SELECT sub.\"a.b\", sum(v) FROM (SELECT g AS \"a.b\", v FROM t) sub GROUP BY sub.\"a.b\" ORDER BY 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a.b\tsum\n1\t30.0\n2\t30.0\n");
+            assertQuery("SELECT sub.\"in\", sum(v) FROM (SELECT g AS \"in\", v FROM t) sub GROUP BY sub.\"in\" ORDER BY 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("in\tsum\n1\t30.0\n2\t30.0\n");
+        });
     }
 
     @Test
@@ -1411,6 +1486,41 @@ public class GroupByTest extends AbstractCairoTest {
                             4\t19\t4\t8
                             0\t20\t0\t8
                             """);
+        });
+    }
+
+    @Test
+    public void testGroupByTrivialExpressionKeyReferencedByAlias() throws Exception {
+        // rewriteTrivialGroupByExpressions lifts a trivial key such as
+        // 859371 + (cnt * -237288) out of the inner GROUP BY when its base
+        // column (cnt) is also a key, recomputing the offset in an outer
+        // VIRTUAL and removing the lifted key column from the group-by model.
+        // It used to leave the alias reference behind in the model's GROUP BY
+        // list, and validateGroupByColumns then rejected the now-missing alias
+        // with "group by column does not match any key column". Expression keys
+        // hid the bug because validateGroupByColumns matches them against the
+        // surviving base column, but a bare alias reference has nothing to match.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fuzz_t1 (c4 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO fuzz_t1 VALUES (1, 0), (2, 1000), (1, 2000)");
+            String expected = """
+                    e0\te1\ta0
+                    1\t622083\t1
+                    2\t384795\t1
+                    """;
+            String body = "FROM (SELECT c4 AS k, count() AS cnt FROM fuzz_t1) t0\n";
+            // alias reference in GROUP BY - the shape the query fuzzer hit
+            assertQuery("SELECT t0.cnt AS e0, (859371 + (t0.cnt * -237288)) AS e1, count() AS a0\n"
+                    + body + "GROUP BY t0.cnt, e1 ORDER BY 1 ASC, e1")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            // and the same query spelling out the expression in GROUP BY
+            assertQuery("SELECT t0.cnt AS e0, (859371 + (t0.cnt * -237288)) AS e1, count() AS a0\n"
+                    + body + "GROUP BY t0.cnt, (859371 + (t0.cnt * -237288)) ORDER BY 1 ASC, e1")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -3645,6 +3755,88 @@ public class GroupByTest extends AbstractCairoTest {
                                             Frame forward scan on: avg
                             """);
         });
+    }
+
+    @Test
+    public void testWindowSpecExpressionRewrites() throws Exception {
+        assertQuery("""
+                SELECT x, grp, sum(v) OVER w AS running, count(*) OVER w AS n
+                FROM t
+                WINDOW w AS (
+                    PARTITION BY grp::string, concat(
+                        CASE
+                            WHEN grp = 0 THEN 'a'
+                            WHEN grp = 1 THEN 'b'
+                            ELSE 'c'
+                        END,
+                        'partition'
+                    )
+                    ORDER BY x
+                    ROWS BETWEEN (1 + 1) PRECEDING AND CURRENT ROW
+                )
+                ORDER BY x
+                """)
+                .ddl("CREATE TABLE t AS (SELECT x, x % 2 AS grp, x AS v FROM long_sequence(6))")
+                .expectSize()
+                .returns("""
+                        x\tgrp\trunning\tn
+                        1\t1\t1.0\t1
+                        2\t0\t2.0\t1
+                        3\t1\t4.0\t2
+                        4\t0\t6.0\t2
+                        5\t1\t9.0\t3
+                        6\t0\t12.0\t3
+                        """);
+        assertQuery("""
+                SELECT x, abs(sum(v) OVER (
+                    PARTITION BY grp::string, concat(
+                        CASE
+                            WHEN grp = 0 THEN 'a'
+                            WHEN grp = 1 THEN 'b'
+                            ELSE 'c'
+                        END,
+                        'partition'
+                    )
+                    ORDER BY x
+                    ROWS BETWEEN (1 + 1) PRECEDING AND CURRENT ROW
+                )) AS running
+                FROM t
+                ORDER BY x
+                """)
+                .expectSize()
+                .returns("""
+                        x\trunning
+                        1\t1.0
+                        2\t2.0
+                        3\t4.0
+                        4\t6.0
+                        5\t9.0
+                        6\t12.0
+                        """);
+    }
+
+    @Test
+    public void testWindowSpecNonSwitchCaseRewrite() throws Exception {
+        // a CASE whose WHEN is not `col = const` cannot fold to a switch, so rewriteCase
+        // takes its in-place else-branch; the window-spec rewrite must apply it exactly once
+        assertQuery("""
+                SELECT x, sum(v) OVER (
+                    PARTITION BY CASE WHEN x > 3 THEN 'hi' ELSE 'lo' END
+                ) AS partition_sum
+                FROM t
+                ORDER BY x
+                """)
+                .ddl("CREATE TABLE t AS (SELECT x, x AS v FROM long_sequence(6))")
+                .expectSize()
+                .returns("""
+                        x\tpartition_sum
+                        1\t6.0
+                        2\t6.0
+                        3\t6.0
+                        4\t15.0
+                        5\t15.0
+                        6\t15.0
+                        """);
     }
 
     private void assertError(String query, String errorMessage) throws Exception {

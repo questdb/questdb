@@ -34,6 +34,7 @@ import io.questdb.std.str.Path;
 public class IndexBwdNullReader implements IndexReader {
     private final ObjList<NullCursor> freeCursors = new ObjList<>();
     private long columnTxn;
+    private long operatingThreadId = -1L;
     private long partitionTxn;
 
     public IndexBwdNullReader(long columnTxn, long partitionTxn) {
@@ -58,12 +59,13 @@ public class IndexBwdNullReader implements IndexReader {
 
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue) {
+        stampOperatingThread();
         NullCursor c;
         if (freeCursors.size() > 0) {
             c = freeCursors.popLast();
             c.isPooled = false;
         } else {
-            c = new NullCursor(this.freeCursors);
+            c = new NullCursor();
         }
         c.value = key == 0 ? maxValue - minValue : -1;
         return c;
@@ -122,20 +124,25 @@ public class IndexBwdNullReader implements IndexReader {
         // no-op
     }
 
+    // See AbstractBitmapIndexReader.isOperatingThread(): re-pool the NullCursor
+    // only on the reader's operating thread so the plain freeCursors ObjList
+    // mutation stays serialized with getCursor(). Fail-safe on mismatch.
+    private boolean isOperatingThread() {
+        return operatingThreadId == Thread.currentThread().threadId();
+    }
 
-    private static class NullCursor implements RowCursor {
-        private final ObjList<NullCursor> pool;
+    private void stampOperatingThread() {
+        operatingThreadId = Thread.currentThread().threadId();
+    }
+
+    private class NullCursor implements RowCursor {
         private boolean isPooled;
         private long value;
 
-        NullCursor(ObjList<NullCursor> freeCursors) {
-            this.pool = freeCursors;
-        }
-
         @Override
         public void close() {
-            if (pool.size() < MAX_CACHED_FREE_CURSORS && !isPooled) {
-                pool.add(this);
+            if (!isPooled && isOperatingThread() && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
+                freeCursors.add(this);
                 isPooled = true;
             }
         }

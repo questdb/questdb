@@ -30,9 +30,11 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.DirectIntLongHashMap;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Cache for lazy prevailing row lookups in window joins with INCLUDE PREVAILING semantics.
@@ -157,5 +159,14 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
         cache.reopen();
         frameIndex = -1;
         rowIndex = Long.MIN_VALUE;
+    }
+
+    /**
+     * Binds the per-query tracker the backing map charges. The cache holds one entry per master
+     * symbol key it has resolved, so it grows with the join's symbol cardinality and belongs under
+     * the per-query limit. Callers bind right before {@link #reopen()}.
+     */
+    public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
+        cache.setMemoryTracker(memoryTracker);
     }
 }

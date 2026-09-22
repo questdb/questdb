@@ -93,9 +93,9 @@ import io.questdb.std.Unsafe;
  * executes one step of the algorithm, resulting in a single output row.
  */
 public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final MarkoutHorizonRecordCursor cursor;
     private final int masterColumnIndex;
     private final int slaveColumnIndex;
+    private MarkoutHorizonRecordCursor cursor;
 
     /**
      * Creates a new markout horizon cursor factory.
@@ -160,11 +160,15 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
             // live at once, so SCATTERED avoids re-decode thrash (at the cost of the full budget).
             masterCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             slaveCursor = slaveFactory.getCursor(executionContext);
-            cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
+            cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
         } catch (Throwable ex) {
             Misc.free(masterCursor);
             Misc.free(slaveCursor);
+            // of() binds the per-query tracker before materializing the slave; close() frees the
+            // partial RecordArray under that tracker. master/slave are adopted only after the
+            // materialization, so this does not double-free them.
+            Misc.free(cursor);
             throw ex;
         }
     }
@@ -195,9 +199,11 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
+        final MarkoutHorizonRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     /**
@@ -295,7 +301,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
                 return true;
             }
 
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
             advanceMasterIfPending();
             long nextIterAddr = iter_nextIterAddr(currentIterAddr);
@@ -602,14 +608,14 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
             emittedRowCount = 0;
         }
 
-        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            this.masterCursor = masterCursor;
-            this.masterRecord = masterCursor.getRecord();
-            this.slaveCursor = slaveCursor;
-            this.circuitBreaker = circuitBreaker;
+        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
+            final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
 
-            // Materialize the slave cursor into RecordArray to enable random access
+            // Materialize the slave cursor into RecordArray to enable random access.
+            // Bind the per-query tracker before the first put so the materialization is charged to
+            // (and capped by) the query memory limit; clear() releases any prior backing first.
             slaveRecordArray.clear();
+            slaveRecordArray.setMemoryTracker(executionContext.getMemoryTracker());
             slaveRecordOffsets.clear();
             if (slaveCursor.size() > Integer.MAX_VALUE) {
                 throw CairoException.critical(-1)
@@ -626,7 +632,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
                             .put(Integer.MAX_VALUE).put(']');
                 }
                 offsetCount++;
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 long offset = slaveRecordArray.put(slaveRecord);
                 slaveRecordOffsets.add(offset);
             }
@@ -646,6 +652,14 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
             // Free any existing iterator blocks from previous execution
             freeAllIteratorBlocks();
             resetLocalState();
+
+            // Adopt the cursors last: the materialization above can breach the query memory limit,
+            // and the factory getCursor() catch frees the local cursors plus this cursor's partial
+            // RecordArray. Assigning here keeps a breach from double-freeing master/slave.
+            this.masterCursor = masterCursor;
+            this.masterRecord = masterCursor.getRecord();
+            this.slaveCursor = slaveCursor;
+            this.circuitBreaker = circuitBreaker;
         }
     }
 }

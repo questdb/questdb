@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.std.LongList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -43,6 +44,38 @@ public interface PartitionFrameCursor extends QuietCloseable, SymbolTableSource 
      * @return the table reader
      */
     TableReader getTableReader();
+
+    /**
+     * An upper bound on the number of partition frames this cursor can produce, when one is
+     * cheap to derive from metadata the cursor has already resolved, or -1 when unknown. An
+     * implementation that answers must never under-count: the walk may produce fewer frames
+     * than the bound (it skips intersections that hold no rows) but never more. Callers may
+     * therefore use the bound to reject frame-proportional work eagerly, but not to size
+     * anything exactly.
+     */
+    default long getFrameCountUpperBound() {
+        return -1;
+    }
+
+    /**
+     * The designated-timestamp intervals this cursor confines its frames to, or null when
+     * it applies no interval filter or cannot describe the one it applies. Flat (lo, hi)
+     * pairs in the timestamp column's own units, CLOSED at both ends, ascending and
+     * disjoint; an EMPTY list means the filter admits nothing, which is distinct from the
+     * null "no filter" answer.
+     * <p>
+     * A caller may only rely on this together with {@link #hasIntervalFilter()}: a non-null
+     * list means the cursor's rows are exactly the table rows whose timestamp falls in one
+     * of these intervals, so a caller holding rows of its own can apply the same filter to
+     * them and stay row-for-row consistent with the scan.
+     * <p>
+     * The list belongs to the cursor and is not a copy: an implementation may re-point or
+     * rewrite it on the next {@code of()} / {@code getCursor()}. Read it, or copy it, before
+     * reopening the cursor.
+     */
+    default @Nullable LongList getIntervals() {
+        return null;
+    }
 
     /**
      * Returns true if this cursor applies interval filtering to partitions.

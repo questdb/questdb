@@ -43,6 +43,7 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.Iterator;
@@ -204,6 +205,22 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public @NotNull TransactionLogCursor getCursor(
+            final TableToken tableToken,
+            long seqTxn,
+            @NotNull TableSequencerCursorHolder cursorHolder
+    ) {
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
+            TransactionLogCursor cursor;
+            try {
+                cursor = tableSequencer.getTransactionLogCursor(seqTxn, cursorHolder);
+            } finally {
+                tableSequencer.unlockRead();
+            }
+            return cursor;
+        }
+    }
+
     public @NotNull TableMetadataChangeLog getMetadataChangeLog(final TableToken tableToken, long structureVersionLo) {
         try (TableSequencerImpl tableSequencer = getOrOpenSequencer(tableToken, this.openSequencerInstanceLambda)) {
             if (tableSequencer.metadataMatches(structureVersionLo)) {
@@ -224,6 +241,22 @@ public class TableSequencerAPI implements QuietCloseable {
             TableMetadataChangeLog metadataChangeLog;
             try {
                 metadataChangeLog = tableSequencer.getMetadataChangeLogSlow(structureVersionLo);
+            } finally {
+                tableSequencer.unlockRead();
+            }
+            return metadataChangeLog;
+        }
+    }
+
+    public TableMetadataChangeLog getMetadataChangeLogSlow(
+            final TableToken tableToken,
+            long structureVersionLo,
+            @NotNull TableSequencerCursorHolder cursorHolder
+    ) {
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
+            TableMetadataChangeLog metadataChangeLog;
+            try {
+                metadataChangeLog = tableSequencer.getMetadataChangeLogSlow(structureVersionLo, cursorHolder);
             } finally {
                 tableSequencer.unlockRead();
             }
@@ -256,6 +289,18 @@ public class TableSequencerAPI implements QuietCloseable {
     @NotNull
     public SeqTxnTracker getTxnTracker(TableToken tableToken) {
         return getSeqTxnTracker(tableToken);
+    }
+
+    /**
+     * Non-creating counterpart to {@link #getTxnTracker(TableToken)}: returns the tracker only if
+     * one has already been installed, and never allocates or installs one on a miss. A caller that
+     * only needs to inspect suspension state, and for which "no tracker yet" means "never
+     * suspended", should prefer this on a hot read path (e.g. a metrics scrape) over the creating
+     * accessor.
+     */
+    @Nullable
+    public SeqTxnTracker getTxnTrackerIfExists(TableToken tableToken) {
+        return seqTxnTrackers.get(tableToken.getDirName());
     }
 
     public boolean initTxnTracker(TableToken tableToken, long writerTxn, long seqTxn) {
@@ -450,6 +495,10 @@ public class TableSequencerAPI implements QuietCloseable {
                 sequencer.unlockWrite();
             }
         }
+    }
+
+    public void setHardSuspended(final TableToken tableToken, boolean hardSuspended) {
+        getSeqTxnTracker(tableToken).setHardSuspended(hardSuspended);
     }
 
     public void suspendTable(final TableToken tableToken, ErrorTag errorTag, String errorMessage) {

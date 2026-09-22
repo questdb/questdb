@@ -1134,6 +1134,49 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVwemaVolumeArgExpressionIsInitialised() throws Exception {
+        // The volume arg is an arbitrary DOUBLE expression, and like any Function it must be
+        // given init(SymbolTableSource, SqlExecutionContext) before it is read. BaseWindowFunction
+        // propagates init/toTop/cursorClosed to `arg` only, so a Vwema function that stores the
+        // volume arg in a field of its own has to propagate to it explicitly.
+        //
+        // Without that, a volume sub-expression that resolves state in init() misbehaves silently:
+        // `side = 'BUY'` compiles to EqSymStrFunctionFactory.ConstSymIntCheckFunc, whose init()
+        // resolves the constant against the symbol table and sets `exists`. Un-initialised, that
+        // flag is still false and getBool() reports "no such symbol" for every row - so the CASE
+        // yields 0.0 throughout, the `volume > 0` guard skips every row, and the window reports
+        // NULL for all of them instead of throwing.
+        //
+        // The oracle is differential: bvol holds, as a plain DOUBLE column, the identical values
+        // the CASE expression must produce. The two windows must agree row for row. Pre-fix the
+        // CASE column read (null, 20.0, 26.0, 26.0) as all-NULL.
+        assertQuery("select ts, side, " +
+                "avg(price, 'alpha', 0.5, case when side = 'BUY' then qty else 0.0 end) " +
+                "  over (partition by sym order by ts) as vwema_expr, " +
+                "avg(price, 'alpha', 0.5, bvol) over (partition by sym order by ts) as vwema_col " +
+                "from trades")
+                .ddl("create table trades (ts timestamp, sym symbol, side symbol, price double, " +
+                                "qty double, bvol double) timestamp(ts) partition by day",
+                        // Both sides are present and interleaved, so an un-initialised predicate
+                        // that matches nothing is distinguishable from the correct one.
+                        "insert into trades values " +
+                                "('2024-01-01T00:00:00.000000Z', 's1', 'SELL', 10.0, 100.0, 0.0), " +
+                                "('2024-01-01T00:00:01.000000Z', 's1', 'BUY',  20.0, 200.0, 200.0), " +
+                                "('2024-01-01T00:00:02.000000Z', 's1', 'BUY',  30.0, 300.0, 300.0), " +
+                                "('2024-01-01T00:00:03.000000Z', 's1', 'SELL', 40.0, 400.0, 0.0)")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tside\tvwema_expr\tvwema_col
+                        2024-01-01T00:00:00.000000Z\tSELL\tnull\tnull
+                        2024-01-01T00:00:01.000000Z\tBUY\t20.0\t20.0
+                        2024-01-01T00:00:02.000000Z\tBUY\t26.0\t26.0
+                        2024-01-01T00:00:03.000000Z\tSELL\t26.0\t26.0
+                        """);
+    }
+
+    @Test
     public void testVwemaWithPartitionBy() throws Exception {
         // Test avg() VWEMA with partition by
         assertQuery("select ts, sym, price, volume, avg(price, 'alpha', 0.5, volume) over (partition by sym order by ts) as vwema from tab")

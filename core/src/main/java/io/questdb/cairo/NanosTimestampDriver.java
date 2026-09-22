@@ -98,7 +98,7 @@ public class NanosTimestampDriver implements TimestampDriver {
     private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorYYYY, NanosFormatUtils.YEAR_FORMAT);
 
     private final ColumnTypeConverter.Var2FixedConverter<CharSequence> converterStr2Timestamp = this::appendToMem;
-    private final ColumnTypeConverter.Fixed2VarConverter converterTimestamp2Str = this::append;
+    private final ColumnTypeConverter.Fixed2VarConverter converterTimestamp2Str = (addr, sink, unused1, unused2) -> append(addr, sink);
     private Clock clock = NanosecondClockImpl.INSTANCE;
 
     private NanosTimestampDriver() {
@@ -484,6 +484,32 @@ public class NanosTimestampDriver implements TimestampDriver {
             return Numbers.INT_NULL;
         }
         return Nanos.getIsoYear(timestamp);
+    }
+
+    @Override
+    public long getMaxDesignatedTimestamp() {
+        // validateBounds() caps a nano designated timestamp at CommonUtils.MAX_TIMESTAMP, but that
+        // check was ineffective for positive values until it was fixed, so an existing table can
+        // still hold rows above the ceiling. Stay conservative and report the long ceiling: it only
+        // declines interval pruning, while a tighter value would prune those legacy rows away.
+        return Long.MAX_VALUE;
+    }
+
+    @Override
+    public long getMaxUnitValue(char unit) {
+        return switch (unit) {
+            case 'n' -> Long.MAX_VALUE;
+            case 'u', 'U' -> Long.MAX_VALUE / Nanos.MICRO_NANOS;
+            case 'T' -> Long.MAX_VALUE / Nanos.MILLI_NANOS;
+            case 's' -> Long.MAX_VALUE / Nanos.SECOND_NANOS;
+            // from() narrows these four to int before scaling, so the narrowing caps them
+            // whenever it bites before the multiply does
+            case 'm' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Nanos.MINUTE_NANOS);
+            case 'H', 'h' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Nanos.HOUR_NANOS);
+            case 'd' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Nanos.DAY_NANOS);
+            case 'w' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Nanos.WEEK_NANOS);
+            default -> 0;
+        };
     }
 
     @Override
@@ -1621,7 +1647,9 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public void validateBounds(long timestamp) {
-        if (timestamp < 0) {
+        // A negative timestamp is a huge unsigned value, so this single comparison routes both
+        // negatives and out-of-range positives into the slow path.
+        if (Long.compareUnsigned(timestamp, CommonUtils.MAX_TIMESTAMP) > 0) {
             validateBounds0(timestamp);
         }
     }
@@ -1742,7 +1770,7 @@ public class NanosTimestampDriver implements TimestampDriver {
         if (timestamp == Long.MIN_VALUE) {
             throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
         }
-        if (timestamp < TableWriter.TIMESTAMP_EPOCH || timestamp > CommonUtils.TIMESTAMP_UNIT_NANOS) {
+        if (timestamp < TableWriter.TIMESTAMP_EPOCH || timestamp > CommonUtils.MAX_TIMESTAMP) {
             throw CairoException.nonCritical().put("designated timestamp_ns before 1970-01-01 and beyond ").put(MAX_NANO_TIMESTAMP_STR).put(" is not allowed");
         }
     }

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
@@ -58,10 +59,10 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
     private final int @Nullable [] masterSymbolKeyColumnIndices;
     private final RecordSink slaveKeySink;
     private final int @Nullable [] slaveSymbolKeyColumnIndices;
-    private final @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
     private AbstractHashOuterJoinLightRecordCursor cursor;
     private Map joinKeyMap;
     private LongChain slaveChain;
+    private @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
 
     public HashOuterJoinLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -90,8 +91,8 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
         try {
             this.masterKeySink = masterKeySink;
             this.slaveKeySink = slaveKeySink;
-            this.joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
-            this.slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages());
+            this.joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes, false, false);
+            this.slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages(), true);
             this.columnSplit = columnSplit;
             this.joinType = joinType;
         } catch (Throwable th) {
@@ -170,6 +171,9 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            // of() binds the per-query tracker and reopens the slave chain + join map before it can throw;
+            // close() frees them under that tracker and resets isOpen so the factory is reusable.
+            Misc.free(cursor);
             throw e;
         }
     }
@@ -197,13 +201,20 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(cursor);
-        Misc.free(joinKeyMap);
-        Misc.free(slaveChain);
-        Misc.free(symbolTranslatingRecord);
+        final AbstractHashOuterJoinLightRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Map joinKeyMap = this.joinKeyMap;
+        this.joinKeyMap = null;
+        final LongChain slaveChain = this.slaveChain;
+        this.slaveChain = null;
+        final SymbolTranslatingRecord symbolTranslatingRecord = this.symbolTranslatingRecord;
+        this.symbolTranslatingRecord = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, joinKeyMap);
+        failure = Misc.freeBestEffort(failure, slaveChain);
+        failure = Misc.freeBestEffort(failure, symbolTranslatingRecord);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class HashFullOuterJoinLightRecordCursor extends AbstractHashOuterJoinLightRecordCursor {
@@ -257,13 +268,13 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
             }
 
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                 return true;
             }
 
             if (masterCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterCursorSink);
                 MapValue value = key.findValue();
@@ -283,7 +294,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
             hasMaster(false);
             hasSlave(true);
             while (mapCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapValue value = mapCursor.getRecord().getValue();
                 if (!value.getBool(1)) { // if not matched
                     slaveChainCursor = slaveChain.getCursor(value.getInt(0));
@@ -388,7 +399,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                 isMapBuilt = true;
             }
 
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
@@ -463,13 +474,13 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
             }
 
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                 return true;
             }
 
             while (masterCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterKeySink);
                 MapValue value = key.findValue();
@@ -484,7 +495,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
 
             record.hasMaster(false);
             while (mapCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapValue value = mapCursor.getRecord().getValue();
                 if (!value.getBool(1)) { // if not matched
                     slaveChainCursor = slaveChain.getCursor(value.getInt(0));

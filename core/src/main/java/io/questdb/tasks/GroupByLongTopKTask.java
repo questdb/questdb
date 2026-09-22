@@ -24,17 +24,20 @@
 
 package io.questdb.tasks;
 
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.engine.groupby.PostAggregationCircuitBreaker;
 import io.questdb.griffin.engine.table.AsyncGroupByAtom;
 import io.questdb.mp.CountDownLatchSPI;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberDispatchContext;
 import io.questdb.std.Mutable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class GroupByLongTopKTask implements Mutable {
     private AsyncGroupByAtom atom;
-    private AtomicBooleanCircuitBreaker circuitBreaker;
+    private PostAggregationCircuitBreaker circuitBreaker;
+    private FiberDispatchContext dispatchContext;
     private CountDownLatchSPI doneLatch;
     private Function func;
     private int limit = -1;
@@ -50,6 +53,7 @@ public class GroupByLongTopKTask implements Mutable {
         func = null;
         atom = null;
         circuitBreaker = null;
+        dispatchContext = null;
         doneLatch = null;
         startedCounter = null;
     }
@@ -58,12 +62,16 @@ public class GroupByLongTopKTask implements Mutable {
         return atom;
     }
 
-    public AtomicBooleanCircuitBreaker getCircuitBreaker() {
+    public PostAggregationCircuitBreaker getCircuitBreaker() {
         return circuitBreaker;
     }
 
     public CountDownLatchSPI getDoneLatch() {
         return doneLatch;
+    }
+
+    public FiberDispatchContext getDispatchContext() {
+        return dispatchContext;
     }
 
     public Function getFunction() {
@@ -87,7 +95,7 @@ public class GroupByLongTopKTask implements Mutable {
     }
 
     public void of(
-            AtomicBooleanCircuitBreaker circuitBreaker,
+            PostAggregationCircuitBreaker circuitBreaker,
             AtomicInteger startedCounter,
             CountDownLatchSPI doneLatch,
             AsyncGroupByAtom atom,
@@ -97,6 +105,7 @@ public class GroupByLongTopKTask implements Mutable {
             int limit
     ) {
         this.circuitBreaker = circuitBreaker;
+        this.dispatchContext = Fiber.captureParallelDispatchContext();
         this.startedCounter = startedCounter;
         this.doneLatch = doneLatch;
         this.atom = atom;

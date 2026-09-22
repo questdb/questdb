@@ -55,14 +55,17 @@ import static io.questdb.cutlass.http.HttpConstants.*;
 public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHeader {
     private static final Comparator<HttpCookie> COOKIE_COMPARATOR = HttpHeaderParser::cookieComparator;
     private static final Log LOG = LogFactory.getLog(HttpHeaderParser.class);
-    private final BoundaryAugmenter boundaryAugmenter = new BoundaryAugmenter();
+    // Deliberately not a field initialiser: those run before the constructor body, so a throw from
+    // the second one would strand the first with nothing able to close it. The constructor
+    // allocates both inside its own try instead.
+    private final BoundaryAugmenter boundaryAugmenter;
     private final ObjList<HttpCookie> cookieList = new ObjList<>();
     private final ObjectPool<HttpCookie> cookiePool;
     private final Utf8SequenceObjHashMap<HttpCookie> cookies = new Utf8SequenceObjHashMap<>();
     private final ObjectPool<DirectUtf8String> csPool;
     private final LowerCaseUtf8SequenceObjHashMap<DirectUtf8String> headers = new LowerCaseUtf8SequenceObjHashMap<>();
     private final HttpHeaderParameterValue parameterValue = new HttpHeaderParameterValue();
-    private final DirectUtf8Sink sink = new DirectUtf8Sink(0);
+    private final DirectUtf8Sink sink; // see boundaryAugmenter
     private final DirectUtf8String temp = new DirectUtf8String();
     private final Utf8SequenceObjHashMap<DirectUtf8String> urlParams = new Utf8SequenceObjHashMap<>();
     protected boolean incomplete;
@@ -101,11 +104,46 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private DirectUtf8String statusText;
 
     public HttpHeaderParser(int bufferSize, ObjectPool<DirectUtf8String> csPool) {
-        this.headerPtr = this._wptr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_HTTP_CONN);
-        this.hi = headerPtr + bufferSize;
-        this.csPool = csPool;
-        this.cookiePool = new ObjectPool<>(HttpCookie::new, 16);
-        clear();
+        // Locals mirror the two final fields: the catch cannot read a blank final that the failing
+        // statement never assigned, so it frees these instead.
+        BoundaryAugmenter augmenter = null;
+        DirectUtf8Sink utf8Sink = null;
+        try {
+            // The sink goes first on purpose. Its native implCreate bypasses
+            // Unsafe.checkAllocLimit, so no test can fail it, whereas the augmenter's and the
+            // header buffer's mallocs both honour the RSS ceiling. Acquiring the untestable one
+            // first leaves it with nothing to roll back, and every rollback that does have work to
+            // do is reachable from a test - testConstructorFailureFreesTheSink fails the augmenter
+            // with the sink live, and testConstructorFailureFreesNativeAllocations fails the header
+            // buffer with both live.
+            this.sink = utf8Sink = new DirectUtf8Sink(0);
+            this.boundaryAugmenter = augmenter = new BoundaryAugmenter();
+            this.csPool = csPool;
+            this.cookiePool = new ObjectPool<>(HttpCookie::new, 16);
+            this.headerPtr = this._wptr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_HTTP_CONN);
+            this.hi = headerPtr + bufferSize;
+            clear();
+        } catch (Throwable th) {
+            // Every native allocation sits inside this try, so the catch really can free every block
+            // the constructor managed to take. Unsafe.malloc throws whenever a caller breaches the
+            // global RSS limit, and DirectUtf8Sink allocates even at capacity 0, so the caller can
+            // be left dropping a half-built parser that nothing will ever close. Free by hand
+            // rather than through close(): HttpClient.ResponseHeaders overrides close() to keep
+            // parser memory alive for the client to free later and to disconnect the outer client's
+            // socket, so routing this path through it would dispatch into a subclass
+            // mid-construction, tear down a live socket, and skip the frees entirely. Release in
+            // reverse order of acquisition.
+            if (headerPtr != 0) {
+                headerPtr = _wptr = hi = Unsafe.free(headerPtr, hi - headerPtr, MemoryTag.NATIVE_HTTP_CONN);
+            }
+            if (augmenter != null) {
+                augmenter.close();
+            }
+            if (utf8Sink != null) {
+                utf8Sink.close();
+            }
+            throw th;
+        }
     }
 
     @Override
@@ -120,6 +158,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         this.query = null;
         this.headerName = null;
         this.contentType = null;
+        this.charset = null;
         this.boundary = null;
         this.contentDisposition = null;
         this.contentDispositionName = null;
@@ -139,7 +178,9 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         this.contentLength = -1;
         this.cookieList.clear();
         this.cookiePool.clear();
+        this.cookies.clear();
         this.ignoredCookieCount = 0;
+        this.sink.clear();
         // do not clear the pool
         // this.pool.clear();
     }
@@ -149,8 +190,11 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         clear();
         if (headerPtr != 0) {
             headerPtr = _wptr = hi = Unsafe.free(headerPtr, hi - headerPtr, MemoryTag.NATIVE_HTTP_CONN);
-            boundaryAugmenter.close();
         }
+        // The augmenter owns a block with its own lifecycle, so do not gate freeing it on the
+        // header buffer's pointer: of() allocates on demand and no longer needs the header buffer
+        // to have been present. Its close() is idempotent, so calling it unconditionally is safe.
+        boundaryAugmenter.close();
         sink.close();
         csPool.clear();
     }
@@ -347,6 +391,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
             this.hi = headerPtr + bufferSize;
         }
         boundaryAugmenter.reopen();
+        sink.reopen();
     }
 
     public int size() {
@@ -625,6 +670,9 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
         boolean expectFormData = true;
         boolean swallowSpace = true;
+        boolean valueQuoted = false;
+        boolean valueEscaped = false;
+        boolean valueStart = false;
 
         DirectUtf8String name = null;
 
@@ -636,7 +684,31 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                 continue;
             }
 
-            if (p > hi || b == ';') {
+            if (name != null && valueStart) {
+                valueStart = false;
+                if (b == '"') {
+                    valueQuoted = true;
+                    valueEscaped = false;
+                    continue;
+                }
+            }
+
+            if (valueQuoted) {
+                if (valueEscaped) {
+                    valueEscaped = false;
+                    continue;
+                }
+                if (b == '\\') {
+                    valueEscaped = true;
+                    continue;
+                }
+                if (b == '"') {
+                    valueQuoted = false;
+                    continue;
+                }
+            }
+
+            if (p > hi || (b == ';' && !valueQuoted)) {
                 if (expectFormData) {
                     this.contentDisposition = csPool.next().of(_lo, p - 1);
                     _lo = p;
@@ -650,26 +722,27 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
                 if (Utf8s.equalsAscii("name", name)) {
                     this.contentDispositionName = unquote("name", csPool.next().of(_lo, p - 1));
-                    swallowSpace = true;
-                    _lo = p;
-                    name = null;
-                    continue;
+                } else if (Utf8s.equalsAscii("filename", name)) {
+                    this.contentDispositionFilename = unquote("filename", csPool.next().of(_lo, p - 1));
                 }
 
-                if (Utf8s.equalsAscii("filename", name)) {
-                    this.contentDispositionFilename = unquote("filename", csPool.next().of(_lo, p - 1));
-                    _lo = p;
-                    name = null;
-                    continue;
-                }
+                swallowSpace = true;
+                valueQuoted = false;
+                valueEscaped = false;
+                valueStart = false;
+                _lo = p;
+                name = null;
 
                 if (p > hi) {
                     break;
                 }
-            } else if (b == '=') {
+            } else if (b == '=' && !valueQuoted) {
                 name = name == null ? csPool.next().of(_lo, p - 1) : name.of(_lo, p - 1);
                 _lo = p;
                 swallowSpace = false;
+                valueQuoted = false;
+                valueEscaped = false;
+                valueStart = true;
             }
         }
     }
@@ -969,21 +1042,41 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
     public static class BoundaryAugmenter implements Reopenable, QuietCloseable {
         private static final Utf8String BOUNDARY_PREFIX = new Utf8String("\r\n--");
+        // Must stay >= BOUNDARY_PREFIX.size(): the constructor writes the prefix into a block of
+        // exactly this size before anything else can grow it.
+        private static final int INITIAL_CAPACITY = 64;
         private final DirectUtf8String export = new DirectUtf8String();
         private long _wptr;
         private long lim;
         private long lo;
+        // The size reopen() comes back at. lim tracks the live block and close() has to zero it, so
+        // the capacity the augmenter grew to is remembered here instead: a boundary longer than 60
+        // bytes repeats on every request of a connection, and reopening at INITIAL_CAPACITY made the
+        // first of() after each pooled reuse realloc straight back up. Never zeroed, so it holds the
+        // high-water capacity across any number of close/reopen rounds.
+        private long reopenCapacity;
 
         public BoundaryAugmenter() {
-            this.lim = 64;
-            this.lo = this._wptr = Unsafe.malloc(lim, MemoryTag.NATIVE_HTTP_CONN);
+            final long newLo = Unsafe.malloc(INITIAL_CAPACITY, MemoryTag.NATIVE_HTTP_CONN);
+            this.lo = this._wptr = newLo;
+            this.lim = this.reopenCapacity = INITIAL_CAPACITY;
             of0(BOUNDARY_PREFIX);
         }
 
         @Override
         public void close() {
-            if (lo > 0) {
+            if (lo != 0) {
                 lo = _wptr = Unsafe.free(lo, lim, MemoryTag.NATIVE_HTTP_CONN);
+                // lim is a capacity, and the block backing it is gone. Leaving it at the grown
+                // value made of() compare against a block the augmenter no longer held: a value
+                // that fit skipped resize() and wrote through lo + 4 == 4, and a value that did
+                // not booked only newLim - staleLim while allocating newLim. Zero it so every
+                // of() after a close takes the resize path, and let reopen() restore it.
+                // testBoundaryAugmenterCloseResetsLimit pins this line through the second symptom,
+                // the mis-booking. The first has no test and can have none: reaching it means
+                // of() writing through address 4 from inside the call, so a test would abort the
+                // fork rather than fail an assertion. Both symptoms share this one assignment.
+                lim = 0;
             }
         }
 
@@ -1000,7 +1093,12 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         @Override
         public void reopen() {
             if (lo == 0) {
-                this.lo = this._wptr = Unsafe.malloc(lim, MemoryTag.NATIVE_HTTP_CONN);
+                // close() zeroed lim along with the block, so restore it from the remembered
+                // capacity - but only after the malloc, per resize(). Committing lim first breaks the
+                // lim == 0 <=> lo == 0 invariant that close() and of() both rely on.
+                final long newLo = Unsafe.malloc(reopenCapacity, MemoryTag.NATIVE_HTTP_CONN);
+                this.lo = this._wptr = newLo;
+                this.lim = reopenCapacity;
                 of0(BOUNDARY_PREFIX);
             }
         }
@@ -1011,10 +1109,17 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
             _wptr += len;
         }
 
-        private void resize(int lim) {
+        private void resize(int requiredLen) {
             final long prevLim = this.lim;
-            this.lim = Numbers.ceilPow2(lim);
-            this.lo = this._wptr = Unsafe.realloc(this.lo, prevLim, this.lim, MemoryTag.NATIVE_HTTP_CONN);
+            final long newLim = Numbers.ceilPow2(requiredLen);
+            // Commit the pointer and the size only once the realloc has returned. Unsafe.realloc
+            // throws once the global RSS limit is breached, and committing this.lim first left the
+            // augmenter holding a prevLim-sized block while claiming newLim: close() then
+            // over-decremented the memory counters by the difference, and the next of() call whose
+            // value fit the claimed size skipped the resize and wrote past the real block.
+            final long newLo = Unsafe.realloc(this.lo, prevLim, newLim, MemoryTag.NATIVE_HTTP_CONN);
+            this.lo = this._wptr = newLo;
+            this.lim = this.reopenCapacity = newLim;
             of0(BOUNDARY_PREFIX);
         }
     }

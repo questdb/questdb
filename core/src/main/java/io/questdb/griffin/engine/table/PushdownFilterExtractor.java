@@ -78,6 +78,8 @@ public class PushdownFilterExtractor implements Mutable {
     public static final int OP_IS_NULL = 5;
     public static final int OP_LE = 2;
     public static final int OP_LT = 1;
+    // Not an op the native side knows about: it marks a condition that cannot be pushed down.
+    public static final int OP_UNSUPPORTED = -1;
 
     private final ObjList<PushdownFilterCondition> conditions = new ObjList<>();
     private final ObjList<ExpressionNode> orValues = new ObjList<>();
@@ -209,6 +211,64 @@ public class PushdownFilterExtractor implements Mutable {
     }
 
     /**
+     * Reports whether a null predicate over this column type may drive row group pruning.
+     * <p>
+     * Pruning is exact only where the parquet null bit and the SQL NULL denote the same rows.
+     * The parquet writer marks column-top rows - rows that predate the ADD COLUMN - with
+     * definition level 0, and decides every other row's null bit through its {@code Nullable}
+     * impl in {@code core/rust/qdbr/src/parquet_write/mod.rs}. Two type groups break the
+     * correspondence, in opposite directions:
+     * <ul>
+     * <li>BOOLEAN, BYTE and SHORT carry no null sentinel, so {@code EqBooleanFunctionFactory},
+     * {@code EqByteFunctionFactory} and {@code EqShortFunctionFactory} fold a null constant to
+     * {@code BooleanConstant.FALSE} and every stored row is non-null - a column-top row reads
+     * back as 0/false, a legitimate value. A row group built entirely from column-top rows
+     * reports {@code null_count == num_values}, which {@link ParquetRowGroupFilter} would
+     * discard for IS NOT NULL even though every one of its rows matches. Neither direction may
+     * consult the file's null bit.</li>
+     * <li>CHAR, FLOAT and DOUBLE call more values NULL than the writer marks null, so parquet
+     * nulls are a strict subset of SQL NULLs. IS NOT NULL still prunes exactly - a row group
+     * with {@code null_count == num_values} holds only NULLs, so no row matches - but IS NULL
+     * does not: {@code null_count == 0} no longer implies the group holds no NULL. CHAR's null
+     * is {@code Numbers.CHAR_NULL} while the writer's {@code Nullable} impl for {@code u16}
+     * reports every stored value non-null; {@code Numbers.isNull(double)} masks
+     * {@code EXP_BIT_MASK} and {@code isNull(float)} tests {@code isInfinite}, so both count
+     * +/-Infinity as NULL, while the writer's impls for {@code f32}/{@code f64} test only
+     * {@code is_nan()} and {@code simd.rs} compares strictly greater than the infinity bits.
+     * A stored CHAR_NULL or infinity therefore reaches the file as a non-null value, and a row
+     * group of them reports {@code null_count == 0} while every row matches IS NULL.</li>
+     * </ul>
+     * Every other type's null detection - a {@code Nullable} impl for the fixed-size types, a
+     * length or key check for the variable-size ones, which do not implement that trait -
+     * recognises the same values SQL does, so both directions stay exact. That includes IPv4,
+     * whose in-band 0 the writer does map to a parquet null.
+     * <p>
+     * This gates on the column's <em>metadata</em> type; soundness also needs the file's stored
+     * type to agree, which {@link ParquetRowGroupFilter} enforces separately by dropping any
+     * condition whose parquet column type differs, before it reaches the null-op branch.
+     * <p>
+     * Relaxing either arm would recover no pruning, so the two {@code false} answers cost nothing.
+     * The native side declines the same skips independently: {@code writer_undercounts_nulls}
+     * refuses the {@code null_count == 0} skip for CHAR, FLOAT and DOUBLE, and
+     * {@code is_null_free_type} refuses the {@code null_count == num_values} skip for BOOLEAN, BYTE
+     * and SHORT, both in {@code parquet_read::row_groups} and its {@code parquet_metadata::skip}
+     * twin. A newly pushed condition would therefore prune nothing and merely mark pushdown active,
+     * which costs the page frame cursor its up-front {@code size()}. For BOOLEAN, BYTE and SHORT it
+     * would also reopen the {@code filter == null} alongside active pushdown state that
+     * {@code ParquetRowGroupPruningTest.testLimitOverConstantFoldedByteNullFilter} pins closed,
+     * because {@code b IS NOT NULL} folds to a constant TRUE the code generator drops. The
+     * remaining pair - IS NULL over those three - folds to a constant FALSE that
+     * {@code SqlCodeGenerator} replaces with an empty factory, so no scan runs there to prune.
+     */
+    private static boolean isNullOpPushable(int columnType, int opType) {
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT -> false;
+            case ColumnType.CHAR, ColumnType.FLOAT, ColumnType.DOUBLE -> opType == OP_IS_NOT_NULL;
+            default -> true;
+        };
+    }
+
+    /**
      * Rebuilds a constant DECIMAL function so its storage tag and scale match the
      * column's, which is what {@link ParquetRowGroupFilter#prepareFilterList} relies
      * on when it dispatches {@code getDecimal<N>} based on the column tag and pushes
@@ -262,7 +322,11 @@ public class PushdownFilterExtractor implements Mutable {
 
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
-                if (SqlKeywords.isAndKeyword(node.token)) {
+                if (node.token == null) {
+                    // tokenless node (e.g. subquery); not extractable, skip it -
+                    // extraction is best-effort and fewer conditions is always safe
+                    node = null;
+                } else if (SqlKeywords.isAndKeyword(node.token)) {
                     if (node.rhs != null) {
                         stack.push(node.rhs);
                     }
@@ -314,7 +378,7 @@ public class PushdownFilterExtractor implements Mutable {
         ExpressionNode hiNode = node.args.getQuick(0);
 
         int columnType = metadata.getColumnType(columnIndex);
-        PushdownFilterCondition cond = new PushdownFilterCondition(colNode.token, columnType, OP_BETWEEN);
+        PushdownFilterCondition cond = new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, OP_BETWEEN);
         cond.addValue(loNode);
         cond.addValue(hiNode);
         conditions.add(cond);
@@ -345,7 +409,7 @@ public class PushdownFilterExtractor implements Mutable {
         }
 
         int columnType = metadata.getColumnType(columnIndex);
-        PushdownFilterCondition condition = new PushdownFilterCondition(colNode.token, columnType, effectiveOp);
+        PushdownFilterCondition condition = new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, effectiveOp);
         condition.addValue(valueNode);
         conditions.add(condition);
     }
@@ -375,11 +439,13 @@ public class PushdownFilterExtractor implements Mutable {
         int columnType = metadata.getColumnType(columnIndex);
 
         if (isNullConstant(valueNode)) {
-            conditions.add(new PushdownFilterCondition(colNode.token, columnType, OP_IS_NULL));
+            if (isNullOpPushable(columnType, OP_IS_NULL)) {
+                conditions.add(new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, OP_IS_NULL));
+            }
             return;
         }
 
-        PushdownFilterCondition condition = new PushdownFilterCondition(colNode.token, columnType);
+        PushdownFilterCondition condition = new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType);
         condition.addValue(valueNode);
         conditions.add(condition);
     }
@@ -408,6 +474,7 @@ public class PushdownFilterExtractor implements Mutable {
         int columnType = metadata.getColumnType(columnIndex);
         PushdownFilterCondition condition = new PushdownFilterCondition(
                 colNode.token,
+                metadata.getWriterIndex(columnIndex),
                 columnType
         );
 
@@ -448,7 +515,10 @@ public class PushdownFilterExtractor implements Mutable {
         }
 
         int columnType = metadata.getColumnType(columnIndex);
-        conditions.add(new PushdownFilterCondition(colNode.token, columnType, OP_IS_NOT_NULL));
+        if (!isNullOpPushable(columnType, OP_IS_NOT_NULL)) {
+            return;
+        }
+        conditions.add(new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, OP_IS_NOT_NULL));
     }
 
     private void tryExtractOrEqualities(ArrayDeque<ExpressionNode> orStack, ExpressionNode node, RecordMetadata metadata) {
@@ -462,6 +532,10 @@ public class PushdownFilterExtractor implements Mutable {
         while (cur != null || !orStack.isEmpty()) {
             if (cur == null) {
                 cur = orStack.poll();
+            }
+            if (cur.token == null) {
+                // tokenless OR operand (e.g. subquery); the whole OR chain is not extractable
+                return;
             }
             if (SqlKeywords.isOrKeyword(cur.token)) {
                 if (cur.lhs == null || cur.rhs == null) {
@@ -505,7 +579,7 @@ public class PushdownFilterExtractor implements Mutable {
         }
 
         if (orValues.size() > 0) {
-            PushdownFilterCondition condition = new PushdownFilterCondition(columnName, columnType);
+            PushdownFilterCondition condition = new PushdownFilterCondition(columnName, metadata.getWriterIndex(resolvedColumnIndex), columnType);
             condition.addValues(orValues);
             conditions.add(condition);
         }
@@ -515,16 +589,30 @@ public class PushdownFilterExtractor implements Mutable {
     public static class PushdownFilterCondition implements QuietCloseable {
         private final CharSequence columnName;
         private final int columnType;
+        // Stable writer index (column id) of the filtered column. The Parquet file stores
+        // this id per column, so native-table row-group pruning resolves the Parquet column
+        // by id rather than by name -- a rename leaves the frozen Parquet name stale, which
+        // would otherwise resolve to the wrong column (or a name collision) and skip rows.
+        private final int columnWriterIndex;
         private final int operationType;
         private final ObjList<Function> valueFunctions = new ObjList<>();
         private final ObjList<ExpressionNode> values = new ObjList<>();
+        // Set when value serialization declined this condition AND every one of its values is a
+        // compile-time constant, so re-running it cannot reach a different answer.
+        // ParquetRowGroupFilter.prepareFilterList runs once per parquet partition and re-raised the
+        // same ImplicitCastException every time - a string bound on a TIMESTAMP column arrives as a
+        // StrConstant whose getLong() throws - which over thousands of partitions is thousands of
+        // exceptions for one permanent answer. A bind variable is a RUNTIME constant, not a
+        // constant, so a value that can be re-bound is never cached.
+        private boolean isSerializationDeclined;
 
-        public PushdownFilterCondition(CharSequence columnName, int columnType) {
-            this(columnName, columnType, OP_EQ);
+        public PushdownFilterCondition(CharSequence columnName, int columnWriterIndex, int columnType) {
+            this(columnName, columnWriterIndex, columnType, OP_EQ);
         }
 
-        public PushdownFilterCondition(CharSequence columnName, int columnType, int operationType) {
+        public PushdownFilterCondition(CharSequence columnName, int columnWriterIndex, int columnType, int operationType) {
             this.columnName = Chars.toString(columnName);
+            this.columnWriterIndex = columnWriterIndex;
             this.columnType = columnType;
             this.operationType = operationType;
         }
@@ -554,6 +642,10 @@ public class PushdownFilterExtractor implements Mutable {
             return columnType;
         }
 
+        public int getColumnWriterIndex() {
+            return columnWriterIndex;
+        }
+
         public int getOperationType() {
             return operationType;
         }
@@ -566,10 +658,32 @@ public class PushdownFilterExtractor implements Mutable {
             return values;
         }
 
+        /**
+         * Reports whether every value is a compile-time constant, i.e. whether an outcome computed
+         * from the values holds for the life of the condition. A bind variable is a runtime
+         * constant and answers false.
+         */
+        public boolean hasConstantValuesOnly() {
+            for (int i = 0, n = valueFunctions.size(); i < n; i++) {
+                if (!valueFunctions.getQuick(i).isConstant()) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         public void init(SqlExecutionContext executionContext) throws SqlException {
             for (int i = 0, n = valueFunctions.size(); i < n; i++) {
                 valueFunctions.getQuick(i).init(null, executionContext);
             }
+        }
+
+        public boolean isSerializationDeclined() {
+            return isSerializationDeclined;
+        }
+
+        public void setSerializationDeclined() {
+            isSerializationDeclined = true;
         }
     }
 }

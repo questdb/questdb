@@ -37,7 +37,9 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.wal.seq.TableSequencerCursorHolder;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -102,6 +104,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
 
     private static class WalTransactionsCursorFactory extends AbstractRecordCursorFactory {
         private final TableListRecordCursor cursor;
+        private final TableSequencerCursorHolder cursorHolder = new TableSequencerCursorHolder();
         private final TableToken tableToken;
 
         public WalTransactionsCursorFactory(TableToken tableToken, int timestampType) {
@@ -115,14 +118,15 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
             cursor.close();
             long txnLo = 0;
             while (true) {
-                TransactionLogCursor cursor = null;
+                TransactionLogCursor logCursor = null;
                 try {
-                    cursor = executionContext.getCairoEngine().getTableSequencerAPI().getCursor(tableToken, txnLo);
-                    cursor.toMinTxn();
-                    this.cursor.logCursor = cursor;
+                    logCursor = executionContext.getCairoEngine().getTableSequencerAPI()
+                            .getCursor(tableToken, txnLo, cursorHolder);
+                    logCursor.toMinTxn();
+                    cursor.logCursor = logCursor;
                     break;
                 } catch (CairoException e) {
-                    Misc.free(cursor);
+                    Misc.free(logCursor);
                     if (e.isFileCannotRead()) {
                         // Txn sequencer can have its parts deleted due to housekeeping
                         // Need to keep scanning until we find a valid part
@@ -137,6 +141,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
                     throw e;
                 }
             }
+            cursor.circuitBreaker = executionContext.getCircuitBreaker();
             return cursor;
         }
 
@@ -150,10 +155,16 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
             sink.val("wal_transactions of: ").val(tableToken.getTableName());
         }
 
+        @Override
+        protected void _close() {
+            Misc.free(cursor);
+            Misc.free(cursorHolder);
+        }
 
         private static class TableListRecordCursor implements NoRandomAccessRecordCursor {
+            private final TransactionRecord record = new TransactionRecord();
             private final TimestampDriver timestampDriver;
-            TransactionRecord record = new TransactionRecord();
+            private SqlExecutionCircuitBreaker circuitBreaker;
             private TransactionLogCursor logCursor;
 
             private TableListRecordCursor(TimestampDriver timestampDriver) {
@@ -172,6 +183,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 return logCursor.hasNext();
             }
 

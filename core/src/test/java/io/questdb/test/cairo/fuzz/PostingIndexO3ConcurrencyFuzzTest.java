@@ -59,16 +59,6 @@ import org.junit.Test;
  */
 public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
 
-    // A tiny posting indexer spill budget forces compactIfOverBudget ->
-    // flushAllPending mid-build, so a full index() rebuild over an O3-merged or
-    // squashed partition trips the spill budget and commitDense must consolidate
-    // sparse gens -- the exact path the squash/covering SIGSEGV came from. The
-    // budget is engine-global, so the non-WAL oracle table spills identically and
-    // the result-set comparison stays apples-to-apples.
-    private void forcePostingSpill(Rnd rnd) {
-        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256L + rnd.nextInt(64 * 1024));
-    }
-
     @Test
     public void testCoveringPostingO3NativeSpillFuzz() throws Exception {
         Rnd rnd = generateRandom(LOG);
@@ -125,7 +115,7 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
                 0.05,
                 0.05,
                 0.1,
-                0.0,
+                0.1,
                 1.0,
                 0.01,
                 0.01,
@@ -134,7 +124,16 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
                 0.1,
                 0.0,
                 0.8,
-                0.1,   // replaceProb
+                0.0,   // replaceProb -- DISABLED: replace-range commits are a mat-view-only
+                //   operation in production (WalWriter.commitMatView via
+                //   MatViewRefreshJob); they are never issued against a regular WAL
+                //   table. With partitionToParquetProb>0 above, enabling replace here
+                //   makes the fuzz apply a replace commit onto a Parquet partition --
+                //   an unsupported, production-unreachable state that suspends the
+                //   table ("commit replace mode is not supported for Parquet
+                //   partitions"). Replace and Parquet must stay mutually exclusive;
+                //   native-partition replace coverage lives in
+                //   testCoveringPostingO3NativeSpillFuzz and testCoveringPostingSquashSpillFuzz.
                 0.0,
                 0.01,
                 0.1,   // setParquetEncodingProb
@@ -161,7 +160,7 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
                 0.1,   // colAddProb
                 0.05,
                 0.05,
-                0.0,
+                0.05,
                 1.0,
                 0.1,   // equalTsRowsProb
                 0.02,
@@ -180,5 +179,15 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
         setFuzzCounts(true, 400_000, 500, 16, 8, 800, 60_000, 24);
         setFuzzProperties(1, 1, 1);
         runFuzz(rnd);
+    }
+
+    // A tiny posting indexer spill budget forces compactIfOverBudget ->
+    // flushAllPending mid-build, so a full index() rebuild over an O3-merged or
+    // squashed partition trips the spill budget and commitDense must consolidate
+    // sparse gens -- the exact path the squash/covering SIGSEGV came from. The
+    // budget is engine-global, so the non-WAL oracle table spills identically and
+    // the result-set comparison stays apples-to-apples.
+    private void forcePostingSpill(Rnd rnd) {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256L + rnd.nextInt(64 * 1024));
     }
 }
