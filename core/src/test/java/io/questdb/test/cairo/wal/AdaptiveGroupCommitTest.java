@@ -36,6 +36,7 @@ import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
@@ -50,8 +51,12 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 
 /**
  * Deferred 2 — adaptive GROUP-COMMIT (the RPO knob {@code cairo.adaptive.commit.group.window}).
@@ -150,6 +155,124 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
         } finally {
             resetDurabilityPoisonForTest();
         }
+    }
+
+    /**
+     * The background flusher must not claim the writer's OWN next commit as durable. {@code fdatasyncTxnLog}
+     * releases the sequencer write lock before {@code markWriterDurable} runs, and {@code getSequencerTxn} runs
+     * outside the writer monitor, so the ingest thread can sequence txn N+1 in that gap. Dropping the pin then
+     * empties the map and the frontier jumps to {@code seqTxn = N+1}, which the fdatasync never covered.
+     *
+     * <p>The test installs a tracker subclass that parks the flusher inside {@code markWriterDurable} until the
+     * writer's next commit has been sequenced, and samples {@code seqTxn} inside the {@code _txnlog} fdatasync
+     * (under the write lock) as the exact bound of what that fdatasync covered.
+     */
+    @Test
+    public void testBackgroundFlusherDoesNotOverClaimWritersOwnNextCommit() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
+
+        final CountDownLatch flusherInMark = new CountDownLatch(1);
+        final CountDownLatch nextCommitSequenced = new CountDownLatch(1);
+        final AtomicReference<Thread> flusherThread = new AtomicReference<>();
+        final AtomicReference<SeqTxnTracker> trackerRef = new AtomicReference<>();
+        final AtomicLong seqTxnAtLastTxnlogFdatasync = new AtomicLong(-1);
+
+        final WalFdatasyncFacade ff = new WalFdatasyncFacade() {
+            @Override
+            public void fdatasync(long fd) {
+                super.fdatasync(fd);
+                final String p = fdToPath.get(fd);
+                final SeqTxnTracker t = trackerRef.get();
+                if (t != null && p != null && (p.endsWith(WalUtils.TXNLOG_FILE_NAME) || p.endsWith(WalUtils.TXNLOG_FILE_NAME + "."))) {
+                    // Under the sequencer write lock: the highest seqTxn this fdatasync can have covered.
+                    seqTxnAtLastTxnlogFdatasync.set(t.getSeqTxn());
+                }
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final TableSequencerAPI seqApi = engine.getTableSequencerAPI();
+            final java.lang.reflect.Field factoryField = TableSequencerAPI.class.getDeclaredField("createTxnTracker");
+            factoryField.setAccessible(true);
+            final Object originalFactory = factoryField.get(seqApi);
+            final Function<CharSequence, SeqTxnTracker> racingFactory = dir -> {
+                final SeqTxnTracker t = new SeqTxnTracker(engine.getConfiguration()) {
+                    @Override
+                    public void markWriterDurable(int walId, long orphanSweepMark) {
+                        if (Thread.currentThread() == flusherThread.get()) {
+                            // Sequencer write lock already released, writer monitor still held.
+                            flusherInMark.countDown();
+                            try {
+                                Assert.assertTrue(nextCommitSequenced.await(10, TimeUnit.SECONDS));
+                            } catch (InterruptedException e) {
+                                throw new RuntimeException(e);
+                            }
+                        }
+                        super.markWriterDurable(walId, orphanSweepMark);
+                    }
+
+                    @Override
+                    public boolean notifyOnCommit(long newSeqTxn) {
+                        final boolean r = super.notifyOnCommit(newSeqTxn);
+                        if (flusherInMark.getCount() == 0) {
+                            nextCommitSequenced.countDown(); // ingest thread, inside the sequencer write lock
+                        }
+                        return r;
+                    }
+                };
+                trackerRef.set(t);
+                return t;
+            };
+            factoryField.set(seqApi, racingFactory);
+            try {
+                execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+                final TableToken tt = engine.verifyTableName("x");
+                final SeqTxnTracker tracker = seqApi.getTxnTracker(tt);
+                Assert.assertSame(trackerRef.get(), tracker);
+
+                try (WalWriter w = engine.getWalWriter(tt); ExposedWalPurgeJob flusher = new ExposedWalPurgeJob(engine)) {
+                    setCurrentMicros(1_000_000L);
+                    commitRow(w, 0L, 1);
+                    final long firstSeqTxn = tracker.getSeqTxn();
+
+                    setCurrentMicros(1_000_000L + WINDOW_US + 1);
+                    final AtomicReference<Throwable> flusherError = new AtomicReference<>();
+                    final Thread t = new Thread(() -> {
+                        try {
+                            flusher.flushNow();
+                        } catch (Throwable th) {
+                            flusherError.set(th);
+                        }
+                    });
+                    flusherThread.set(t);
+                    t.start();
+                    Assert.assertTrue(flusherInMark.await(10, TimeUnit.SECONDS));
+
+                    // The writer's own next commit: sequenced while the flusher is parked, then blocks on the
+                    // writer monitor in recordPendingDurable until the flusher finishes.
+                    commitRow(w, 60_000_000L, 2);
+                    t.join(10_000);
+                    Assert.assertFalse(t.isAlive());
+                    if (flusherError.get() != null) {
+                        throw new AssertionError(flusherError.get());
+                    }
+                    final long secondSeqTxn = tracker.getSeqTxn();
+                    Assert.assertEquals(firstSeqTxn + 1, secondSeqTxn);
+                    Assert.assertEquals("no sequencer fdatasync ran after txn " + secondSeqTxn + " was sequenced",
+                            firstSeqTxn, seqTxnAtLastTxnlogFdatasync.get());
+
+                    Assert.assertEquals(
+                            "durable frontier over-claims the writer's own un-fsynced txn " + secondSeqTxn,
+                            firstSeqTxn, tracker.getLocalDurableSeqTxn()
+                    );
+                    Assert.assertEquals("pending batch must keep a contiguous-prefix pin", 1, tracker.getPendingWriterPinCount());
+                }
+            } finally {
+                factoryField.set(seqApi, originalFactory);
+            }
+        });
     }
 
     @Test
@@ -1047,8 +1170,8 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
     }
 
     static class WalFdatasyncFacade extends TestFilesFacadeImpl {
+        protected final Map<Long, String> fdToPath = new HashMap<>();
         private final List<String> fdatasyncPaths = new ArrayList<>();
-        private final Map<Long, String> fdToPath = new HashMap<>();
 
         /**
          * The writer-private WAL barriers issue barrierFsync, not fdatasync, since ordering ahead of the
