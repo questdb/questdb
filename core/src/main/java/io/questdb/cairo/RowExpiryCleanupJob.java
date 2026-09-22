@@ -48,6 +48,7 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.CharSequenceLongHashMap;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
@@ -133,6 +134,9 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     // retrying, but never more often than this once the exponential backoff has grown to the cap.
     private static final long FAILURE_BACKOFF_CAP_MICROS = 600_000_000L;
     private static final long GLOBAL_CHECK_INTERVAL_MICROS = 1_000_000L;
+    // SKIP verdicts kept across sweeps for clock-free predicates. Past this many partitions the
+    // notebook stops accepting new ones and keeps the ones it already holds.
+    private static final int MAX_CACHED_PARTITIONS = 16_384;
     private static final Log LOG = LogFactory.getLog(RowExpiryCleanupJob.class);
     private static final long NO_LAST_RUN = Long.MIN_VALUE;
     private final BytecodeAssembler asm = new BytecodeAssembler();
@@ -156,8 +160,13 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private final LongList partitionFloors = new LongList();
     private final LongList partitionNextFloors = new LongList();
     private final LongList partitionRowCounts = new LongList();
-    private final CharSequenceLongHashMap scalarPartitionGenerations = new CharSequenceLongHashMap(16, 0.5, NO_LAST_RUN);
+    // Per directory name: the predicate those SKIP verdicts were computed for, and floor -> generation.
+    // A dropped view, a changed predicate, or a wiped partition removes its own entries. The notebook
+    // is never cleared as a whole, so a full notebook still skips the partitions it already holds.
+    private final CharSequenceObjHashMap<ScalarPartitionCache> scalarPartitionCaches = new CharSequenceObjHashMap<>(4);
     private final StringSink scalarPartitionKey = new StringSink();
+    private int cachedPartitionCount;
+    private int maxCachedPartitions = MAX_CACHED_PARTITIONS;
     private long lastExpiryPolicyVersion = -1;
     private long nextDiscoveryDeadlineMicros = NO_LAST_RUN;
     private long policyDiscoveryCount;
@@ -439,9 +448,6 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // nothing can raise the expired fraction of a partition that no writer touches. As a result, the two
         // flags are mutually exclusive.
         final boolean isCompactionGated = !isPredicateDeterministic && minExpiredFraction > 0;
-        if (scalarPartitionGenerations.size() > 16_384) {
-            scalarPartitionGenerations.clear();
-        }
         // Concurrency model. A REPLACE or count-DROP must never physically delete a row a concurrent writer
         // back-filled into a non-active partition since the survivor scan. On a WAL table the scan reads only
         // APPLIED state, so a committed-but-unapplied back-fill is invisible to a recount; we instead gate on
@@ -529,6 +535,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                         if (commitWithFence(walWriter, floorTs, nextFloorTs, txnTracker, expectedSeqTxn)) {
                             expectedSeqTxn++; // our accepted commit advanced the sequencer by exactly one txn
                             isWorkDone = true;
+                            forgetScalarPartition(tableToken, floorTs);
                             LOG.info().$("reclaimed fully-expired partition [table=").$safe(tableName)
                                     .$(", partitionTs=").$ts(floorTs).I$();
                         } else {
@@ -566,6 +573,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                             if (commitWithFence(walWriter, floorTs, nextFloorTs, txnTracker, expectedSeqTxn)) {
                                 expectedSeqTxn++; // our accepted commit advanced the sequencer by exactly one txn
                                 isWorkDone = true;
+                                forgetScalarPartition(tableToken, floorTs);
                                 LOG.info().$("reclaimed fully-expired partition [table=").$safe(tableName)
                                         .$(", partitionTs=").$ts(floorTs).I$();
                             } else {
@@ -684,6 +692,11 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         return runSerially();
     }
 
+    @TestOnly
+    public void setMaxCachedPartitions(int maxCachedPartitions) {
+        this.maxCachedPartitions = maxCachedPartitions;
+    }
+
     @Override
     protected boolean runSerially() {
         // A read-only node reclaims nothing: its views are replicated state that the primary's own cleanup
@@ -709,6 +722,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 lastRunByTable.clear();
                 failureBackoffMicros.clear();
             }
+            clearScalarPartitionCaches();
             nextDiscoveryDeadlineMicros = nowMicros + GLOBAL_CHECK_INTERVAL_MICROS;
             return false;
         }
@@ -742,9 +756,11 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 lastRunByTable.clear();
                 failureBackoffMicros.clear();
             }
+            clearScalarPartitionCaches();
             nextDiscoveryDeadlineMicros = nowMicros + GLOBAL_CHECK_INTERVAL_MICROS;
             return false;
         }
+        pruneScalarPartitionCaches();
 
         // Bound the throttle map over a long process lifetime: a dropped/renamed view never removes its
         // entry, so if it has accumulated far more entries than there are live policied views, reset it. The
@@ -978,11 +994,10 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     }
 
     private boolean isScalarPartitionGenerationCurrent(TableToken tableToken, String predicate, int partitionIndex) {
+        final ScalarPartitionCache cache = scalarPartitionCache(tableToken, predicate);
         scalarPartitionKey.clear();
-        scalarPartitionKey.put(tableToken.getDirName()).putAscii(':').put(predicate).putAscii(':')
-                .put(partitionFloors.getQuick(partitionIndex));
-        return scalarPartitionGenerations.get(scalarPartitionKey)
-                == partitionContentGenerations.getQuick(partitionIndex);
+        scalarPartitionKey.put(partitionFloors.getQuick(partitionIndex));
+        return cache.generations.get(scalarPartitionKey) == partitionContentGenerations.getQuick(partitionIndex);
     }
 
     private static long mixPartitionGeneration(long seed, long nameTxn, long rowCount) {
@@ -1004,13 +1019,80 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     }
 
     private void rememberScalarPartitionGeneration(TableToken tableToken, String predicate, int partitionIndex) {
+        final ScalarPartitionCache cache = scalarPartitionCache(tableToken, predicate);
         scalarPartitionKey.clear();
-        scalarPartitionKey.put(tableToken.getDirName()).putAscii(':').put(predicate).putAscii(':')
-                .put(partitionFloors.getQuick(partitionIndex));
-        scalarPartitionGenerations.put(
-                Chars.toString(scalarPartitionKey),
-                partitionContentGenerations.getQuick(partitionIndex)
-        );
+        scalarPartitionKey.put(partitionFloors.getQuick(partitionIndex));
+        final int index = cache.generations.keyIndex(scalarPartitionKey);
+        // An existing floor is updated in place, including when the notebook is full. A new floor past
+        // the cap stays uncached and is counted again on the next sweep.
+        if ((index < 0 || cachedPartitionCount < maxCachedPartitions)
+                && cache.generations.putAt(index, scalarPartitionKey, partitionContentGenerations.getQuick(partitionIndex))) {
+            cachedPartitionCount++;
+        }
+    }
+
+    private void forgetScalarPartition(TableToken tableToken, long floorTs) {
+        final ScalarPartitionCache cache = scalarPartitionCaches.get(tableToken.getDirName());
+        if (cache == null) {
+            return;
+        }
+        scalarPartitionKey.clear();
+        scalarPartitionKey.put(floorTs);
+        final int index = cache.generations.keyIndex(scalarPartitionKey);
+        if (index < 0) {
+            cache.generations.removeAt(index);
+            cachedPartitionCount--;
+        }
+    }
+
+    private ScalarPartitionCache scalarPartitionCache(TableToken tableToken, String predicate) {
+        final CharSequence dirName = tableToken.getDirName();
+        final int index = scalarPartitionCaches.keyIndex(dirName);
+        if (index < 0) {
+            final ScalarPartitionCache cache = scalarPartitionCaches.valueAt(index);
+            if (!Chars.equals(cache.predicate, predicate)) {
+                cachedPartitionCount -= cache.generations.size();
+                cache.generations.clear();
+                cache.predicate = predicate;
+            }
+            return cache;
+        }
+        final ScalarPartitionCache cache = new ScalarPartitionCache(predicate);
+        scalarPartitionCaches.putAt(index, Chars.toString(dirName), cache);
+        return cache;
+    }
+
+    private void pruneScalarPartitionCaches() {
+        final ObjList<CharSequence> dirNames = scalarPartitionCaches.keys();
+        for (int i = dirNames.size() - 1; i >= 0; i--) {
+            final CharSequence dirName = dirNames.getQuick(i);
+            final int discovered = discoveredDirIndex(dirName);
+            final ScalarPartitionCache cache = scalarPartitionCaches.valueQuick(i);
+            if (discovered < 0) {
+                cachedPartitionCount -= cache.generations.size();
+                scalarPartitionCaches.removeAt(scalarPartitionCaches.keyIndex(dirName));
+            } else if (!Chars.equals(cache.predicate, discoveredPredicates.getQuick(discovered))) {
+                cachedPartitionCount -= cache.generations.size();
+                cache.generations.clear();
+                cache.predicate = discoveredPredicates.getQuick(discovered);
+            }
+        }
+    }
+
+    private int discoveredDirIndex(CharSequence dirName) {
+        for (int i = 0, n = discoveredTokens.size(); i < n; i++) {
+            if (Chars.equals(discoveredTokens.getQuick(i).getDirName(), dirName)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private void clearScalarPartitionCaches() {
+        if (scalarPartitionCaches.size() > 0) {
+            scalarPartitionCaches.clear();
+            cachedPartitionCount = 0;
+        }
     }
 
     private boolean replacePartition(
@@ -1053,5 +1135,17 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         LOG.info().$(appended == 0 ? "reclaimed fully-expired partition [table=" : "compacted expired-rows partition [table=")
                 .$safe(tableName).$(", partitionTs=").$ts(floorTs).I$();
         return true;
+    }
+
+    /**
+     * SKIP generations for one view directory, valid only for {@link #predicate}.
+     */
+    private static final class ScalarPartitionCache {
+        final CharSequenceLongHashMap generations = new CharSequenceLongHashMap(4, 0.5, NO_LAST_RUN);
+        String predicate;
+
+        private ScalarPartitionCache(String predicate) {
+            this.predicate = predicate;
+        }
     }
 }

@@ -2817,6 +2817,75 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testScalarCleanupRetainsCachedPartitionsWhenFull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                        ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                        ('B', 2.0, '2024-01-02T00:00:00.000000Z'),
+                        ('C', 3.0, '2024-01-03T00:00:00.000000Z'),
+                        ('D', 4.0, '2024-01-04T00:00:00.000000Z')
+                    """);
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 0");
+            drainWalAndMatViewQueues();
+
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate = expiryPredicate("mv");
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                job.setMaxCachedPartitions(2);
+                Assert.assertFalse(job.cleanupTable(token, predicate));
+                Assert.assertEquals(3, job.getScalarPartitionScanCount());
+
+                Assert.assertFalse(job.cleanupTable(token, predicate));
+                Assert.assertEquals("a full notebook still skips the partitions it already holds",
+                        4, job.getScalarPartitionScanCount());
+
+                execute("INSERT INTO base VALUES ('E', 5.0, '2024-01-01T12:00:00.000000Z')");
+                drainWalAndMatViewQueues();
+                Assert.assertFalse(job.cleanupTable(token, predicate));
+                Assert.assertEquals("a back-fill updates a cached partition even when the notebook is full",
+                        6, job.getScalarPartitionScanCount());
+
+                Assert.assertFalse(job.cleanupTable(token, predicate));
+                Assert.assertEquals("the updated partition stays cached",
+                        7, job.getScalarPartitionScanCount());
+            }
+        });
+    }
+
+    @Test
+    public void testScalarCleanupRescansWhenThePredicateChanges() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                        ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                        ('B', 2.0, '2024-01-02T00:00:00.000000Z'),
+                        ('C', 3.0, '2024-01-03T00:00:00.000000Z')
+                    """);
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 0");
+            drainWalAndMatViewQueues();
+
+            final TableToken token = engine.verifyTableName("mv");
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                final String predicate = expiryPredicate("mv");
+                Assert.assertFalse(job.cleanupTable(token, predicate));
+                Assert.assertFalse(job.cleanupTable(token, predicate));
+                Assert.assertEquals(2, job.getScalarPartitionScanCount());
+
+                execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v > 100");
+                drainWalAndMatViewQueues();
+                Assert.assertFalse(job.cleanupTable(token, expiryPredicate("mv")));
+                Assert.assertEquals("a new predicate discards the previous SKIP verdicts",
+                        4, job.getScalarPartitionScanCount());
+            }
+        });
+    }
+
     private void assertCleanupWithStaleDiscoveryPredicateKeepsRows(String policyChangeSql, String newPredicateOrNullForDrop) throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(JAN_10);
