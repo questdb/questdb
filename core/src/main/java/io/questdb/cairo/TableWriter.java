@@ -6794,7 +6794,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * kept, since the partition spends its {@code _txn} offset-3 field on the geometry pointer.
      */
     long getCompositePartitionSeqTxn() {
-        return tableToken.isWal() ? txWriter.getSeqTxn() : -1L;
+        if (!tableToken.isWal()) {
+            return -1L;
+        }
+        return walApplySeqTxn > 0 ? walApplySeqTxn : txWriter.getSeqTxn();
     }
 
     private void configureCoveringIfNeeded(ColumnIndexer indexer, int columnIndex, long partitionTimestamp) {

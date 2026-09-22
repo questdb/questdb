@@ -870,7 +870,7 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
                 // would have; every other geometry accessor does this for the caller.
                 reader.getGeometry().getPieceCount(0);
                 warmSeqTxn = reader.getGeometry().getSeqTxn(0);
-                Assert.assertTrue("a warm reader lost the stamp too", warmSeqTxn > 0);
+                Assert.assertEquals("the composite partition must carry the modifying WAL transaction", 3L, warmSeqTxn);
             }
 
             engine.releaseInactive();
