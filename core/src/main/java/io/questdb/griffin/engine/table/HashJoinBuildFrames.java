@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -34,6 +36,7 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.ParquetDecodeHint;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
@@ -44,6 +47,7 @@ import io.questdb.griffin.engine.join.HashJoinPayloadSource;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.LongList;
@@ -51,6 +55,7 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
@@ -64,16 +69,23 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  * its row within that frame, {@link Rows#toRowID(int, long)}. The cursor stays open until
  * {@link #clear()}, because probes read payload columns and resolve SYMBOL payloads through it.
  * <p>
- * Every probe reads through a {@link Reader} of its own: a page frame memory pool and record
- * over the shared, read-only address cache, positioned at one build row at a time. Native frames
- * read straight from the cache's page addresses. A Parquet frame decodes into the reader's pool,
- * so matches that alternate between Parquet row groups decode them again; the fused plan accepts
- * that cost.
+ * Every probe reads through a {@link Reader} of its own, positioned at one build row at a time.
+ * Matches land on build rows in no particular order, so consecutive matches often sit in
+ * different frames, and a reader cannot afford to rebind a record per match. The owner therefore
+ * lays out the page address of every payload column of every native frame in one flat table, once
+ * per execution, and every reader's fixed-size and SYMBOL getters read through it, returning the
+ * nulls a page frame record returns for a column the frame lacks. A Parquet frame, and a getter
+ * without such a path, reads through the reader's own page frame memory pool and record over the
+ * shared, read-only address cache. A Parquet frame decodes into that pool, so matches that
+ * alternate between Parquet row groups decode them again; the fused plan accepts that cost.
  */
 public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCloseable {
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
     private final CairoConfiguration configuration;
     private final LongList frameRowCounts = new LongList();
+    // Page address of payload column c of native frame f at f * payloadColumns.length + c; zero for a
+    // column the frame lacks, and for every column of a Parquet frame, which the readers decode.
+    private final LongList payloadAddresses = new LongList();
     // Build scan column of each payload column, in payload order.
     private final int[] payloadColumns;
     private final boolean[] payloadSymbols;
@@ -100,6 +112,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
         frameCursor = null;
         failure = Misc.freeBestEffort(failure, addressCache);
         frameRowCounts.clear();
+        payloadAddresses.clear();
         rowCount = 0;
         memoryTracker = null;
         CairoException.rethrowCleanupFailure(failure);
@@ -154,6 +167,14 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
             addressCache.add(frameIndex++, frame);
             rowCount += frameRows;
         }
+        final DirectLongList pageAddresses = addressCache.getPageAddresses();
+        for (int f = 0; f < frameIndex; f++) {
+            final boolean isNative = addressCache.getFrameFormat(f) == PartitionFormat.NATIVE;
+            final int columnOffset = addressCache.toColumnOffset(f);
+            for (int column : payloadColumns) {
+                payloadAddresses.add(isNative ? pageAddresses.get(columnOffset + column) : 0);
+            }
+        }
     }
 
     private static final class BuildRecord extends PageFrameMemoryRecord {
@@ -165,6 +186,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
         public SymbolTable getSymbolTable(int columnIndex) {
             return super.getSymbolTable(columnIndex);
         }
+
     }
 
     /**
@@ -174,7 +196,14 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
     private final class Reader implements HashJoinPayloadSource.Reader {
         private final PageFrameMemoryPool pool;
         private final BuildRecord record = new BuildRecord();
+        // Where the current frame's payload addresses start in the shared table.
+        private int addressBase;
         private int frameIndex = -1;
+        // True while the current frame is native, so that getters read the shared address table.
+        private boolean isDirect;
+        // The frame the record is bound to; the record binds only for a read the table cannot serve.
+        private int recordFrameIndex = -1;
+        private long row;
 
         private Reader() {
             // Matches land on build rows in no particular order, so the pool caches for scattered access.
@@ -184,6 +213,8 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
         @Override
         public void close() {
             frameIndex = -1;
+            recordFrameIndex = -1;
+            isDirect = false;
             record.of(null);
             // A closed pool releases its buffers and takes the next execution's address cache in reopen().
             Misc.free(pool);
@@ -191,167 +222,255 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
 
         @Override
         public ArrayView getArray(int col, int columnType) {
-            return record.getArray(payloadColumns[col], columnType);
+            return record().getArray(payloadColumns[col], columnType);
         }
 
         @Override
         public BinarySequence getBin(int col) {
-            return record.getBin(payloadColumns[col]);
+            return record().getBin(payloadColumns[col]);
         }
 
         @Override
         public long getBinLen(int col) {
-            return record.getBinLen(payloadColumns[col]);
+            return record().getBinLen(payloadColumns[col]);
         }
 
         @Override
         public boolean getBool(int col) {
-            return record.getBool(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? Unsafe.getByte(address + row) == 1 : NullMemoryCMR.INSTANCE.getBool(0);
+            }
+            return record().getBool(payloadColumns[col]);
         }
 
         @Override
         public byte getByte(int col) {
-            return record.getByte(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? Unsafe.getByte(address + row) : NullMemoryCMR.INSTANCE.getByte(0);
+            }
+            return record().getByte(payloadColumns[col]);
         }
 
         @Override
         public char getChar(int col) {
-            return record.getChar(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? Unsafe.getChar(address + (row << 1)) : NullMemoryCMR.INSTANCE.getChar(0);
+            }
+            return record().getChar(payloadColumns[col]);
         }
 
         @Override
         public long getDate(int col) {
-            return record.getDate(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? Unsafe.getLong(address + (row << 3)) : NullMemoryCMR.INSTANCE.getLong(0);
+            }
+            return record().getDate(payloadColumns[col]);
         }
 
         @Override
         public void getDecimal128(int col, Decimal128 sink) {
-            record.getDecimal128(payloadColumns[col], sink);
+            record().getDecimal128(payloadColumns[col], sink);
         }
 
         @Override
         public short getDecimal16(int col) {
-            return record.getDecimal16(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? Unsafe.getShort(address + (row << 1)) : NullMemoryCMR.INSTANCE.getDecimal16(0);
+            }
+            return record().getDecimal16(payloadColumns[col]);
         }
 
         @Override
         public void getDecimal256(int col, Decimal256 sink) {
-            record.getDecimal256(payloadColumns[col], sink);
+            record().getDecimal256(payloadColumns[col], sink);
         }
 
         @Override
         public int getDecimal32(int col) {
-            return record.getDecimal32(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? Unsafe.getInt(address + (row << 2)) : NullMemoryCMR.INSTANCE.getDecimal32(0);
+            }
+            return record().getDecimal32(payloadColumns[col]);
         }
 
         @Override
         public long getDecimal64(int col) {
-            return record.getDecimal64(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? Unsafe.getLong(address + (row << 3)) : NullMemoryCMR.INSTANCE.getDecimal64(0);
+            }
+            return record().getDecimal64(payloadColumns[col]);
         }
 
         @Override
         public byte getDecimal8(int col) {
-            return record.getDecimal8(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? Unsafe.getByte(address + row) : NullMemoryCMR.INSTANCE.getDecimal8(0);
+            }
+            return record().getDecimal8(payloadColumns[col]);
         }
 
         @Override
         public double getDouble(int col) {
-            return record.getDouble(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? Unsafe.getDouble(address + (row << 3)) : NullMemoryCMR.INSTANCE.getDouble(0);
+            }
+            return record().getDouble(payloadColumns[col]);
         }
 
         @Override
         public float getFloat(int col) {
-            return record.getFloat(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? Unsafe.getFloat(address + (row << 2)) : NullMemoryCMR.INSTANCE.getFloat(0);
+            }
+            return record().getFloat(payloadColumns[col]);
         }
 
         @Override
         public byte getGeoByte(int col) {
-            return record.getGeoByte(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? Unsafe.getByte(address + row) : GeoHashes.BYTE_NULL;
+            }
+            return record().getGeoByte(payloadColumns[col]);
         }
 
         @Override
         public int getGeoInt(int col) {
-            return record.getGeoInt(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? Unsafe.getInt(address + (row << 2)) : GeoHashes.INT_NULL;
+            }
+            return record().getGeoInt(payloadColumns[col]);
         }
 
         @Override
         public long getGeoLong(int col) {
-            return record.getGeoLong(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? Unsafe.getLong(address + (row << 3)) : GeoHashes.NULL;
+            }
+            return record().getGeoLong(payloadColumns[col]);
         }
 
         @Override
         public short getGeoShort(int col) {
-            return record.getGeoShort(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? Unsafe.getShort(address + (row << 1)) : GeoHashes.SHORT_NULL;
+            }
+            return record().getGeoShort(payloadColumns[col]);
         }
 
         @Override
         public int getIPv4(int col) {
-            return record.getIPv4(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? Unsafe.getInt(address + (row << 2)) : NullMemoryCMR.INSTANCE.getIPv4(0);
+            }
+            return record().getIPv4(payloadColumns[col]);
         }
 
         @Override
         public int getInt(int col) {
-            return record.getInt(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? Unsafe.getInt(address + (row << 2)) : NullMemoryCMR.INSTANCE.getInt(0);
+            }
+            return record().getInt(payloadColumns[col]);
         }
 
         @Override
         public long getLong(int col) {
-            return record.getLong(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? Unsafe.getLong(address + (row << 3)) : NullMemoryCMR.INSTANCE.getLong(0);
+            }
+            return record().getLong(payloadColumns[col]);
         }
 
         @Override
         public long getLong128Hi(int col) {
-            return record.getLong128Hi(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? Unsafe.getLong(address + (row << 4) + Long.BYTES) : NullMemoryCMR.INSTANCE.getLong128Hi();
+            }
+            return record().getLong128Hi(payloadColumns[col]);
         }
 
         @Override
         public long getLong128Lo(int col) {
-            return record.getLong128Lo(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? Unsafe.getLong(address + (row << 4)) : NullMemoryCMR.INSTANCE.getLong128Lo();
+            }
+            return record().getLong128Lo(payloadColumns[col]);
         }
 
         @Override
         public void getLong256(int col, CharSink<?> sink) {
-            record.getLong256(payloadColumns[col], sink);
+            record().getLong256(payloadColumns[col], sink);
         }
 
         @Override
         public Long256 getLong256A(int col) {
-            return record.getLong256A(payloadColumns[col]);
+            return record().getLong256A(payloadColumns[col]);
         }
 
         @Override
         public Long256 getLong256B(int col) {
-            return record.getLong256B(payloadColumns[col]);
+            return record().getLong256B(payloadColumns[col]);
         }
 
         @Override
         public short getShort(int col) {
-            return record.getShort(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? Unsafe.getShort(address + (row << 1)) : NullMemoryCMR.INSTANCE.getShort(0);
+            }
+            return record().getShort(payloadColumns[col]);
         }
 
         @Override
         public CharSequence getStrA(int col) {
-            return record.getStrA(payloadColumns[col]);
+            return record().getStrA(payloadColumns[col]);
         }
 
         @Override
         public CharSequence getStrB(int col) {
-            return record.getStrB(payloadColumns[col]);
+            return record().getStrB(payloadColumns[col]);
         }
 
         @Override
         public int getStrLen(int col) {
-            return record.getStrLen(payloadColumns[col]);
+            return record().getStrLen(payloadColumns[col]);
         }
 
         @Override
         public CharSequence getSymA(int col) {
-            return record.getSymA(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? getSymbolTable(col).valueOf(Unsafe.getInt(address + (row << 2))) : null;
+            }
+            return record().getSymA(payloadColumns[col]);
         }
 
         @Override
         public CharSequence getSymB(int col) {
-            return record.getSymB(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? getSymbolTable(col).valueBOf(Unsafe.getInt(address + (row << 2))) : null;
+            }
+            return record().getSymB(payloadColumns[col]);
         }
 
         @Override
@@ -361,22 +480,26 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
 
         @Override
         public long getTimestamp(int col) {
-            return record.getTimestamp(payloadColumns[col]);
+            if (isDirect) {
+                final long address = payloadAddresses.getQuick(addressBase + col);
+                return address != 0 ? Unsafe.getLong(address + (row << 3)) : NullMemoryCMR.INSTANCE.getLong(0);
+            }
+            return record().getTimestamp(payloadColumns[col]);
         }
 
         @Override
         public Utf8Sequence getVarcharA(int col) {
-            return record.getVarcharA(payloadColumns[col]);
+            return record().getVarcharA(payloadColumns[col]);
         }
 
         @Override
         public Utf8Sequence getVarcharB(int col) {
-            return record.getVarcharB(payloadColumns[col]);
+            return record().getVarcharB(payloadColumns[col]);
         }
 
         @Override
         public int getVarcharSize(int col) {
-            return record.getVarcharSize(payloadColumns[col]);
+            return record().getVarcharSize(payloadColumns[col]);
         }
 
         @Override
@@ -388,15 +511,18 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
         public void position(long rowId) {
             final int frameIndex = Rows.toPartitionIndex(rowId);
             if (frameIndex != this.frameIndex) {
-                pool.navigateTo(frameIndex, record);
                 this.frameIndex = frameIndex;
+                addressBase = frameIndex * payloadColumns.length;
+                isDirect = addressCache.getFrameFormat(frameIndex) == PartitionFormat.NATIVE;
             }
-            record.setRowIndex(Rows.toLocalRowID(rowId));
+            row = Rows.toLocalRowID(rowId);
         }
 
         @Override
         public void reopen() {
             frameIndex = -1;
+            recordFrameIndex = -1;
+            isDirect = false;
             pool.setMemoryTracker(memoryTracker);
             pool.of(addressCache, ParquetDecodeHint.SCATTERED);
             record.of(frameCursor);
@@ -407,6 +533,16 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
                     record.getSymbolTable(payloadColumns[i]);
                 }
             }
+        }
+
+        // The record, bound to the current frame and row, for a read the address table cannot serve.
+        private PageFrameMemoryRecord record() {
+            if (recordFrameIndex != frameIndex) {
+                pool.navigateTo(frameIndex, record);
+                recordFrameIndex = frameIndex;
+            }
+            record.setRowIndex(row);
+            return record;
         }
     }
 }
