@@ -665,18 +665,146 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     /**
+     * A table-type conversion RESETS the WAL lineage: {@code TableConverter} zeroes {@code _txn.seqTxn}
+     * and re-seeds {@code txn_seq} from txn 0. The durable epoch taken under the PREVIOUS lineage is then
+     * unreachable, and left on disk it post-dates the live cut, which is a refusal that takes the whole
+     * instance down over a supported operator workflow. The converter must therefore clear the anchor and
+     * publish a replacement, the way the REBASE WAL clone does.
+     */
+    @Test
+    public void testTypeConversionRoundTripLeavesInstanceBootable() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        try {
+            execute("create table conv (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into conv values ('2024-09-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            execute("insert into conv values ('2024-09-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+            Assert.assertTrue("precondition: the WAL table has an anchor beyond seqTxn 0",
+                    readTxnSeqTxn(engine.verifyTableName("conv")) > 0);
+
+            execute("alter table conv set type bypass wal");
+            engine.releaseInactive();
+            engine.load();
+
+            execute("alter table conv set type wal", sqlExecutionContext);
+            engine.releaseInactive();
+            engine.load();
+
+            final TableToken tt = engine.verifyTableName("conv");
+            Assert.assertTrue("the converted table must carry its own anchor",
+                    epochArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME, ""));
+            Assert.assertEquals("the conversion re-seeds the lineage at seqTxn 0", 0L, readTxnSeqTxn(tt));
+
+            engine.getTableSequencerAPI().resetForReboot(tt);
+            new RecoveryCoordinator(engine).recover();
+
+            try (io.questdb.cairo.TableReader reader = engine.getReader(tt)) {
+                Assert.assertEquals("both rows must survive the round trip", 2L, reader.size());
+            }
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    /**
+     * A WAL table dropped while a {@code SET TYPE WAL} request is still pending is resurrected by
+     * {@code TableConverter} on the next boot (questdb/questdb#7649, an OSS bug that predates adaptive
+     * commit). The resurrection re-seeds the lineage exactly as any other conversion does, so recovery must
+     * find a table it can validate rather than a stale anchor that fails the startup closed. Written to pass
+     * either way, so it keeps its value once the upstream resurrection is fixed.
+     */
+    @Test
+    public void testDroppedTableResurrectedByConversionDoesNotBlockStartup() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        try {
+            execute("create table zt (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into zt values ('2024-09-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            execute("insert into zt values ('2024-09-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+
+            execute("alter table zt set type bypass wal");
+            execute("alter table zt set type wal", sqlExecutionContext);
+            execute("drop table zt");
+            Assert.assertNull("precondition: dropped before the restart", engine.getTableTokenIfExists("zt"));
+
+            engine.releaseInactive();
+            engine.load();
+
+            final TableToken resurrected = engine.getTableTokenIfExists("zt");
+            if (resurrected != null) {
+                engine.getTableSequencerAPI().resetForReboot(resurrected);
+            }
+            new RecoveryCoordinator(engine).recover();
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    /**
+     * A database written by a build that reset the WAL lineage WITHOUT clearing the anchor (every build
+     * before the {@code TableConverter} fix above) still carries an epoch beyond the sequencer frontier.
+     * Such an epoch names a cut no replay can reach, so it is a superseded lineage, not the lost-write case
+     * the freshness guard fails closed on: recovery must discard it and re-enrol at the live cut instead of
+     * refusing to start. The stale anchor is restored here from copies taken before the conversion, which is
+     * exactly the on-disk state such an upgrade presents.
+     */
+    @Test
+    public void testEpochBeyondSequencerFrontierIsDiscardedAndReEnrolled() throws Exception {
+        org.junit.Assume.assumeFalse("replants files over existing destinations, which Windows forbids", Os.isWindows());
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        try {
+            execute("create table lin (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into lin values ('2024-09-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            execute("insert into lin values ('2024-09-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+
+            final TableToken pre = engine.verifyTableName("lin");
+            final long staleEpochSeqTxn = readTxnSeqTxn(pre);
+            Assert.assertTrue("precondition: anchor beyond seqTxn 0", staleEpochSeqTxn > 0);
+            copyEpochArtifacts(pre, false);
+
+            execute("alter table lin set type bypass wal");
+            engine.releaseInactive();
+            engine.load();
+            execute("alter table lin set type wal", sqlExecutionContext);
+            engine.releaseInactive();
+            engine.load();
+
+            final TableToken tt = engine.verifyTableName("lin");
+            Assert.assertEquals("the conversion re-seeds the lineage at seqTxn 0", 0L, readTxnSeqTxn(tt));
+            // Replant the pre-conversion anchor in full: the state an upgraded database arrives in.
+            copyEpochArtifacts(tt, true);
+
+            engine.getTableSequencerAPI().resetForReboot(tt);
+            new RecoveryCoordinator(engine).recover();
+
+            Assert.assertEquals("the discarded anchor must not rewind the live cut", 0L, readTxnSeqTxn(tt));
+            Assert.assertTrue("the table must be re-enrolled with a replacement anchor",
+                    epochArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME, ""));
+            try (io.questdb.cairo.TableReader reader = engine.getReader(tt)) {
+                Assert.assertEquals("rows must survive the discarded anchor", 2L, reader.size());
+            }
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    /**
      * Finding C2 (invariant pin) — locks the {@code TxReader.unsafeLoadAll} SLOT-SELECTION property that
      * {@code RecoveryCoordinator.epochIsAheadOfLiveTxn}'s C2 assert relies on: {@code unsafeLoadAll} returns
      * the VERSION-SELECTED (latest) A/B slot when it is intact, and ONLY its IMMEDIATE predecessor
      * (version - 1) when the latest is torn — never an older slot. So {@code unsafeReadVersion() -
      * getVersion()} is exactly 0 on a clean load and exactly 1 on the torn-latest fallback. Together with the
      * version word being durably floored at the epoch cut, that is WHY a single-lineage post-crash {@code
-     * _txn} can never load cleanly BELOW the epoch, so the recovery guard's SKIP is only ever the genuine
+     * _txn} can never load cleanly BELOW the epoch, so the recovery guard's refusal is only ever the genuine
      * multi-lineage / stale-epoch case (never a slot-selection artifact).
      * <p>
      * The recovery guard's clean-load branch (diff 0) is exercised end-to-end by
      * {@link #testRecoverRestoresTxnToEpochCut} (proceed) and {@link #testRecoverSkipsEpochAheadOfRestoredTxn}
-     * (skip). This test pins the tolerated FALLBACK branch (diff 1) directly and deterministically, using the
+     * (refuse). This test pins the tolerated FALLBACK branch (diff 1) directly and deterministically, using the
      * proven two-commit {@code TxWriter} torn-body pattern (A and B both hold a valid checksummed record), so
      * a regression that narrowed the assert to "must be the latest" (which would wrongly reject the
      * legitimate torn-latest fallback) or widened slot selection to return an older slot is caught here.
@@ -751,6 +879,27 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             } finally {
                 Unsafe.free(buf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 ff.close(fd);
+            }
+        }
+    }
+
+    /**
+     * Copies every epoch artifact of {@code tt} aside ({@code restore == false}) or back into place
+     * ({@code restore == true}), covering both ping-pong generations so the replanted state is exactly the
+     * one the marker selector described when it was taken.
+     */
+    private void copyEpochArtifacts(TableToken tt, boolean restore) {
+        final String[] names = {
+                TableUtils.SNAPSHOT_FILE_NAME,
+                "_meta.epoch.0", "_txn.epoch.0", "_cv.epoch.0", "_epoch.manifest.0",
+                "_meta.epoch.1", "_txn.epoch.1", "_cv.epoch.1", "_epoch.manifest.1"
+        };
+        for (int i = 0; i < names.length; i++) {
+            final String live = names[i];
+            final String saved = live + ".bak";
+            final String from = restore ? saved : live;
+            if (epochArtifactExists(tt, from, "")) {
+                copyTableFile(tt, from, restore ? live : saved);
             }
         }
     }

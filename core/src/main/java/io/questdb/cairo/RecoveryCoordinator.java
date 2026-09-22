@@ -139,7 +139,7 @@ public class RecoveryCoordinator {
                         // that generation before a retrying metadata reader can spin forever on a pinned clock.
                         if (metadataBoundEpoch) {
                             failIfRecoveryDisabled(token);
-                            recoverTable(token, src, dst, dir);
+                            recoverTable(token, src, dst, dir, checkpointEnrollments);
                             continue;
                         }
                         throw metadataFailure;
@@ -175,7 +175,7 @@ public class RecoveryCoordinator {
                         // ahead of a cut nothing can name any more.
                         continue;
                     }
-                    recoverTable(token, src, dst, dir);
+                    recoverTable(token, src, dst, dir, checkpointEnrollments);
                 } catch (CairoException | CairoError e) {
                     if (CairoException.isDataSyncFailure(e)) {
                         // A writeback failure poisons the process-wide page-cache durability state. Do not
@@ -287,7 +287,23 @@ public class RecoveryCoordinator {
         }
     }
 
-    private void recoverTable(TableToken token, Path src, Path dst, Path dir) {
+    /**
+     * Last durable sequencer transaction for {@code token}, or {@code -1} when it cannot be established.
+     * Read only on the refusal path (see the lineage classification in {@link #recoverTable}), never on the
+     * healthy one, so opening the sequencer here costs nothing at a normal startup.
+     */
+    private long sequencerFrontierOrUnknown(TableToken token) {
+        try {
+            return engine.getTableSequencerAPI().lastTxn(token);
+        } catch (CairoException | CairoError e) {
+            // Unknown frontier. Do NOT guess: the caller falls through to the fail-closed refusal.
+            LOG.error().$("could not read sequencer frontier while classifying an adaptive epoch [table=").$(token)
+                    .$(", error=").$((Throwable) e).I$();
+            return -1;
+        }
+    }
+
+    private void recoverTable(TableToken token, Path src, Path dst, Path dir, ObjList<TableToken> enrollments) {
         tablePath(dir, token).concat(TableUtils.SNAPSHOT_FILE_NAME);
         if (!ff.exists(dir.$())) {
             throw CairoException.critical(0)
@@ -333,10 +349,38 @@ public class RecoveryCoordinator {
         // the live _txn loads cleanly at a seqTxn BELOW this epoch, the table was rewound BENEATH a stale,
         // higher-lineage epoch by a backup / checkpoint-recover / PITR restore that left _snapshot/.epoch
         // behind (nothing on the restore path clears them). Rolling _txn forward to that epoch would
-        // resurrect the discarded lineage and leave _txn ahead of the restored sequencer. SKIP; the restored
-        // live state + normal WAL replay is correct. A TORN/unreadable live _txn (the genuine post-crash
-        // state this mechanism exists to repair) does NOT trip the guard — see epochIsAheadOfLiveTxn.
+        // resurrect the discarded lineage and leave _txn ahead of the restored sequencer. REFUSE: the epoch
+        // cannot be adopted, and the live state below it may be the result of writes the storage lost, so
+        // this fails the startup closed rather than serving a table nobody can vouch for. A TORN/unreadable
+        // live _txn (the genuine post-crash state this mechanism exists to repair) does NOT trip the guard —
+        // see epochIsAheadOfLiveTxn.
         if (epochIsAheadOfLiveTxn(token, src, selected)) {
+            // Classify before refusing. An epoch is always taken at a cut that is ALREADY in the durable
+            // sequencer log, so epochSeqTxn <= sequencer lastTxn holds for every SAME-lineage epoch. An epoch
+            // BEYOND the sequencer frontier therefore cannot belong to this lineage at all: the sequencer was
+            // re-seeded wholesale (ALTER TABLE ... SET TYPE WAL re-registers it from txn 0, REBASE WAL builds
+            // a new one, an out-of-process restore may drop a fresh txn_seq in place), which makes the anchor
+            // unreachable rather than evidence of lost writes — no replay can ever produce the cut it names.
+            // Discard it and re-enrol at the live cut instead of refusing to start. This is not a relaxation
+            // of the refusal above: the live _txn here loaded CLEAN (epochIsAheadOfLiveTxn returns true only
+            // then), so the table has a self-consistent cut, and WAL replay from the sequencer frontier is
+            // exactly what the new lineage needs.
+            final long frontier = sequencerFrontierOrUnknown(token);
+            if (frontier >= 0 && epochSeqTxn > frontier) {
+                LOG.critical().$("adaptive epoch belongs to a superseded WAL lineage, discarding anchor and re-enrolling [table=").$(token)
+                        .$(", epochSeqTxn=").$(epochSeqTxn)
+                        .$(", seqLastTxn=").$(frontier).I$();
+                tablePath(dir, token);
+                final int tableRootLen = dir.size();
+                // Marker BEFORE removal: between the two the table is enrolled in _meta with no anchor, and
+                // only the marker keeps the next startup from refusing that state if we crash here.
+                markRestoredForEnrolment(ff, dir, tableRootLen);
+                removeAdaptiveEpochArtifacts(ff, dir, tableRootLen);
+                // Publish the replacement baseline in THIS startup, from the same post-loop pass the restore
+                // path uses, so the table is not left anchorless for a whole run.
+                enrollments.add(token);
+                return;
+            }
             throw CairoException.critical(0)
                     .put("adaptive epoch post-dates live state; refusing wrong-lineage recovery [table=")
                     .put(token.getTableName()).put(", epochSeqTxn=").put(epochSeqTxn).put(']');
@@ -357,7 +401,7 @@ public class RecoveryCoordinator {
         // trips here loudly instead of silently corrupting the restored table.
         assert !epochIsAheadOfLiveTxn(token, src, selected)
                 : "adaptive recovery would ADOPT an epoch that post-dates the live _txn (wrong-lineage "
-                + "resurrection); the freshness guard must SKIP it [table=" + token.getTableName()
+                + "resurrection); the freshness guard must refuse or discard it [table=" + token.getTableName()
                 + ", epochSeqTxn=" + epochSeqTxn + ']';
 
         // Restore the durable cut. V2 manifests first restore _meta from the same generation,
@@ -625,8 +669,12 @@ public class RecoveryCoordinator {
      * <p>
      * FAIL-OPEN on an unreadable live {@code _txn}: a torn / short / garbage {@code _txn} is exactly the
      * genuine post-crash state this whole mechanism exists to repair, so it returns {@code false} (NOT
-     * ahead -> allow the roll-forward). We only ever SKIP recovery on a CLEAN load that is provably behind
-     * the epoch — never on the crash case.
+     * ahead -> allow the roll-forward). A {@code true} answer is only ever produced by a CLEAN load that is
+     * provably behind the epoch — never by the crash case.
+     * <p>
+     * The caller decides what a {@code true} answer means, by comparing the epoch with the sequencer
+     * frontier: an epoch beyond it belongs to a re-seeded lineage and is discarded, and anything else fails
+     * the startup closed. This method itself makes no such distinction.
      */
     private boolean epochIsAheadOfLiveTxn(TableToken token, Path scratch, SnapshotMarker.Candidate candidate) {
         final long epochSeqTxn = candidate.epochSeqTxn;
@@ -663,7 +711,7 @@ public class RecoveryCoordinator {
                 return false;
             }
 
-            // INVARIANT PIN (review Finding C2). The return-true SKIP below is only SOUND because, on a
+            // INVARIANT PIN (review Finding C2). The return-true verdict below is only SOUND because, on a
             // SINGLE lineage, a CLEAN unsafeLoadAll() can never report a seqTxn BELOW the durable epoch.
             // That rests on a SLOT-SELECTION property of TxReader which we pin here so a future A/B refactor
             // cannot silently turn a genuine post-crash cut into a wrongful skip:
@@ -685,10 +733,10 @@ public class RecoveryCoordinator {
             //   - seqTxn is monotone with version within a lineage, hence loadedSeqTxn >= epochSeqTxn.
             // A clean load BELOW the epoch is therefore NEVER a slot-selection artifact — it is the genuine
             // multi-lineage / stale-epoch case (a restore/PITR rewound the live _txn beneath a leftover,
-            // higher-lineage epoch), which is exactly what the return-true SKIP handles.
+            // higher-lineage epoch), which is exactly what the return-true verdict hands to the caller.
             //
             // Why NOT a blanket `assert loadedSeqTxn >= epochSeqTxn`: that WRONG form would fire on the
-            // legitimate multi-lineage skip this method exists to detect (there loadedSeqTxn < epochSeqTxn by
+            // legitimate multi-lineage case this method exists to detect (there loadedSeqTxn < epochSeqTxn by
             // design). The invariant is single-lineage-scoped; we can soundly pin only the lineage-INDEPENDENT
             // slot-selection property (latest, or its immediate predecessor), which holds equally in the
             // multi-lineage case (a restored _txn is self-consistent and loads its own latest slot). At

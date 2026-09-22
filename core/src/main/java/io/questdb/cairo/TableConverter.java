@@ -119,11 +119,39 @@ public class TableConverter {
                                 // Structural one-shot conversion, outside any table writer and outside the
                                 // adaptive epoch's coverage: take the SYNC grade under ADAPTIVE.
                                 txWriter.setCommitMode(CommitMode.structuralCommitMode(configuration.getCommitMode()));
+
+                                // A type conversion RESETS this table's WAL lineage: resetLagValuesUnsafe()
+                                // below zeroes _txn.seqTxn, and the WAL branch re-seeds txn_seq from txn 0.
+                                // Every durable-epoch artifact in this directory anchors the lineage that ends
+                                // here, so it must go -- the rule every other rewinding path already obeys
+                                // (TableSnapshotRestore on checkpoint restore, and the REBASE WAL staging
+                                // clone, which excludes the source anchor and publishes its own). Left behind,
+                                // the stale anchor post-dates the reset live _txn and startup recovery refuses
+                                // to bring the instance up.
+                                //
+                                // The order is crash-safe at every point. The restore-enrolment marker goes
+                                // down FIRST: between the removal and the new baseline the table is enrolled
+                                // in _meta with no anchor, which recovery refuses unless that marker tells it
+                                // to re-enrol at the live cut. A crash before the marker leaves the old,
+                                // still-valid anchor with the lineage it describes; a crash after the removal
+                                // leaves a table recovery re-enrols; either way _convert survives and the
+                                // conversion runs again on the next boot.
+                                path.trimTo(rootLen).concat(dirNameSink);
+                                final int tableRootLen = path.size();
+                                RecoveryCoordinator.markRestoredForEnrolment(ff, path, tableRootLen);
+                                RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, path, tableRootLen);
+
                                 txWriter.resetLagValuesUnsafe();
 
+                                int convertedTimestampType = ColumnType.TIMESTAMP;
+                                int convertedPartitionBy = PartitionBy.NONE;
                                 if (walEnabled) {
                                     try (TableWriterMetadata metadata = new TableWriterMetadata(token)) {
                                         metadata.reload(metaPath, metaMem);
+                                        convertedTimestampType = metadata.getTimestampIndex() < 0
+                                                ? ColumnType.TIMESTAMP
+                                                : metadata.getColumnType(metadata.getTimestampIndex());
+                                        convertedPartitionBy = metadata.getPartitionBy();
                                         tableSequencerAPI.registerTable(tableId, metadata, token);
                                     }
 
@@ -150,6 +178,31 @@ public class TableConverter {
                                 // above now describes the PREVIOUS contents. Refresh after the final
                                 // write, not before it.
                                 TableUtils.refreshMetaBodyChecksum(metaMem);
+
+                                // The converted table is a fresh WAL lineage sitting at seqTxn 0, so give it
+                                // its own generation-zero anchor here, the way the REBASE WAL clone does. The
+                                // next boot then validates an anchor instead of refusing an absent one. A
+                                // non-adaptive instance publishes nothing, and must not leave the PREVIOUS
+                                // enrolment record behind either: it would claim lazy state on a table whose
+                                // _txn was just reset, with nothing to rewind to.
+                                path.trimTo(rootLen).concat(dirNameSink);
+                                if (walEnabled && configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+                                    DurableEpochManifest.publishInitialAt(
+                                            configuration,
+                                            token,
+                                            path,
+                                            convertedTimestampType,
+                                            convertedPartitionBy,
+                                            configuration.getMicrosecondClock().getTicks() / 1000L
+                                    );
+                                } else {
+                                    DurableEpochManifest.clearEnrollmentRecord(configuration, token, path.trimTo(rootLen).concat(dirNameSink), tableRootLen);
+                                }
+                                // Consume the crash bridge: the anchor above is durable, or this table has no
+                                // lazy state by construction (non-WAL, or a non-adaptive instance).
+                                path.trimTo(rootLen).concat(dirNameSink).concat(RecoveryCoordinator.RESTORE_ENROL_FILE_NAME);
+                                ff.removeQuiet(path.$());
+
                                 convertedTables.add(token);
 
                                 try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
