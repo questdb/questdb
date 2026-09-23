@@ -5070,7 +5070,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         // which an undroppable table need not be, so without this the one route
                         // that drops every table at once would be the route around the veto. The
                         // throw lands in dropAllTablesFailures below, so the rest still drop.
-                        checkTableDroppable(tableToken);
+                        engine.checkTableDroppable(tableToken);
                     }
                     if (tableToken.isLiveView()) {
                         // A live view carries state the generic drop does not know about:
@@ -5184,7 +5184,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(op.getEntityNamePosition(), "table name expected, got ").put(tableToken.getType().keyword()).put(" name: ").put(op.getEntityName());
         }
         sqlExecutionContext.getSecurityContext().authorizeTableDrop(tableToken);
-        checkTableDroppable(tableToken);
+        engine.checkTableDroppable(tableToken);
 
         final String sqlText = op.getSqlText();
         final long queryId = queryRegistry.register(sqlText, sqlExecutionContext);
@@ -5994,19 +5994,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     protected AlterOperationBuilder createAlterOperationBuilder() {
         return new AlterOperationBuilder();
-    }
-
-    /**
-     * Vetoes dropping a specific table outright, independently of permissions. Distinct from
-     * {@code isProtected()}, which denies every kind of access: a table can be readable, writable
-     * and truncatable by anyone holding the permission, yet still be one the database refuses to
-     * let go of. Overridden by Enterprise for the view audit table.
-     * <p>
-     * Consulted on the two routes that drop a <b>table</b> - {@code DROP TABLE} and
-     * {@code DROP ALL TABLES} - and on neither of the view, materialized view or live view drops,
-     * which have their own statements. A view cannot be made undroppable this way.
-     */
-    protected void checkTableDroppable(TableToken tableToken) {
     }
 
     /**

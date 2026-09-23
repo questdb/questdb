@@ -26,13 +26,19 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.SqlException;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cutlass.text.Atomicity;
+import io.questdb.cutlass.text.TextLoader;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import static org.junit.Assert.assertNotNull;
@@ -40,14 +46,27 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.fail;
 
 /**
- * {@code checkTableDroppable} vetoes dropping a table outright, independently of permissions.
- * Enterprise overrides it for the view audit table, so every route that drops a table has to
- * consult it - a veto that only one route honours is not a veto.
+ * {@code CairoEngine.checkTableDroppable} vetoes dropping a table outright, independently of
+ * permissions. Enterprise overrides it for the view audit table, so every route that drops a table
+ * has to consult it - a veto that only one route honours is not a veto.
  */
 public class DropTableVetoTest extends AbstractCairoTest {
 
     private static final String UNDROPPABLE = "undroppable";
     private static final String VETO_MESSAGE = "this table cannot be dropped";
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        AbstractCairoTest.engineFactory = configuration -> new CairoEngine(configuration) {
+            @Override
+            public void checkTableDroppable(TableToken tableToken) {
+                if (Chars.equalsIgnoreCase(tableToken.getTableName(), UNDROPPABLE)) {
+                    throw CairoException.nonCritical().put(VETO_MESSAGE);
+                }
+            }
+        };
+        AbstractCairoTest.setUpStatic();
+    }
 
     @Test
     public void testDropAllTablesHonoursTheVeto() throws Exception {
@@ -56,7 +75,7 @@ public class DropTableVetoTest extends AbstractCairoTest {
             execute("CREATE TABLE " + UNDROPPABLE + " (s SYMBOL)");
 
             try {
-                dropWith("DROP ALL TABLES");
+                execute("DROP ALL TABLES");
                 fail("expected DROP ALL TABLES to report the vetoed table");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), VETO_MESSAGE);
@@ -73,7 +92,7 @@ public class DropTableVetoTest extends AbstractCairoTest {
             execute("CREATE TABLE " + UNDROPPABLE + " (s SYMBOL)");
 
             try {
-                dropWith("DROP TABLE " + UNDROPPABLE);
+                execute("DROP TABLE " + UNDROPPABLE);
                 fail("expected DROP TABLE to be vetoed");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), VETO_MESSAGE);
@@ -83,28 +102,44 @@ public class DropTableVetoTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Runs the drop through the vetoing compiler end to end. The operation has to be executed by
-     * the same compiler that compiled it: {@code Operation.execute} borrows a compiler from the
-     * engine's pool, which would be a plain one.
-     */
-    private static void dropWith(String sql) throws SqlException {
-        try (VetoingCompiler compiler = new VetoingCompiler(engine)) {
-            final CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
-            compiler.execute(cq.getOperation(), sqlExecutionContext);
-        }
+    @Test
+    public void testTextImportOverwriteHonoursTheVeto() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE " + UNDROPPABLE + " (s SYMBOL)");
+            execute("INSERT INTO " + UNDROPPABLE + " VALUES ('kept')");
+
+            // Overwriting drops the table and creates one to the file's shape, so it is a drop too.
+            try (TextLoader loader = new TextLoader(engine)) {
+                loader.setState(TextLoader.ANALYZE_STRUCTURE);
+                loader.configureDestination(new Utf8String(UNDROPPABLE), true, Atomicity.SKIP_ROW, PartitionBy.NONE, null, null);
+                loadText(loader, "a,b\r\n1,2\r\n");
+                fail("expected the overwrite to be vetoed");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), VETO_MESSAGE);
+            }
+
+            // The table survives with its own shape and rows, not the file's.
+            assertQuery("SELECT * FROM " + UNDROPPABLE)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s
+                            kept
+                            """);
+        });
     }
 
-    private static class VetoingCompiler extends SqlCompilerImpl {
-        VetoingCompiler(CairoEngine engine) {
-            super(engine);
-        }
-
-        @Override
-        protected void checkTableDroppable(TableToken tableToken) {
-            if (Chars.equalsIgnoreCase(tableToken.getTableName(), UNDROPPABLE)) {
-                throw CairoException.nonCritical().put(VETO_MESSAGE);
+    private static void loadText(TextLoader loader, String text) throws Exception {
+        final byte[] bytes = text.getBytes(Files.UTF_8);
+        final long buf = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_TEXT_PARSER_RSS);
+        try {
+            for (int i = 0; i < bytes.length; i++) {
+                Unsafe.putByte(buf + i, bytes[i]);
             }
+            loader.parse(buf, buf + bytes.length, AllowAllSecurityContext.INSTANCE);
+            loader.wrapUp();
+        } finally {
+            Unsafe.free(buf, bytes.length, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         }
     }
 }

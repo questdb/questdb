@@ -1163,6 +1163,22 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    /**
+     * Vetoes dropping a specific table outright, independently of permissions. Distinct from
+     * {@code isProtected()}, which denies every kind of access: a table can be readable, writable
+     * and truncatable by anyone holding the permission, yet still be one the database refuses to
+     * let go of. Overridden by Enterprise for the view audit table.
+     * <p>
+     * Consulted on every route by which a client drops an existing <b>table</b>: {@code DROP TABLE},
+     * {@code DROP ALL TABLES}, and a text import that overwrites the table. It sits on the engine
+     * so that each of them can reach it, and it is not on {@link #dropTableOrViewOrMatView} itself,
+     * which also drops what the engine created and has to clean up. The view, materialized view
+     * and live view drops have their own statements and do not consult it: a view cannot be made
+     * undroppable this way.
+     */
+    public void checkTableDroppable(TableToken tableToken) {
+    }
+
     public void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, boolean isIncrementalBackup) throws SqlException {
         checkpointAgent.checkpointCreate(circuitBreaker, false, isIncrementalBackup);
     }
