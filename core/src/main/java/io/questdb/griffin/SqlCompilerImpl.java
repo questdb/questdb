@@ -2906,6 +2906,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final int viewSqlPosition = lexer.getPosition();
         final String viewSql = parser.parseViewSql(lexer, this);
+        if (isAuditedView(viewToken)) {
+            // The new body keeps the view's audited flag, so its AUDITED declarations are held to
+            // what a read of the view needs, here rather than on every read that follows.
+            validateAuditedViewBody(viewToken, parser.getViewSqlModel(), executionContext);
+        }
 
         alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
     }
@@ -5966,6 +5971,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final int viewSqlPosition = lexer.getPosition();
         final String viewSql = parser.parseViewSql(lexer, this);
+        if (isAuditedView(viewToken)) {
+            // The new body keeps the view's audited flag, so its AUDITED declarations are held to
+            // what a read of the view needs, here rather than on every read that follows.
+            validateAuditedViewBody(viewToken, parser.getViewSqlModel(), executionContext);
+        }
 
         alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
     }
@@ -6081,6 +6091,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         keywordBasedExecutors.put("cancel", this::compileCancel);
         keywordBasedExecutors.put("refresh", this::compileRefresh);
         keywordBasedExecutors.put("backup", this::compileBackup);
+    }
+
+    /**
+     * Checks the body {@code ALTER VIEW} or {@code CREATE OR REPLACE VIEW} gives an audited view,
+     * before it replaces the current one. The model is the body as parsed from the statement, so
+     * positions in it are the statement's. A no-op here: Enterprise, which consumes the AUDITED
+     * declarations, overrides it to refuse the ones no read of the view could audit.
+     */
+    protected void validateAuditedViewBody(
+            TableToken viewToken,
+            IQueryModel viewModel,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
     }
 
     @FunctionalInterface

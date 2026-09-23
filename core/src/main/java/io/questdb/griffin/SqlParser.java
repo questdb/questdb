@@ -179,6 +179,9 @@ public class SqlParser {
     private int digit;
     private boolean pivotMode = false;
     private boolean subQueryMode = false;
+    // The body parseViewSql() last parsed, for a caller that inspects it before the statement runs.
+    // Pooled, so it is valid only until clear().
+    private IQueryModel viewSqlModel;
 
     SqlParser(
             CairoEngine cairoEngine,
@@ -7462,6 +7465,7 @@ public class SqlParser {
         createTableMode = false;
         copyMode = false;
         createViewMode = false;
+        viewSqlModel = null;
         characterStore.clear();
         insertModelPool.clear();
         pivotQueryColumnPool.clear();
@@ -7510,6 +7514,14 @@ public class SqlParser {
     @TestOnly
     void expr(GenericLexer lexer, ExpressionParserListener listener, SqlParserCallback sqlParserCallback) throws SqlException {
         expressionParser.parseExpr(lexer, listener, sqlParserCallback, null);
+    }
+
+    /**
+     * Returns the view body {@link #parseViewSql} last parsed, positioned in the statement it was
+     * parsed from.
+     */
+    IQueryModel getViewSqlModel() {
+        return viewSqlModel;
     }
 
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
@@ -7610,7 +7622,7 @@ public class SqlParser {
             expectTok(lexer, "select");
         }
         lexer.unparseLast();
-        parseAsSubQuery(lexer, null, true, sqlParserCallback, null, false);
+        viewSqlModel = parseAsSubQuery(lexer, null, true, sqlParserCallback, null, false);
         final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
 
         final String viewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
