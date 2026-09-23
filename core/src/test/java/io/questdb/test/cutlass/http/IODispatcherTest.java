@@ -5848,6 +5848,118 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testSCPRangeRequests() throws Exception {
+        assertMemoryLeak(() -> {
+            final String baseDir = root;
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, baseDir, false);
+            WorkerPool workerPool = new TestWorkerPool(2);
+            try (CairoEngine engine = new CairoEngine(configuration); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
+                httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
+                workerPool.start(LOG);
+
+                final String content = "0123456789".repeat(10);
+                try (Path path = new Path().of(baseDir).concat("questdb-range.txt")) {
+                    try {
+                        writeAsciiFile(path, content, 122299092L);
+
+                        final String partialHeader = """
+                                HTTP/1.1 206 Partial content\r
+                                Server: questDB/1.0\r
+                                Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                """;
+                        final String fullHeader = """
+                                HTTP/1.1 200 OK\r
+                                Server: questDB/1.0\r
+                                Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                Content-Length: 100\r
+                                Content-Type: text/plain\r
+                                ETag: "122299092"\r
+                                \r
+                                """;
+
+                        // a single byte range is inclusive on both ends
+                        sendAndReceive(
+                                rangeRequest("bytes=0-0", null),
+                                partialHeader + """
+                                        Content-Length: 1\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 0-0/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        0"""
+                        );
+
+                        // open range ends at the last byte of the file
+                        sendAndReceive(
+                                rangeRequest("bytes=95-", null),
+                                partialHeader + """
+                                        Content-Length: 5\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 95-99/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        56789"""
+                        );
+
+                        // end past the file is clamped
+                        sendAndReceive(
+                                rangeRequest("bytes=90-9999", null),
+                                partialHeader + """
+                                        Content-Length: 10\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 90-99/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        0123456789"""
+                        );
+
+                        // start past the file is unsatisfiable
+                        sendAndReceive(
+                                rangeRequest("bytes=100-", null),
+                                """
+                                        HTTP/1.1 416 Request range not satisfiable\r
+                                        Server: questDB/1.0\r
+                                        Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                        Transfer-Encoding: chunked\r
+                                        Content-Type: text/plain; charset=utf-8\r
+                                        Content-Range: bytes */100\r
+                                        \r
+                                        1f\r
+                                        Request range not satisfiable\r
+                                        \r
+                                        00\r
+                                        \r
+                                        """
+                        );
+
+                        // matching If-Range keeps the range
+                        sendAndReceive(
+                                rangeRequest("bytes=0-0", "\"122299092\""),
+                                partialHeader + """
+                                        Content-Length: 1\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 0-0/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        0"""
+                        );
+
+                        // stale If-Range falls back to the full file
+                        sendAndReceive(rangeRequest("bytes=0-0", "\"1\""), fullHeader + content);
+                    } finally {
+                        workerPool.halt();
+                        TestUtils.remove(path.$());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSCPHttp10() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = root;
@@ -7478,6 +7590,14 @@ public class IODispatcherTest extends AbstractTest {
         }
     }
 
+    private static String rangeRequest(String range, String ifRange) {
+        return "GET /questdb-range.txt HTTP/1.1\r\n"
+                + "Host: localhost:9000\r\n"
+                + "Range: " + range + "\r\n"
+                + (ifRange == null ? "" : "If-Range: " + ifRange + "\r\n")
+                + "\r\n";
+    }
+
     private static void sendAndReceive(String request, CharSequence response) {
         sendAndReceive(NetworkFacadeImpl.INSTANCE, request, response, 1, 0, false);
     }
@@ -8249,6 +8369,20 @@ public class IODispatcherTest extends AbstractTest {
                 Unsafe.free(mem, request.length(), MemoryTag.NATIVE_DEFAULT);
             }
         });
+    }
+
+    private void writeAsciiFile(Path path, String content, long lastModified) {
+        final int len = content.length();
+        final long fd = Files.openAppend(path.$());
+        final long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Utf8s.strCpyAscii(content, len, buf);
+            Assert.assertEquals(len, Files.append(fd, buf, len));
+        } finally {
+            Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
+            TestFilesFacadeImpl.INSTANCE.close(fd);
+        }
+        Files.setLastModified(path.$(), lastModified);
     }
 
     private void writeRandomFile(Path path, Rnd rnd, long lastModified) {
