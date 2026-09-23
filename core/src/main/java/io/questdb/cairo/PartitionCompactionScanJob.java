@@ -69,6 +69,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private static final int IN_FLIGHT_STRIDE = 5;
     private static final int IN_FLIGHT_TABLE_ID_OFFSET = 0;
     private static final int IN_FLIGHT_WRITER_ID_OFFSET = 4;
+    private static final Log LOG = LogFactory.getLog(PartitionCompactionScanJob.class);
     // Bounds the clean-parquet memo. Kept across two generations so a full memo evicts its oldest half
     // rather than being wiped whole - see rememberCleanParquetPartition.
     private static final int MAX_MEMO_SIZE = 100_000;
@@ -78,16 +79,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     // every table in one tick, on this job's single thread. Charging probes against a per-sweep budget
     // spreads that cost across sweeps; a partition memoized clean is never probed again until it changes.
     private static final int MAX_PROBE_PER_SWEEP = 10_000;
-    private static final Log LOG = LogFactory.getLog(PartitionCompactionScanJob.class);
     private final long checkInterval;
     private final Clock clock;
-    // Fingerprints of parquet partitions already found to hold no dead space AND no stale schema. Any write
-    // to a partition changes its nameTxn or its file size, and any DDL changes the metadata version, so
-    // neither a changed partition nor a changed schema can match its own stale entry. Held in two
-    // generations: the active set takes new entries, and when it fills to half the memo bound it is retired
-    // and the previously retired one dropped (see rememberCleanParquetPartition), so a full memo loses only
-    // its oldest half instead of everything.
-    private LongHashSet cleanParquetPartitions = new LongHashSet();
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final FilesFacade ff;
@@ -114,6 +107,13 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private final long timeBudgetMicros;
     private final TxReader txReader;
     private final LongConsumer writerIdSink = this::capturePublishedWriterId;
+    // Fingerprints of parquet partitions already found to hold no dead space AND no stale schema. Any write
+    // to a partition changes its nameTxn or its file size, and any DDL changes the metadata version, so
+    // neither a changed partition nor a changed schema can match its own stale entry. Held in two
+    // generations: the active set takes new entries, and when it fills to half the memo bound it is retired
+    // and the previously retired one dropped (see rememberCleanParquetPartition), so a full memo loses only
+    // its oldest half instead of everything.
+    private LongHashSet cleanParquetPartitions = new LongHashSet();
     private boolean isBudgetExhausted;
     private boolean isIoDispatchStarted;
     private long last = 0;
@@ -184,24 +184,79 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         this.memoCapacity = memoCapacity;
     }
 
-    @Override
-    protected boolean runSerially() {
-        if (checkInterval < 0) {
-            // A negative cairo.partition.compaction.check.interval disables the background sweep;
-            // writer-side compaction is unaffected. Zero still means "sweep on every call".
-            return false;
+    /**
+     * A column type in the form the two sides can be compared in. Exact rather than by tag, so an ALTER that
+     * keeps the tag (DECIMAL(10,2) to DECIMAL(12,4), TIMESTAMP to TIMESTAMP_NS) is caught. The
+     * designated-timestamp flag is the exception: the file sets it on its own timestamp column and the
+     * table's type does not carry it.
+     */
+    private static int comparableColumnType(int columnType) {
+        return ColumnType.tagOf(columnType) == ColumnType.TIMESTAMP
+                ? ColumnType.setDesignatedTimestampBit(columnType, false)
+                : columnType;
+    }
+
+    private static long estimateCompactionIoBytes(TableMetadata metadata, long liveRows) {
+        final long avgRecordSize = Math.max(1, TableUtils.estimateAvgRecordSize(metadata));
+        if (liveRows > Long.MAX_VALUE / avgRecordSize / 2) {
+            return Long.MAX_VALUE;
         }
-        final long t = clock.getTicks();
-        if (last + checkInterval < t) {
-            try {
-                sweep(t);
-            } finally {
-                // Measure the interval from completion. A slow sweep must not make the next one immediately
-                // eligible and turn background reclamation into a continuous workload.
-                last = clock.getTicks();
+        return liveRows * avgRecordSize * 2;
+    }
+
+    /**
+     * Whether any column the table still has is stored under {@code columnId} - the parquet field id, i.e. an
+     * original writer index. A dropped column's id is not evidence of anything while a live column is still
+     * keyed by it.
+     */
+    private static boolean hasLiveColumnWithId(TableMetadata metadata, int columnId) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getColumnType(i) > 0 && metadata.getColumnMetadata(i).getOriginalWriterIndex() == columnId) {
+                return true;
             }
         }
         return false;
+    }
+
+    /**
+     * Reports whether the file's own schema has fallen behind the table's - a column DROPped or its type ALTERed
+     * since the conversion - which {@link O3PartitionJob#compactParquetPartition} repairs by re-encoding every row
+     * group under the current schema instead of copying it verbatim.
+     * <p>
+     * Both tests are ones the re-encode actually clears, which is what keeps the sweep from re-picking the same
+     * partition forever. {@code compactParquetPartition}'s own {@code hasTypeConvertedColumns} is deliberately NOT
+     * used: {@code originalWriterIndex} is durable metadata and the re-encode stamps it back into the new file's
+     * field ids, so that predicate stays true for the life of the table. An ADD since the conversion is not a reason
+     * on its own - the read path already serves the missing column as nulls.
+     */
+    private static boolean isParquetSchemaStale(TableMetadata metadata, ParquetMetaFileReader parquetMeta) {
+        final int parquetColumnCount = parquetMeta.getColumnCount();
+        int mappedParquetColumns = 0;
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            // Matched on the parquet field id, which is the column's ORIGINAL writer index, so a column
+            // re-keyed by ALTER COLUMN TYPE is still found under the id it was converted with.
+            final int columnId = metadata.getColumnMetadata(i).getOriginalWriterIndex();
+            final int parquetIdx = parquetMeta.getColumnIndexById(columnId);
+            final int tableType = metadata.getColumnType(i);
+            if (tableType < 0) {
+                // A dropped column, whose tombstone this metadata still carries. It counts only when no LIVE
+                // column claims the same id: ALTER COLUMN TYPE leaves the tombstone and its replacement sharing
+                // one originalWriterIndex, and the replacement's own type check below decides that column.
+                if (parquetIdx >= 0 && !hasLiveColumnWithId(metadata, columnId)) {
+                    return true;
+                }
+                continue;
+            }
+            if (parquetIdx < 0) {
+                continue;
+            }
+            mappedParquetColumns++;
+            if (comparableColumnType(parquetMeta.getColumnType(parquetIdx)) != comparableColumnType(tableType)) {
+                return true;
+            }
+        }
+        // The other half of the dropped-column question: a parquet column no live table column claims.
+        return mappedParquetColumns < parquetColumnCount;
     }
 
     /**
@@ -284,12 +339,126 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
+     * The parquet twin of {@link #buildCompactedComposite}: copies the partition's live row groups off {@code reader}'s
+     * snapshot into a staging directory, index files included, and returns the swap command describing the result.
+     */
+    private ParquetPartitionSwapCommand buildCompactedParquet(
+            TableToken tableToken,
+            TableReader reader,
+            int partitionIndex,
+            long partitionTimestamp
+    ) {
+        final TxReader txFile = reader.getTxFile();
+        final long srcNameTxn = txFile.getPartitionNameTxn(partitionIndex);
+        final long parquetFileSize = txFile.getPartitionParquetFileSize(partitionIndex);
+        final int timestampType = reader.getMetadata().getTimestampType();
+        final int partitionBy = reader.getPartitionedBy();
+
+        path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+        setStagingPath(other, tableToken, timestampType, partitionBy, partitionTimestamp, srcNameTxn, parquetFileSize);
+
+        final ParquetPartitionSwapCommand command = new ParquetPartitionSwapCommand();
+        command.of(tableToken, tableToken.getTableId(), partitionTimestamp, srcNameTxn, parquetFileSize, reader.getMetadataVersion());
+        symbolTableProvider.of(reader);
+        try {
+            if (ff.exists(other.$())) {
+                // A build that never reached its swap.
+                ff.rmdir(other, false);
+            }
+            O3PartitionJob.compactParquetPartition(
+                    configuration,
+                    ff,
+                    tableToken,
+                    reader.getMetadata(),
+                    symbolTableProvider,
+                    path,
+                    other,
+                    // Fallback only: the rebuilt _pm keeps the source footer's own seqTxn.
+                    reader.getSeqTxn(),
+                    command
+            );
+            copyParquetPartitionSidecars(path, other);
+        } catch (Throwable e) {
+            if (ff.exists(other.$())) {
+                ff.rmdir(other, false);
+            }
+            throw e;
+        } finally {
+            symbolTableProvider.clear();
+        }
+        return command;
+    }
+
+    /**
      * The table's root directory as a {@link String}, the shape {@link PartitionGeometry#of} needs.
      */
     private String buildTableRoot(TableToken tableToken) {
         try (Path root = new Path()) {
             root.of(configuration.getDbRoot()).concat(tableToken.getDirName());
             return root.toString();
+        }
+    }
+
+    private void capturePublishedWriterId(long writerId) {
+        publishedWriterId = writerId;
+    }
+
+    private boolean chargeDispatch(long estimatedIoBytes) {
+        if ((sweepDispatchCount > 0 && clock.getTicks() >= sweepDeadline)
+                || (isIoDispatchStarted && estimatedIoBytes > remainingIoBudget)) {
+            isBudgetExhausted = true;
+            return false;
+        }
+        if (estimatedIoBytes > 0) {
+            isIoDispatchStarted = true;
+            remainingIoBudget = Math.max(0, remainingIoBudget - estimatedIoBytes);
+        }
+        sweepDispatchCount++;
+        return true;
+    }
+
+    /**
+     * One entry of the source partition directory: everything but {@code data.parquet} and {@code _pm} is an index file
+     * and is carried into the staging directory, hard-linked where the file system allows.
+     */
+    private void copyParquetPartitionSidecar(long pUtf8NameZ, int type) {
+        if (!Files.notDots(pUtf8NameZ)) {
+            return;
+        }
+        sidecarName.clear();
+        Utf8s.utf8ZCopy(pUtf8NameZ, sidecarName);
+        if (Utf8s.equalsAscii(TableUtils.PARQUET_PARTITION_NAME, sidecarName)
+                || Utf8s.equalsAscii(TableUtils.PARQUET_METADATA_FILE_NAME, sidecarName)) {
+            return;
+        }
+        path.trimTo(sidecarSrcLen).concat(pUtf8NameZ).$();
+        other.trimTo(sidecarDstLen).concat(pUtf8NameZ).$();
+        final boolean ok;
+        if (type == Files.DT_DIR) {
+            ok = ff.hardLinkDirRecursive(path, other, configuration.getMkDirMode()) == 0
+                    || ff.copyRecursive(path, other, configuration.getMkDirMode()) == 0;
+        } else {
+            ok = ff.hardLink(path.$(), other.$()) == Files.FILES_RENAME_OK
+                    || ff.copy(path.$(), other.$()) >= 0;
+        }
+        if (!ok) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not carry parquet partition sidecar into staging directory [from=").put(path)
+                    .put(", to=").put(other)
+                    .put(']');
+        }
+    }
+
+    private void copyParquetPartitionSidecars(Path srcPartitionDir, Path dstPartitionDir) {
+        assert srcPartitionDir == path && dstPartitionDir == other;
+        sidecarSrcLen = srcPartitionDir.size();
+        sidecarDstLen = dstPartitionDir.size();
+        try {
+            ff.iterateDir(srcPartitionDir.$(), sidecarVisitor);
+        } finally {
+            srcPartitionDir.trimTo(sidecarSrcLen);
+            dstPartitionDir.trimTo(sidecarDstLen);
         }
     }
 
@@ -425,114 +594,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * The parquet twin of {@link #buildCompactedComposite}: copies the partition's live row groups off {@code reader}'s
-     * snapshot into a staging directory, index files included, and returns the swap command describing the result.
-     */
-    private ParquetPartitionSwapCommand buildCompactedParquet(
-            TableToken tableToken,
-            TableReader reader,
-            int partitionIndex,
-            long partitionTimestamp
-    ) {
-        final TxReader txFile = reader.getTxFile();
-        final long srcNameTxn = txFile.getPartitionNameTxn(partitionIndex);
-        final long parquetFileSize = txFile.getPartitionParquetFileSize(partitionIndex);
-        final int timestampType = reader.getMetadata().getTimestampType();
-        final int partitionBy = reader.getPartitionedBy();
-
-        path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
-        setStagingPath(other, tableToken, timestampType, partitionBy, partitionTimestamp, srcNameTxn, parquetFileSize);
-
-        final ParquetPartitionSwapCommand command = new ParquetPartitionSwapCommand();
-        command.of(tableToken, tableToken.getTableId(), partitionTimestamp, srcNameTxn, parquetFileSize, reader.getMetadataVersion());
-        symbolTableProvider.of(reader);
-        try {
-            if (ff.exists(other.$())) {
-                // A build that never reached its swap.
-                ff.rmdir(other, false);
-            }
-            O3PartitionJob.compactParquetPartition(
-                    configuration,
-                    ff,
-                    tableToken,
-                    reader.getMetadata(),
-                    symbolTableProvider,
-                    path,
-                    other,
-                    // Fallback only: the rebuilt _pm keeps the source footer's own seqTxn.
-                    reader.getSeqTxn(),
-                    command
-            );
-            copyParquetPartitionSidecars(path, other);
-        } catch (Throwable e) {
-            if (ff.exists(other.$())) {
-                ff.rmdir(other, false);
-            }
-            throw e;
-        } finally {
-            symbolTableProvider.clear();
-        }
-        return command;
-    }
-
-    /**
-     * A column type in the form the two sides can be compared in. Exact rather than by tag, so an ALTER that
-     * keeps the tag (DECIMAL(10,2) to DECIMAL(12,4), TIMESTAMP to TIMESTAMP_NS) is caught. The
-     * designated-timestamp flag is the exception: the file sets it on its own timestamp column and the
-     * table's type does not carry it.
-     */
-    private static int comparableColumnType(int columnType) {
-        return ColumnType.tagOf(columnType) == ColumnType.TIMESTAMP
-                ? ColumnType.setDesignatedTimestampBit(columnType, false)
-                : columnType;
-    }
-
-    /**
-     * One entry of the source partition directory: everything but {@code data.parquet} and {@code _pm} is an index file
-     * and is carried into the staging directory, hard-linked where the file system allows.
-     */
-    private void copyParquetPartitionSidecar(long pUtf8NameZ, int type) {
-        if (!Files.notDots(pUtf8NameZ)) {
-            return;
-        }
-        sidecarName.clear();
-        Utf8s.utf8ZCopy(pUtf8NameZ, sidecarName);
-        if (Utf8s.equalsAscii(TableUtils.PARQUET_PARTITION_NAME, sidecarName)
-                || Utf8s.equalsAscii(TableUtils.PARQUET_METADATA_FILE_NAME, sidecarName)) {
-            return;
-        }
-        path.trimTo(sidecarSrcLen).concat(pUtf8NameZ).$();
-        other.trimTo(sidecarDstLen).concat(pUtf8NameZ).$();
-        final boolean ok;
-        if (type == Files.DT_DIR) {
-            ok = ff.hardLinkDirRecursive(path, other, configuration.getMkDirMode()) == 0
-                    || ff.copyRecursive(path, other, configuration.getMkDirMode()) == 0;
-        } else {
-            ok = ff.hardLink(path.$(), other.$()) == Files.FILES_RENAME_OK
-                    || ff.copy(path.$(), other.$()) >= 0;
-        }
-        if (!ok) {
-            throw CairoException.critical(ff.errno())
-                    .put("could not carry parquet partition sidecar into staging directory [from=").put(path)
-                    .put(", to=").put(other)
-                    .put(']');
-        }
-    }
-
-    private void copyParquetPartitionSidecars(Path srcPartitionDir, Path dstPartitionDir) {
-        assert srcPartitionDir == path && dstPartitionDir == other;
-        sidecarSrcLen = srcPartitionDir.size();
-        sidecarDstLen = dstPartitionDir.size();
-        try {
-            ff.iterateDir(srcPartitionDir.$(), sidecarVisitor);
-        } finally {
-            srcPartitionDir.trimTo(sidecarSrcLen);
-            dstPartitionDir.trimTo(sidecarDstLen);
-        }
-    }
-
-    /**
      * Compacts the partition off a {@link TableReader} snapshot ({@link #buildCompactedParquet}), then publishes a
      * {@link ParquetPartitionSwapCommand} exactly as {@link #dispatchComposite} does.
      */
@@ -583,26 +644,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         }
     }
 
-    /**
-     * Hands the table a WAL apply notification when it still lags its sequencer. Taking the writer out of the pool
-     * to land a swap blocks WAL apply, and the notification apply dropped while it waited is gone for good:
-     * {@link io.questdb.cairo.wal.seq.SeqTxnTracker#notifyOnCommit} publishes only while a table is exactly caught
-     * up, so no later commit re-sends one.
-     */
-    private void notifyWalApplyIfLagging(TableToken tableToken) {
-        if (!tableToken.isWal()) {
-            return;
-        }
-        SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-        if (!tracker.isSuspended() && tracker.getWriterTxn() < tracker.getSeqTxn()) {
-            engine.notifyWalTxnCommitted(tableToken);
-        }
-    }
-
-    private void capturePublishedWriterId(long writerId) {
-        publishedWriterId = writerId;
-    }
-
     private int findPendingSwap(int tableId, long partitionTimestamp) {
         int lo = 0;
         int hi = inFlightSwaps.size() / IN_FLIGHT_STRIDE - 1;
@@ -622,65 +663,12 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         return -lo - 1;
     }
 
-    private void rememberPendingSwap(
-            int tableId,
-            long partitionTimestamp,
-            long srcNameTxn,
-            long generation,
-            long writerId
-    ) {
-        assert writerId > 0;
-        int recordIndex = findPendingSwap(tableId, partitionTimestamp);
-        if (recordIndex < 0) {
-            recordIndex = -recordIndex - 1;
-            inFlightSwaps.insert(recordIndex * IN_FLIGHT_STRIDE, IN_FLIGHT_STRIDE);
-        }
-        final int offset = recordIndex * IN_FLIGHT_STRIDE;
-        inFlightSwaps.setQuick(offset + IN_FLIGHT_TABLE_ID_OFFSET, tableId);
-        inFlightSwaps.setQuick(offset + IN_FLIGHT_PARTITION_TIMESTAMP_OFFSET, partitionTimestamp);
-        inFlightSwaps.setQuick(offset + IN_FLIGHT_NAME_TXN_OFFSET, srcNameTxn);
-        inFlightSwaps.setQuick(offset + IN_FLIGHT_GENERATION_OFFSET, generation);
-        inFlightSwaps.setQuick(offset + IN_FLIGHT_WRITER_ID_OFFSET, writerId);
-    }
-
-    private void removePendingSwap(int recordIndex) {
-        inFlightSwaps.removeIndexBlock(recordIndex * IN_FLIGHT_STRIDE, IN_FLIGHT_STRIDE);
-    }
-
     /**
-     * Whether any column the table still has is stored under {@code columnId} - the parquet field id, i.e. an
-     * original writer index. A dropped column's id is not evidence of anything while a live column is still
-     * keyed by it.
+     * Whether {@code memoKey} sits in either generation of the clean-parquet memo. A hit means the partition
+     * was footer-probed on an earlier sweep and found clean, so this sweep skips it for free.
      */
-    private static boolean hasLiveColumnWithId(TableMetadata metadata, int columnId) {
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            if (metadata.getColumnType(i) > 0 && metadata.getColumnMetadata(i).getOriginalWriterIndex() == columnId) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static long estimateCompactionIoBytes(TableMetadata metadata, long liveRows) {
-        final long avgRecordSize = Math.max(1, TableUtils.estimateAvgRecordSize(metadata));
-        if (liveRows > Long.MAX_VALUE / avgRecordSize / 2) {
-            return Long.MAX_VALUE;
-        }
-        return liveRows * avgRecordSize * 2;
-    }
-
-    private boolean chargeDispatch(long estimatedIoBytes) {
-        if ((sweepDispatchCount > 0 && clock.getTicks() >= sweepDeadline)
-                || (isIoDispatchStarted && estimatedIoBytes > remainingIoBudget)) {
-            isBudgetExhausted = true;
-            return false;
-        }
-        if (estimatedIoBytes > 0) {
-            isIoDispatchStarted = true;
-            remainingIoBudget = Math.max(0, remainingIoBudget - estimatedIoBytes);
-        }
-        sweepDispatchCount++;
-        return true;
+    private boolean isCleanParquetPartitionMemoized(long memoKey) {
+        return cleanParquetPartitions.contains(memoKey) || retiringCleanParquetPartitions.contains(memoKey);
     }
 
     /**
@@ -746,72 +734,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * Whether {@code memoKey} sits in either generation of the clean-parquet memo. A hit means the partition
-     * was footer-probed on an earlier sweep and found clean, so this sweep skips it for free.
-     */
-    private boolean isCleanParquetPartitionMemoized(long memoKey) {
-        return cleanParquetPartitions.contains(memoKey) || retiringCleanParquetPartitions.contains(memoKey);
-    }
-
-    /**
-     * Records a clean parquet partition's fingerprint. When the active generation fills to half the memo
-     * bound it is retired and the previously retired one dropped, evicting the oldest half of the memo
-     * instead of wiping it whole. Swapping the two sets and clearing the reused one keeps the sweep path
-     * allocation-free. A wholesale clear here would collapse the hit rate for an instance holding more clean
-     * parquet partitions than the memo bound, re-probing them all on the next sweep.
-     */
-    private void rememberCleanParquetPartition(long memoKey) {
-        if (cleanParquetPartitions.size() >= memoCapacity / 2) {
-            final LongHashSet retired = retiringCleanParquetPartitions;
-            retiringCleanParquetPartitions = cleanParquetPartitions;
-            cleanParquetPartitions = retired;
-            cleanParquetPartitions.clear();
-        }
-        cleanParquetPartitions.add(memoKey);
-    }
-
-    /**
-     * Reports whether the file's own schema has fallen behind the table's - a column DROPped or its type ALTERed
-     * since the conversion - which {@link O3PartitionJob#compactParquetPartition} repairs by re-encoding every row
-     * group under the current schema instead of copying it verbatim.
-     * <p>
-     * Both tests are ones the re-encode actually clears, which is what keeps the sweep from re-picking the same
-     * partition forever. {@code compactParquetPartition}'s own {@code hasTypeConvertedColumns} is deliberately NOT
-     * used: {@code originalWriterIndex} is durable metadata and the re-encode stamps it back into the new file's
-     * field ids, so that predicate stays true for the life of the table. An ADD since the conversion is not a reason
-     * on its own - the read path already serves the missing column as nulls.
-     */
-    private static boolean isParquetSchemaStale(TableMetadata metadata, ParquetMetaFileReader parquetMeta) {
-        final int parquetColumnCount = parquetMeta.getColumnCount();
-        int mappedParquetColumns = 0;
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            // Matched on the parquet field id, which is the column's ORIGINAL writer index, so a column
-            // re-keyed by ALTER COLUMN TYPE is still found under the id it was converted with.
-            final int columnId = metadata.getColumnMetadata(i).getOriginalWriterIndex();
-            final int parquetIdx = parquetMeta.getColumnIndexById(columnId);
-            final int tableType = metadata.getColumnType(i);
-            if (tableType < 0) {
-                // A dropped column, whose tombstone this metadata still carries. It counts only when no LIVE
-                // column claims the same id: ALTER COLUMN TYPE leaves the tombstone and its replacement sharing
-                // one originalWriterIndex, and the replacement's own type check below decides that column.
-                if (parquetIdx >= 0 && !hasLiveColumnWithId(metadata, columnId)) {
-                    return true;
-                }
-                continue;
-            }
-            if (parquetIdx < 0) {
-                continue;
-            }
-            mappedParquetColumns++;
-            if (comparableColumnType(parquetMeta.getColumnType(parquetIdx)) != comparableColumnType(tableType)) {
-                return true;
-            }
-        }
-        // The other half of the dropped-column question: a parquet column no live table column claims.
-        return mappedParquetColumns < parquetColumnCount;
-    }
-
-    /**
      * Suppresses a rebuild only while the exact writer instance that received the command remains live and the
      * partition identity still matches. The staging directory itself is not a liveness signal: a terminal path may
      * leave it behind, while a live command must retain ownership even if the directory temporarily disappears.
@@ -836,6 +758,22 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         }
         removePendingSwap(recordIndex);
         return false;
+    }
+
+    /**
+     * Hands the table a WAL apply notification when it still lags its sequencer. Taking the writer out of the pool
+     * to land a swap blocks WAL apply, and the notification apply dropped while it waited is gone for good:
+     * {@link io.questdb.cairo.wal.seq.SeqTxnTracker#notifyOnCommit} publishes only while a table is exactly caught
+     * up, so no later commit re-sends one.
+     */
+    private void notifyWalApplyIfLagging(TableToken tableToken) {
+        if (!tableToken.isWal()) {
+            return;
+        }
+        SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        if (!tracker.isSuspended() && tracker.getWriterTxn() < tracker.getSeqTxn()) {
+            engine.notifyWalTxnCommitted(tableToken);
+        }
     }
 
     private void pruneDroppedTableSwaps() {
@@ -896,6 +834,48 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             }
             recordIndex++;
         }
+    }
+
+    /**
+     * Records a clean parquet partition's fingerprint. When the active generation fills to half the memo
+     * bound it is retired and the previously retired one dropped, evicting the oldest half of the memo
+     * instead of wiping it whole. Swapping the two sets and clearing the reused one keeps the sweep path
+     * allocation-free. A wholesale clear here would collapse the hit rate for an instance holding more clean
+     * parquet partitions than the memo bound, re-probing them all on the next sweep.
+     */
+    private void rememberCleanParquetPartition(long memoKey) {
+        if (cleanParquetPartitions.size() >= memoCapacity / 2) {
+            final LongHashSet retired = retiringCleanParquetPartitions;
+            retiringCleanParquetPartitions = cleanParquetPartitions;
+            cleanParquetPartitions = retired;
+            cleanParquetPartitions.clear();
+        }
+        cleanParquetPartitions.add(memoKey);
+    }
+
+    private void rememberPendingSwap(
+            int tableId,
+            long partitionTimestamp,
+            long srcNameTxn,
+            long generation,
+            long writerId
+    ) {
+        assert writerId > 0;
+        int recordIndex = findPendingSwap(tableId, partitionTimestamp);
+        if (recordIndex < 0) {
+            recordIndex = -recordIndex - 1;
+            inFlightSwaps.insert(recordIndex * IN_FLIGHT_STRIDE, IN_FLIGHT_STRIDE);
+        }
+        final int offset = recordIndex * IN_FLIGHT_STRIDE;
+        inFlightSwaps.setQuick(offset + IN_FLIGHT_TABLE_ID_OFFSET, tableId);
+        inFlightSwaps.setQuick(offset + IN_FLIGHT_PARTITION_TIMESTAMP_OFFSET, partitionTimestamp);
+        inFlightSwaps.setQuick(offset + IN_FLIGHT_NAME_TXN_OFFSET, srcNameTxn);
+        inFlightSwaps.setQuick(offset + IN_FLIGHT_GENERATION_OFFSET, generation);
+        inFlightSwaps.setQuick(offset + IN_FLIGHT_WRITER_ID_OFFSET, writerId);
+    }
+
+    private void removePendingSwap(int recordIndex) {
+        inFlightSwaps.removeIndexBlock(recordIndex * IN_FLIGHT_STRIDE, IN_FLIGHT_STRIDE);
     }
 
     /**
@@ -1003,15 +983,15 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                     final long nameTxn = txReader.getPartitionNameTxn(partitionIndex);
                     if (isSwapPending(tableToken, partitionTimestamp, nameTxn, parquetFileSize)
                             || !isParquetPartitionIdle(
-                                    tableToken,
-                                    timestampType,
-                                    partitionBy,
-                                    partitionTimestamp,
-                                    nameTxn,
-                                    parquetFileSize,
-                                    metadata,
-                                    nowMicros
-                            )) {
+                            tableToken,
+                            timestampType,
+                            partitionBy,
+                            partitionTimestamp,
+                            nameTxn,
+                            parquetFileSize,
+                            metadata,
+                            nowMicros
+                    )) {
                         continue;
                     }
                     if (!chargeDispatch(estimateCompactionIoBytes(metadata, txReader.getPartitionSize(partitionIndex)))) {
@@ -1074,5 +1054,25 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 txReader.clear();
             }
         }
+    }
+
+    @Override
+    protected boolean runSerially() {
+        if (checkInterval < 0) {
+            // A negative cairo.partition.compaction.check.interval disables the background sweep;
+            // writer-side compaction is unaffected. Zero still means "sweep on every call".
+            return false;
+        }
+        final long t = clock.getTicks();
+        if (last + checkInterval < t) {
+            try {
+                sweep(t);
+            } finally {
+                // Measure the interval from completion. A slow sweep must not make the next one immediately
+                // eligible and turn background reclamation into a continuous workload.
+                last = clock.getTicks();
+            }
+        }
+        return false;
     }
 }

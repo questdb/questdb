@@ -8705,13 +8705,14 @@ public class JoinTest extends AbstractCairoTest {
         // Regression for a query-fuzzer divergence: a SPLICE JOIN whose master
         // table has an indexed SYMBOL column and an interval WHERE on ts, with
         // the outer query ordering by that indexed symbol, used to compile the
-        // master as SortedSymbolIndexRecordCursorFactory. That factory emits
-        // rows in symbol order and zeroes the timestamp index, so the SPLICE
+        // master as SortedSymbolIndexRecordCursorFactory. That factory emitted
+        // rows in symbol order and zeroed the timestamp index, so the SPLICE
         // join validation either threw "left side of time series join has no
         // timestamp" or, with the timestamp restored, would have fed
-        // sym-ordered input into a merge that assumes ts order. The codegen
-        // now skips the symbol-index sort path when the parent join requires
-        // a timestamp on the master.
+        // sym-ordered input into a merge that assumes ts order. That symbol-index
+        // sort path is gone - it could not keep its ordering promise across page
+        // frames - so the master now compiles to an interval frame scan that keeps
+        // its timestamp, and the ORDER BY is served by a sort above the join.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x_idx (sym SYMBOL INDEX, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE y_tab (sym SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

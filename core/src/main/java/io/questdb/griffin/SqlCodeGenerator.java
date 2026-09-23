@@ -328,7 +328,6 @@ import io.questdb.griffin.engine.table.PostingIndexDistinctRecordCursorFactory;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
-import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
@@ -12359,14 +12358,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             //    "overhead" order by implementation, which would be trying to oder already ordered symbols
                             if (Chars.equals(orderByAdvice.getQuick(0).token, intrinsicModel.keyColumn)) {
                                 queryMeta.setTimestampIndex(-1);
-                                if (orderByAdviceSize == 1) {
-                                    orderByKeyColumn = true;
-                                } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
-                                    orderByKeyColumn = true;
-                                    if (getOrderByDirectionOrDefault(model, 1) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
-                                        indexDirection = IndexReader.DIR_BACKWARD;
-                                    }
-                                }
+                                // A second ORDER BY term is honoured only when it asks for the direction the page
+                                // frames already arrive in. On this branch the first advice term is the key column,
+                                // so SqlOptimiser leaves isForceBackwardScan() false and the frames ascend; an index
+                                // cursor, however, is re-opened per frame, so a backward walk produces one descending
+                                // run PER FRAME inside an ascending frame sequence.
+                                orderByKeyColumn = orderByAdviceSize == 1
+                                        || (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)
+                                        && getOrderByDirectionOrDefault(model, 1) == IQueryModel.ORDER_DIRECTION_ASCENDING);
                             }
                         }
                     }
@@ -12733,54 +12732,64 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
-                // Skip the symbol-index sort optimization when an outer time-series
-                // join needs the master in timestamp order. SortedSymbolIndexRecordCursorFactory
-                // emits rows in symbol order and zeroes the timestamp index, which would
-                // either trip "no timestamp" validation downstream or, worse, feed sym-ordered
-                // input into a SPLICE/ASOF/LT/WINDOW merge that assumes ts order.
-                if (intervalHitsOnlyOnePartition && intrinsicModel.filter == null && !executionContext.isTimestampRequired()) {
-                    final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
-                    final int orderByAdviceSize = orderByAdvice.size();
-                    if (orderByAdviceSize > 0 && orderByAdviceSize < 3 && intrinsicModel.hasIntervalFilters()) {
-                        // This function cannot handle dotted aliases
-                        guardAgainstDotsInOrderByAdvice(model);
-
-                        // we can only deal with 'order by symbol, timestamp' at best
-                        // skip this optimisation if order by is more extensive
-                        final int columnIndex = SqlUtil.getColumnIndexQuiet(queryMeta, model.getOrderByAdvice().getQuick(0).token);
-                        assert columnIndex > -1;
-
-                        // this is our kind of column — bitmap only (native scanner)
-                        if (queryMeta.getColumnIndexType(columnIndex) == IndexType.BITMAP
-                                && !SqlHints.hasNoIndexHint(model)) {
-                            boolean orderByKeyColumn = false;
-                            int indexDirection = IndexReader.DIR_FORWARD;
-                            if (orderByAdviceSize == 1) {
-                                orderByKeyColumn = true;
-                            } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
-                                orderByKeyColumn = true;
-                                if (getOrderByDirectionOrDefault(model, 1) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
-                                    indexDirection = IndexReader.DIR_BACKWARD;
-                                }
-                            }
-
-                            if (orderByKeyColumn) {
-                                // check that intrinsicModel.intervals hit only one partition
-                                queryMeta.setTimestampIndex(-1);
-                                return new SortedSymbolIndexRecordCursorFactory(
-                                        configuration,
-                                        queryMeta,
-                                        dfcFactory,
-                                        columnIndex,
-                                        getOrderByDirectionOrDefault(model, 0) == IQueryModel.ORDER_DIRECTION_ASCENDING,
-                                        indexDirection,
-                                        columnIndexes,
-                                        columnSizeShifts
-                                );
-                            }
-                        }
-                    }
-                }
+                // Removed: the SortedSymbolIndex fast path for "ORDER BY sym" and
+                // "ORDER BY sym, ts" over an interval that floored to one calendar partition. It
+                // compiled to SortedSymbolIndexRecordCursorFactory, which claimed
+                // followedOrderByAdvice() unconditionally, so generateOrderBy() planned no
+                // corrective Sort above it.
+                //
+                // What it got wrong: the row cursor walked the sorted symbol key list INSIDE one
+                // page frame and restarted at key 0 for the next frame, while
+                // PageFrameRecordCursorImpl drives page frames in the outer loop. The output was a
+                // concatenation of per-frame symbol-ordered runs - k1,k2,k1,k2 - not a globally
+                // ordered result, and with a LIMIT on top it returned the wrong ROWS rather than
+                // merely the wrong order.
+                //
+                // Any of these cuts one partition into several page frames, and none of them is
+                // visible to the compiler: the page-frame row limit
+                // (min(cairo.sql.page.frame.max.rows, max(min.rows, rows / workers)), stock max
+                // 1,000,000), a column top left by ALTER TABLE ADD COLUMN, one frame per parquet
+                // row group (cairo.partition.encoder.parquet.row.group.size, stock 100,000), an O3
+                // partition split, and the pieces of a composite partition.
+                //
+                // No compile-time predicate is sound. The gate was intervalHitsOnlyOnePartition, a
+                // calendar-floor test (RuntimeIntervalModel.allIntervalsHitOnePartition): one
+                // calendar day can hold several physical partitions, and the frame count is a
+                // RUNTIME property of the data while the claim is consumed at COMPILE time and the
+                // plan is cached - a table at 999,000 rows compiles to "one frame" and is wrong
+                // after the next commit.
+                //
+                // The same reasoning withdrew two neighbouring claims. FilterOnValues and
+                // FilterOnExcludedValues no longer claim the advice for the key-column case: their
+                // SequentialRowCursorFactory restarts its per-key drain on every frame the same
+                // way. The single-key scan no longer claims "ORDER BY key, ts DESC", which asked
+                // for a backward index walk inside frames that still arrive in ascending order;
+                // "ORDER BY key" alone stays sound because the key column is constant across the
+                // result, and "ORDER BY key, ts ASC" stays sound because a forward index walk
+                // inside ascending frames is globally ascending. The orderByTimestamp claim also
+                // survives: it forces HeapRowCursorFactory, which emits the smallest row id first
+                // within a frame, frames arrive in timestamp order, and the descending form is
+                // admitted only for a single key value.
+                //
+                // The branch also carried the only guardAgainstDotsInOrderByAdvice() call on the
+                // intrinsicModel.keyColumn == null path, so a table-prefixed order-by advice now
+                // compiles to scan plus sort here instead of raising "cannot use table-prefixed
+                // names in order by"; the surviving call guards the keyColumn != null path.
+                //
+                // Two designs can bring the optimisation back:
+                // (a) key-major traversal in a dedicated cursor: for each sorted symbol key walk
+                //     every page frame, instead of for each frame walk every key. Frames are
+                //     enumerated once into PageFrameAddressCache and revisited through
+                //     PageFrameMemoryPool.navigateTo(); the index cursor bounds come from
+                //     PageFrame.getIndexRowLo() / getIndexRowHi(), which already carry the
+                //     composite piece shift. Such a cursor must pin ParquetDecodeHint.SCATTERED,
+                //     as LatestByLightRecordCursorFactory does, or the parquet decode cache
+                //     thrashes at four buffers.
+                // (b) decide per open rather than at compile time: build the fast factory and a
+                //     sorted backup, and choose when the cursor opens and the frame geometry is
+                //     knowable. CoveringIndexRecordCursorFactory already works this way - it asks
+                //     ScannedColumnTopProbe.hasAnyColumnTop() inside getCursor() and delegates to
+                //     its backup factory - precisely because the answer changes after compilation.
 
                 final RowCursorFactory rowFactory = new PageFrameRowCursorFactory(model.isForceBackwardScan() ? ORDER_DESC : ORDER_ASC);
 

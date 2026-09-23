@@ -1871,7 +1871,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
     @Test
     public void testOrderByAdviceWorksWithCrossJoin1a() throws Exception {
-        // case when ordering by symbol, then timestamp - we expect to use the symbol index
+        // case when ordering by symbol, then timestamp - the scan cannot promise that order across page
+        // frames, so the sort sits above the join
         assertMemoryLeak(() -> {
             execute(orderByAdviceDdl.replace(" t ", " t1 "));
             execute(orderByAdviceDdl.replace(" t ", " t2 "));
@@ -1891,20 +1892,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                SelectedRecord
-                                    Cross Join
-                                        SortedSymbolIndex
-                                            Index forward scan on: s
-                                              symbolOrder: asc
-                                            Interval forward scan on: t1
-                                              intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T00:00:00.000000Z")]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t2
+                                Encode sort
+                                  keys: [s, ts]
+                                    SelectedRecord
+                                        Cross Join
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: t1
+                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T00:00:00.000000Z")]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t2
                             """);
             assertQuery(query)
                     .noLeakCheck()
-                    .noRandomAccess()
                     .returns("""
                             s\tts\ts1\tts1
                             a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
@@ -1922,7 +1923,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
     @Test
     public void testOrderByAdviceWorksWithCrossJoin1b() throws Exception {
-        // case when ordering by symbol, then timestamp - we expect to use the symbol index
+        // case when ordering by symbol, then timestamp - the scan cannot promise that order across page
+        // frames, so the sort sits above the join
         assertMemoryLeak(() -> {
             execute(orderByAdviceDdl.replace(" t ", " t1 "));
             execute(orderByAdviceDdl.replace(" t ", " t2 "));
@@ -1942,18 +1944,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .withPlan("""
                             Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                SelectedRecord
-                                    Cross Join
-                                        SortedSymbolIndex
-                                            Index forward scan on: s
-                                              symbolOrder: asc
-                                            Interval forward scan on: t1
-                                              intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t2
+                                Encode sort
+                                  keys: [s, ts]
+                                    SelectedRecord
+                                        Cross Join
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: t1
+                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t2
                             """)
-                    .noRandomAccess()
                     .returns("""
                             s\tts\ts1\tts1
                             a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
@@ -2130,7 +2132,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
     @Test
     public void testOrderByAdviceWorksWithCrossJoin2() throws Exception {
-        // case when ordering by just symbol - we expect to use the symbol index
+        // case when ordering by just symbol - the scan cannot promise that order across page frames, so
+        // the sort sits above the join
         assertMemoryLeak(() -> {
             execute(orderByAdviceDdl.replace(" t ", " t1 "));
             execute(orderByAdviceDdl.replace(" t ", " t2 "));
@@ -2150,18 +2153,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .withPlan("""
                             Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                SelectedRecord
-                                    Cross Join
-                                        SortedSymbolIndex
-                                            Index forward scan on: s
-                                              symbolOrder: asc
-                                            Interval forward scan on: t1
-                                              intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t2
+                                Encode sort
+                                  keys: [s]
+                                    SelectedRecord
+                                        Cross Join
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: t1
+                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t2
                             """)
-                    .noRandomAccess()
                     .returns("""
                             s\tts\ts1\tts1
                             a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z

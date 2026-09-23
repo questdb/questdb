@@ -1854,13 +1854,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         path.trimTo(pathSize);
         setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, newNameTxn);
         if (ff.rename(other.$(), path.$()) != Files.FILES_RENAME_OK) {
-            other.trimTo(pathSize);
-            path.trimTo(pathSize);
-            throw CairoException.critical(ff.errno())
+            // Built before the trims, so it names the staging and target directories rather than the
+            // table root twice. The trims still have to run: processAsyncWriterCommand swallows this
+            // exception and the writer keeps going with these two reusable Path fields.
+            final CairoException e = CairoException.critical(ff.errno())
                     .put("could not rename staged parquet partition compaction [table=").put(tableToken)
                     .put(", from=").put(other)
                     .put(", to=").put(path)
                     .put(']');
+            other.trimTo(pathSize);
+            path.trimTo(pathSize);
+            throw e;
         }
         path.trimTo(pathSize);
         other.trimTo(pathSize);
@@ -4149,13 +4153,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         path.trimTo(pathSize);
         setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, newNameTxn);
         if (ff.rename(other.$(), path.$()) != Files.FILES_RENAME_OK) {
-            other.trimTo(pathSize);
-            path.trimTo(pathSize);
-            throw CairoException.critical(ff.errno())
+            // Built before the trims, so it names the staging and target directories rather than the
+            // table root twice. The trims still have to run: processAsyncWriterCommand swallows this
+            // exception and the writer keeps going with these two reusable Path fields.
+            final CairoException e = CairoException.critical(ff.errno())
                     .put("could not rename staged composite partition rewrite [table=").put(tableToken)
                     .put(", from=").put(other)
                     .put(", to=").put(path)
                     .put(']');
+            other.trimTo(pathSize);
+            path.trimTo(pathSize);
+            throw e;
         }
         path.trimTo(pathSize);
         other.trimTo(pathSize);
@@ -18241,6 +18249,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     pieceCount++;
                     liveRows += action.getO3RowCount();
                 }
+                case APPEND -> {
+                    pieceCount++;
+                    liveRows += O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex) + action.getO3RowCount();
+                }
                 case MERGE -> {
                     pieceCount++;
                     final long pieceRows = O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
@@ -18291,6 +18303,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 case KEEP -> liveRows += O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
                 case NEW_PIECE -> liveRows += action.getO3RowCount();
                 case MERGE ->
+                        liveRows += O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex) + action.getO3RowCount();
+                case APPEND ->
                         liveRows += O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex) + action.getO3RowCount();
                 default -> {
                 }
