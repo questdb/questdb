@@ -200,7 +200,7 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
             final Function<CharSequence, SeqTxnTracker> racingFactory = dir -> {
                 final SeqTxnTracker t = new SeqTxnTracker(engine.getConfiguration()) {
                     @Override
-                    public void markWriterDurable(int walId, long orphanSweepMark) {
+                    public void markWriterDurable(int walId, long orphanSweepMark, long coveredSeqTxn) {
                         if (Thread.currentThread() == flusherThread.get()) {
                             // Sequencer write lock already released, writer monitor still held.
                             flusherInMark.countDown();
@@ -210,7 +210,7 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
                                 throw new RuntimeException(e);
                             }
                         }
-                        super.markWriterDurable(walId, orphanSweepMark);
+                        super.markWriterDurable(walId, orphanSweepMark, coveredSeqTxn);
                     }
 
                     @Override

@@ -151,8 +151,15 @@ syncIfRequired(commitMode):
   pending age ≥ W flushes now. `localDurableSeqTxn` is **not** advanced here.
 
 **The batched flush** (`WalWriter.flushPendingDurable`, W>0):
-`sequencer.fdatasyncTxnLog()` → `setLocalDurableSeqTxn(flushTo)`. Private columns/events
-were already durable before sequencing.
+`covered = sequencer.fdatasyncTxnLog()` → `markWriterDurable(walId, mark, covered)`. Private
+columns/events were already durable before sequencing. `covered` is `seqTxn` as read under the
+sequencer write lock, so it is exactly what the fdatasync covered; the tracker keeps the running
+max as the frontier's ceiling. The frontier is
+`min(ceiling, pins empty ? +inf : min(oldest-un-flushed) - 1)`: the pins hold it lower, the
+ceiling keeps out anything sequenced after the lock was released — including the writer's own
+next commit (`getSequencerTxn` runs outside the writer monitor) and structure txns, which carry
+no pin. `recordPendingDurable` re-registers the pin at batch start, because a flush of this
+writer that was already past its fdatasync drops the pin that commit reused.
 The frontier advances **only** here, after the device flush. Also driven by the background
 `forceDurableIfPending(now, W)` (age‑gated, bounds RPO ≤ W even when commits stop) and
 defensively at segment open/roll.

@@ -85,11 +85,11 @@ public class SeqTxnTracker {
     // seqTxn on flush: writer B (seqTxn 11) flushing before writer A (seqTxn 10) would falsely claim A's
     // still-page-cache-only txn 10 as durable and the QWP durable-ack would lie. Instead each writer records
     // the OLDEST un-flushed seqTxn of its current batch here; localDurableSeqTxn only advances to the
-    // contiguous prefix = (map empty ? getSeqTxn() : min(oldest-un-flushed) - 1). Parallel lists keyed by
-    // index: pendingWalIds[i] -> pendingLoSeqTxns[i]. Tiny (one entry per concurrently-held WalWriter) and
-    // touched only per BATCH (start / flush), not per row. Guarded by durableFrontierLock (NOT `this`, which
-    // the waiter machinery uses) so the frontier RMW never contends with fireWaiters/updateWriterTxns;
-    // localDurableSeqTxn stays volatile for lock-free reads.
+    // contiguous prefix = min(maxCoveredSeqTxn, map empty ? +inf : min(oldest-un-flushed) - 1). Parallel
+    // lists keyed by index: pendingWalIds[i] -> pendingLoSeqTxns[i]. Tiny (one entry per concurrently-held
+    // WalWriter) and touched only per BATCH (start / flush), not per row. Guarded by durableFrontierLock (NOT
+    // `this`, which the waiter machinery uses) so the frontier RMW never contends with
+    // fireWaiters/updateWriterTxns; localDurableSeqTxn stays volatile for lock-free reads.
     private final Object durableFrontierLock = new Object();
     private final IntList pendingWalIds = new IntList();
     private final LongList pendingLoSeqTxns = new LongList();
@@ -105,6 +105,12 @@ public class SeqTxnTracker {
     private final LongList pendingOrphanSeqs = new LongList();
     // Monotonic counter, bumped under durableFrontierLock by orphanWriterPending.
     private long orphanSeq;
+    // Highest seqTxn any completed sequencer fdatasync has covered: seqTxn as it stood under the sequencer
+    // write lock when that fdatasync ran (TableSequencerImpl.fdatasyncTxnLog). Everything at or below it is
+    // device-durable, so under W>0 it is the ceiling of localDurableSeqTxn; the pins can only hold the
+    // frontier lower. A running max rather than the latest value: a txn covered by a peer's earlier fdatasync
+    // stays claimable after the pin that held it back is released. Guarded by durableFrontierLock.
+    private long maxCoveredSeqTxn = UNINITIALIZED_TXN;
     // Live-view dedup-base signal. The apply
     // worker is the single writer per table, so plain volatile suffices (no CAS). A
     // coupled dedup-base live view reads these to decide whether an applied seqTxn range
@@ -400,11 +406,11 @@ public class SeqTxnTracker {
     /**
      * Advances the device-durable frontier to {@code seqTxn} (ADAPTIVE mode). MONOTONE: a value below the
      * current frontier is silently ignored (durable data never becomes non-durable), which also makes an
-     * out-of-order contiguous-prefix recompute in {@link #markWriterDurable(int, long)} safe.
+     * out-of-order contiguous-prefix recompute in {@link #markWriterDurable(int, long, long)} safe.
      *
      * <p>Used directly on the ADAPTIVE {@code W=0} path (the commit fdatasync completed BEFORE the seqTxn was
      * even assigned, so the commit is durable when this is called; concurrent writers are safe because a txn
-     * is durable before it is sequenced), and internally by {@link #markWriterDurable(int, long)} under
+     * is durable before it is sequenced), and internally by {@link #markWriterDurable(int, long, long)} under
      * {@code durableFrontierLock} for the {@code W>0} contiguous prefix. A table is exclusively W=0 OR W>0
      * (config-fixed), so these two callers never race for the same tracker.
      */
@@ -418,7 +424,7 @@ public class SeqTxnTracker {
      * Adaptive group-commit (W&gt;0): record the OLDEST un-flushed {@code loSeqTxn} of {@code walId}'s current
      * batch so the shared durable-ack frontier can be held at the contiguous durable prefix across concurrent
      * writers. putIfAbsent — a writer's later commits in the SAME batch (walId already pinned) must NOT lower
-     * its recorded floor; the pin is dropped only by {@link #markWriterDurable(int, long)} (after that writer's
+     * its recorded floor; the pin is dropped only by {@link #markWriterDurable(int, long, long)} (after that writer's
      * fdatasync) or {@link #resetDurableFrontier()} (recovery/reboot). A distressed/crash teardown WITHOUT a
      * flush deliberately LEAVES the pin, so the frontier stays honestly behind the writer's non-durable data.
      */
@@ -444,7 +450,7 @@ public class SeqTxnTracker {
 
     /**
      * Adaptive group-commit (W&gt;0): take the orphan-sweep mark to pass to a later
-     * {@link #markWriterDurable(int, long)}. MUST be called BEFORE the caller's
+     * {@link #markWriterDurable(int, long, long)}. MUST be called BEFORE the caller's
      * {@code sequencer.fdatasyncTxnLog()}, and the returned value passed unchanged to the
      * {@code markWriterDurable} that follows it.
      *
@@ -474,7 +480,7 @@ public class SeqTxnTracker {
 
     /**
      * Adaptive group-commit (W&gt;0): mark {@code walId}'s pin as ORPHANED because its writer was torn down
-     * (distressed / crashed / closed) WITHOUT a device flush, so no {@link #markWriterDurable(int, long)} will ever
+     * (distressed / crashed / closed) WITHOUT a device flush, so no {@link #markWriterDurable(int, long, long)} will ever
      * arrive for it. The pin is deliberately NOT removed here: at this instant the writer's batch really is
      * non-durable (its shared sequencer records are still only in the page cache), and dropping the pin would
      * let the durable-ack frontier advance over them -- the CRITICAL-2 over-claim.
@@ -484,7 +490,7 @@ public class SeqTxnTracker {
      * segment column fd and the events file, then {@code getSequencerTxn()} assigns the seqTxn). The ONLY thing
      * a W&gt;0 batch defers is the shared sequencer barrier. So the orphan's txns become fully durable the moment
      * ANY writer of this table completes {@code sequencer.fdatasyncTxnLog()} -- that one fdatasync covers the
-     * whole shared log, including records written by the dead writer. {@link #markWriterDurable(int, long)} runs
+     * whole shared log, including records written by the dead writer. {@link #markWriterDurable(int, long, long)} runs
      * immediately after exactly that fdatasync, which is why it is safe (and necessary) to sweep orphans there.
      *
      * <p>Without this, a single distressed writer froze the contiguous-prefix frontier at
@@ -512,9 +518,16 @@ public class SeqTxnTracker {
      * Adaptive group-commit (W&gt;0): called AFTER {@code walId}'s batched device flush (data→events→seq)
      * completes. Drops the writer's pin, then advances {@link #localDurableSeqTxn} MONOTONICALLY to the
      * contiguous durable prefix across the remaining pending writers: {@code min(oldest-un-flushed) - 1}, or
-     * {@code getSeqTxn()} (every committed txn is now durable) when nothing is pending. Never advances to the
+     * the covered ceiling when nothing is pending, and never above that ceiling. Never advances to the
      * flushing writer's own seqTxn — that is the CRITICAL-2 over-claim. Idempotent: an unknown/already-removed
      * walId is a harmless no-op that still recomputes the prefix from the remaining pins.
+     *
+     * <p>{@code coveredSeqTxn} is what the caller's fdatasync provably covered: {@code seqTxn} as read under
+     * the sequencer WRITE lock, where no append is in flight. That lock is released before this method runs,
+     * so by now the flushing writer's own next commit or a peer may have sequenced further txns, and they
+     * reuse (putIfAbsent) the very pin being dropped here; a structure txn carries no pin at all. The live
+     * {@code seqTxn} would publish both un-flushed, so the frontier is bounded by the covered value instead,
+     * kept as a running max in {@link #maxCoveredSeqTxn}.
      *
      * <p>Also sweeps every ORPHANED pin (see {@link #orphanWriterPending(int)}). The caller has just completed
      * {@code sequencer.fdatasyncTxnLog()}, one device flush of the WHOLE shared sequencer log; combined with the
@@ -524,7 +537,7 @@ public class SeqTxnTracker {
      * ONLY here (and by {@link #resetDurableFrontier()}) — never on the teardown path itself, where the batch is
      * still volatile.
      */
-    public void markWriterDurable(int walId, long orphanSweepMark) {
+    public void markWriterDurable(int walId, long orphanSweepMark, long coveredSeqTxn) {
         synchronized (durableFrontierLock) {
             final int idx = indexOfPendingWalId(walId);
             if (idx > -1) {
@@ -539,7 +552,12 @@ public class SeqTxnTracker {
                     removePendingIndex(i);
                 }
             }
-            final long target = pendingWalIds.size() == 0 ? seqTxn : minPendingLoSeqTxn() - 1;
+            if (coveredSeqTxn > maxCoveredSeqTxn) {
+                maxCoveredSeqTxn = coveredSeqTxn;
+            }
+            final long target = pendingWalIds.size() == 0
+                    ? maxCoveredSeqTxn
+                    : Math.min(maxCoveredSeqTxn, minPendingLoSeqTxn() - 1);
             setLocalDurableSeqTxnLocked(target);
         }
     }
@@ -557,6 +575,7 @@ public class SeqTxnTracker {
             pendingLoSeqTxns.clear();
             pendingOrphaned.clear();
             pendingOrphanSeqs.clear();
+            maxCoveredSeqTxn = UNINITIALIZED_TXN;
             final long current = localDurableSeqTxn;
             if (current > 0) {
                 metrics.walMetrics().addLocalDurableSeqTxn(-current);

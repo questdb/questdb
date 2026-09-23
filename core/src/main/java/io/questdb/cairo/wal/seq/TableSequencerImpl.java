@@ -355,10 +355,16 @@ public class TableSequencerImpl implements TableSequencer {
      * Adaptive group-commit (Deferred 2) deferred device flush of the sequencer txn log
      * (part-before-header). Must be called holding the sequencer WRITE lock (the same lock {@code nextTxn}
      * takes), so it cannot race a concurrent sequencer append/rotation of the txn-log mmaps.
+     *
+     * @return the highest seqTxn this flush covered. Read under the WRITE lock, where no append is in flight,
+     * so everything at or below it was in the log before the fdatasync; anything sequenced once the lock is
+     * released is not covered. Passed on to {@link SeqTxnTracker#markWriterDurable(int, long, long)}.
      */
-    public void fdatasyncTxnLog() {
+    public long fdatasyncTxnLog() {
         assert !closed;
+        final long coveredSeqTxn = seqTxnTracker.getSeqTxn();
         tableTransactionLog.fdatasyncTxnLog();
+        return coveredSeqTxn;
     }
 
     public boolean isDistressed() {

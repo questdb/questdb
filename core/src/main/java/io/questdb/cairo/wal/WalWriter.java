@@ -2573,13 +2573,14 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      */
     private synchronized void recordPendingDurable(long seqTxn) {
         if (pendingDurableSeqTxn < 0) {
-            // first commit of a new batch: stamp the batch's age clock (the OLDEST un-flushed commit). The
-            // shared contiguous-prefix pin is NOT registered here — it is registered ATOMICALLY with the seqTxn
-            // assignment inside the sequencer (TableSequencerImpl.nextTxn), so it is already in place before this
-            // runs and NO mid-flight window exists in which a peer flush could over-claim this txn (Task 1b).
-            // putIfAbsent there keeps the pin at this batch's OLDEST seqTxn until the writer's own flush drops it.
+            // first commit of a new batch: stamp the batch's age clock (the OLDEST un-flushed commit).
             pendingSinceMicros = configuration.getMicrosecondClock().getTicks();
             pendingLoSeqTxn = seqTxn;
+            // The sequencer already pinned this txn under its write lock (TableSequencerImpl.nextTxn), so this
+            // is normally a no-op. It matters when this writer's own flush was in progress at the time: the
+            // txn was sequenced after that flush's fdatasync and reused the previous batch's pin, which the
+            // flush then dropped. This batch needs a pin of its own.
+            seqTxnTracker.registerWriterPending(walId, seqTxn);
         }
         pendingDurableSeqTxn = seqTxn;
         // Register BEFORE the trigger: if the trigger flushes, flushPendingDurable() deregisters; if it does
@@ -2621,14 +2622,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             final long orphanSweepMark = seqTxnTracker.snapshotOrphanSweepMark();
             // Private WAL dependencies were fdatasync'd before sequencing. Only the shared sequencer
             // barrier remains deferred/batched, so it can never expose a peer's volatile dependency.
-            sequencer.fdatasyncTxnLog(tableToken);
-            // Only NOW is this writer's batch on disk. Drop our contiguous-prefix pin and let the shared frontier
-            // advance to the durable prefix across ALL writers (min oldest-un-flushed - 1, or getSeqTxn() when
-            // nothing is pending) — NOT to our own flushTo, which would over-claim a peer writer's still-unflushed
-            // lower seqTxn (CRITICAL 2). markWriterDurable recomputes the prefix; flushTo above only gates the
-            // nothing-pending early return. Re-check process poison after the barriers and before publication.
+            final long coveredSeqTxn = sequencer.fdatasyncTxnLog(tableToken);
+            // Only NOW is this writer's batch on disk. The frontier advances to the contiguous durable prefix
+            // across ALL writers, bounded by coveredSeqTxn -- NOT to our own flushTo, which would over-claim a
+            // peer's still-unflushed lower seqTxn (CRITICAL 2), and not to the live seqTxn either: the sequencer
+            // lock is free again, and our own next commit may already be sequenced (getSequencerTxn runs outside
+            // the writer monitor). flushTo above only gates the nothing-pending early return. Re-check process
+            // poison after the barriers and before publication.
             checkDistressed();
-            seqTxnTracker.markWriterDurable(walId, orphanSweepMark);
+            seqTxnTracker.markWriterDurable(walId, orphanSweepMark, coveredSeqTxn);
             pendingDurableSeqTxn = -1L;
             pendingSinceMicros = -1L;
             pendingLoSeqTxn = -1L;

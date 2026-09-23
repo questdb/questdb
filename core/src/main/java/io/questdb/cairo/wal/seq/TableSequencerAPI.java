@@ -380,11 +380,13 @@ public class TableSequencerAPI implements QuietCloseable {
      * Opens the sequencer under the WRITE lock (the same lock {@code nextTxn} takes) so the flush cannot
      * race a concurrent sequencer append/rotation. A no-op-safe call: callers only invoke it for ADAPTIVE
      * tables that have deferred at least one sequencer commit under {@code W > 0}.
+     *
+     * @return the highest seqTxn the flush covered; see {@link TableSequencerImpl#fdatasyncTxnLog()}.
      */
-    public void fdatasyncTxnLog(final TableToken tableToken) {
+    public long fdatasyncTxnLog(final TableToken tableToken) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
-                tableSequencer.fdatasyncTxnLog();
+                return tableSequencer.fdatasyncTxnLog();
             } finally {
                 tableSequencer.unlockWrite();
             }
