@@ -178,12 +178,10 @@ public class WriterPool extends AbstractPool {
     }
 
     /**
-     * Returns writer from the pool or sends writer command
+     * Identifies the writer the pool currently holds for a table, without taking it.
      *
-     * @param tableToken         name of the table
-     * @param lockReason         reason for the action
-     * @param asyncWriterCommand command to write to TableWriterTask
-     * @return null if command is published or TableWriter instance if writer is available
+     * @param tableToken the table to look up
+     * @return the live writer's id, or -1 when the pool holds no writer for the table
      */
     public long getWriterId(TableToken tableToken) {
         final Entry entry = entries.get(tableToken.getDirName());
@@ -196,6 +194,14 @@ public class WriterPool extends AbstractPool {
         return -1;
     }
 
+    /**
+     * Returns writer from the pool or sends writer command
+     *
+     * @param tableToken         name of the table
+     * @param lockReason         reason for the action
+     * @param asyncWriterCommand command to write to TableWriterTask
+     * @return null if command is published or TableWriter instance if writer is available
+     */
     public TableWriter getWriterOrPublishCommand(
             TableToken tableToken,
             @NotNull String lockReason,
