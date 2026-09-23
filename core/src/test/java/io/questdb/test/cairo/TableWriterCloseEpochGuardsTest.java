@@ -128,7 +128,7 @@ public class TableWriterCloseEpochGuardsTest extends AbstractCairoTest {
                 // the end of doClose(). No explicit assert here: the harness IS the assert.
             });
         } finally {
-            resetDurabilityPoisonForTest();
+            engine.resetDurabilityFailure();
         }
     }
 
@@ -190,19 +190,6 @@ public class TableWriterCloseEpochGuardsTest extends AbstractCairoTest {
                         "the close-time durable-epoch flush ran on a PARTIALLY-CONSTRUCTED writer and its "
                                 + "error replaced the real open failure: " + e, e);
             }
-        });
-    }
-
-    /**
-     * Clears the engine-wide durability poison so it cannot leak into later tests. Mirrors the helper in
-     * {@code AdaptiveGroupCommitTest} / {@code TableWriterTest}.
-     */
-    private void resetDurabilityPoisonForTest() throws Exception {
-        final java.lang.reflect.Field field =
-                io.questdb.cairo.CairoEngine.class.getDeclaredField("durabilityFailure");
-        field.setAccessible(true);
-        ((java.util.concurrent.atomic.AtomicReference<?>) field.get(engine)).set(null);
-        engine.setDurabilityFailureHandler(failure -> {
         });
     }
 

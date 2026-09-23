@@ -1160,7 +1160,7 @@ public class CheckpointTest extends AbstractCairoTest {
             } finally {
                 testFilesFacade.isWindowsSyncSimulated = false;
                 // A regression poisons the shared engine; keep the failure in this test.
-                resetDurabilityPoison();
+                engine.resetDurabilityFailure();
             }
 
             Assert.assertFalse("restore must consume the trigger", testFilesFacade.exists(triggerFilePath.$()));
@@ -1194,7 +1194,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getMessage(), "could not syncfs");
                 } finally {
                     testFilesFacade.errorOnSyncfs = false;
-                    resetDurabilityPoison();
+                    engine.resetDurabilityFailure();
                 }
                 Assert.assertTrue("the trigger must survive a failed flush", testFilesFacade.exists(triggerFilePath.$()));
                 Assert.assertTrue("the checkpoint must survive a failed flush", testFilesFacade.exists(path.trimTo(rootLen).$()));
@@ -5188,12 +5188,6 @@ public class CheckpointTest extends AbstractCairoTest {
             out[i] = buf.getInt();
         }
         return out;
-    }
-
-    private static void resetDurabilityPoison() throws Exception {
-        final Field field = CairoEngine.class.getDeclaredField("durabilityFailure");
-        field.setAccessible(true);
-        ((AtomicReference<?>) field.get(engine)).set(null);
     }
 
     private static TestServerMain startServerMain(String root, String... envKeyValues) {

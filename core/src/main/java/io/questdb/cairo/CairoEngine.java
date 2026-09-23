@@ -3656,6 +3656,17 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    /**
+     * Un-poisons the engine after a test injected a durability failure, and restores the default handler,
+     * which only fences the engine. Production never un-poisons: ServerMain halts on the first failure.
+     */
+    @TestOnly
+    public void resetDurabilityFailure() {
+        durabilityFailure.set(null);
+        durabilityFailureHandler = failure -> {
+        };
+    }
+
     @TestOnly
     public void resetFrameFactory() {
         frameFactory.close();

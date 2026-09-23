@@ -153,7 +153,7 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
                 }
             });
         } finally {
-            resetDurabilityPoisonForTest();
+            engine.resetDurabilityFailure();
         }
     }
 
@@ -1121,19 +1121,6 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
         }
     }
 
-    /**
-     * A FilesFacade that counts {@code fdatasync} calls on WAL-commit files, split into events-file
-     * device flushes and total WAL device flushes (segment column data + events + sequencer part/header).
-     * Used to prove the W=0 per-commit fdatasync vs the W&gt;0 batched fdatasync.
-     */
-    private void resetDurabilityPoisonForTest() throws Exception {
-        final java.lang.reflect.Field field = CairoEngine.class.getDeclaredField("durabilityFailure");
-        field.setAccessible(true);
-        ((AtomicReference<?>) field.get(engine)).set(null);
-        engine.setDurabilityFailureHandler(failure -> {
-        });
-    }
-
     static class FailingWalFdatasyncFacade extends WalFdatasyncFacade {
         private boolean armed;
         private boolean failNext;
@@ -1228,6 +1215,11 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * A FilesFacade that counts {@code fdatasync} calls on WAL-commit files, split into events-file
+     * device flushes and total WAL device flushes (segment column data + events + sequencer part/header).
+     * Used to prove the W=0 per-commit fdatasync vs the W&gt;0 batched fdatasync.
+     */
     static class WalFdatasyncFacade extends TestFilesFacadeImpl {
         protected final Map<Long, String> fdToPath = new HashMap<>();
         private final List<String> fdatasyncPaths = new ArrayList<>();

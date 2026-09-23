@@ -26,7 +26,6 @@ package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
@@ -101,7 +100,6 @@ import org.junit.Test;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
@@ -575,16 +573,8 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
             });
         } finally {
-            resetDurabilityPoisonForTest();
+            engine.resetDurabilityFailure();
         }
-    }
-
-    private void resetDurabilityPoisonForTest() throws Exception {
-        final java.lang.reflect.Field field = CairoEngine.class.getDeclaredField("durabilityFailure");
-        field.setAccessible(true);
-        ((AtomicReference<?>) field.get(engine)).set(null);
-        engine.setDurabilityFailureHandler(failure -> {
-        });
     }
 
     @Test
