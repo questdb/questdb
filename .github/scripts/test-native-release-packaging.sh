@@ -544,10 +544,10 @@ with zipfile.ZipFile(bundle_path) as bundle:
 print('Central bundle allowlist, POM, jar identity, and native checks passed')
 PY
     local verifier_line central_line
-    verifier_line="$(grep -n 'io/questdb/bin/windows-x86-64/questdbr.dll' "${central_log}" | head -1 | cut -d: -f1)"
-    central_line="$(grep -n 'central-publishing-maven-plugin' "${central_log}" | tail -1 | cut -d: -f1)"
+    verifier_line="$(grep -n 'io/questdb/bin/windows-x86-64/questdbr.dll' "${central_log}" | head -1 | cut -d: -f1 || true)"
+    central_line="$(grep -Ein 'skip.*publish|publish.*skip' "${central_log}" | tail -1 | cut -d: -f1 || true)"
     [[ -n "${verifier_line}" && -n "${central_line}" && "${verifier_line}" -lt "${central_line}" ]] \
-        || fail "aggregate jar verification did not precede Central deployment"
+        || fail "aggregate jar verification did not precede Central skipPublishing"
 
     effective_pom="${temp_dir}/release-effective-pom.xml"
     (
