@@ -200,6 +200,107 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLagLeadSymbolEqualsSameTableValue() throws Exception {
+        // lag()/lead() resolve their key through the argument's symbol table. When the other side
+        // of = reads the same table, both reads must land on distinct A/B flyweights, or the second
+        // read overwrites the first and every row compares equal. The static-table path compares
+        // int keys and never hits this, so use sources whose table is not static: a UNION, a
+        // NOCACHE column read through ::string, and a ::symbol cast over a STRING column.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, a SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (ts TIMESTAMP, a SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE n (ts TIMESTAMP, a SYMBOL NOCACHE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s (ts TIMESTAMP, a STRING) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00', 'a1'),
+                    ('2024-01-01T01:00:00', 'a2'),
+                    ('2024-01-01T02:00:00', 'a3'),
+                    ('2024-01-01T03:00:00', 'a4')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    ('2024-01-01T04:00:00', 'a4'),
+                    ('2024-01-01T05:00:00', 'a1'),
+                    ('2024-01-01T06:00:00', 'a2'),
+                    ('2024-01-01T07:00:00', 'a2')
+                    """);
+            execute("INSERT INTO n SELECT * FROM (SELECT ts, a FROM t UNION ALL SELECT ts, a FROM t2)");
+            execute("INSERT INTO s SELECT ts, a::string FROM n");
+
+            // cached window over a UNION: symbol = symbol from the same record
+            assertQuery("""
+                    SELECT ts, a, ls FROM (
+                        SELECT ts, a, lead(a) OVER (ORDER BY ts DESC) ls
+                        FROM (SELECT ts, a FROM t UNION ALL SELECT ts, a FROM t2)
+                    ) WHERE ls = a ORDER BY ts
+                    """)
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("""
+                            ts\ta\tls
+                            2024-01-01T04:00:00.000000Z\ta4\ta4
+                            2024-01-01T07:00:00.000000Z\ta2\ta2
+                            """);
+            assertQuery("""
+                    SELECT ts, a, ls FROM (
+                        SELECT ts, a, lead(a) OVER (ORDER BY ts DESC) ls
+                        FROM (SELECT ts, a FROM t UNION ALL SELECT ts, a FROM t2)
+                    ) WHERE ls != a ORDER BY ts
+                    """)
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("""
+                            ts\ta\tls
+                            2024-01-01T00:00:00.000000Z\ta1\t
+                            2024-01-01T01:00:00.000000Z\ta2\ta1
+                            2024-01-01T02:00:00.000000Z\ta3\ta2
+                            2024-01-01T03:00:00.000000Z\ta4\ta3
+                            2024-01-01T05:00:00.000000Z\ta1\ta4
+                            2024-01-01T06:00:00.000000Z\ta2\ta1
+                            """);
+            // streaming window over a UNION: two window columns resolved through the same table
+            assertQuery("""
+                    SELECT ts, a, l1, l2 FROM (
+                        SELECT ts, a, lag(a) OVER () l1, lag(a, 2) OVER () l2
+                        FROM (SELECT ts, a FROM t UNION ALL SELECT ts, a FROM t2)
+                    ) WHERE l1 = l2
+                    """)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\ta\tl1\tl2
+                            2024-01-01T00:00:00.000000Z\ta1\t\t
+                            2024-01-01T05:00:00.000000Z\ta1\ta4\ta4
+                            """);
+            // NOCACHE column: the reader hands out mapped views, and ::string bypasses the key path
+            assertQuery("SELECT ts, a, x FROM (SELECT ts, a, lag(a) OVER () x FROM n) WHERE x = a::string")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\ta\tx
+                            2024-01-01T04:00:00.000000Z\ta4\ta4
+                            2024-01-01T07:00:00.000000Z\ta2\ta2
+                            """);
+            // ::symbol over a STRING column: the cast function owns the dictionary
+            assertQuery("""
+                    SELECT ts, k, x FROM (
+                        SELECT ts, k, lag(k) OVER () x FROM (SELECT ts, a::symbol k FROM s)
+                    ) WHERE x = k
+                    """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tk\tx
+                            2024-01-01T04:00:00.000000Z\ta4\ta4
+                            2024-01-01T07:00:00.000000Z\ta2\ta2
+                            """);
+        });
+    }
+
+    @Test
     public void testLagLeadSymbolDownstreamJoin() throws Exception {
         // dim assigns different int keys to the same symbol values, and holds a value absent
         // from t, so the join must map keys between the two static symbol tables by value.
