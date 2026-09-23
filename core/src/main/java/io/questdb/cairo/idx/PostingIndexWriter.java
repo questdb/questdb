@@ -45,8 +45,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
+import io.questdb.mp.ConcurrentQueue;
 import io.questdb.std.Decimals;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -214,6 +213,7 @@ public class PostingIndexWriter implements IndexWriter {
     private final Utf8StringSink partitionPath = new Utf8StringSink();
     private final ObjList<PendingSealPurge> pendingPurgePool = new ObjList<>();
     private final ObjList<PendingSealPurge> pendingPurges = new ObjList<>();
+    private final PostingSealPurgeTask purgeTask = new PostingSealPurgeTask();
     // Reusable scratch list for sealTxns that recoveryDropAbandoned dropped
     // out of the chain on writer-open. Populated by of(...) when
     // currentTableTxn was supplied via setCurrentTableTxn; the orphan
@@ -1476,8 +1476,8 @@ public class PostingIndexWriter implements IndexWriter {
      * work and lets the persistent {@code sys.posting_seal_purge_log} survive
      * a writer-process crash.
      * <p>
-     * Entries that cannot be published (queue full) stay in the outbox and
-     * retry on the next commit.
+     * Entries whose superseding transaction has not committed stay in the
+     * outbox until that transaction becomes durable.
      */
     public void publishPendingPurges(
             MessageBus messageBus,
@@ -1489,8 +1489,7 @@ public class PostingIndexWriter implements IndexWriter {
         if (pendingPurges.size() == 0 || partitionPath.size() == 0 || tableToken == null || messageBus == null) {
             return;
         }
-        Sequence pubSeq = messageBus.getPostingSealPurgePubSeq();
-        RingQueue<PostingSealPurgeTask> queue = messageBus.getPostingSealPurgeQueue();
+        ConcurrentQueue<PostingSealPurgeTask> queue = messageBus.getPostingSealPurgeQueue();
         int writePos = 0;
         for (int readPos = 0, n = pendingPurges.size(); readPos < n; readPos++) {
             PendingSealPurge entry = pendingPurges.getQuick(readPos);
@@ -1543,15 +1542,8 @@ public class PostingIndexWriter implements IndexWriter {
             } else {
                 toTableTxn = entry.toTableTxn;
             }
-            long cursor = pubSeq.next();
-            if (cursor < 0) {
-                // Queue full or contended — keep entry for retry on next commit.
-                pendingPurges.setQuick(writePos++, entry);
-                continue;
-            }
             try {
-                PostingSealPurgeTask task = queue.get(cursor);
-                task.of(
+                purgeTask.of(
                         tableToken,
                         indexName,
                         entry.postingColumnNameTxn,
@@ -1563,8 +1555,9 @@ public class PostingIndexWriter implements IndexWriter {
                         entry.fromTableTxn,
                         toTableTxn
                 );
+                queue.enqueue(purgeTask);
             } finally {
-                pubSeq.done(cursor);
+                purgeTask.clear();
             }
             entry.of(0L, 0L, 0L, 0L, Long.MIN_VALUE, -1L);
             pendingPurgePool.add(entry);
@@ -5128,13 +5121,11 @@ public class PostingIndexWriter implements IndexWriter {
         // turns the never-set case (-1) into slot.TXN_AT_SEAL=0, leaving
         // the entry undroppable by recovery -- a deliberate trade-off for
         // test/legacy paths that never wire the setter.
-        // Cap the in-memory outbox to prevent unbounded growth when the
-        // global PostingSealPurge job is disabled, the queue is permanently
-        // saturated, or publishPendingPurges() is never called. When at the
-        // cap, drop the oldest entry. There is no writer-open scan that
-        // reclaims its file -- dropping leaks the superseded .pv/.pc on disk
-        // (bounded by outboxMax), so keep the global PostingSealPurge job
-        // running to drain the outbox and keep this path cold.
+        // Cap the local outbox when callers seal repeatedly without publishing
+        // ready tasks. The global queue is unbounded, but entries still need a
+        // committed transaction and partition context before publication. At the
+        // cap, drop the oldest entry; recovery cannot rediscover every such file,
+        // so callers must publish regularly to avoid leaking superseded .pv/.pc.
         int outboxMax = configuration.getPostingSealPurgeOutboxMax();
         if (outboxMax > 0 && pendingPurges.size() >= outboxMax) {
             PendingSealPurge oldest = pendingPurges.getQuick(0);
@@ -6072,10 +6063,9 @@ public class PostingIndexWriter implements IndexWriter {
      * reader; the seal-purge job's scoreboard check is the safety net.
      * <p>
      * The outbox saturation policy mirrors {@link #recordPostingSealPurge}:
-     * if the queue is at capacity the oldest entry is dropped. Its files are
-     * then left on disk -- the writer-open recovery walk is chain-driven and
-     * cannot re-discover a never-published orphan -- so the (bounded) leak
-     * relies on the global purge job draining the outbox before saturation.
+     * if the local outbox is at capacity, it drops the oldest entry. Recovery
+     * cannot rediscover a never-published orphan, so callers must publish ready
+     * entries regularly. The global queue itself has no capacity limit.
      */
     private void scheduleOrphanPurge(long orphanSealTxn) {
         int outboxMax = configuration.getPostingSealPurgeOutboxMax();
