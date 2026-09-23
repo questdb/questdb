@@ -572,6 +572,8 @@ for plugin in root.findall('.//m:plugin', ns):
     text = ET.tostring(config, encoding='unicode')
     if 'maven-central-release' in text or 'build-web-console' not in text or 'release-preparation-safety' not in text:
         raise SystemExit('release-plugin profile configuration is unsafe')
+    if config.findtext('m:preparationProfiles', namespaces=ns) != 'release-preparation-safety':
+        raise SystemExit('release:prepare does not activate its external SNAPSHOT dependency guard')
     if any(element in text for element in ('<preparationGoals>', '<pushChanges>', '<resume>')):
         raise SystemExit('fixture requires release-plugin clean verify, pushChanges=true, and resume=true defaults')
     print('effective release plugin keeps Central inactive; preparation defaults remain clean verify, pushChanges=true, resume=true')
