@@ -2378,6 +2378,31 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return tt;
     }
 
+    /**
+     * Requires the caller to hold SELECT on every column a scalar EXPIRE ROWS predicate reads. The cleanup job
+     * evaluates the stored predicate under the root context and physically deletes the rows it matches, so
+     * without this check a caller could set a policy on a column they cannot read and learn its values from
+     * which rows survive. A predicate that references no column reads no column data; it still requires
+     * SELECT on some column, because an empty column list means "every column" to the security context.
+     */
+    private void authorizeExpiryPredicateSelect(
+            SqlExecutionContext executionContext,
+            TableToken tableToken,
+            RecordMetadata metadata,
+            ExpiryValidationResult validationResult
+    ) {
+        final IntList columnIndexes = validationResult.getReferencedColumnIndexes();
+        if (columnIndexes.size() == 0) {
+            executionContext.getSecurityContext().authorizeSelectOnAnyColumn(tableToken);
+            return;
+        }
+        columnNames.clear();
+        for (int i = 0, n = columnIndexes.size(); i < n; i++) {
+            columnNames.add(metadata.getColumnName(columnIndexes.getQuick(i)));
+        }
+        executionContext.getSecurityContext().authorizeSelect(tableToken, columnNames);
+    }
+
     private CharSequence authorizeInsertForCopy(SqlExecutionContext executionContext, ExportModel model) {
         final CharSequence tableName = unquote(model.getTableName());
         final TableToken tt = engine.getTableTokenIfExists(tableName);
@@ -6677,6 +6702,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             validationResult = validateAlterRelativePolicy(executionContext, tableToken, tableMetadata, clause.predicate, clause.predicatePos);
         } else {
             validationResult = validateExpiryPredicate(executionContext, tableMetadata, clause.predicate, clause.predicatePos);
+            authorizeExpiryPredicateSelect(executionContext, tableToken, tableMetadata, validationResult);
         }
         warnIfExpiryKeepsDisk(validationResult, clause.predicate, tableToken.getTableName());
         final AlterOperationBuilder setExpire = alterOperationBuilder.ofSetExpire(
@@ -6709,7 +6735,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * Validates the EXPIRE ROWS predicate captured by a CREATE statement BEFORE the object is created,
      * binding it against the columns the object will have. This is purely structural: it parses + binds
      * the expression against {@code metadata} and checks the result is boolean. It touches no table, so
-     * it needs no SELECT permission (unlike ALTER ... SET EXPIRE, see {@link #validateExpiryPredicate})
+     * it needs no SELECT permission (unlike ALTER ... SET EXPIRE, see {@link #authorizeExpiryPredicateSelect})
      * and, running before {@code createMatView}, cannot leave a half-created object behind on failure.
      * Only a CREATE MATERIALIZED VIEW scalar WHEN policy reaches this (EXPIRE ROWS is rejected on plain
      * CREATE TABLE / CTAS / LIKE at parse time), so {@code selectMetadata} is always the view's defining-
