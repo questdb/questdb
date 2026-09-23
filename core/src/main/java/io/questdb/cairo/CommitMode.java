@@ -56,7 +56,7 @@ public final class CommitMode {
      * A WAL commit fdatasyncs its private segment files (column data, then the {@code _event} file) before
      * the txn is sequenced. The shared sequencer record is fdatasynced at once when the group-commit window
      * W ({@code cairo.adaptive.commit.group.window}, 50 ms by default) is 0, and otherwise within W, batched
-     * with other commits. A crash therefore loses only acknowledged commits younger than W: RPO <= W. The
+     * with other commits. A crash therefore loses only acknowledged commits younger than W: {@code RPO <= W}. The
      * durable-ack frontier advances only after the sequencer flush.
      * <p>
      * The table-apply path is lazy: {@link #appliesColumnSync} excludes ADAPTIVE, and the durable epoch plus
