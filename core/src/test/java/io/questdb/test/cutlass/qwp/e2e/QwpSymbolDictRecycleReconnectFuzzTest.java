@@ -216,8 +216,8 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                         senderRef.set(sender);
                         // DISCONNECTED fires only when an already-established
                         // connection is observed dropped mid-stream by the I/O
-                        // loop's OWN reused reconnect factory (buildAndConnect's
-                        // ctx.previousIdx >= 0 check, QwpWebSocketSender.java:3350).
+                        // loop's OWN reused reconnect factory (the
+                        // ctx.previousIdx >= 0 check in QwpWebSocketSender.connectWalk).
                         // A recycle's step-7 reconnect always builds a brand-new
                         // factory (ReconnectSupplier.previousIdx starts at -1), and
                         // CursorWebSocketSendLoop.close()'s running=false guard

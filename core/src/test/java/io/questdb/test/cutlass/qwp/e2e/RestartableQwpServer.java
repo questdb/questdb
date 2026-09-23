@@ -59,8 +59,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * without losing the underlying {@link CairoEngine} state. Single-threaded
  * worker pool keeps test scheduling deterministic.
  * <p>
- * The server also tracks the upgraded connections that have carried a WebSocket frame and that
- * its worker has not closed; {@link #stop()} returns how many of them it killed, and
+ * The server also tracks the connections whose WebSocket upgrade has completed and that its
+ * worker has not closed; {@link #stop()} returns how many of them it killed, and
  * {@link #awaitStableLiveConnection(long, long)} lets a test land a stop on one deliberately.
  */
 public final class RestartableQwpServer implements AutoCloseable {
@@ -70,9 +70,9 @@ public final class RestartableQwpServer implements AutoCloseable {
     private final CairoEngine engine;
     private final int forceRecvFragmentationChunkSize;
     private final int forceSendFragmentationChunkSize;
-    // fds of upgraded connections that have carried at least one WebSocket frame and that the
-    // worker has not yet closed. Written by the single worker thread, read by test threads,
-    // and cleared by stop() only after the workers have halted.
+    // fds of connections whose WebSocket upgrade has completed and that the worker has not yet
+    // closed. Written by the single worker thread, read by test threads, and cleared by stop()
+    // only after the workers have halted.
     private final Set<Long> liveFds = ConcurrentHashMap.newKeySet();
     private final int port;
     private final AtomicBoolean running = new AtomicBoolean();
@@ -173,9 +173,9 @@ public final class RestartableQwpServer implements AutoCloseable {
 
     /**
      * Waits until one upgraded connection has been in the live set, unchanged, for
-     * {@code stableMillis}. "Live" means the server has already received a WebSocket frame on
-     * it, so the client's I/O loop finished the upgrade and is in its send loop rather than
-     * mid-connect. The stability window lets a recycle the client had already armed before the
+     * {@code stableMillis}. "Live" means the WebSocket upgrade has completed and the worker has
+     * entered the frame-reading path on it, so the client's I/O loop is past its connect and
+     * in its send loop. The stability window lets a recycle the client had already armed before the
      * caller paused resets fire at its next barrier and reconnect before the caller acts on
      * the connection. Polls every millisecond; returns false once {@code timeoutMillis} passes.
      */
@@ -292,9 +292,10 @@ public final class RestartableQwpServer implements AutoCloseable {
     }
 
     /**
-     * Records which upgraded connections have carried a frame. {@code resumeRecv} is the
-     * dispatcher's entry for every readable event after the protocol switch, so its first call
-     * for an fd means the client finished the upgrade and is running its send loop. The fd is
+     * Records which connections have completed the WebSocket upgrade. {@code resumeRecv} is the
+     * dispatcher's entry for every readable event after the protocol switch, and the dispatcher
+     * re-enters it right after the upgrade completes, before any frame has arrived, so its first
+     * call for an fd means the upgrade is done and the worker is reading frames on it. The fd is
      * added on entry rather than after {@code super} returns because a frame whose ack cannot
      * be sent at once surfaces as a backpressure exception, not a normal return. A
      * peer-disconnect event on a connection that never sent anything adds the fd and then

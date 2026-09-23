@@ -33,8 +33,8 @@ import org.junit.Test;
 import java.time.temporal.ChronoUnit;
 
 /**
- * Pins what {@link RestartableQwpServer#stop()} counts: an upgraded connection that has
- * carried a frame and that the client still holds when the workers halt counts as one live
+ * Pins what {@link RestartableQwpServer#stop()} counts: a connection whose WebSocket upgrade
+ * has completed and that the client still holds when the workers halt counts as one live
  * drop; a connection the client closed first, which the worker has already removed from the
  * live set, counts as zero. The reconnect fuzz test's DISCONNECTED floor is asserted against
  * this count.
@@ -60,7 +60,7 @@ public class RestartableQwpServerLiveTrackingTest extends AbstractCairoTest {
                 try (Sender first = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
                     first.table(TABLE_NAME).longColumn("id", 3).at(TS_NANOS + 2, ChronoUnit.NANOS);
                     first.flush();
-                    Assert.assertTrue("server never saw a frame from the first sender",
+                    Assert.assertTrue("server never saw a live connection from the first sender",
                             server.awaitStableLiveConnection(10_000, 20));
                     try (Sender second = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
                         second.table(TABLE_NAME).longColumn("id", 4).at(TS_NANOS + 3, ChronoUnit.NANOS);
@@ -87,11 +87,11 @@ public class RestartableQwpServerLiveTrackingTest extends AbstractCairoTest {
                 server.start();
                 Assert.assertEquals(0, server.liveConnectionCount());
 
-                // A client that has sent a frame and is still connected when the server stops.
+                // A client that has completed the upgrade and is still connected when the server stops.
                 try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
                     sender.table(TABLE_NAME).longColumn("id", 1).at(TS_NANOS, ChronoUnit.NANOS);
                     sender.flush();
-                    Assert.assertTrue("server never saw a frame from the sender",
+                    Assert.assertTrue("server never saw a live connection from the sender",
                             server.awaitStableLiveConnection(10_000, 20));
                     Assert.assertEquals(1, server.liveConnectionCount());
                     Assert.assertEquals("stop() must report the live connection it killed", 1, server.stop());
@@ -105,7 +105,7 @@ public class RestartableQwpServerLiveTrackingTest extends AbstractCairoTest {
                 try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
                     sender.table(TABLE_NAME).longColumn("id", 2).at(TS_NANOS + 1, ChronoUnit.NANOS);
                     sender.flush();
-                    Assert.assertTrue("server never saw a frame from the second sender",
+                    Assert.assertTrue("server never saw a live connection from the second sender",
                             server.awaitStableLiveConnection(10_000, 20));
                 }
                 TestUtils.assertEventually(() -> Assert.assertEquals(0, server.liveConnectionCount()));

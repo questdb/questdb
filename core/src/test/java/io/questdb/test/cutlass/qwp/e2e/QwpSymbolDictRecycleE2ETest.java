@@ -80,10 +80,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       not just a row count -- misattribution across the epoch boundary is
  *       silent while counts stay correct);</li>
  *   <li>the server actually accepted more than one ingress connection;</li>
- *   <li>a {@code SenderProgressHandler} observes a strictly increasing
- *       external FSN stream straight through every recycle boundary;</li>
- *   <li>a FSN captured well before the first recycle is still awaitable
- *       (and acked) after the recycle has happened.</li>
+ *   <li>the FSNs handed out by {@code flushAndGetSequence()} strictly
+ *       increase across both recycles, and a {@code SenderProgressHandler}
+ *       is still delivering acks in the final epoch;</li>
+ *   <li>a FSN captured in the epoch before the last recycle is still
+ *       awaitable (and acked) after that recycle has happened.</li>
  * </ul>
  * Runs the same scenario in both delta-SF (disk-backed {@code sf_dir}) and
  * memory mode, mirroring the client's own
@@ -230,6 +231,7 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
             }
 
             List<Long> ackedFsns = Collections.synchronizedList(new ArrayList<>());
+            List<Long> flushedFsns = new ArrayList<>();
             long finalEpochBase;
             long lastOrganicFsn = -1;
             long preRecycleFsn;
@@ -248,6 +250,7 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
                 preRecycleFsn = sender.flushAndGetSequence();
                 Assert.assertTrue("flushAndGetSequence() must return a real FSN for the first batch",
                         preRecycleFsn >= 0);
+                flushedFsns.add(preRecycleFsn);
                 Assert.assertTrue("first batch must be acked before the threshold is ever crossed",
                         sender.awaitAckedFsn(preRecycleFsn, 10_000));
                 Assert.assertFalse("threshold=" + SYMBOL_DICT_RESET_THRESHOLD
@@ -261,6 +264,7 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
                     }
                     long batchFsn = sender.flushAndGetSequence();
                     if (batchFsn >= 0) {
+                        flushedFsns.add(batchFsn);
                         Assert.assertTrue("batch ending at id=" + id + " must be acked within 10s",
                                 sender.awaitAckedFsn(batchFsn, 10_000));
                         lastOrganicFsn = batchFsn;
@@ -288,6 +292,7 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
                     id++;
                 }
                 long finalBatchFsn = sender.flushAndGetSequence();
+                flushedFsns.add(finalBatchFsn);
                 Assert.assertTrue("final batch ending at id=" + id + " must be acked within 10s",
                         sender.awaitAckedFsn(finalBatchFsn, 10_000));
 
@@ -354,48 +359,39 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
                     .expectSize()
                     .returns("count\n" + TOTAL_ROWS + "\n");
 
-            // Relational, not absolute: the exact recycle count depends on batch
-            // timing that this test does not pin (a time-based auto-flush could
-            // shift a batch boundary under load), but every healthy recycle
-            // produces exactly one new ingress connection regardless of how many
-            // recycles happened, so this is flake-free while still catching a
-            // regression that halves the recycle rate or reconnects twice per
-            // recycle -- neither of which a bare ">= 2" could see.
+            // Every healthy recycle produces exactly one new ingress connection:
+            // symbolDictEpoch is pinned at 2 above, so a skipped or doubled
+            // reconnect fails here.
             Assert.assertEquals("each recycle must produce exactly one new ingress connection",
                     symbolDictEpoch + 1, ingressConnections.get());
 
-            // FSN continuity: the progress handler must have observed a
-            // strictly increasing external FSN stream straight through every
-            // recycle boundary in the run above.
+            // FSN continuity from the producer's side: every value that
+            // flushAndGetSequence() handed out is external (epoch base plus
+            // internal FSN), so the sequence must strictly increase across both
+            // recycle boundaries. A base that failed to roll, or rolled short,
+            // shows up as a repeat or a step back here.
+            for (int i = 1, n = flushedFsns.size(); i < n; i++) {
+                Assert.assertTrue("flushAndGetSequence() must strictly increase across every recycle "
+                                + "boundary, got " + flushedFsns.get(i - 1) + " -> " + flushedFsns.get(i)
+                                + " at flush " + i,
+                        flushedFsns.get(i) > flushedFsns.get(i - 1));
+            }
+
+            // Progress-handler continuity: the dispatcher lives for the whole
+            // sender and only ever delivers increasing values, so the list
+            // cannot show a step back; what it can show is a dispatcher that
+            // stopped firing at a recycle boundary (a lost re-attachment to the
+            // rebuilt cursor loop at step 7). Anchoring on finalEpochBase, the
+            // base as of the LAST recycle, catches that: a delivery at or above
+            // it is necessarily an ack from the final epoch. A size bound would
+            // not do -- SenderProgressDispatcher is a single-slot coalescing
+            // mailbox, so the list length says nothing about how many acks landed.
             List<Long> snapshot = new ArrayList<>(ackedFsns);
             Assert.assertFalse("progress handler must have fired at least once", snapshot.isEmpty());
-            // Not vacuous, and anchored to survive every boundary, not just the
-            // first: a regression that drops the progress dispatcher's
-            // re-attachment to the rebuilt cursor loop after ANY recycle
-            // (QwpWebSocketSender's step-7 reconnect) stops every callback from
-            // that boundary onward. Comparing against preRecycleFsn alone would
-            // NOT catch this -- epoch 0 spans three batches, so a dispatcher
-            // dying at the very first boundary still leaves batch-2/3 acks in
-            // snapshot that are already > preRecycleFsn. Anchoring on
-            // finalEpochBase (the epoch base as of the LAST recycle, captured
-            // above before close()) closes that gap: any delivery at or above
-            // finalEpochBase is necessarily an ack from the final epoch, so
-            // this only passes if callbacks survived every recycle boundary
-            // the run crossed (symbolDictEpoch of them, asserted == 2 above).
-            // A size-based lower bound on snapshot would NOT work as a
-            // substitute or supplement here -- SenderProgressDispatcher is a
-            // single-slot coalescing watermark mailbox, so the list length
-            // says nothing about how many acks actually landed.
             Assert.assertTrue("progress handler must have kept firing through the final epoch, "
                             + "last observed FSN=" + snapshot.get(snapshot.size() - 1)
                             + ", finalEpochBase=" + finalEpochBase,
                     snapshot.get(snapshot.size() - 1) >= finalEpochBase);
-            for (int i = 1, n = snapshot.size(); i < n; i++) {
-                Assert.assertTrue("external FSN must strictly increase across every recycle "
-                                + "boundary, got " + snapshot.get(i - 1) + " -> " + snapshot.get(i)
-                                + " at index " + i,
-                        snapshot.get(i) > snapshot.get(i - 1));
-            }
         }, ingressConnections);
     }
 
