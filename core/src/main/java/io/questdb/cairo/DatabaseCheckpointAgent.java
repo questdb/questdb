@@ -53,6 +53,7 @@ import io.questdb.preferences.SettingsStore;
 import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -63,6 +64,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -191,6 +193,78 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             } else {
                 LOG.info().$("_preferences~store restored from checkpoint").$();
             }
+        }
+    }
+
+    /**
+     * Runs syncfs(2) on the filesystem holding {@code dir}. Only meaningful where
+     * {@link FilesFacade#isSyncfsFileSystemWide()}: there it flushes the whole filesystem and reports its
+     * writeback errors.
+     */
+    private static void syncFileSystemOf(FilesFacade ff, LPSZ dir) {
+        final long fd = TableUtils.openRO(ff, dir, LOG);
+        try {
+            ff.syncfs(fd);
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    /**
+     * Makes durable what a checkpoint restore step changed under {@code dir}: the restored files, or the
+     * removal of the trigger or of the checkpoint directory. A restore writes through many code paths, so
+     * this flushes whole filesystems rather than a tracked set of files.
+     * <ul>
+     *     <li>Linux: syncfs(2) on the filesystem holding {@code dir} and, with {@code includeVolumes}, on
+     *     every volume a table directory under {@code dir} links to. Unlike sync(2), syncfs(2) reports
+     *     writeback errors, so a restore that did not reach the device fails recovery.</li>
+     *     <li>Windows has no sync(2): {@code Files.sync()} is a stub that always returns -1, and flushing a
+     *     whole volume needs administrator rights. The OS writes the restored files back in its own
+     *     time.</li>
+     *     <li>Elsewhere: sync(2), which flushes every filesystem.</li>
+     * </ul>
+     */
+    private static void syncRestoredState(FilesFacade ff, Path dir, boolean includeVolumes) {
+        if (ff.isSyncfsFileSystemWide()) {
+            final int dirLen = dir.size();
+            syncFileSystemOf(ff, dir.$());
+            if (includeVolumes) {
+                syncVolumes(ff, dir, dirLen);
+            }
+            return;
+        }
+        if (ff.isRestrictedFileSystem()) {
+            LOG.info().$("no filesystem-wide sync on this platform, leaving restored state to OS write-back [dir=")
+                    .$(dir).I$();
+            return;
+        }
+        if (ff.sync() != 0) {
+            final int errno = ff.errno();
+            throw CairoException.dataSyncFailure(errno, "sync")
+                    .put("sync() failed during checkpoint recovery [errno=").put(errno).put(']');
+        }
+    }
+
+    /**
+     * Runs syncfs(2) once per volume that a table directory under {@code dir} links to. A table created
+     * IN VOLUME is a soft link to a directory on that volume, so the link target's parent names the
+     * volume, and every table on it shares one flush.
+     */
+    private static void syncVolumes(FilesFacade ff, Path dir, int dirLen) {
+        final ObjHashSet<String> volumes = new ObjHashSet<>();
+        try (Path target = new Path()) {
+            ff.iterateDir(dir.trimTo(dirLen).$(), (pUtf8NameZ, type) -> {
+                if (type == Files.DT_LNK && ff.isDirOrSoftLinkDirNoDots(dir, dirLen, pUtf8NameZ, type)) {
+                    target.trimTo(0);
+                    // A link that cannot be read still leads to its volume, since open() follows it.
+                    volumes.add(ff.readLink(dir, target) ? target.parent().toString() : dir.toString());
+                }
+            });
+            for (int i = 0, n = volumes.size(); i < n; i++) {
+                syncFileSystemOf(ff, target.of(volumes.get(i)).$());
+            }
+        } finally {
+            dir.trimTo(dirLen);
         }
     }
 
@@ -982,7 +1056,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 throw CairoException.critical(ff.errno())
                         .put("could not remove restore trigger file. file permission issues? [file=").put(path).put(']');
             }
-            syncAfterCheckpointRecovery(ff);
+            syncRestoredState(ff, path.of(configuration.getInstallRoot()), false);
 
             path.of(recoveredCheckpointDir);
             if (ff.exists(path.$()) && !ff.rmdir(path)) {
@@ -990,7 +1064,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         .put("could not remove checkpoint dir [dir=").put(path)
                         .put(", errno=").put(ff.errno()).put(']');
             }
-            syncAfterCheckpointRecovery(ff);
+            syncRestoredState(ff, path.of(recoveredCheckpointDir).parent(), false);
             recoveredCheckpointDir = null;
             recoveredCheckpointTriggerExists = false;
         }
@@ -1166,17 +1240,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             // not strand current-format adaptive tables markerless on the next ordinary startup.
             srcPath.trimTo(checkpointRootLen).$();
             memFile.close();
-            syncAfterCheckpointRecovery(ff);
+            syncRestoredState(ff, dstPath.trimTo(rootLen), true);
             recoveredCheckpointDir = srcPath.toString();
             recoveredCheckpointTriggerExists = triggerExists;
-        }
-    }
-
-    private static void syncAfterCheckpointRecovery(FilesFacade ff) {
-        if (ff.sync() != 0) {
-            final int errno = ff.errno();
-            throw CairoException.dataSyncFailure(errno, "sync")
-                    .put("sync() failed during checkpoint recovery [errno=").put(errno).put(']');
         }
     }
 }

@@ -36,6 +36,7 @@ import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CheckpointListener;
 import io.questdb.cairo.ColumnType;
@@ -87,6 +88,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
+import io.questdb.std.LongObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
@@ -1138,6 +1140,132 @@ public class CheckpointTest extends AbstractCairoTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns(expectedNextCount);
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreCompletesWhereSyncIsUnavailable() throws Exception {
+        // Windows has no sync(2), and its Files.sync() always returns -1. This suite does not run on Windows,
+        // so the facade plays that platform. Restore must complete and consume the trigger: treating the
+        // missing primitive as a failed flush halts the server, and the trigger it keeps repeats that on
+        // every start.
+        assertMemoryLeak(() -> {
+            createTableWithRowsAfterCheckpoint("t");
+
+            engine.clear();
+            createTriggerFile();
+            testFilesFacade.isWindowsSyncSimulated = true;
+            try {
+                engine.checkpointRecover();
+            } finally {
+                testFilesFacade.isWindowsSyncSimulated = false;
+                // A regression poisons the shared engine; keep the failure in this test.
+                resetDurabilityPoison();
+            }
+
+            Assert.assertFalse("restore must consume the trigger", testFilesFacade.exists(triggerFilePath.$()));
+            Assert.assertFalse("restore must remove the checkpoint", testFilesFacade.exists(path.trimTo(rootLen).$()));
+            assertQuery("select count() from t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreFailsAndKeepsTriggerOnSyncfsError() throws Exception {
+        // A restore whose flush fails has not reached the device. Recovery must fail loudly and keep the
+        // trigger and the checkpoint, so that the next start restores again instead of trusting the files.
+        assertMemoryLeak(() -> {
+            createTableWithRowsAfterCheckpoint("t");
+
+            engine.clear();
+            createTriggerFile();
+            testFilesFacade.isSyncfsForced = true;
+            try {
+                testFilesFacade.errorOnSyncfs = true;
+                try {
+                    engine.checkpointRecover();
+                    Assert.fail("a failed flush of the restored files must fail recovery");
+                } catch (CairoError e) {
+                    Assert.assertTrue(CairoException.isDataSyncFailure(e));
+                    TestUtils.assertContains(e.getMessage(), "could not syncfs");
+                } finally {
+                    testFilesFacade.errorOnSyncfs = false;
+                    resetDurabilityPoison();
+                }
+                Assert.assertTrue("the trigger must survive a failed flush", testFilesFacade.exists(triggerFilePath.$()));
+                Assert.assertTrue("the checkpoint must survive a failed flush", testFilesFacade.exists(path.trimTo(rootLen).$()));
+
+                // The next start repeats the restore and completes it.
+                engine.clear();
+                engine.checkpointRecover();
+            } finally {
+                testFilesFacade.isSyncfsForced = false;
+            }
+
+            Assert.assertFalse(testFilesFacade.exists(triggerFilePath.$()));
+            assertQuery("select count() from t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreFlushesEachVolumeOnce() throws Exception {
+        // A table created IN VOLUME lives on another filesystem behind a soft link, so flushing the database
+        // root's filesystem does not cover it. Two tables share one volume, and so one flush.
+        assertMemoryLeak(() -> {
+            final File volume = temp.newFolder("checkpoint_volume");
+            final String volumeAlias = "checkpoint_vol";
+            try (Path p = new Path()) {
+                configuration.getVolumeDefinitions().of(volumeAlias + "->" + volume.getAbsolutePath(), p, root);
+            }
+            try {
+                for (String tableName : new String[]{"v1", "v2"}) {
+                    execute("create table " + tableName + " (x long, ts timestamp) timestamp(ts) partition by day bypass wal in volume '" + volumeAlias + "'");
+                    execute("insert into " + tableName + " select x, x::timestamp from long_sequence(3)");
+                }
+                execute("checkpoint create");
+                execute("insert into v1 select x + 3, (x + 3)::timestamp from long_sequence(2)");
+
+                engine.clear();
+                createTriggerFile();
+                testFilesFacade.isSyncfsForced = true;
+                try {
+                    engine.checkpointRecover();
+                } finally {
+                    testFilesFacade.isSyncfsForced = false;
+                }
+
+                final String volumePath = volume.getCanonicalPath();
+                final String dbRootPath = new File(configuration.getDbRoot().toString()).getCanonicalPath();
+                int volumeFlushes = 0;
+                int dbRootFlushes = 0;
+                for (int i = 0, n = testFilesFacade.syncfsDirs.size(); i < n; i++) {
+                    final String dir = new File(testFilesFacade.syncfsDirs.getQuick(i)).getCanonicalPath();
+                    if (dir.equals(volumePath)) {
+                        volumeFlushes++;
+                    } else if (dir.equals(dbRootPath)) {
+                        dbRootFlushes++;
+                    }
+                }
+                Assert.assertEquals("flushed dirs: " + testFilesFacade.syncfsDirs, 1, volumeFlushes);
+                Assert.assertEquals("flushed dirs: " + testFilesFacade.syncfsDirs, 1, dbRootFlushes);
+                assertQuery("select count() from v1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n3\n");
+                engine.checkpointRelease();
+            } finally {
+                configuration.getVolumeDefinitions().clear();
+            }
         });
     }
 
@@ -4962,6 +5090,12 @@ public class CheckpointTest extends AbstractCairoTest {
         }
     }
 
+    private static void createTableWithRowsAfterCheckpoint(String tableName) throws SqlException {
+        execute("create table " + tableName + " as (select x from long_sequence(3))");
+        execute("checkpoint create");
+        execute("insert into " + tableName + " select x + 3 from long_sequence(2)");
+    }
+
     private static void createTriggerFile() {
         Files.touch(triggerFilePath.$());
     }
@@ -5054,6 +5188,12 @@ public class CheckpointTest extends AbstractCairoTest {
             out[i] = buf.getInt();
         }
         return out;
+    }
+
+    private static void resetDurabilityPoison() throws Exception {
+        final Field field = CairoEngine.class.getDeclaredField("durabilityFailure");
+        field.setAccessible(true);
+        ((AtomicReference<?>) field.get(engine)).set(null);
     }
 
     private static TestServerMain startServerMain(String root, String... envKeyValues) {
@@ -5854,10 +5994,18 @@ public class CheckpointTest extends AbstractCairoTest {
 
     private static class TestFilesFacade extends TestFilesFacadeImpl {
 
+        // Names the dir each fd was opened for, while isSyncfsForced records syncfs targets.
+        private final LongObjHashMap<String> openedPaths = new LongObjHashMap<>();
+        final ObjList<String> syncfsDirs = new ObjList<>();
         boolean errorOnRegistryFileCopy = false;
         boolean errorOnRegistryFileRemoval = false;
         boolean errorOnSync = false;
+        boolean errorOnSyncfs = false;
         boolean errorOnTriggerFileRemoval = false;
+        // Takes the syncfs(2) path on any OS, and records the dir behind every syncfs call.
+        boolean isSyncfsForced = false;
+        // Plays Windows: no filesystem-wide syncfs, a restricted file system, and a sync() that returns -1.
+        boolean isWindowsSyncSimulated = false;
 
         @Override
         public int copy(LPSZ from, LPSZ to) {
@@ -5882,18 +6030,56 @@ public class CheckpointTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isRestrictedFileSystem() {
+            return isWindowsSyncSimulated || super.isRestrictedFileSystem();
+        }
+
+        @Override
+        public boolean isSyncfsFileSystemWide() {
+            if (isWindowsSyncSimulated) {
+                return false;
+            }
+            return isSyncfsForced || super.isSyncfsFileSystemWide();
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            final long fd = super.openRO(name);
+            if (isSyncfsForced && fd > -1) {
+                openedPaths.put(fd, Utf8s.stringFromUtf8Bytes(name));
+            }
+            return fd;
+        }
+
+        @Override
         public int sync() {
-            if (!errorOnSync) {
+            if (!errorOnSync && !isWindowsSyncSimulated) {
                 return super.sync();
             }
             return -1;
         }
 
+        @Override
+        public void syncfs(long fd) {
+            if (isSyncfsForced) {
+                syncfsDirs.add(openedPaths.get(fd));
+            }
+            if (errorOnSyncfs) {
+                throw CairoException.dataSyncFailure(5, "syncfs").put("could not syncfs [fd=").put(fd).put(']');
+            }
+            super.syncfs(fd);
+        }
+
         void reset() {
             errorOnSync = false;
+            errorOnSyncfs = false;
             errorOnTriggerFileRemoval = false;
             errorOnRegistryFileRemoval = false;
             errorOnRegistryFileCopy = false;
+            isSyncfsForced = false;
+            isWindowsSyncSimulated = false;
+            openedPaths.clear();
+            syncfsDirs.clear();
         }
     }
 }
