@@ -561,17 +561,20 @@ import xml.etree.ElementTree as ET
 root = ET.parse(sys.argv[1]).getroot()
 ns = {'m': 'http://maven.apache.org/POM/4.0.0'}
 for plugin in root.findall('.//m:plugin', ns):
-    if plugin.findtext('m:artifactId', namespaces=ns) == 'maven-release-plugin':
-        config = plugin.find('m:configuration', ns)
-        text = ET.tostring(config, encoding='unicode')
-        if 'maven-central-release' in text or 'build-web-console' not in text:
-            raise SystemExit('release:perform profile configuration is unsafe')
-        if any(element in text for element in ('<preparationGoals>', '<pushChanges>', '<resume>')):
-            raise SystemExit('fixture requires release-plugin clean verify, pushChanges=true, and resume=true defaults')
-        print('effective release plugin keeps Central inactive; preparation defaults remain clean verify, pushChanges=true, resume=true')
-        break
+    if plugin.findtext('m:artifactId', namespaces=ns) != 'maven-release-plugin':
+        continue
+    config = plugin.find('m:configuration', ns)
+    if config is None:
+        continue
+    text = ET.tostring(config, encoding='unicode')
+    if 'maven-central-release' in text or 'build-web-console' not in text:
+        raise SystemExit('release:perform profile configuration is unsafe')
+    if any(element in text for element in ('<preparationGoals>', '<pushChanges>', '<resume>')):
+        raise SystemExit('fixture requires release-plugin clean verify, pushChanges=true, and resume=true defaults')
+    print('effective release plugin keeps Central inactive; preparation defaults remain clean verify, pushChanges=true, resume=true')
+    break
 else:
-    raise SystemExit('maven-release-plugin missing from effective POM')
+    raise SystemExit('configured maven-release-plugin missing from effective POM')
 PY
 
     probe_root="${temp_dir}/release-prepare-probe"
