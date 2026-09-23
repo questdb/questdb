@@ -71,8 +71,14 @@ import java.util.concurrent.atomic.AtomicReference;
  * Every even-indexed bounce is targeted: the bouncer pauses the producer's
  * reset requests and waits for a connection that has stayed live for 20 ms
  * before stopping, so the stop lands on an armed client; odd-indexed bounces
- * stay blind so restarts still land mid-recycle and mid-outage. That
- * overlap is the risk surface -- a recycle's engine teardown/epoch roll must
+ * stay blind so restarts still land mid-recycle and mid-outage.
+ * The schedule runs to a random 15-30 restart target and then continues,
+ * up to five times the target, until at least ten recycles have completed
+ * during the bouncing, so the recycle-density floor is a condition the
+ * schedule satisfies on any host rather than a bet on how fast this one
+ * reconnects (hosted Windows completes about one recycle per three
+ * bounces; a mac several per bounce).
+ * That overlap is the risk surface -- a recycle's engine teardown/epoch roll must
  * never observe (or be observed by) an in-flight ordinary reconnect, and vice
  * versa.
  * <p>
@@ -94,6 +100,11 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
 
     private static final int BATCH_SIZE = 25;
     private static final Log LOG = LogFactory.getLog(QwpSymbolDictRecycleReconnectFuzzTest.class);
+    // Recycle-density floor: the bouncer keeps bouncing past its restart target until this
+    // many recycles have completed during the bouncing, so the epoch assertion below is a
+    // schedule condition the run satisfies on any host, not a bet on how fast this host
+    // reconnects; only a run that reaches the ceiling first fails it.
+    private static final int MIN_RECYCLES_DURING_BOUNCES = 10;
     // Server defaults from DefaultIODispatcherConfiguration, mirroring
     // QwpIngressServerRestartFuzzTest -- RestartableQwpServer does not
     // override these, so the actual buffers are this size.
@@ -105,6 +116,12 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
     // still runs only at the client's own barrier (drained ring, no row in
     // progress), so a request that lands mid-outage waits like an organic arm.
     private static final int RESET_EVERY_N_BATCHES = 3;
+    // Ceiling on the bounce schedule as a multiple of its random restart target. Hosted
+    // Windows pays ~500 ms per reconnect into an outage (a refused loopback SYN is retried
+    // after 500 ms instead of returning ECONNREFUSED, and the client's foreground connect is
+    // untimed), so it completes about one recycle per three bounces; five times the 15-bounce
+    // low end leaves the floor a comfortable margin where three times it does not.
+    private static final int RESTART_CEILING_FACTOR = 5;
     private static final int SEND_BUFFER_SIZE = 131_072;
     // Comfortably above the reset threshold -- as in QwpSymbolDictRecycleE2ETest,
     // this keeps most in-epoch growth on genuinely novel symbols. Total rows
@@ -147,12 +164,15 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
             // 15..30 server bounces, randomly paced -- large enough to
             // interleave densely with the tens of recycles the reset cadence
             // produces, small enough to keep the run under a handful of
-            // seconds.
+            // seconds on a fast host. Past the target the bouncer keeps going
+            // only until MIN_RECYCLES_DURING_BOUNCES recycles have completed
+            // during the bouncing, up to the ceiling.
             int restartTarget = 15 + rnd.nextInt(16);
+            int restartCeiling = restartTarget * RESTART_CEILING_FACTOR;
             // One full stability-wait bound per bounce on top of the schedule itself, so a
             // stalled client fails the per-bounce wait assertion (10 s, naming the bounce)
             // before this outer ceiling can fire.
-            long bouncerBudgetSeconds = 120 + 10L * restartTarget;
+            long bouncerBudgetSeconds = 120 + 10L * restartCeiling;
             long tsBase = 1_700_000_000_000_000_000L;
             long tsStepNanos = 1_000L; // 1us per row, well under DAY partition
 
@@ -289,7 +309,16 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                         // the initial connect.
                         Assert.assertTrue("producer's first batch never drained",
                                 firstBatchAcked.await(60, TimeUnit.SECONDS));
-                        for (int i = 0; i < restartTarget; i++) {
+                        for (int i = 0; i < restartCeiling; i++) {
+                            if (i >= restartTarget) {
+                                // Schedule condition: past the target, bounce only while the
+                                // recycle floor is unmet (a dead producer leaves senderRef set
+                                // and the targeted wait below fails loudly within 10 s).
+                                QwpWebSocketSender s = senderRef.get();
+                                if (s != null && s.getSymbolDictEpoch() >= MIN_RECYCLES_DURING_BOUNCES) {
+                                    break;
+                                }
+                            }
                             Os.sleep(40 + rnd.nextInt(160)); // 40..199ms uptime
                             final boolean targeted = (i & 1) == 0;
                             if (targeted) {
@@ -357,7 +386,7 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                 }
 
                 // Sample the sender's cumulative reset counter the moment the
-                // bouncer's fixed restart schedule finishes, so the floor below
+                // bouncer's restart schedule finishes, so the floor below
                 // proves recycling happened DURING the bouncing window itself,
                 // not in the post-bounce grace window that follows -- an
                 // end-of-run-only sample could in principle be satisfied by a
@@ -385,10 +414,12 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                             + "interleaving (rowsProduced=" + rowsProduced.get() + ")", producerError.get());
                 }
 
-                Assert.assertTrue("expected the reset threshold to be crossed many times DURING the "
-                                + restartsDone.get() + " server restarts, but symbolDictEpoch="
-                                + epochAtBounceEnd + " when the bounce schedule finished",
-                        epochAtBounceEnd >= 10);
+                Assert.assertTrue("expected the reset threshold to be crossed at least "
+                                + MIN_RECYCLES_DURING_BOUNCES + " times DURING the server restarts, but "
+                                + "symbolDictEpoch=" + epochAtBounceEnd + " when the bounce schedule finished "
+                                + "after " + restartsDone.get() + " restarts (target " + restartTarget
+                                + ", ceiling " + restartCeiling + ")",
+                        epochAtBounceEnd >= MIN_RECYCLES_DURING_BOUNCES);
 
                 long expected = rowsProduced.get();
                 long symbolDictEpoch = symbolDictEpochHolder.get();
@@ -402,14 +433,20 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                 }
                 LOG.info().$("fuzz run complete: rowsProduced=").$(expected)
                         .$(", serverRestarts=").$(restarts)
+                        .$(", restartTarget=").$(restartTarget)
+                        .$(", restartCeiling=").$(restartCeiling)
                         .$(", targetedBounces=").$(targeted)
                         .$(", targetedLiveDrops=").$(targetedLiveDropCount)
                         .$(", liveDrops=").$(liveDropCount)
                         .$(", unplannedDisconnects=").$(unplanned)
                         .$(", symbolDictEpoch=").$(symbolDictEpoch).$();
 
-                Assert.assertEquals("bouncer must have completed its full randomized restart schedule",
-                        restartTarget, restarts);
+                Assert.assertTrue("bouncer must have completed at least its randomized restart target: "
+                                + "restartTarget=" + restartTarget + ", restarts=" + restarts,
+                        restarts >= restartTarget);
+                Assert.assertTrue("bouncer must have stopped at its ceiling: restartCeiling="
+                                + restartCeiling + ", restarts=" + restarts,
+                        restarts <= restartCeiling);
                 // Every targeted bounce stopped the server while the client held a connection
                 // that had already carried a frame, with reset requests paused. The only way
                 // such a stop is not counted is a recycle armed before the pause firing inside
