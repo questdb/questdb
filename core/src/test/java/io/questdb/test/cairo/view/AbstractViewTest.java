@@ -40,6 +40,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -191,10 +192,19 @@ class AbstractViewTest extends AbstractCairoTest {
     }
 
     void assertQueryAndPlan(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, String expectedPlan, String... expectedReferencedViews) throws Exception {
-        assertQuery(query)
-                .noLeakCheck()
-                .timestamp(expectedTimestamp)
-                .supportsRandomAccess(supportsRandomAccess)
+        assertQueryAndPlan(expected, query, expectedTimestamp, false, supportsRandomAccess, expectSize, expectedPlan, expectedReferencedViews);
+    }
+
+    /**
+     * @param timestampUnordered when true the result is asserted to carry {@code expectedTimestamp} as its
+     *                           designated timestamp without any scan-order claim. Needed when the query
+     *                           re-designates a timestamp over a factory that does not emit rows in
+     *                           timestamp order (keyed GROUP BY, UNION, non-timestamp sort).
+     */
+    void assertQueryAndPlan(String expected, String query, String expectedTimestamp, boolean timestampUnordered, boolean supportsRandomAccess, boolean expectSize, String expectedPlan, String... expectedReferencedViews) throws Exception {
+        QueryAssertion assertion = assertQuery(query).noLeakCheck();
+        assertion = timestampUnordered ? assertion.timestampUnordered(expectedTimestamp) : assertion.timestamp(expectedTimestamp);
+        assertion.supportsRandomAccess(supportsRandomAccess)
                 .expectSize(expectSize)
                 .returns(expected);
         assertReferencedViews(query, expectedReferencedViews);
