@@ -340,6 +340,7 @@ run_release_lifecycle_probes() {
     local probe_root
     local probe_remote
     local probe_receives
+    local probe_head_before
 
     if ! java -version 2>&1 | grep -Eq 'version "(2[5-9]|[3-9][0-9])\.'; then
         fail "RUN_MAVEN_LIFECYCLE_TESTS=1 requires JDK 25 or newer"
@@ -615,11 +616,14 @@ PY
         git commit -m 'inject external snapshot client' > /dev/null
     )
     : > "${probe_receives}"
+    probe_head_before="$(git -C "${probe_root}" rev-parse HEAD)"
     assert_failure release-prepare-snapshot bash -c "cd '${probe_root}' && mvn -B -pl core -am release:prepare -DpreparationGoals=validate -DautoVersionSubmodules=true"
     grep -qi 'snapshot' "${temp_dir}/release-prepare-snapshot.out" || fail "release:prepare did not reject the external snapshot client"
-    [[ -z "$(git -C "${probe_root}" status --porcelain)" ]] || fail "snapshot release:prepare changed the local repository"
+    [[ "$(git -C "${probe_root}" rev-parse HEAD)" == "${probe_head_before}" ]] || fail "snapshot release:prepare created a local release commit"
+    git -C "${probe_root}" diff --quiet || fail "snapshot release:prepare modified a tracked file"
     [[ -z "$(git -C "${probe_root}" tag -l)" ]] || fail "snapshot release:prepare created a local tag"
     [[ ! -s "${probe_receives}" ]] || fail "snapshot release:prepare pushed to the audited remote"
+    git -C "${probe_root}" clean -fd > /dev/null
 
     python3 - "${probe_root}/pom.xml" "${probe_root}/core/pom.xml" "${probe_remote}" <<'PY'
 from pathlib import Path
