@@ -53,7 +53,7 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
 
             final ObjList<CloseCountingRecordCursorFactory> factories = new ObjList<>();
             final String functionName = "owned_cursor";
-            TableFunctionTestUtils.register(engine, functionName, SqlExecutionRequirements.NONE, null, factories);
+            TableFunctionTestUtils.register(engine, functionName, SqlExecutionRequirements.NONE, factories);
             try {
                 // validateAndOptimiseInsertAsSelect() optimises FIRST and only then compares the column
                 // count, so the rejection lands in exactly the window this test is about: the optimiser
@@ -85,7 +85,7 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
 
             final ObjList<CloseCountingRecordCursorFactory> factories = new ObjList<>();
             final String functionName = "owned_cursor";
-            TableFunctionTestUtils.register(engine, functionName, SqlExecutionRequirements.NONE, null, factories);
+            TableFunctionTestUtils.register(engine, functionName, SqlExecutionRequirements.NONE, factories);
             try {
                 // The counterpart of the rejection above: when the statement is accepted, generation owns
                 // every instantiated factory and the compiled tree - nothing else - closes it, once. Without

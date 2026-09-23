@@ -42,10 +42,7 @@ import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
-
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Registers a synthetic FROM/JOIN table function whose cursor factory counts its own closes.
@@ -67,8 +64,7 @@ public final class TableFunctionTestUtils {
             CairoEngine engine,
             String functionName,
             int executionRequirements,
-            @Nullable AtomicInteger constructionCount,
-            @Nullable ObjList<CloseCountingRecordCursorFactory> instantiatedFactories
+            ObjList<CloseCountingRecordCursorFactory> instantiatedFactories
     ) throws SqlException {
         final ObjList<FunctionFactoryDescriptor> descriptors = new ObjList<>();
         descriptors.add(new FunctionFactoryDescriptor(new FunctionFactory() {
@@ -95,16 +91,11 @@ public final class TableFunctionTestUtils {
                     CairoConfiguration configuration,
                     SqlExecutionContext executionContext
             ) {
-                if (constructionCount != null) {
-                    constructionCount.incrementAndGet();
-                }
                 final GenericRecordMetadata metadata = new GenericRecordMetadata();
                 metadata.add(new TableColumnMetadata("permission", ColumnType.VARCHAR));
                 final CloseCountingRecordCursorFactory factory =
                         new CloseCountingRecordCursorFactory(new EmptyTableRecordCursorFactory(metadata));
-                if (instantiatedFactories != null) {
-                    instantiatedFactories.add(factory);
-                }
+                instantiatedFactories.add(factory);
                 return new CursorFunction(factory);
             }
         }));

@@ -197,42 +197,6 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewAdministrativeCursorFunctionInJoin() throws Exception {
-        assertMemoryLeak(() -> {
-            createTable(TABLE1);
-
-            final AtomicInteger constructionCount = new AtomicInteger();
-            final String functionName = "ent_admin_cursor";
-            TableFunctionTestUtils.register(
-                    engine,
-                    functionName,
-                    SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT,
-                    constructionCount,
-                    null
-            );
-            try {
-                final String sql = "create materialized view test as (select t1.ts, count() from " + TABLE1 +
-                        " t1 cross join " + functionName + "() sample by 30s) partition by day";
-                assertQuery(sql)
-                        .noLeakCheck()
-                        .fails(
-                                sql.indexOf(functionName + "()"),
-                                "administrative function cannot be used in materialized view: " + functionName
-                        );
-                // The optimiser instantiates a FROM/JOIN cursor function while compileMatViewQuery still
-                // allows non-deterministic functions, so FunctionParser's pre-check - which rejects before
-                // newInstance() - cannot fire here. A non-zero construction count therefore pins the
-                // rejection on the post-optimise backstop in SqlCompilerImpl.compileMatViewQuery, and the
-                // function name in the message can only come from SqlExecutionRequirements.getFunctionName().
-                assertEquals(1, constructionCount.get());
-                assertNull(getMatViewDefinition("test"));
-            } finally {
-                TableFunctionTestUtils.unregister(engine, functionName);
-            }
-        });
-    }
-
-    @Test
     public void testCreateMatViewAsExpectedPosition() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery("create materialized view test select as sym")
@@ -501,7 +465,6 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     engine,
                     functionName,
                     SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT,
-                    null,
                     factories
             );
             try {
@@ -513,10 +476,14 @@ public class CreateMatViewTest extends AbstractCairoTest {
                                 sql.indexOf(functionName + "()"),
                                 "administrative function cannot be used in materialized view: " + functionName
                         );
-                // SqlOptimiser instantiates the JOIN cursor function and holds the factory in flight until
-                // code generation takes ownership of it. The rejection throws after optimise() returned and
-                // before generation runs, so no factory tree owns it and the compile path itself has to
-                // close it - exactly once, since a second close would be a use-after-free.
+                // The optimiser instantiates a FROM/JOIN cursor function while compileMatViewQuery still
+                // allows non-deterministic functions, so FunctionParser's pre-check - which rejects before
+                // newInstance() - cannot fire here. A constructed factory therefore pins the rejection on the
+                // post-optimise backstop in SqlCompilerImpl.compileMatViewQuery, and the function name in the
+                // message can only come from SqlExecutionRequirements.getFunctionName(). That backstop throws
+                // after optimise() returned and before generation takes ownership of the factory, so the
+                // compile path itself has to close it - exactly once, since a second close would be a
+                // use-after-free.
                 assertEquals(1, factories.size());
                 assertEquals(1, factories.getQuick(0).getCloseCount());
                 assertNull(getMatViewDefinition("test"));
@@ -538,7 +505,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             final ObjList<CloseCountingRecordCursorFactory> factories = new ObjList<>();
             final String functionName = "plain_cursor";
-            TableFunctionTestUtils.register(engine, functionName, SqlExecutionRequirements.NONE, null, factories);
+            TableFunctionTestUtils.register(engine, functionName, SqlExecutionRequirements.NONE, factories);
             try {
                 execute("create materialized view test as (select t1.ts, count() from " + TABLE1 +
                         " t1 cross join " + functionName + "() sample by 30s) partition by day");
