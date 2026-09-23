@@ -2857,6 +2857,73 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testScalarCleanupReleasesTtlEvictedPartitionsWhenFull() throws Exception {
+        assertMemoryLeak(() -> {
+            // Wall-clock TTL measures age from this clock. 2024-01-04T12:00 keeps the Jan 3 and Jan 4
+            // partitions of mv_ttl under TTL 1 DAY and drops Jan 1 and Jan 2.
+            setCurrentMicros(1_704_369_600_000_000L);
+            execute("CREATE TABLE base_kept (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base_kept VALUES
+                        ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                        ('B', 2.0, '2024-01-02T00:00:00.000000Z'),
+                        ('C', 3.0, '2024-01-03T00:00:00.000000Z')
+                    """);
+            execute("CREATE TABLE base_ttl (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base_ttl VALUES
+                        ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                        ('B', 2.0, '2024-01-02T00:00:00.000000Z'),
+                        ('C', 3.0, '2024-01-03T00:00:00.000000Z'),
+                        ('D', 4.0, '2024-01-04T00:00:00.000000Z')
+                    """);
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv_kept AS (SELECT * FROM base_kept) EXPIRE ROWS WHEN v < 0");
+            execute("CREATE MATERIALIZED VIEW mv_ttl AS (SELECT * FROM base_ttl) EXPIRE ROWS WHEN v < 0");
+            drainWalAndMatViewQueues();
+
+            final TableToken kept = engine.verifyTableName("mv_kept");
+            final TableToken ttl = engine.verifyTableName("mv_ttl");
+            final String keptPredicate = expiryPredicate("mv_kept");
+            final String ttlPredicate = expiryPredicate("mv_ttl");
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                // Two views share the cap. mv_kept fills two slots; mv_ttl can store one of its three
+                // non-active partitions, so the later two are counted on every sweep until a slot frees.
+                job.setMaxCachedPartitions(3);
+                Assert.assertFalse(job.cleanupTable(kept, keptPredicate));
+                Assert.assertFalse(job.cleanupTable(kept, keptPredicate));
+                Assert.assertEquals(2, job.getScalarPartitionScanCount());
+
+                Assert.assertFalse(job.cleanupTable(ttl, ttlPredicate));
+                Assert.assertEquals(5, job.getScalarPartitionScanCount());
+                Assert.assertFalse(job.cleanupTable(ttl, ttlPredicate));
+                Assert.assertEquals("a full cache keeps counting the partitions it could not store",
+                        7, job.getScalarPartitionScanCount());
+
+                execute("ALTER MATERIALIZED VIEW mv_ttl SET TTL 1 DAY");
+                drainWalAndMatViewQueues();
+                assertQuery("select count() p from table_partitions('mv_ttl')")
+                        .noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
+
+                Assert.assertFalse(job.cleanupTable(ttl, ttlPredicate));
+                Assert.assertEquals("the sweep that sees the TTL drop stores the surviving partition",
+                        8, job.getScalarPartitionScanCount());
+                Assert.assertFalse(job.cleanupTable(ttl, ttlPredicate));
+                Assert.assertEquals("the surviving partition stays cached",
+                        8, job.getScalarPartitionScanCount());
+                Assert.assertFalse(job.cleanupTable(kept, keptPredicate));
+                Assert.assertEquals("the other view keeps the partitions it already stored",
+                        8, job.getScalarPartitionScanCount());
+            }
+
+            assertQuery("select sym from mv_ttl order by sym").noLeakCheck().returns("sym\nC\nD\n");
+            assertQuery("select sym from mv_kept order by sym").noLeakCheck().returns("sym\nA\nB\nC\n");
+            assertQuery("select count() p from table_partitions('mv_kept')")
+                    .noRandomAccess().expectSize().noLeakCheck().returns("p\n3\n");
+        });
+    }
+
+    @Test
     public void testScalarCleanupRescansWhenThePredicateChanges() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");

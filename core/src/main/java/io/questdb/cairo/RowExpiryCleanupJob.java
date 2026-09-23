@@ -50,6 +50,7 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
@@ -161,9 +162,13 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private final LongList partitionNextFloors = new LongList();
     private final LongList partitionRowCounts = new LongList();
     // Per directory name: the predicate those SKIP verdicts were computed for, and floor -> generation.
-    // A dropped view, a changed predicate, or a wiped partition removes its own entries. The notebook
-    // is never cleared as a whole, so a full notebook still skips the partitions it already holds.
+    // A dropped view, a changed predicate, a partition this job wipes, or a floor absent from this
+    // sweep's non-active snapshot removes its own entries. The notebook is never cleared as a whole,
+    // so a full notebook still skips the partitions it already holds.
     private final CharSequenceObjHashMap<ScalarPartitionCache> scalarPartitionCaches = new CharSequenceObjHashMap<>(4);
+    // Floors present in the current view's non-active snapshot. Rebuilt for each release pass.
+    // LONG_NULL is the empty-slot marker, and a logical partition floor never takes that value.
+    private final LongHashSet scalarPartitionFloorSet = new LongHashSet(16, LongHashSet.DEFAULT_LOAD_FACTOR, Numbers.LONG_NULL);
     private final StringSink scalarPartitionKey = new StringSink();
     private int cachedPartitionCount;
     private int maxCachedPartitions = MAX_CACHED_PARTITIONS;
@@ -355,6 +360,10 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             // newer one takes over. Reads stay correct throughout; see
             // RowExpiryUtil.ENFORCEMENT_FILTER_AND_RECLAIM.
             if (partitionCount < 2) {
+                // The reader sees no non-active partition. partitionFloors is still empty, and that
+                // empty snapshot is complete: every cached floor for this view is gone, or it is the
+                // single active partition this sweep does not clean.
+                releaseScalarPartitionsAbsentFromSnapshot(tableToken);
                 return false;
             }
             final TxReader txReader = reader.getTxFile();
@@ -431,6 +440,11 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // yields a different expiry verdict as now() advances; caching a SKIP there would suppress the later
         // re-scan that must reclaim the partition once it ages past the threshold.
         final boolean isScalarGenerationCacheEnabled = timestampThreshold == Numbers.LONG_NULL && isPredicateDeterministic;
+        if (isScalarGenerationCacheEnabled) {
+            // Drop floors TTL or another writer already removed. The slots free up before this
+            // sweep stores SKIP verdicts for the partitions that remain.
+            releaseScalarPartitionsAbsentFromSnapshot(tableToken);
+        }
         // A REPLACE rewrites every surviving row of a partition, so the job does one only when a large
         // enough fraction of that partition is expired. A clock threshold moves through a partition across
         // many sweeps. With daily partitions and the default cleanup interval of 1 hour, the partition that
@@ -1042,6 +1056,39 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         if (index < 0) {
             cache.generations.removeAt(index);
             cachedPartitionCount--;
+        }
+    }
+
+    /**
+     * Removes SKIP verdicts whose logical floor is absent from {@link #partitionFloors}.
+     * <p>
+     * The caller has finished this view's non-active snapshot. A floor missing from it was
+     * removed outside this job, TTL included, and its slot can be reused. Floors still in the
+     * snapshot stay cached. The cache key is the decimal form of that same logical floor.
+     */
+    private void releaseScalarPartitionsAbsentFromSnapshot(TableToken tableToken) {
+        final ScalarPartitionCache cache = scalarPartitionCaches.get(tableToken.getDirName());
+        if (cache == null || cache.generations.size() == 0) {
+            return;
+        }
+        scalarPartitionFloorSet.clear();
+        for (int i = 0, n = partitionFloors.size(); i < n; i++) {
+            scalarPartitionFloorSet.add(partitionFloors.getQuick(i));
+        }
+        final CharSequenceLongHashMap generations = cache.generations;
+        final ObjList<CharSequence> floorKeys = generations.keys();
+        for (int i = floorKeys.size() - 1; i >= 0; i--) {
+            final CharSequence floorKey = floorKeys.getQuick(i);
+            // Keys are written by StringSink.put(long), which appends the decimal floor.
+            final long floorTs = Numbers.parseLongQuiet(floorKey);
+            if (floorTs != Numbers.LONG_NULL && scalarPartitionFloorSet.contains(floorTs)) {
+                continue;
+            }
+            final int index = generations.keyIndex(floorKey);
+            if (index < 0) {
+                generations.removeAt(index);
+                cachedPartitionCount--;
+            }
         }
     }
 
