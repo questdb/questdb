@@ -841,6 +841,56 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareVariableAsSubQueryWithTopLevelComma() throws Exception {
+        assertMemoryLeak(() -> {
+            // A subquery that opens with its own DECLARE is still a subquery, not a value list,
+            // however many commas its select list, its DECLARE or its ORDER BY puts directly inside
+            // the brackets.
+            assertQuery("DECLARE @x := (DECLARE @y := 4 SELECT @y AS a, 5 AS b) SELECT * FROM @x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            4\t5
+                            """);
+            assertQuery("DECLARE @x := (DECLARE @a := 1, @b := 2 SELECT @a + @b AS s) SELECT * FROM @x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s
+                            3
+                            """);
+            assertQuery("DECLARE @x := (/* leading */ DECLARE @y := 4 SELECT @y AS a, 5 AS b) SELECT * FROM @x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            4\t5
+                            """);
+            assertQuery("DECLARE @x := (DECLARE @n := 2 SELECT x FROM long_sequence(3) ORDER BY x % @n, x) SELECT * FROM @x ORDER BY x DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            3
+                            2
+                            1
+                            """);
+            // A view body is parsed again on every read, so a stored body of this shape has to
+            // keep parsing too.
+            execute("CREATE VIEW v_decl AS (DECLARE @x := (DECLARE @y := 4 SELECT @y AS a, 5 AS b) SELECT * FROM @x)");
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM v_decl")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            4\t5
+                            """);
+        });
+    }
+
+    @Test
     public void testDeclareVariableDefinedByAnotherVariable() throws Exception {
         assertModel("select-virtual 2 2, 2 * 2 column from (long_sequence(1))",
                 "DECLARE @y := 2, @y2 := (@y * @y) SELECT @y, @y2", ExecutionModel.QUERY);

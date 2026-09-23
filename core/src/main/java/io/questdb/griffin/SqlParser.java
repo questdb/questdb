@@ -3795,9 +3795,12 @@ public class SqlParser {
         // A bracketed subquery is not a list. Its select list, ORDER BY and GROUP BY put commas at
         // the very depth a separator sits at, so without this a subquery would be read as a list
         // and reported as a misused one, rather than getting the error that describes what was
-        // actually written.
+        // actually written. A subquery may open with its own DECLARE, whose declarations are
+        // comma-separated too.
         final int firstWord = skipIgnorable(content, i + 1, len);
-        if (isWordAt(content, firstWord, len, "select") || isWordAt(content, firstWord, len, "with")) {
+        if (isWordAt(content, firstWord, len, "select")
+                || isWordAt(content, firstWord, len, "with")
+                || isWordAt(content, firstWord, len, "declare")) {
             return false;
         }
         // An empty bracket pair is a list with nothing in it, never a scalar. Claiming it here
@@ -6680,7 +6683,11 @@ public class SqlParser {
             final ExpressionNode decl = decls.get(name);
             if (decl != null) {
                 // decls hold the whole `@name := value` assignment; the value is its right side.
-                viewAudit.addParam(name, decl.rhs);
+                // It is copied because every reference to the variable is replaced by that same
+                // node, and the optimiser rewrites the query's expressions in place: `NOT @flag`
+                // over `@flag := (1 = 1)` turns the node into `1 != 1`, and the audit would then
+                // record the negation of the value the read was given.
+                viewAudit.addParam(name, ExpressionNode.deepClone(expressionNodePool, decl.rhs));
             }
         }
         viewAudit.sortParams();

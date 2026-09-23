@@ -36,8 +36,9 @@ import io.questdb.std.ObjectFactory;
  * <p>
  * It names the view and pairs each of the view's {@code DECLARE AUDITED} parameters with the
  * expression that parameter resolved to at this reference site - the caller's override where the
- * caller supplied one, the view's own default otherwise. The expression is what the parser
- * substituted into the view body, so it is exactly what the read filters on.
+ * caller supplied one, the view's own default otherwise. The expression is a copy of what the
+ * parser substituted into the view body, taken before the optimiser rewrites the body's
+ * expressions in place, so it is exactly the value the read was given.
  * <p>
  * {@code AUDITED} is what decides membership here, not {@code OVERRIDABLE}: the two markings are
  * independent, and a parameter no caller can set still resolves differently on every execution when
