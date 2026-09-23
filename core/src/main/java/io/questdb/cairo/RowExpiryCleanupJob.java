@@ -161,11 +161,6 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private final LongList partitionFloors = new LongList();
     private final LongList partitionNextFloors = new LongList();
     private final LongList partitionRowCounts = new LongList();
-    // Per directory name: the predicate those SKIP verdicts were computed for, and floor -> generation.
-    // A dropped view, a changed predicate, a partition this job wipes, or a floor absent from this
-    // sweep's non-active snapshot removes its own entries. The notebook is never cleared as a whole,
-    // so a full notebook still skips the partitions it already holds.
-    private final CharSequenceObjHashMap<ScalarPartitionCache> scalarPartitionCaches = new CharSequenceObjHashMap<>(4);
     // Floors present in the current view's non-active snapshot. Rebuilt for each release pass.
     // LONG_NULL is the empty-slot marker, and a logical partition floor never takes that value.
     private final LongHashSet scalarPartitionFloorSet = new LongHashSet(16, LongHashSet.DEFAULT_LOAD_FACTOR, Numbers.LONG_NULL);
@@ -175,6 +170,11 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private long lastExpiryPolicyVersion = -1;
     private long nextDiscoveryDeadlineMicros = NO_LAST_RUN;
     private long policyDiscoveryCount;
+    // Per directory name: the predicate those SKIP verdicts were computed for, and floor -> generation.
+    // A dropped view, a changed predicate, a partition this job wipes, or a floor absent from this
+    // sweep's non-active snapshot removes its own entries. The notebook is never cleared as a whole,
+    // so a full notebook still skips the partitions it already holds.
+    private CharSequenceObjHashMap<ScalarPartitionCache> scalarPartitionCaches = new CharSequenceObjHashMap<>(4);
     private long scalarPartitionScanCount;
     private boolean isLastCleanupDeferred;
     private boolean isLastCleanupFailed;
@@ -1019,6 +1019,46 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         return generation * 31 + rowCount;
     }
 
+    private void pruneScalarPartitionCaches() {
+        if (scalarPartitionCaches.size() == 0) {
+            return;
+        }
+        // Discovery contains each policied directory once. Probe the existing hash map rather
+        // than scanning the discovery snapshot separately for every cached view.
+        int retainedCacheCount = 0;
+        int retainedPartitionCount = 0;
+        for (int i = 0, n = discoveredTokens.size(); i < n; i++) {
+            final ScalarPartitionCache cache = scalarPartitionCaches.get(discoveredTokens.getQuick(i).getDirName());
+            if (cache != null) {
+                final String predicate = discoveredPredicates.getQuick(i);
+                if (!Chars.equals(cache.predicate, predicate)) {
+                    cachedPartitionCount -= cache.generations.size();
+                    cache.generations.clear();
+                    cache.predicate = predicate;
+                }
+                retainedCacheCount++;
+                retainedPartitionCount += cache.generations.size();
+            }
+        }
+        if (retainedCacheCount == scalarPartitionCaches.size()) {
+            return;
+        }
+        // removeAt also scans the map's key list. Rebuild only when a directory disappears,
+        // retaining the same cache objects, including empty ones, for every surviving policy.
+        // Leave a spare slot so the last insertion cannot trigger a rehash.
+        final CharSequenceObjHashMap<ScalarPartitionCache> retainedCaches = new CharSequenceObjHashMap<>(retainedCacheCount + 1);
+        for (int i = 0, n = discoveredTokens.size(); i < n; i++) {
+            final String dirName = discoveredTokens.getQuick(i).getDirName();
+            final ScalarPartitionCache cache = scalarPartitionCaches.get(dirName);
+            if (cache != null) {
+                retainedCaches.put(dirName, cache);
+            }
+        }
+        // Publish evictions and their accounting only after the replacement is complete.
+        scalarPartitionCaches = retainedCaches;
+        cachedPartitionCount = retainedPartitionCount;
+    }
+
     /**
      * Discards the prepared-but-unsequenced reclamation when the demote gate refuses it. The survivor rows a
      * REPLACE sweep appended sit in the writer's current segment and were never sequenced, so rolling the
@@ -1123,32 +1163,6 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         final ScalarPartitionCache cache = new ScalarPartitionCache(predicate);
         scalarPartitionCaches.putAt(index, Chars.toString(dirName), cache);
         return cache;
-    }
-
-    private void pruneScalarPartitionCaches() {
-        final ObjList<CharSequence> dirNames = scalarPartitionCaches.keys();
-        for (int i = dirNames.size() - 1; i >= 0; i--) {
-            final CharSequence dirName = dirNames.getQuick(i);
-            final int discovered = discoveredDirIndex(dirName);
-            final ScalarPartitionCache cache = scalarPartitionCaches.valueQuick(i);
-            if (discovered < 0) {
-                cachedPartitionCount -= cache.generations.size();
-                scalarPartitionCaches.removeAt(scalarPartitionCaches.keyIndex(dirName));
-            } else if (!Chars.equals(cache.predicate, discoveredPredicates.getQuick(discovered))) {
-                cachedPartitionCount -= cache.generations.size();
-                cache.generations.clear();
-                cache.predicate = discoveredPredicates.getQuick(discovered);
-            }
-        }
-    }
-
-    private int discoveredDirIndex(CharSequence dirName) {
-        for (int i = 0, n = discoveredTokens.size(); i < n; i++) {
-            if (Chars.equals(discoveredTokens.getQuick(i).getDirName(), dirName)) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     private void clearScalarPartitionCaches() {

@@ -25,21 +25,177 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.cairo.RowExpiryCleanupJob;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
 public class RowExpiryCleanupJobCacheTest extends AbstractCairoTest {
     private static final long HOUR_MICROS = 3_600_000_000L;
     private static final int OTHER_CACHE_SIZE = 4;
     private static final String PREDICATE = "v < 0";
+
+    @Test
+    public void testPruneAllAbsentViews() throws Exception {
+        assertPruneViews(1024, 0, 1024);
+    }
+
+    @Test
+    public void testPruneDroppedAndRecreatedViewDoesNotInheritCache() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken dropped = token("recreated", 1);
+            final TableToken recreated = token("recreated", 2);
+            final TableToken kept = token("kept", 3);
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                createCache(job, dropped, 3);
+                final CharSequenceLongHashMap keptGenerations = createCache(job, kept, 2);
+                final Object keptCache = cache(job, kept);
+                discover(job, recreated, PREDICATE);
+                // A rename keeps the directory identity, unlike dropping and recreating the view.
+                discover(job, kept.renamed("renamed"), PREDICATE);
+
+                prune(job);
+
+                Assert.assertNull(cache(job, dropped));
+                Assert.assertNull("discovery must not create a cache for the replacement view", cache(job, recreated));
+                Assert.assertSame(keptCache, cache(job, kept));
+                Assert.assertSame(keptGenerations, generations(job, kept));
+                assertEntries(keptGenerations, 2, 0, 0);
+                Assert.assertEquals(1, cacheMap(job).size());
+                Assert.assertEquals(2, cachedPartitionCount(job));
+            }
+        });
+    }
+
+    @Test
+    public void testPruneDroppedPolicyFreesCapacityOnDiscovery() throws Exception {
+        assertPruneRemovedViewFreesCapacity("ALTER MATERIALIZED VIEW mv_removed DROP EXPIRE");
+    }
+
+    @Test
+    public void testPruneDroppedViewFreesCapacityOnDiscovery() throws Exception {
+        assertPruneRemovedViewFreesCapacity("DROP MATERIALIZED VIEW mv_removed");
+    }
+
+    @Test
+    public void testPruneEmptyCacheDoesNotCreateEntries() throws Exception {
+        assertMemoryLeak(() -> {
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                final CharSequenceObjHashMap<?> original = cacheMap(job);
+                discover(job, token("uncached", 1), PREDICATE);
+
+                prune(job);
+
+                Assert.assertSame(original, cacheMap(job));
+                Assert.assertEquals(0, original.size());
+                Assert.assertEquals(0, cachedPartitionCount(job));
+            }
+        });
+    }
+
+    @Test
+    public void testPruneFailedRebuildKeepsOriginalMapAndAccounting() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken dropped = token("dropped", 1);
+            final TableToken changed = token("changed", 2);
+            final TableToken kept = token("kept", 3);
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                final CacheOperationCountingMap original = new CacheOperationCountingMap();
+                field(RowExpiryCleanupJob.class, "scalarPartitionCaches").set(job, original);
+                createCache(job, dropped, 4);
+                final CharSequenceLongHashMap changedGenerations = createCache(job, changed, 3);
+                final CharSequenceLongHashMap keptGenerations = createCache(job, kept, 2);
+                discover(job, changed, "v > 100");
+                discover(job, kept, PREDICATE);
+                discover(job, token("uncached", 4), PREDICATE);
+                original.getCount = 0;
+                // Fail after the first pass and one insertion into the replacement map.
+                original.failOnGet = 5;
+
+                final InvocationTargetException error = Assert.assertThrows(InvocationTargetException.class, () -> prune(job));
+
+                Assert.assertSame(original.lookupFailure, error.getCause());
+                Assert.assertSame(original, cacheMap(job));
+                Assert.assertEquals(3, original.size());
+                Assert.assertEquals("predicate invalidation is accounted for, but eviction is not yet published",
+                        6, cachedPartitionCount(job));
+                Assert.assertEquals(0, changedGenerations.size());
+                Assert.assertEquals("v > 100", field(cache(job, changed).getClass(), "predicate").get(cache(job, changed)));
+                assertEntries(keptGenerations, 2, 0, 0);
+                assertEntries(generations(job, dropped), 4, 0, 0);
+
+                original.failOnGet = 0;
+                prune(job);
+
+                Assert.assertNotSame(original, cacheMap(job));
+                Assert.assertEquals(2, cacheMap(job).size());
+                Assert.assertEquals(2, cachedPartitionCount(job));
+                Assert.assertNull(cache(job, dropped));
+                Assert.assertSame(changedGenerations, generations(job, changed));
+                Assert.assertSame(keptGenerations, generations(job, kept));
+                Assert.assertEquals(0, original.removalCount);
+            }
+        });
+    }
+
+    @Test
+    public void testPruneManyAbsentViewsPreservesOtherViews() throws Exception {
+        assertPruneViews(1024, 0, 768);
+    }
+
+    @Test
+    public void testPruneMissingFirstMiddleAndLastView() throws Exception {
+        assertPruneViews(8, 0, 1);
+        assertPruneViews(8, 4, 5);
+        assertPruneViews(8, 7, 8);
+    }
+
+    @Test
+    public void testPrunePredicateChangeDoesNotRebuild() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken changed = token("changed", 1);
+            final TableToken kept = token("kept", 2);
+            final TableToken empty = token("empty", 3);
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                final CharSequenceObjHashMap<?> original = cacheMap(job);
+                final CharSequenceLongHashMap changedGenerations = createCache(job, changed, 3);
+                final CharSequenceLongHashMap keptGenerations = createCache(job, kept, 2);
+                final CharSequenceLongHashMap emptyGenerations = createCache(job, empty, 0);
+                discover(job, changed, "v > 100");
+                discover(job, kept, new String(PREDICATE));
+                discover(job, empty, PREDICATE);
+
+                for (int i = 0; i < 2; i++) {
+                    prune(job);
+
+                    Assert.assertSame(original, cacheMap(job));
+                    Assert.assertEquals(3, original.size());
+                    Assert.assertEquals(2, cachedPartitionCount(job));
+                    Assert.assertSame(changedGenerations, generations(job, changed));
+                    Assert.assertEquals(0, changedGenerations.size());
+                    Assert.assertEquals("v > 100", field(cache(job, changed).getClass(), "predicate").get(cache(job, changed)));
+                    Assert.assertSame(keptGenerations, generations(job, kept));
+                    assertEntries(keptGenerations, 2, 0, 0);
+                    Assert.assertSame(emptyGenerations, generations(job, empty));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPruneUnchangedDiscoveryUsesLinearLookups() throws Exception {
+        assertPruneViews(64, 0, 0);
+        assertPruneViews(1024, 0, 0);
+    }
 
     @Test
     public void testReleaseAllAbsentFloorsFromNonEmptySnapshot() throws Exception {
@@ -118,6 +274,70 @@ public class RowExpiryCleanupJobCacheTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertPruneViews(int size, int removeFrom, int removeTo) throws Exception {
+        assertMemoryLeak(() -> {
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                final CacheOperationCountingMap original = new CacheOperationCountingMap();
+                field(RowExpiryCleanupJob.class, "scalarPartitionCaches").set(job, original);
+                final DiscoveryCountingList discovered = new DiscoveryCountingList();
+                field(RowExpiryCleanupJob.class, "discoveredTokens").set(job, discovered);
+                final ObjList<TableToken> tokens = new ObjList<>();
+                final ObjList<Object> caches = new ObjList<>();
+                final ObjList<CharSequenceLongHashMap> generations = new ObjList<>();
+                for (int i = 0; i < size; i++) {
+                    final TableToken token = token("view" + i, i + 1);
+                    tokens.add(token);
+                    generations.add(createCache(job, token, 2));
+                    caches.add(cache(job, token));
+                }
+                // Deliberately differ from cache insertion order and include an uncached view.
+                for (int i = size - 1; i >= 0; i--) {
+                    if (i < removeFrom || i >= removeTo) {
+                        discover(job, tokens.getQuick(i), PREDICATE);
+                    }
+                }
+                final TableToken uncached = token("uncached", size + 1);
+                discover(job, uncached, PREDICATE);
+                original.getCount = 0;
+
+                prune(job);
+
+                Assert.assertEquals("bulk pruning must not remove keys individually", 0, original.removalCount);
+                Assert.assertTrue("discovery reads must be linear, actual=" + discovered.readCount,
+                        discovered.readCount <= 2 * discovered.size());
+                Assert.assertTrue("cache lookups must be linear, actual=" + original.getCount,
+                        original.getCount <= 2 * discovered.size());
+                final CharSequenceObjHashMap<?> retained = cacheMap(job);
+                if (removeFrom == removeTo) {
+                    Assert.assertSame("unchanged discovery must not replace the map", original, retained);
+                } else {
+                    Assert.assertNotSame(original, retained);
+                }
+                final int retainedSize = size - (removeTo - removeFrom);
+                Assert.assertEquals(retainedSize, retained.size());
+                Assert.assertEquals(2 * retainedSize, cachedPartitionCount(job));
+                Assert.assertNull(cache(job, uncached));
+                for (int i = 0; i < size; i++) {
+                    final TableToken token = tokens.getQuick(i);
+                    if (i >= removeFrom && i < removeTo) {
+                        Assert.assertNull(cache(job, token));
+                    } else {
+                        Assert.assertSame(caches.getQuick(i), cache(job, token));
+                        Assert.assertSame(generations.getQuick(i), generations(job, token));
+                        assertEntries(generations(job, token), 2, 0, 0);
+                    }
+                }
+
+                discovered.readCount = 0;
+                prune(job);
+
+                Assert.assertSame("the next unchanged discovery must reuse the map", retained, cacheMap(job));
+                Assert.assertEquals(2 * retainedSize, cachedPartitionCount(job));
+                Assert.assertTrue(discovered.readCount <= 2 * discovered.size());
+            }
+        });
+    }
+
     private static void assertReleaseAbsentFloors(int size, int removeFrom, int removeTo) throws Exception {
         assertMemoryLeak(() -> {
             final TableToken token = token("expired", 1);
@@ -156,9 +376,11 @@ public class RowExpiryCleanupJobCacheTest extends AbstractCairoTest {
     }
 
     private static Object cache(RowExpiryCleanupJob job, TableToken token) throws Exception {
-        final CharSequenceObjHashMap<?> caches =
-                (CharSequenceObjHashMap<?>) field(RowExpiryCleanupJob.class, "scalarPartitionCaches").get(job);
-        return caches.get(token.getDirName());
+        return cacheMap(job).get(token.getDirName());
+    }
+
+    private static CharSequenceObjHashMap<?> cacheMap(RowExpiryCleanupJob job) throws Exception {
+        return (CharSequenceObjHashMap<?>) field(RowExpiryCleanupJob.class, "scalarPartitionCaches").get(job);
     }
 
     private static int cachedPartitionCount(RowExpiryCleanupJob job) throws Exception {
@@ -176,6 +398,18 @@ public class RowExpiryCleanupJobCacheTest extends AbstractCairoTest {
         field(cache.getClass(), "generations").set(cache, generations);
         field(RowExpiryCleanupJob.class, "cachedPartitionCount").setInt(job, cachedPartitionCount(job) + size);
         return generations;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void discover(RowExpiryCleanupJob job, TableToken token, String predicate) throws Exception {
+        ((ObjList<TableToken>) field(RowExpiryCleanupJob.class, "discoveredTokens").get(job)).add(token);
+        ((ObjList<String>) field(RowExpiryCleanupJob.class, "discoveredPredicates").get(job)).add(predicate);
+    }
+
+    private static String expiryPredicate(TableToken token) {
+        try (TableReader reader = engine.getReader(token)) {
+            return reader.getMetadata().getExpiryPredicate();
+        }
     }
 
     private static Field field(Class<?> type, String name) throws Exception {
@@ -202,6 +436,12 @@ public class RowExpiryCleanupJobCacheTest extends AbstractCairoTest {
         return (LongList) field(RowExpiryCleanupJob.class, "partitionFloors").get(job);
     }
 
+    private static void prune(RowExpiryCleanupJob job) throws Exception {
+        final Method method = RowExpiryCleanupJob.class.getDeclaredMethod("pruneScalarPartitionCaches");
+        method.setAccessible(true);
+        method.invoke(job);
+    }
+
     private static void release(RowExpiryCleanupJob job, TableToken token) throws Exception {
         final Method method = RowExpiryCleanupJob.class.getDeclaredMethod("releaseScalarPartitionsAbsentFromSnapshot", TableToken.class);
         method.setAccessible(true);
@@ -210,6 +450,88 @@ public class RowExpiryCleanupJobCacheTest extends AbstractCairoTest {
 
     private static TableToken token(String name, int id) {
         return new TableToken(name, name + "~" + id, null, id, TableToken.Type.MAT_VIEW, true, false, false, false);
+    }
+
+    private void assertPruneRemovedViewFreesCapacity(String ddl) throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                        (1.0, '2024-01-01T00:00:00.000000Z'),
+                        (2.0, '2024-01-02T00:00:00.000000Z'),
+                        (3.0, '2024-01-03T00:00:00.000000Z')
+                    """);
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv_removed AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 0");
+            execute("CREATE MATERIALIZED VIEW mv_kept AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 0");
+            drainWalAndMatViewQueues();
+
+            final TableToken removed = engine.verifyTableName("mv_removed");
+            final TableToken kept = engine.verifyTableName("mv_kept");
+            final String removedPredicate = expiryPredicate(removed);
+            final String keptPredicate = expiryPredicate(kept);
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                job.setMaxCachedPartitions(3);
+                Assert.assertFalse(job.cleanupTable(removed, removedPredicate));
+                Assert.assertFalse(job.cleanupTable(kept, keptPredicate));
+                Assert.assertEquals(4, job.getScalarPartitionScanCount());
+                final Object keptCache = cache(job, kept);
+                final CharSequenceLongHashMap keptGenerations = generations(job, kept);
+                Assert.assertEquals(1, keptGenerations.size());
+                Assert.assertFalse(job.runNow());
+                Assert.assertEquals(5, job.getScalarPartitionScanCount());
+
+                execute(ddl);
+                drainWalAndMatViewQueues();
+                Assert.assertFalse(job.runNow());
+                Assert.assertEquals("discovery prunes even though the retained view is not due for cleanup",
+                        5, job.getScalarPartitionScanCount());
+                Assert.assertNull(cache(job, removed));
+                Assert.assertSame(keptCache, cache(job, kept));
+                Assert.assertSame(keptGenerations, generations(job, kept));
+                Assert.assertEquals(1, cachedPartitionCount(job));
+
+                Assert.assertFalse(job.cleanupTable(kept, keptPredicate));
+                Assert.assertEquals("the retained view keeps its verdict and fills a freed slot",
+                        6, job.getScalarPartitionScanCount());
+                Assert.assertEquals(2, cachedPartitionCount(job));
+                Assert.assertFalse(job.cleanupTable(kept, keptPredicate));
+                Assert.assertEquals(6, job.getScalarPartitionScanCount());
+            }
+            assertQuery("SELECT count() FROM mv_kept").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
+        });
+    }
+
+    private static final class CacheOperationCountingMap extends CharSequenceObjHashMap<Object> {
+        private final RuntimeException lookupFailure = new RuntimeException("injected cache lookup failure");
+        private int failOnGet;
+        private int getCount;
+        private int removalCount;
+
+        @Override
+        public Object get(CharSequence key) {
+            if (++getCount == failOnGet) {
+                throw lookupFailure;
+            }
+            return super.get(key);
+        }
+
+        @Override
+        public void removeAt(int index) {
+            removalCount++;
+            super.removeAt(index);
+        }
+    }
+
+    private static final class DiscoveryCountingList extends ObjList<TableToken> {
+        private int readCount;
+
+        @Override
+        public TableToken getQuick(int index) {
+            readCount++;
+            return super.getQuick(index);
+        }
     }
 
     // Count the operation that scans the key list instead of asserting wall-clock timings.
