@@ -349,6 +349,8 @@ public class QwpSchemaRowBufferE2ETest extends AbstractQwpWebSocketTest {
                 }
             }
         }
+        // An emptied or unparsed corpus must not pass vacuously.
+        Assert.assertEquals(20, vectors.size());
         return vectors;
     }
 

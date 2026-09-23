@@ -564,6 +564,8 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
                         invalid, invalid ? 0 : Long.parseLong(fields[4]), fields[5]));
             }
         }
+        // An emptied or unparsed corpus must not pass vacuously.
+        Assert.assertEquals(48, vectors.size());
         return vectors;
     }
 
@@ -597,6 +599,8 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
                 ));
             }
         }
+        // An emptied or unparsed corpus must not pass vacuously.
+        Assert.assertEquals(102, vectors.size());
         return vectors;
     }
 

@@ -34,6 +34,7 @@ import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -41,74 +42,82 @@ public class QwpSchemaIdentityParserTest {
 
     @Test
     public void testKnownUnknownAndMultiTableIdentityReset() throws Exception {
-        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
-             QwpTableBuffer known = table("known");
-             QwpTableBuffer unknown = table("unknown");
-             QwpTableBuffer maximum = table("maximum")) {
-            encoder.beginSchemaMessage(3, new GlobalSymbolDictionary(), -1, -1);
-            encoder.addSchemaTable(known, 17, 29);
-            encoder.addSchemaTable(unknown, -1, -1);
-            encoder.addSchemaTable(maximum, Integer.MAX_VALUE, Long.MAX_VALUE);
-            int length = encoder.finishMessage();
+        TestUtils.assertMemoryLeak(() -> {
+            try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                 QwpTableBuffer known = table("known");
+                 QwpTableBuffer unknown = table("unknown");
+                 QwpTableBuffer maximum = table("maximum")) {
+                encoder.beginSchemaMessage(3, new GlobalSymbolDictionary(), -1, -1);
+                encoder.addSchemaTable(known, 17, 29);
+                encoder.addSchemaTable(unknown, -1, -1);
+                encoder.addSchemaTable(maximum, Integer.MAX_VALUE, Long.MAX_VALUE);
+                int length = encoder.finishMessage();
 
-            QwpMessageCursor cursor = new QwpMessageCursor();
-            cursor.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
-            QwpTableBlockCursor first = cursor.nextTable();
-            Assert.assertTrue(first.hasKnownSchemaIdentity());
-            Assert.assertEquals(17, first.getSchemaTableId());
-            Assert.assertEquals(29, first.getSchemaMetadataVersion());
-            QwpTableBlockCursor second = cursor.nextTable();
-            Assert.assertFalse(second.hasKnownSchemaIdentity());
-            Assert.assertEquals(-1, second.getSchemaTableId());
-            Assert.assertEquals(-1, second.getSchemaMetadataVersion());
-            QwpTableBlockCursor third = cursor.nextTable();
-            Assert.assertTrue(third.hasKnownSchemaIdentity());
-            Assert.assertEquals(Integer.MAX_VALUE, third.getSchemaTableId());
-            Assert.assertEquals(Long.MAX_VALUE, third.getSchemaMetadataVersion());
-            Assert.assertFalse(cursor.hasNextTable());
-        }
+                QwpMessageCursor cursor = new QwpMessageCursor();
+                cursor.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
+                QwpTableBlockCursor first = cursor.nextTable();
+                Assert.assertTrue(first.hasKnownSchemaIdentity());
+                Assert.assertEquals(17, first.getSchemaTableId());
+                Assert.assertEquals(29, first.getSchemaMetadataVersion());
+                QwpTableBlockCursor second = cursor.nextTable();
+                Assert.assertFalse(second.hasKnownSchemaIdentity());
+                Assert.assertEquals(-1, second.getSchemaTableId());
+                Assert.assertEquals(-1, second.getSchemaMetadataVersion());
+                QwpTableBlockCursor third = cursor.nextTable();
+                Assert.assertTrue(third.hasKnownSchemaIdentity());
+                Assert.assertEquals(Integer.MAX_VALUE, third.getSchemaTableId());
+                Assert.assertEquals(Long.MAX_VALUE, third.getSchemaMetadataVersion());
+                Assert.assertFalse(cursor.hasNextTable());
+            }
+        });
     }
 
     @Test
     public void testReservedAndNegativeKnownIdentityRejected() throws Exception {
-        byte[] message = knownMessage();
-        int identityOffset = identityOffset("t");
-        message[identityOffset] = 2;
-        assertParseError(message, message.length, QwpParseException.ErrorCode.INVALID_SCHEMA_IDENTITY);
+        TestUtils.assertMemoryLeak(() -> {
+            byte[] message = knownMessage();
+            int identityOffset = identityOffset("t");
+            message[identityOffset] = 2;
+            assertParseError(message, message.length, QwpParseException.ErrorCode.INVALID_SCHEMA_IDENTITY);
 
-        message = knownMessage();
-        putInt(message, identityOffset + 1, -1);
-        assertParseError(message, message.length, QwpParseException.ErrorCode.INVALID_SCHEMA_IDENTITY);
+            message = knownMessage();
+            putInt(message, identityOffset + 1, -1);
+            assertParseError(message, message.length, QwpParseException.ErrorCode.INVALID_SCHEMA_IDENTITY);
 
-        message = knownMessage();
-        putLong(message, identityOffset + 1 + Integer.BYTES, -1);
-        assertParseError(message, message.length, QwpParseException.ErrorCode.INVALID_SCHEMA_IDENTITY);
+            message = knownMessage();
+            putLong(message, identityOffset + 1 + Integer.BYTES, -1);
+            assertParseError(message, message.length, QwpParseException.ErrorCode.INVALID_SCHEMA_IDENTITY);
+        });
     }
 
     @Test
     public void testTruncatedKnownIdentityRejectedAtEveryByte() throws Exception {
-        byte[] complete = knownMessage();
-        int identityOffset = identityOffset("t");
-        for (int identityBytes = 0; identityBytes < 1 + Integer.BYTES + Long.BYTES; identityBytes++) {
-            int length = identityOffset + identityBytes;
-            byte[] truncated = new byte[length];
-            System.arraycopy(complete, 0, truncated, 0, length);
-            putInt(truncated, QwpConstants.HEADER_OFFSET_PAYLOAD_LENGTH, length - QwpConstants.HEADER_SIZE);
-            assertParseError(truncated, length, QwpParseException.ErrorCode.HEADER_TOO_SHORT);
-        }
+        TestUtils.assertMemoryLeak(() -> {
+            byte[] complete = knownMessage();
+            int identityOffset = identityOffset("t");
+            for (int identityBytes = 0; identityBytes < 1 + Integer.BYTES + Long.BYTES; identityBytes++) {
+                int length = identityOffset + identityBytes;
+                byte[] truncated = new byte[length];
+                System.arraycopy(complete, 0, truncated, 0, length);
+                putInt(truncated, QwpConstants.HEADER_OFFSET_PAYLOAD_LENGTH, length - QwpConstants.HEADER_SIZE);
+                assertParseError(truncated, length, QwpParseException.ErrorCode.HEADER_TOO_SHORT);
+            }
+        });
     }
 
     @Test
     public void testIllegalSchemaMessageFlagsAndTablelessFrameRejected() throws Exception {
-        byte[] message = knownMessage();
-        message[QwpConstants.HEADER_OFFSET_FLAGS] |= QwpConstants.FLAG_CONTROL;
-        assertParseError(message, message.length, QwpParseException.ErrorCode.INVALID_SCHEMA_IDENTITY);
+        TestUtils.assertMemoryLeak(() -> {
+            byte[] message = knownMessage();
+            message[QwpConstants.HEADER_OFFSET_FLAGS] |= QwpConstants.FLAG_CONTROL;
+            assertParseError(message, message.length, QwpParseException.ErrorCode.INVALID_SCHEMA_IDENTITY);
 
-        byte[] tableless = new byte[QwpConstants.HEADER_SIZE];
-        putInt(tableless, 0, QwpConstants.MAGIC_MESSAGE);
-        tableless[QwpConstants.HEADER_OFFSET_VERSION] = QwpConstants.VERSION;
-        tableless[QwpConstants.HEADER_OFFSET_FLAGS] = QwpConstants.FLAG_SCHEMA;
-        assertParseError(tableless, tableless.length, QwpParseException.ErrorCode.INVALID_SCHEMA_IDENTITY);
+            byte[] tableless = new byte[QwpConstants.HEADER_SIZE];
+            putInt(tableless, 0, QwpConstants.MAGIC_MESSAGE);
+            tableless[QwpConstants.HEADER_OFFSET_VERSION] = QwpConstants.VERSION;
+            tableless[QwpConstants.HEADER_OFFSET_FLAGS] = QwpConstants.FLAG_SCHEMA;
+            assertParseError(tableless, tableless.length, QwpParseException.ErrorCode.INVALID_SCHEMA_IDENTITY);
+        });
     }
 
     private static void assertParseError(byte[] bytes, int length, QwpParseException.ErrorCode errorCode) throws Exception {
