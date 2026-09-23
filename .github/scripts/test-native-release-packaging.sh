@@ -281,6 +281,7 @@ for required in (
     "LINUX_EVIDENCE_ATTEMPT:",
     "WINDOWS_RELEASE_ATTEMPT:",
     "WINDOWS_EVIDENCE_ATTEMPT:",
+    "rust_versions",
     "publish-github:",
     "publish-ami:",
     "github.event_name == 'push'",

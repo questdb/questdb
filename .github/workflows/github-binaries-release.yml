@@ -64,6 +64,7 @@ jobs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
       artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
       producer-attempt: ${{ github.run_attempt }}
+      rust-version: ${{ steps.rust-metadata.outputs.rust-version }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -80,8 +81,12 @@ jobs:
               export PATH="$HOME/.cargo/bin:$PATH"
               cd /build/core/rust/qdbr
               cargo build --release
-              rustc --version --verbose
+              rustc --version --verbose > /build/.rust-version-linux-x64
             '
+      - id: rust-metadata
+        run: |
+          echo "rust-version=$(tr '\n' ';' < .rust-version-linux-x64)" >> "$GITHUB_OUTPUT"
+          rm .rust-version-linux-x64
       - id: upload
         uses: actions/upload-artifact@v6
         with:
@@ -98,6 +103,7 @@ jobs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
       artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
       producer-attempt: ${{ github.run_attempt }}
+      rust-version: ${{ steps.rust-metadata.outputs.rust-version }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -114,8 +120,12 @@ jobs:
               export PATH="$HOME/.cargo/bin:$PATH"
               cd /build/core/rust/qdbr
               cargo build --release
-              rustc --version --verbose
+              rustc --version --verbose > /build/.rust-version-linux-arm64
             '
+      - id: rust-metadata
+        run: |
+          echo "rust-version=$(tr '\n' ';' < .rust-version-linux-arm64)" >> "$GITHUB_OUTPUT"
+          rm .rust-version-linux-arm64
       - id: upload
         uses: actions/upload-artifact@v6
         with:
@@ -132,6 +142,7 @@ jobs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
       artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
       producer-attempt: ${{ github.run_attempt }}
+      rust-version: ${{ steps.rust-metadata.outputs.rust-version }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -141,6 +152,11 @@ jobs:
           export MACOSX_DEPLOYMENT_TARGET=13.0
           cd core/rust/qdbr
           cargo build --release
+          rustc --version --verbose > "${GITHUB_WORKSPACE}/.rust-version-macos-arm64"
+      - id: rust-metadata
+        run: |
+          echo "rust-version=$(tr '\n' ';' < .rust-version-macos-arm64)" >> "$GITHUB_OUTPUT"
+          rm .rust-version-macos-arm64
       - id: upload
         uses: actions/upload-artifact@v6
         with:
@@ -157,6 +173,7 @@ jobs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
       artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
       producer-attempt: ${{ github.run_attempt }}
+      rust-version: ${{ steps.rust-metadata.outputs.rust-version }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -165,6 +182,12 @@ jobs:
         run: |
           cd core/rust/qdbr
           cargo build --release
+          rustc --version --verbose | Out-File -Encoding ascii "$env:GITHUB_WORKSPACE\.rust-version-windows"
+      - id: rust-metadata
+        shell: bash
+        run: |
+          echo "rust-version=$(tr '\n' ';' < .rust-version-windows)" >> "$GITHUB_OUTPUT"
+          rm .rust-version-windows
       - id: upload
         uses: actions/upload-artifact@v6
         with:
@@ -186,15 +209,19 @@ jobs:
       raw-linux-x64-artifact-id: ${{ needs.build-rust-linux-x64.outputs.artifact-id }}
       raw-linux-x64-artifact-digest: ${{ needs.build-rust-linux-x64.outputs.artifact-digest }}
       raw-linux-x64-producer-attempt: ${{ needs.build-rust-linux-x64.outputs.producer-attempt }}
+      raw-linux-x64-rust-version: ${{ needs.build-rust-linux-x64.outputs.rust-version }}
       raw-linux-arm64-artifact-id: ${{ needs.build-rust-linux-arm64.outputs.artifact-id }}
       raw-linux-arm64-artifact-digest: ${{ needs.build-rust-linux-arm64.outputs.artifact-digest }}
       raw-linux-arm64-producer-attempt: ${{ needs.build-rust-linux-arm64.outputs.producer-attempt }}
+      raw-linux-arm64-rust-version: ${{ needs.build-rust-linux-arm64.outputs.rust-version }}
       raw-macos-arm64-artifact-id: ${{ needs.build-rust-macos-arm64.outputs.artifact-id }}
       raw-macos-arm64-artifact-digest: ${{ needs.build-rust-macos-arm64.outputs.artifact-digest }}
       raw-macos-arm64-producer-attempt: ${{ needs.build-rust-macos-arm64.outputs.producer-attempt }}
+      raw-macos-arm64-rust-version: ${{ needs.build-rust-macos-arm64.outputs.rust-version }}
       raw-windows-artifact-id: ${{ needs.build-rust-windows.outputs.artifact-id }}
       raw-windows-artifact-digest: ${{ needs.build-rust-windows.outputs.artifact-digest }}
       raw-windows-producer-attempt: ${{ needs.build-rust-windows.outputs.producer-attempt }}
+      raw-windows-rust-version: ${{ needs.build-rust-windows.outputs.rust-version }}
       native-artifact-id: ${{ steps.upload-native.outputs.artifact-id }}
       native-artifact-digest: ${{ steps.upload-native.outputs.artifact-digest }}
       native-producer-attempt: ${{ github.run_attempt }}
@@ -437,15 +464,19 @@ jobs:
           RAW_LINUX_X64_ID: ${{ needs.package-linux.outputs.raw-linux-x64-artifact-id }}
           RAW_LINUX_X64_DIGEST: ${{ needs.package-linux.outputs.raw-linux-x64-artifact-digest }}
           RAW_LINUX_X64_ATTEMPT: ${{ needs.package-linux.outputs.raw-linux-x64-producer-attempt }}
+          RUST_LINUX_X64: ${{ needs.package-linux.outputs.raw-linux-x64-rust-version }}
           RAW_LINUX_ARM64_ID: ${{ needs.package-linux.outputs.raw-linux-arm64-artifact-id }}
           RAW_LINUX_ARM64_DIGEST: ${{ needs.package-linux.outputs.raw-linux-arm64-artifact-digest }}
           RAW_LINUX_ARM64_ATTEMPT: ${{ needs.package-linux.outputs.raw-linux-arm64-producer-attempt }}
+          RUST_LINUX_ARM64: ${{ needs.package-linux.outputs.raw-linux-arm64-rust-version }}
           RAW_MACOS_ARM64_ID: ${{ needs.package-linux.outputs.raw-macos-arm64-artifact-id }}
           RAW_MACOS_ARM64_DIGEST: ${{ needs.package-linux.outputs.raw-macos-arm64-artifact-digest }}
           RAW_MACOS_ARM64_ATTEMPT: ${{ needs.package-linux.outputs.raw-macos-arm64-producer-attempt }}
+          RUST_MACOS_ARM64: ${{ needs.package-linux.outputs.raw-macos-arm64-rust-version }}
           RAW_WINDOWS_ID: ${{ needs.package-linux.outputs.raw-windows-artifact-id }}
           RAW_WINDOWS_DIGEST: ${{ needs.package-linux.outputs.raw-windows-artifact-digest }}
           RAW_WINDOWS_ATTEMPT: ${{ needs.package-linux.outputs.raw-windows-producer-attempt }}
+          RUST_WINDOWS: ${{ needs.package-linux.outputs.raw-windows-rust-version }}
           NATIVE_ID: ${{ needs.package-linux.outputs.native-artifact-id }}
           NATIVE_DIGEST: ${{ needs.package-linux.outputs.native-artifact-digest }}
           NATIVE_ATTEMPT: ${{ needs.package-linux.outputs.native-producer-attempt }}
@@ -513,6 +544,12 @@ jobs:
               "containers": {
                   "linux_x64": "quay.io/pypa/manylinux2014_x86_64",
                   "linux_arm64": "quay.io/pypa/manylinux_2_28_aarch64",
+              },
+              "rust_versions": {
+                  "linux_x64": os.environ["RUST_LINUX_X64"],
+                  "linux_arm64": os.environ["RUST_LINUX_ARM64"],
+                  "macos_arm64": os.environ["RUST_MACOS_ARM64"],
+                  "windows_x64": os.environ["RUST_WINDOWS"],
               },
               "artifacts": entries,
               "native_manifest_sha256": hashlib.sha256(native_manifest.read_bytes()).hexdigest(),
