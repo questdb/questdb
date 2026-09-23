@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
@@ -554,6 +555,13 @@ public class TableWriterTest extends AbstractCairoTest {
                 final TableDirSyncFailureFacade ff = new TableDirSyncFailureFacade();
                 final CairoConfiguration testConfiguration = new DefaultTestCairoConfiguration(root) {
                     @Override
+                    public int getCommitMode() {
+                        // The swap-time table-dir fsyncs this facade targets are skipped under NOSYNC. Pin a
+                        // mode that takes them, so the test still runs under a nosync sweep.
+                        return CommitMode.ADAPTIVE;
+                    }
+
+                    @Override
                     public @NotNull FilesFacade getFilesFacade() {
                         return ff;
                     }
@@ -611,6 +619,13 @@ public class TableWriterTest extends AbstractCairoTest {
             }
             final TableDirOpenFailureFacade ff = new TableDirOpenFailureFacade();
             final CairoConfiguration testConfiguration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public int getCommitMode() {
+                    // The swap-time table-dir fsyncs this facade targets are skipped under NOSYNC. Pin a mode
+                    // that takes them, so the test still runs under a nosync sweep.
+                    return CommitMode.ADAPTIVE;
+                }
+
                 @Override
                 public @NotNull FilesFacade getFilesFacade() {
                     return ff;
