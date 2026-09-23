@@ -811,12 +811,176 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareVariableAsComparisonUnderNot() throws Exception {
+        assertMemoryLeak(() -> {
+            // The optimiser folds NOT into a comparison by rewriting the comparison node in place.
+            // Every reference to a variable used to be the declared node itself, so `NOT @f` turned
+            // `@f` into its own negation for the other reference as well.
+            assertQuery("DECLARE @f := (1 = 1) SELECT count() FROM long_sequence(3) WHERE NOT @f OR @f")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            3
+                            """);
+            assertQuery("DECLARE @f := (x < 2) SELECT x, NOT @f AS n FROM long_sequence(3) WHERE @f OR NOT @f")
+                    .noLeakCheck()
+                    .returns("""
+                            x	n
+                            1	false
+                            2	true
+                            3	true
+                            """);
+            // A view body substitutes its variables the same way, the caller's value included.
+            execute("CREATE VIEW v_not AS (DECLARE OVERRIDABLE @f := (x < 2) SELECT x FROM long_sequence(3) WHERE NOT @f AND x > 2 OR @f)");
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM v_not")
+                    .noLeakCheck()
+                    .returns("""
+                            x
+                            1
+                            3
+                            """);
+            assertQuery("DECLARE @f := (x > 2) SELECT * FROM v_not")
+                    .noLeakCheck()
+                    .returns("""
+                            x
+                            3
+                            """);
+        });
+    }
+
+    @Test
     public void testDeclareVariableAsSubQuery() throws Exception {
         String targetModel = "select-choose y from (select-virtual [1 y] 1 y from (long_sequence(1)))";
         assertModel(targetModel,
                 "SELECT * FROM (SELECT 1 as y)", ExecutionModel.QUERY);
         assertModel(targetModel,
                 "DECLARE @x := (SELECT 1 as y) SELECT * FROM @x", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryKeepsOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            // FROM @x used to read the model the declaration parsed while the optimiser also rewrote
+            // that model as a standalone query, which left it without its ORDER BY but kept its LIMIT:
+            // the rows came back unsorted, and a top-N read returned the wrong rows.
+            assertQuery("DECLARE @x := (SELECT x FROM long_sequence(3) ORDER BY x DESC) SELECT * FROM @x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            3
+                            2
+                            1
+                            """);
+            assertQuery("DECLARE @x := (DECLARE @n := 2 SELECT x FROM long_sequence(3) ORDER BY x % @n, x LIMIT 1) SELECT * FROM @x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            2
+                            """);
+            execute("CREATE VIEW v_top AS (DECLARE OVERRIDABLE @x := (SELECT x FROM long_sequence(3) ORDER BY x DESC LIMIT 1) SELECT * FROM @x)");
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM v_top")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            3
+                            """);
+            assertQuery("DECLARE @x := (SELECT x FROM long_sequence(3) ORDER BY x LIMIT 2) SELECT * FROM v_top")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            1
+                            2
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeclareVariableAsSubQueryReadMoreThanOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL, l LONG)");
+            execute("INSERT INTO k VALUES ('a', 1), ('b', 2), ('c', 3)");
+            drainWalQueue();
+            // The optimiser and the code generator rewrite a model in place for the one place it is
+            // read from, so every read of a declared sub-query needs a model of its own. The reads
+            // used to share the declaration's model, and all but one of them read it wrong.
+            assertQuery("DECLARE @x := (SELECT l FROM k WHERE l > 1 ORDER BY l DESC LIMIT 1) SELECT * FROM @x UNION ALL SELECT * FROM @x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            l
+                            3
+                            3
+                            """);
+            assertQuery("DECLARE @x := (SELECT s FROM k WHERE l > 1) WITH w AS (SELECT * FROM @x) SELECT * FROM w UNION ALL SELECT * FROM w")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            s
+                            b
+                            c
+                            b
+                            c
+                            """);
+            assertQuery("DECLARE @x := (SELECT s FROM k WHERE l > 1) SELECT * FROM k WHERE s IN @x OR s IN @x")
+                    .noLeakCheck()
+                    .returns("""
+                            s	l
+                            b	2
+                            c	3
+                            """);
+            // A read in an expression and a read in FROM, in either order.
+            assertQuery("DECLARE @x := (SELECT s FROM k WHERE l > 1) SELECT * FROM @x WHERE s IN @x")
+                    .noLeakCheck()
+                    .returns("""
+                            s
+                            b
+                            c
+                            """);
+            assertQuery("DECLARE @x := (SELECT s FROM k WHERE l > 1), @f := (s IN @x) SELECT s FROM k WHERE @f UNION ALL SELECT * FROM @x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            s
+                            b
+                            c
+                            b
+                            c
+                            """);
+            // Every copy resolves variables as the declaration did, not as the scope it is read in.
+            assertQuery("DECLARE @n := 1, @x := (SELECT l FROM k WHERE l > @n) SELECT * FROM @x UNION ALL SELECT * FROM (DECLARE @n := 2 SELECT * FROM @x)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            l
+                            2
+                            3
+                            2
+                            3
+                            """);
+            // A view body parses a copy of a caller's value from the caller's text.
+            execute("CREATE VIEW v_sub AS (DECLARE OVERRIDABLE @x := (SELECT l FROM k ORDER BY l DESC LIMIT 1) SELECT * FROM @x)");
+            drainWalAndViewQueues();
+            assertQuery("DECLARE @x := (SELECT l FROM k ORDER BY l LIMIT 2) SELECT * FROM v_sub UNION ALL SELECT * FROM v_sub")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            l
+                            1
+                            2
+                            1
+                            2
+                            """);
+        });
     }
 
     @Test
@@ -906,6 +1070,37 @@ public class DeclareTest extends AbstractSqlParserTest {
             assertQuery("DECLARE @symbols := ('ETH-USD', 'BTC-USD') " +
                     "SELECT * FROM trades WHERE @symbols IN @symbols")
                     .fails(20, "declared list can only be used on the right-hand side of IN");
+        });
+    }
+
+    @Test
+    public void testDeclareVariableWithBracketedOperand() throws Exception {
+        assertMemoryLeak(() -> {
+            // A bracket used to end a declared value after anything but a bracket, a literal or the
+            // `:=` itself, so a bracketed operand after an operator, a comma or a keyword cut the
+            // value short. Only a complete value, outside every bracket, ends at one.
+            assertQuery("DECLARE @a := (1 + 2) * (3), @b := abs(1 - (5)), @c := NOT (1 = 1), @d := -(1), " +
+                    "@e := CASE WHEN (1 = 1) THEN 1 END, @f := 2 BETWEEN (1) AND (3), @g := cast((1) AS LONG) " +
+                    "SELECT @a a, @b b, @c c, @d d, @e e, @f f, @g g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a	b	c	d	e	f	g
+                            9	4	false	-1	1	true	1
+                            """);
+            assertQuery("DECLARE @x := 1 (SELECT @x AS x)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            1
+                            """);
+            // A sub-query nested in a declared value now gets the error it gets written in place.
+            execute("CREATE TABLE k (l LONG, ts TIMESTAMP)");
+            assertQuery("DECLARE @v := dateadd('d', -1, (SELECT max(ts) FROM k)) SELECT * FROM k WHERE ts > @v")
+                    .fails(14, "there is no matching function `dateadd` with the argument types: (CHAR, INT, CURSOR)");
+            assertQuery("DECLARE @v := 1 + (SELECT max(l) FROM k) SELECT * FROM k WHERE l = @v")
+                    .fails(16, "there is no matching operator `+` with the argument types: INT + CURSOR");
         });
     }
 

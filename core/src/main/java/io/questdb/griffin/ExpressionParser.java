@@ -1287,9 +1287,13 @@ public class ExpressionParser {
                     }
 
                     case '(':
-                        // check that we are handling a declare variable, and we have finished parsing it
-                        if (parsedDeclaration && prevBranch != BRANCH_LEFT_PARENTHESIS && prevBranch != BRANCH_LITERAL
-                                && !(prevBranch == BRANCH_OPERATOR && Chars.equals(opStack.peek().token, ":="))
+                        // A bracket after a finished declared value starts the statement that
+                        // follows it, as in `DECLARE @x := 1 (SELECT @x)`. The value is finished
+                        // only outside every bracket and right after a complete operand. After an
+                        // operator or a comma the bracket is the value's own operand, as in
+                        // `1 + (2)` or `f(a, (SELECT ...))`, and after a literal it opens a call.
+                        if (parsedDeclaration && scopeStack.size() == 0
+                                && isCompletedOperand(prevBranch) && prevBranch != BRANCH_LITERAL
                         ) {
                             lexer.unparseLast();
                             break OUT;

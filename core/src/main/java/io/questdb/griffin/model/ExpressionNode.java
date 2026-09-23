@@ -222,39 +222,20 @@ public class ExpressionNode implements Mutable, Sinkable {
     }
 
     public static ExpressionNode deepClone(final ObjectPool<ExpressionNode> pool, final ExpressionNode node) {
-        if (node == null) {
-            return null;
-        }
-        ExpressionNode copy = pool.next();
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            copy.args.add(ExpressionNode.deepClone(pool, node.args.get(i)));
-        }
-        copy.token = node.token;
-        copy.queryModel = node.queryModel;
-        copy.precedence = node.precedence;
-        copy.position = node.position;
-        copy.lhs = ExpressionNode.deepClone(pool, node.lhs);
-        copy.rhs = ExpressionNode.deepClone(pool, node.rhs);
-        copy.type = node.type;
-        copy.paramCount = node.paramCount;
-        copy.intrinsicValue = node.intrinsicValue;
-        // shared by reference on purpose: every re-compile of this sub-query node - including ones
-        // fed a cloned filter expression - must read the same frozen pruning-bound value
-        copy.scalarBoundHolder = node.scalarBoundHolder;
-        // shared by reference like scalarBoundHolder: whichever clone is compiled first claims the
-        // parked compile, and later clones (per-worker filters) find the slot empty and generate
-        // their own copy, which they need anyway - a sub-query factory is not thread-safe
-        copy.scalarBoundCompileCache = node.scalarBoundCompileCache;
-        copy.isConstantExpression = node.isConstantExpression;
-        copy.isTimestampOrderInherited = node.isTimestampOrderInherited;
-        copy.innerPredicate = node.innerPredicate;
-        copy.implemented = node.implemented;
-        copy.windowExpression = node.windowExpression; // shallow copy - WindowColumn is pooled
-        copy.lateralDepth = node.lateralDepth;
-        copy.constFoldLongValue = node.constFoldLongValue;
-        copy.isConstFoldLongValid = node.isConstFoldLongValid;
-        copy.isConstFoldWidening = node.isConstFoldWidening;
-        return copy;
+        return deepClone(pool, node, false);
+    }
+
+    /**
+     * Deep-clones an expression tree, except for its {@link #QUERY} nodes: those are returned as
+     * they are, and every clone shares them.
+     * <p>
+     * The parser registers each sub-query node with its model as an expression model, and the
+     * optimiser swaps the node's {@link #queryModel} for the model it rewrites. A copy of the node
+     * would keep pointing at the model as parsed, which by then is the rewritten model's inner part.
+     * Sharing the node also keeps its identity, which the parser tracks declared sub-queries by.
+     */
+    public static ExpressionNode deepCloneSharingQueries(final ObjectPool<ExpressionNode> pool, final ExpressionNode node) {
+        return deepClone(pool, node, true);
     }
 
     /**
@@ -833,6 +814,46 @@ public class ExpressionNode implements Mutable, Sinkable {
             }
         }
         return true;
+    }
+
+    private static ExpressionNode deepClone(
+            final ObjectPool<ExpressionNode> pool,
+            final ExpressionNode node,
+            boolean isSharingQueries
+    ) {
+        if (node == null || (isSharingQueries && node.type == QUERY)) {
+            return node;
+        }
+        ExpressionNode copy = pool.next();
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            copy.args.add(deepClone(pool, node.args.get(i), isSharingQueries));
+        }
+        copy.token = node.token;
+        copy.queryModel = node.queryModel;
+        copy.precedence = node.precedence;
+        copy.position = node.position;
+        copy.lhs = deepClone(pool, node.lhs, isSharingQueries);
+        copy.rhs = deepClone(pool, node.rhs, isSharingQueries);
+        copy.type = node.type;
+        copy.paramCount = node.paramCount;
+        copy.intrinsicValue = node.intrinsicValue;
+        // shared by reference on purpose: every re-compile of this sub-query node - including ones
+        // fed a cloned filter expression - must read the same frozen pruning-bound value
+        copy.scalarBoundHolder = node.scalarBoundHolder;
+        // shared by reference like scalarBoundHolder: whichever clone is compiled first claims the
+        // parked compile, and later clones (per-worker filters) find the slot empty and generate
+        // their own copy, which they need anyway - a sub-query factory is not thread-safe
+        copy.scalarBoundCompileCache = node.scalarBoundCompileCache;
+        copy.isConstantExpression = node.isConstantExpression;
+        copy.isTimestampOrderInherited = node.isTimestampOrderInherited;
+        copy.innerPredicate = node.innerPredicate;
+        copy.implemented = node.implemented;
+        copy.windowExpression = node.windowExpression; // shallow copy - WindowColumn is pooled
+        copy.lateralDepth = node.lateralDepth;
+        copy.constFoldLongValue = node.constFoldLongValue;
+        copy.isConstFoldLongValid = node.isConstFoldLongValid;
+        copy.isConstFoldWidening = node.isConstFoldWidening;
+        return copy;
     }
 
     /**

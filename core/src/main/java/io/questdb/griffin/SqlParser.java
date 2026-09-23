@@ -130,6 +130,11 @@ public class SqlParser {
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = createMatViewOperationBuilder.getCreateTableOperationBuilder();
     private final CreateViewOperationBuilderImpl createViewOperationBuilder = new CreateViewOperationBuilderImpl();
+    // The sub-queries in declared values: the node each one parsed to, the model it parsed and the
+    // text it parsed from. parseDeclaredQuery() parses a sub-query again from that text.
+    private final ObjList<ExpressionNode> declaredQueries = new ObjList<>();
+    private final ObjList<IQueryModel> declaredQueryModels = new ObjList<>();
+    private final ObjList<CharSequence> declaredQuerySources = new ObjList<>();
     private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
@@ -158,6 +163,8 @@ public class SqlParser {
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final IntList tableNamePositions = new IntList();
     private final LowerCaseCharSequenceHashSet tableNames = new LowerCaseCharSequenceHashSet();
+    // The declared sub-queries whose parsed model a read has taken; every later read parses a copy.
+    private final ObjList<ExpressionNode> takenDeclaredQueries = new ObjList<>();
     private final CharSequenceHashSet tempCharSequenceSet = new CharSequenceHashSet();
     private final ObjList<ExpressionNode> tempExprNodes = new ObjList<>();
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCaseRef = this::rewriteCase;
@@ -595,6 +602,32 @@ public class SqlParser {
             // CONCAT() carries no operand to fold. Keep the node itself, so that FunctionParser
             // rejects it at its own position rather than the parent silently swallowing it.
             args.add(leaf);
+        }
+    }
+
+    /**
+     * Records the sub-queries in a declared value, with the text they parsed from, for
+     * {@link #parseDeclaredQuery} to parse again.
+     */
+    private void addDeclaredQueries(ExpressionNode node, CharSequence source) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.QUERY) {
+            // A value built on another variable, `@y := @x`, holds that variable's sub-query node,
+            // which its own declaration has recorded, with its own text: a view body can build on
+            // a caller's variable, and the body's text is not the caller's.
+            if (!declaredQueries.contains(node)) {
+                declaredQueries.add(node);
+                declaredQueryModels.add(node.queryModel);
+                declaredQuerySources.add(source);
+            }
+            return;
+        }
+        addDeclaredQueries(node.lhs, source);
+        addDeclaredQueries(node.rhs, source);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            addDeclaredQueries(node.args.getQuick(i), source);
         }
     }
 
@@ -3765,6 +3798,7 @@ public class SqlParser {
                 }
             }
 
+            addDeclaredQueries(expr.rhs, lexer.getContent());
             model.getDecls().put(tok, expr);
             if (isAudited) {
                 model.getAuditedDecls().add(tok);
@@ -3773,6 +3807,30 @@ public class SqlParser {
                 model.getOverridableDecls().add(tok);
             }
         }
+    }
+
+    /**
+     * Parses a copy of a sub-query in a declared value, for a read of its variable that cannot
+     * take the model the declaration parsed.
+     * <p>
+     * One model cannot serve two reads: the optimiser and the code generator rewrite a model in
+     * place for the one place it is read from, and whatever else reads it sees those rewrites. So
+     * the first read takes the parsed model and every later one parses its own copy, as
+     * {@link #parseWith} does for each later reference to a CTE.
+     * <p>
+     * The copy resolves variables as the declaration did. It parses from the declaration's own
+     * text rather than from the text at the read, which differs when a caller's value for a view's
+     * variable is read in the view body. It parses with the declarations the parsed model saw,
+     * rather than with the ones in scope at the read.
+     */
+    private IQueryModel parseDeclaredQuery(ExpressionNode query, SqlParserCallback sqlParserCallback) throws SqlException {
+        final int index = declaredQueries.indexOf(query);
+        assert index > -1 : "addDeclaredQueries() records every sub-query in a declared value";
+        // borrowed from the pool views parse with, which outlives the models parsed with it
+        final GenericLexer queryLexer = viewLexers.next();
+        queryLexer.of(declaredQuerySources.getQuick(index));
+        queryLexer.goToPosition(query.position);
+        return parseAsSubQuery(queryLexer, null, true, sqlParserCallback, declaredQueryModels.getQuick(index).getDecls(), false);
     }
 
     /**
@@ -4428,15 +4486,15 @@ public class SqlParser {
 
             tok = optTok(lexer);
         } else {
-            IQueryModel proposedNested = null;
             ExpressionNode variableExpr;
+            ExpressionNode declaredQuery = null;
 
             // check for variable as subquery
             if (tok.charAt(0) == '@'
                     && (variableExpr = model.getDecls().get(tok)) != null
                     && variableExpr.rhs != null
-                    && variableExpr.rhs.queryModel != null) {
-                proposedNested = variableExpr.rhs.queryModel;
+                    && variableExpr.rhs.type == ExpressionNode.QUERY) {
+                declaredQuery = variableExpr.rhs;
             }
 
             final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(tok));
@@ -4444,10 +4502,10 @@ public class SqlParser {
                 compileViewQuery(model, tt, lexer.lastTokenPosition());
                 tok = setModelAliasAndTimestamp(lexer, model);
                 // expect "(" in case of sub-query
-            } else if (Chars.equals(tok, '(') || proposedNested != null) {
-                if (proposedNested == null) {
-                    proposedNested = parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses(), true, sqlParserCallback, model.getDecls());
-                }
+            } else if (Chars.equals(tok, '(') || declaredQuery != null) {
+                IQueryModel proposedNested = declaredQuery != null
+                        ? takeDeclaredQuery(declaredQuery, sqlParserCallback)
+                        : parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses(), true, sqlParserCallback, model.getDecls());
 
                 tok = optTok(lexer);
 
@@ -6660,6 +6718,49 @@ public class SqlParser {
     }
 
     /**
+     * Gives an expression that reads declared variables a model of its own for each sub-query their
+     * values hold: the first read of a sub-query takes the model its declaration parsed, and every
+     * later read parses a copy (see {@link #parseDeclaredQuery}), which this registers as an
+     * expression model of {@code model}, as the expression parser registers a sub-query written in
+     * place.
+     * <p>
+     * An expression without a model has nowhere to register a copy. The expression parser refuses
+     * a sub-query written in such a place, and this refuses a declared one it would have to copy.
+     */
+    private ExpressionNode readDeclaredQueries(
+            ExpressionNode node,
+            @Nullable IQueryModel model,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        if (node == null) {
+            return null;
+        }
+        if (node.type == ExpressionNode.QUERY) {
+            if (!declaredQueries.contains(node)) {
+                // written in place
+                return node;
+            }
+            if (!takenDeclaredQueries.contains(node)) {
+                takenDeclaredQueries.add(node);
+                return node;
+            }
+            if (model == null) {
+                throw SqlException.$(node.position, "query is not allowed here");
+            }
+            final ExpressionNode copy = expressionNodePool.next().of(ExpressionNode.QUERY, null, 0, node.position);
+            copy.queryModel = parseDeclaredQuery(node, sqlParserCallback);
+            model.addExpressionModel(copy);
+            return copy;
+        }
+        node.lhs = readDeclaredQueries(node.lhs, model, sqlParserCallback);
+        node.rhs = readDeclaredQueries(node.rhs, model, sqlParserCallback);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            node.args.setQuick(i, readDeclaredQueries(node.args.getQuick(i), model, sqlParserCallback));
+        }
+        return node;
+    }
+
+    /**
      * Snapshots what an audited view was read with, at one reference site.
      * <p>
      * Only the view's own AUDITED variables are recorded, read off the view's model rather than the
@@ -6683,11 +6784,10 @@ public class SqlParser {
             final ExpressionNode decl = decls.get(name);
             if (decl != null) {
                 // decls hold the whole `@name := value` assignment; the value is its right side.
-                // It is copied because every reference to the variable is replaced by that same
-                // node, and the optimiser rewrites the query's expressions in place: `NOT @flag`
-                // over `@flag := (1 = 1)` turns the node into `1 != 1`, and the audit would then
-                // record the negation of the value the read was given.
-                viewAudit.addParam(name, ExpressionNode.deepClone(expressionNodePool, decl.rhs));
+                // The optimiser never rewrites this node: every reference to the variable reads a
+                // copy of it (RewriteDeclaredVariablesInExpressionVisitor), which shares nothing
+                // but the value's sub-queries.
+                viewAudit.addParam(name, decl.rhs);
             }
         }
         viewAudit.sortParams();
@@ -7291,6 +7391,29 @@ public class SqlParser {
                 .put("], expected one of TABLES, VIEWS, MATERIALIZED_VIEWS, LIVE_VIEWS, USERS, GROUPS, SERVICE_ACCOUNTS, PERMISSIONS, SCHEMA, ACL, ALL");
     }
 
+    /**
+     * Returns the model a {@code FROM @var} reads a declared sub-query through: the model the
+     * declaration parsed if no other read has taken it, and a copy of it otherwise.
+     * <p>
+     * Taking the model also clears the sub-query node's reference to it. Parsing the declaration
+     * registered the node as an expression model of the declaring model, and the optimiser rewrites
+     * every expression model as a standalone query. That rewrite returns a new model, which only the
+     * node points at, and leaves the model it was given without its {@code ORDER BY}: a
+     * {@code FROM} still reading that model returned the rows unsorted, with the {@code LIMIT}
+     * applied, so a top-N read returned the wrong rows. The optimiser, the code generator and every
+     * other walker of the list skip a node without a model, as they do a sub-query the optimiser has
+     * turned into a join.
+     */
+    private IQueryModel takeDeclaredQuery(ExpressionNode query, SqlParserCallback sqlParserCallback) throws SqlException {
+        if (takenDeclaredQueries.contains(query)) {
+            return parseDeclaredQuery(query, sqlParserCallback);
+        }
+        takenDeclaredQueries.add(query);
+        final IQueryModel model = query.queryModel;
+        query.queryModel = null;
+        return model;
+    }
+
     private @NotNull CharSequence tok(GenericLexer lexer, String expectedList) throws SqlException {
         final int pos = lexer.getPosition();
         CharSequence tok = optTok(lexer);
@@ -7457,6 +7580,10 @@ public class SqlParser {
     }
 
     void clear() {
+        declaredQueries.clear();
+        declaredQueryModels.clear();
+        declaredQuerySources.clear();
+        takenDeclaredQueries.clear();
         queryModelPool.clear();
         queryColumnPool.clear();
         expressionNodePool.clear();
@@ -7500,7 +7627,11 @@ public class SqlParser {
         try {
             expressionTreeBuilder.pushModel(model);
             expressionParser.parseExpr(lexer, expressionTreeBuilder, sqlParserCallback, decls);
-            return rewriteKnownStatements(expressionTreeBuilder.poll(), decls, exprTargetVariableName);
+            final ExpressionNode expr = rewriteKnownStatements(expressionTreeBuilder.poll(), decls, exprTargetVariableName);
+            // A declaration's value is not a read of the variables it builds on; the reads of it are.
+            return exprTargetVariableName == null && declaredQueries.size() > 0
+                    ? readDeclaredQueries(expr, model, sqlParserCallback)
+                    : expr;
         } catch (SqlException e) {
             expressionTreeBuilder.reset();
             throw e;
@@ -7658,7 +7789,7 @@ public class SqlParser {
         ExpressionNode visit(ExpressionNode node) throws SqlException;
     }
 
-    private static class RewriteDeclaredVariablesInExpressionVisitor implements ReplacingVisitor {
+    private class RewriteDeclaredVariablesInExpressionVisitor implements ReplacingVisitor {
         public LowerCaseCharSequenceObjHashMap<ExpressionNode> decls;
         public CharSequence exprTargetVariableName;
         public boolean hasAtChar;
@@ -7674,7 +7805,12 @@ public class SqlParser {
             }
 
             if (node.token != null && node.type == ExpressionNode.LITERAL && decls.contains(node.token)) {
-                return decls.get(node.token).rhs;
+                // Each reference gets its own copy, because the optimiser rewrites expressions in
+                // place: over a shared node, folding `NOT @flag` into `@flag := (a = b)` turns it
+                // into `a != b` for every other reference to the variable too. The copy shares
+                // the value's sub-queries, which readDeclaredQueries() sorts out once the whole
+                // expression is rewritten.
+                return ExpressionNode.deepCloneSharingQueries(expressionNodePool, decls.get(node.token).rhs);
             } else if (hasAtChar) {
                 throw SqlException.$(node.position, "tried to use undeclared variable `" + node.token + '`');
             }
