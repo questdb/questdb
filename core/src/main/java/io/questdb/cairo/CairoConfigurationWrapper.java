@@ -1901,6 +1901,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public DeltaCheckpoint newDeltaCheckpoint() {
+        return getDelegate().newDeltaCheckpoint();
+    }
+
+    @Override
     public ParquetPartitionDecoder newParquetPartitionDecoder() {
         return getDelegate().newParquetPartitionDecoder();
     }

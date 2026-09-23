@@ -2243,9 +2243,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // if a column is indexed, it is also of type SYMBOL
             throw CairoException.invalidMetadataRecoverable("column is not indexed", columnName);
         }
-        final byte droppedIndexType = columnMetadata.getIndexType();
-        final int droppedIndexValueBlockSize = columnMetadata.getIndexValueBlockCapacity();
-        final IntList droppedCoveringColumnIndices = columnMetadata.getCoveringColumnIndices();
         final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
 
         if (inTransaction()) {
@@ -2269,13 +2266,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             dropIndexOperator.executeDropIndex(columnName, columnIndex); // upserts column version in partitions
 
-            dropColdDeltaIndex(
-                    columnIndex,
-                    droppedIndexType,
-                    droppedIndexValueBlockSize,
-                    droppedCoveringColumnIndices,
-                    getSeqTxn()
-            );
+            dropColdDeltaIndex(columnIndex, getSeqTxn());
 
             // refresh metadata
             columnMetadata.setIndexType(IndexType.NONE);
@@ -3312,6 +3303,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         commit();
+
+        if (indexType != IndexType.NONE) {
+            dropColdDeltaIndex(index, getSeqTxn());
+        }
 
         // Tombstone any cover slot in other POSTING indexes that references
         // this column. Must run BEFORE metadata.removeColumn so the
@@ -7258,9 +7253,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void dropColdDeltaIndex(
             int columnIndex,
-            byte indexType,
-            int indexValueBlockSize,
-            IntList coveringColumnIndices,
             long dropSeqTxn
     ) {
         PartitionDeltaWriter deltaWriter = null;
@@ -7278,9 +7270,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     this,
                     partitionIndex,
                     columnIndex,
-                    indexType,
-                    indexValueBlockSize,
-                    coveringColumnIndices,
                     dropSeqTxn
             );
         }
