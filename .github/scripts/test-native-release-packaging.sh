@@ -270,6 +270,8 @@ for required in (
     "third-party-licenses",
     "LINUX_RELEASE_ATTEMPT:",
     "LINUX_EVIDENCE_ATTEMPT:",
+    "WINDOWS_RELEASE_ATTEMPT:",
+    "WINDOWS_EVIDENCE_ATTEMPT:",
     "publish-github:",
     "publish-ami:",
     "github.event_name == 'push'",

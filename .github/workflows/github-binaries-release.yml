@@ -431,8 +431,10 @@ jobs:
           LINUX_EVIDENCE_ATTEMPT: ${{ needs.package-linux.outputs.producer-attempt }}
           WINDOWS_RELEASE_ID: ${{ steps.upload-release.outputs.artifact-id }}
           WINDOWS_RELEASE_DIGEST: ${{ steps.upload-release.outputs.artifact-digest }}
+          WINDOWS_RELEASE_ATTEMPT: ${{ github.run_attempt }}
           WINDOWS_EVIDENCE_ID: ${{ steps.upload-evidence.outputs.artifact-id }}
           WINDOWS_EVIDENCE_DIGEST: ${{ steps.upload-evidence.outputs.artifact-digest }}
+          WINDOWS_EVIDENCE_ATTEMPT: ${{ github.run_attempt }}
           WINDOWS_ATTEMPT: ${{ github.run_attempt }}
           RUN_ID: ${{ github.run_id }}
           EVENT_NAME: ${{ github.event_name }}
