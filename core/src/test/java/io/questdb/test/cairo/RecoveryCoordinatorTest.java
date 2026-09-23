@@ -493,6 +493,94 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     /**
+     * First start after switching an instance to adaptive: a table created under nosync was never enrolled,
+     * so it has no anchor and no adaptive state. A {@code _meta} that cannot be read there must not stop the
+     * instance from starting; nothing can open the table without it, so it fails on its own when opened.
+     */
+    @Test
+    public void testAdaptiveBootLeavesNeverEnrolledTableWithUnreadableMetaToFail() throws Exception {
+        assertBootLeavesTablesWithUnreadableMetaToFail("nosync", "adaptive");
+    }
+
+    /**
+     * A table whose {@code _meta} cannot be read must not stop a nosync instance from starting, exactly as
+     * before adaptive recovery existed. Recovery reads {@code _meta} of every WAL table, because a table left
+     * enrolled by adaptive must be rolled forward whatever the instance runs now, but a table it cannot read
+     * is left to fail when opened.
+     */
+    @Test
+    public void testNosyncBootLeavesTablesWithUnreadableMetaToFail() throws Exception {
+        assertBootLeavesTablesWithUnreadableMetaToFail("nosync", "nosync");
+    }
+
+    /**
+     * The one table a nosync startup still refuses: a table adaptive left enrolled, whose {@code _meta} exists
+     * but fails to read. Its writer opens once the read succeeds, finds the enrolment, and takes the lazily
+     * applied state as durable. The same table with its {@code _meta} gone cannot be opened by anything, so it
+     * is left to fail when opened, and its anchor is not restored from outside adaptive.
+     */
+    @Test
+    public void testNosyncBootRefusesEnrolledTableWhoseMetaFailsToRead() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        try {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE left_enrolled (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO left_enrolled VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                final TableToken tt = engine.verifyTableName("left_enrolled");
+                try (TableReaderMetadata metadata = new TableReaderMetadata(engine.getConfiguration(), tt)) {
+                    metadata.loadMetadata();
+                    Assert.assertEquals("precondition: the table is enrolled", CommitMode.ADAPTIVE, metadata.getEnrolledCommitMode());
+                }
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                engine.getTableSequencerAPI().resetForReboot(tt);
+
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                final FilesFacade ffBefore = AbstractCairoTest.ff;
+                AbstractCairoTest.ff = new TestFilesFacadeImpl() {
+                    @Override
+                    public long openRO(LPSZ name) {
+                        return isTargetMeta(name) ? -1 : super.openRO(name);
+                    }
+
+                    @Override
+                    public long openRONoCache(LPSZ name) {
+                        return isTargetMeta(name) ? -1 : super.openRONoCache(name);
+                    }
+
+                    private boolean isTargetMeta(LPSZ name) {
+                        return Utf8s.containsAscii(name, tt.getDirName()) && Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME);
+                    }
+                };
+                try {
+                    new RecoveryCoordinator(engine).recover();
+                    Assert.fail("an enrolled table whose _meta fails to read must abort the startup");
+                } catch (CairoException expected) {
+                    TestUtils.assertContains(expected.getFlyweightMessage(), TableUtils.META_FILE_NAME);
+                } finally {
+                    AbstractCairoTest.ff = ffBefore;
+                }
+
+                final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                try (Path path = new Path()) {
+                    path.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.META_FILE_NAME);
+                    Assert.assertTrue("remove _meta", ff.removeQuiet(path.$()));
+                    new RecoveryCoordinator(engine).recover();
+                    Assert.assertFalse("outside adaptive, _meta must not be restored from the anchor", ff.exists(path.$()));
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    @Test
+    public void testSyncBootLeavesTablesWithUnreadableMetaToFail() throws Exception {
+        assertBootLeavesTablesWithUnreadableMetaToFail("sync", "sync");
+    }
+
+    /**
      * A crash between TableWriter's two metadata renames leaves no {@code _meta}, only {@code _meta.prev} and a
      * {@code _todo_} armed to restore it. The writer restores it when it opens, but recovery runs first and reads
      * {@code _meta} of every WAL table. It must finish the same repair rather than refuse to start, in nosync
@@ -1488,6 +1576,58 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         engine.releaseAllWriters();
         engine.releaseAllReaders();
         engine.getTableSequencerAPI().resetForReboot(tt);
+    }
+
+    private void assertBootLeavesTablesWithUnreadableMetaToFail(String createMode, String bootMode) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, createMode);
+        try {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE healthy (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE no_meta (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE empty_meta (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO healthy VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                execute("INSERT INTO no_meta VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                execute("INSERT INTO empty_meta VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                final TableToken noMeta = engine.verifyTableName("no_meta");
+                final TableToken emptyMeta = engine.verifyTableName("empty_meta");
+                engine.releaseInactive();
+                // Settle the storage-version migration first. It reads every _meta itself when it runs, which
+                // happens only when the storage version changes, and is not what this test is about.
+                try (CairoEngine ignored = new CairoEngine(configuration)) {
+                    Assert.assertNotNull(ignored.getTableTokenIfExists("healthy"));
+                }
+
+                final FilesFacade ff = configuration.getFilesFacade();
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(noMeta).concat(TableUtils.META_FILE_NAME);
+                    Assert.assertTrue("remove _meta", ff.removeQuiet(path.$()));
+                    path.of(configuration.getDbRoot()).concat(emptyMeta).concat(TableUtils.META_FILE_NAME);
+                    final long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+                    Assert.assertTrue("open _meta", fd > -1);
+                    try {
+                        Assert.assertTrue("truncate _meta", ff.truncate(fd, 0));
+                    } finally {
+                        ff.close(fd);
+                    }
+                }
+
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, bootMode);
+                try (CairoEngine rebooted = new CairoEngine(configuration)) {
+                    Assert.assertNotNull("the table stays registered", rebooted.getTableTokenIfExists("no_meta"));
+                    Assert.assertNotNull("the table stays registered", rebooted.getTableTokenIfExists("empty_meta"));
+                    rebooted.execute("INSERT INTO healthy VALUES ('2024-09-01T01:00:00.000000Z', 2)");
+                    TestUtils.drainWalQueue(rebooted);
+                    final TableToken healthy = rebooted.verifyTableName("healthy");
+                    Assert.assertFalse(rebooted.getTableSequencerAPI().isSuspended(healthy));
+                    try (TableReader reader = rebooted.getReader(healthy)) {
+                        Assert.assertEquals("the healthy table must keep working", 2L, reader.size());
+                    }
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
     }
 
     private int readMetaColumnCount(TableToken tt) {

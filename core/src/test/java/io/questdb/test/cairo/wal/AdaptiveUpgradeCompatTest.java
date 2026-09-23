@@ -28,13 +28,16 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -65,7 +68,10 @@ import org.junit.Test;
  *   <li><b>{@code _snapshot} marker + {@code .epoch} copies</b> &mdash;
  *       {@link #testStraySnapshotAndEpochArtifactsAreInertOnNormalOpen} (NEW; the gap).</li>
  *   <li><b>downgrade</b> &mdash; {@link #testDowngradeFromAdaptiveDrainsCleanlyAndArtifactsAreInert} +
- *       {@link #testDowngradeThenRebootPreservesDataAndIgnoresStaleEpoch} (NEW).</li>
+ *       {@link #testDowngradeThenRebootPreservesDataAndIgnoresStaleEpoch} +
+ *       {@link #testNosyncBootDoesNotRestoreUnreadableMetaFromStaleAnchor} (NEW).</li>
+ *   <li><b>re-enabling adaptive after a downgrade</b> &mdash;
+ *       {@link #testReEnablingAdaptiveKeepsRowsWrittenUnderNosync} (NEW).</li>
  *   <li><b>{@code _event} CRC trailer</b> &mdash; magic-gated; cited:
  *       {@code WalEventChecksumTest.testLegacyRecordWithoutTrailerStillReads}.</li>
  *   <li><b>{@code _txn} body checksum</b> &mdash; zero-sentinel; cited:
@@ -415,6 +421,117 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Outside adaptive, recovery never restores a table from its anchor, even when the table's {@code _meta}
+     * cannot be read. The anchor a table leaves behind when it leaves adaptive is frozen while the WAL purge
+     * floor drops below it, and without {@code _meta} nothing tells it from a current one. Restoring from it
+     * would rewind {@code _txn} past WAL that no longer exists. The table is left to fail when opened instead,
+     * as it would without adaptive recovery, and the instance starts.
+     * <p>
+     * <b>Non-vacuity:</b> the anchor here carries a bound {@code _meta} copy, which is exactly what recovery
+     * restores from on an adaptive instance. Before the instance mode gated that path, this startup restored
+     * {@code _meta} and rewound the live {@code _txn} to the stale anchor.
+     */
+    @Test
+    public void testNosyncBootDoesNotRestoreUnreadableMetaFromStaleAnchor() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+        assertMemoryLeak(() -> {
+            execute("create table sm (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into sm values ('2024-05-01T00:00:00.000000Z', 1)");
+            execute("insert into sm values ('2024-05-01T01:00:00.000000Z', 2)");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("sm");
+
+            releaseHandles();
+            final CairoConfiguration nosyncConfiguration = nosyncConfiguration();
+            try (CairoEngine downgraded = new CairoEngine(nosyncConfiguration)) {
+                downgraded.execute("insert into sm values ('2024-05-01T02:00:00.000000Z', 3)");
+                downgraded.execute("insert into sm values ('2024-05-01T03:00:00.000000Z', 4)");
+                TestUtils.drainWalQueue(downgraded);
+                forceWalPurge(downgraded);
+            }
+            final long liveSeqTxn = readLiveSeqTxn(tt);
+            Assert.assertTrue("precondition: the anchor left behind must be below the live cut",
+                    readMarkerEpochSeqTxn(tt) < liveSeqTxn);
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.META_FILE_NAME);
+                Assert.assertTrue("remove _meta", ff.removeQuiet(path.$()));
+
+                try (CairoEngine restarted = new CairoEngine(nosyncConfiguration)) {
+                    Assert.assertNotNull("the table stays registered", restarted.getTableTokenIfExists("sm"));
+                }
+
+                Assert.assertFalse("outside adaptive, _meta must not be restored from the anchor", ff.exists(path.$()));
+            }
+            Assert.assertEquals("the live _txn must not be rewound to the stale anchor", liveSeqTxn, readLiveSeqTxn(tt));
+        });
+    }
+
+    /**
+     * Re-enabling adaptive after a nosync period. The table left adaptive during that period: its writer made
+     * the state durable, cleared the enrolment and left the anchor on disk, frozen, while the WAL purge floor
+     * dropped below it. The restart that turns adaptive back on must not rewind the table to that anchor,
+     * because the WAL it would replay is gone. The table is not enrolled, so there is nothing to roll forward;
+     * the first writer to open it enrols it again at its live cut.
+     * <p>
+     * <b>Non-vacuity:</b> while the instance mode could start the roll-forward, this restart rewound the
+     * table to the stale anchor, kept 2 of its 5 rows and suspended it on the first purged WAL segment.
+     */
+    @Test
+    public void testReEnablingAdaptiveKeepsRowsWrittenUnderNosync() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+        assertMemoryLeak(() -> {
+            execute("create table re (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into re values ('2024-04-01T00:00:00.000000Z', 1)");
+            execute("insert into re values ('2024-04-01T01:00:00.000000Z', 2)");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("re");
+
+            releaseHandles();
+            try (CairoEngine downgraded = new CairoEngine(nosyncConfiguration())) {
+                downgraded.execute("insert into re values ('2024-04-01T02:00:00.000000Z', 3)");
+                downgraded.execute("insert into re values ('2024-04-01T03:00:00.000000Z', 4)");
+                downgraded.execute("insert into re values ('2024-04-01T04:00:00.000000Z', 5)");
+                TestUtils.drainWalQueue(downgraded);
+                forceWalPurge(downgraded);
+            }
+            final long staleEpoch = readMarkerEpochSeqTxn(tt);
+            Assert.assertTrue("precondition: the anchor left behind must be below the live cut",
+                    staleEpoch < readLiveSeqTxn(tt));
+            Assert.assertNotEquals("precondition: leaving adaptive must clear the enrolment",
+                    CommitMode.ADAPTIVE, readEnrolledCommitMode(tt));
+
+            try (CairoEngine reEnabled = new CairoEngine(configuration)) {
+                final TableToken rtt = reEnabled.verifyTableName("re");
+                reEnabled.execute("insert into re values ('2024-04-01T05:00:00.000000Z', 6)");
+                TestUtils.drainWalQueue(reEnabled);
+                Assert.assertFalse("re-enabled table must not be suspended",
+                        reEnabled.getTableSequencerAPI().isSuspended(rtt));
+                try (TableReader reader = reEnabled.getReader(rtt)) {
+                    Assert.assertEquals("every row written under nosync must survive", 6L, reader.size());
+                }
+            }
+            Assert.assertEquals("the first writer must enrol the table again",
+                    CommitMode.ADAPTIVE, readEnrolledCommitMode(tt));
+            Assert.assertTrue("enrolment must publish a fresh anchor", readMarkerEpochSeqTxn(tt) > staleEpoch);
+
+            // An ordinary adaptive restart now rolls forward from the fresh anchor.
+            try (CairoEngine restarted = new CairoEngine(configuration)) {
+                final TableToken rtt = restarted.verifyTableName("re");
+                TestUtils.drainWalQueue(restarted);
+                Assert.assertFalse("table must not be suspended after the next restart",
+                        restarted.getTableSequencerAPI().isSuspended(rtt));
+                try (TableReader reader = restarted.getReader(rtt)) {
+                    Assert.assertEquals("every row must survive the next restart", 6L, reader.size());
+                }
+            }
+        });
+    }
+
     // ------------------------------------------------------------------------------------------------
     // helpers
     // ------------------------------------------------------------------------------------------------
@@ -440,6 +557,22 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
                 marker.of(dst);
                 marker.write(Math.max(1, seqTxn), Math.max(1, seqTxn), 1_000_000L);
             }
+        }
+    }
+
+    private int readEnrolledCommitMode(TableToken tt) {
+        try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tt)) {
+            metadata.loadMetadata();
+            return metadata.getEnrolledCommitMode();
+        }
+    }
+
+    private long readLiveSeqTxn(TableToken tt) {
+        try (Path path = new Path(); TxReader txReader = new TxReader(configuration.getFilesFacade())) {
+            path.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.TXN_FILE_NAME);
+            txReader.ofRO(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+            Assert.assertTrue("_txn must load", txReader.unsafeLoadAll());
+            return txReader.getSeqTxn();
         }
     }
 

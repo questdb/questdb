@@ -68,10 +68,13 @@ import io.questdb.std.str.Path;
  *       on the same cut. Apply itself is idempotent through {@code _txn} (the contiguity assert
  *       {@code seqTxn == appliedSeqTxn + 1} is satisfied because {@code _txn} now says
  *       {@code epoch.seqTxn}).</li>
- *   <li><b>Conservative fallback:</b> a table with NO {@code _snapshot} marker (or whose
- *       {@code .epoch} copies are absent) is left UNTOUCHED -> today's behaviour (full WAL replay /
- *       normal open). Non-adaptive tables are touched only to finish a metadata swap that a crash
- *       interrupted, exactly as their writer would on open. Non-WAL tables are never touched.</li>
+ *   <li><b>Enrolment decides:</b> only a table whose {@code _meta} records it as enrolled under ADAPTIVE
+ *       is rolled forward, whatever mode the instance runs now. Any other table, including every table a
+ *       non-adaptive instance or an older build wrote, is left UNTOUCHED (normal open / WAL apply), apart
+ *       from finishing a metadata swap that a crash interrupted, exactly as its writer would on open. A
+ *       table whose {@code _meta} cannot be read is left to fail when opened, unless it has an anchor and
+ *       either the instance runs ADAPTIVE or the file exists but failed to read. Non-WAL tables are never
+ *       touched.</li>
  * </ul>
  */
 public class RecoveryCoordinator {
@@ -100,10 +103,14 @@ public class RecoveryCoordinator {
      * after the table registry is loaded and before any WAL apply.
      */
     public void recover() {
-        // Do not short-circuit on the global mode: a table whose _meta records it as enrolled in adaptive
-        // may be lazily ahead of its durable epoch even when the instance now runs nosync, and must still
-        // be recovered.
-        // Every adaptive WAL table must have a trustworthy marker/generation; absence fails startup closed.
+        // The enrolment record in _meta decides whether a table is rolled forward, never the instance mode.
+        // Only a table enrolled under adaptive can have been applied lazily ahead of its durable epoch:
+        // enrolment publishes the anchor before it sets the record, and leaving adaptive makes the state
+        // durable before it clears the record. The record outlives a mode change across a restart, so a table
+        // left enrolled is still recovered when the instance now runs nosync, and a table that left adaptive
+        // is not rewound to the anchor it left behind when the instance runs adaptive again.
+        // Every enrolled table must have a trustworthy marker/generation; absence fails startup closed.
+        final boolean adaptiveInstance = configuration.getCommitMode() == CommitMode.ADAPTIVE;
         final ObjHashSet<TableToken> tokens = new ObjHashSet<>();
         final ObjList<TableToken> checkpointEnrollments = new ObjList<>();
         engine.getTableTokens(tokens, false);
@@ -121,36 +128,69 @@ public class RecoveryCoordinator {
                 try {
                     // Before anything below reads _meta, finish the _todo_ repair of a metadata swap that a
                     // crash interrupted. TableWriter performs it on open, which comes after this pass.
-                    repairInterruptedMetaSwap(token, src, dst);
-                    // On cold boot this may read _meta. Any inability to determine or restore an adaptive
-                    // table's replay floor aborts initialization; sequencer suspension does not fence readers.
-                    final boolean metadataBoundEpoch = hasMetadataBoundEpoch(token, dir);
+                    try {
+                        repairInterruptedMetaSwap(token, src, dst);
+                    } catch (CairoException | CairoError repairFailure) {
+                        if (CairoException.isDataSyncFailure(repairFailure) || mayHoldAdaptiveState(token, dir)) {
+                            throw repairFailure;
+                        }
+                        // Leave the repair to the table's writer, which retries it on open, exactly as it
+                        // would without this pass.
+                        LOG.error().$("could not repair interrupted metadata swap, deferring to table writer [table=").$(token)
+                                .$(", error=").$((Throwable) repairFailure).I$();
+                        continue;
+                    }
                     final boolean enrolledAdaptive;
                     try {
-                        final int effectiveMode = configuration.getCommitMode();
-                        // The effective mode says how this table will be written NEXT; the enrolled record
-                        // says how its materialized state was LEFT. A table applied lazily under adaptive is
-                        // torn ahead of its durable epoch no matter what the config file says on the way back
-                        // up, so an operator turning adaptive off must not turn the repair off with it.
-                        // Skipping requires BOTH: not adaptive now, and no lazy state to reconcile.
                         enrolledAdaptive = readEnrolledCommitMode(token, dir) == CommitMode.ADAPTIVE;
-                        if (effectiveMode != CommitMode.ADAPTIVE && !enrolledAdaptive) {
-                            continue;
-                        }
-                        failIfRecoveryDisabled(token);
                     } catch (CairoException | CairoError metadataFailure) {
-                        // A crash during structural metadata swap can leave live _meta absent/torn while the
-                        // previous durable epoch still has a bound, checksummed _meta payload. Recover from
-                        // that generation before a retrying metadata reader can spin forever on a pinned clock.
-                        if (metadataBoundEpoch) {
+                        // Nothing opens a table whose _meta is missing or empty -- readers, WAL apply and the
+                        // writer all load it first -- so leaving such a table alone never serves torn state: it
+                        // fails when opened, as it does without this pass. A table without an anchor has no lazy
+                        // state to protect -- enrolment publishes the anchor first, and a restore that clears it
+                        // lays down a consistent cut -- so it is left alone whatever the read failed on.
+                        //
+                        // On an adaptive instance a crash during a structural metadata swap can leave the live
+                        // _meta absent or torn while the durable epoch still has a bound, checksummed _meta
+                        // payload. Recover from that generation before a retrying metadata reader can spin
+                        // forever on a pinned clock; any other anchored table aborts the startup. Outside
+                        // adaptive the anchor is never restored from: nothing tells a current anchor from one a
+                        // table left behind when it left adaptive, and rewinding to that one would replay purged
+                        // WAL. An anchored table whose _meta exists but failed to read still aborts there: it
+                        // may be left enrolled, and the writer that opens it once the read succeeds would take
+                        // its lazily applied state as durable.
+                        if (adaptiveInstance && hasMetadataBoundEpoch(token, dir)) {
                             failIfRecoveryDisabled(token);
                             recoverTable(token, src, dst, dir, checkpointEnrollments);
                             continue;
                         }
-                        throw metadataFailure;
+                        if (hasAnchor(token, dir) && (adaptiveInstance || hasNonEmptyMetadataFile(token, dir))) {
+                            throw metadataFailure;
+                        }
+                        LOG.error().$("could not read table metadata, leaving the table to fail when opened [table=").$(token)
+                                .$(", error=").$((Throwable) metadataFailure).I$();
+                        continue;
                     }
-                    tablePath(dir, token).concat(TableUtils.SNAPSHOT_FILE_NAME);
-                    if (!ff.exists(dir.$()) && (checkpointRestored || isMarkedForRestoreEnrolment(token, dir))) {
+                    if (!enrolledAdaptive) {
+                        // Nothing to roll forward: a table that is not enrolled was never applied lazily since
+                        // its last durable cut, so its live state is exactly as durable as the mode it was
+                        // written under promised. An anchor it still carries was either left on disk when the
+                        // table left adaptive, and the WAL purge floor has dropped below it since, or published
+                        // at the live cut by an enrolment a crash interrupted. Rewinding to the first replays
+                        // purged WAL; rewinding to the second changes nothing. The TableWriter constructor
+                        // enrolls the table (baseline at the live cut, then the record) before the first lazy
+                        // apply.
+                        //
+                        // A restored table is the one exception, on an adaptive instance: it publishes its
+                        // baseline here, below, so that the restore marker is consumed.
+                        if (adaptiveInstance && isRestoredWithoutAnchor(token, dir)) {
+                            failIfRecoveryDisabled(token);
+                            checkpointEnrollments.add(token);
+                        }
+                        continue;
+                    }
+                    failIfRecoveryDisabled(token);
+                    if (isRestoredWithoutAnchor(token, dir)) {
                         // A restore is a trustworthy, internally consistent materialized cut, but restore
                         // metadata intentionally excludes adaptive epoch anchors -- both the checkpoint path
                         // (TableSnapshotRestore) and an out-of-process restore that clears them via
@@ -163,21 +203,8 @@ public class RecoveryCoordinator {
                         // before this engine existed; such a restore leaves the per-table marker instead (see
                         // markRestoredForEnrolment). Without one of the two signals an absent anchor is
                         // indistinguishable from a table whose anchor was lost, which recoverTable must keep
-                        // refusing.
+                        // refusing: its state may be ahead of a cut nothing can name any more.
                         checkpointEnrollments.add(token);
-                        continue;
-                    }
-                    if (!ff.exists(dir.$()) && !enrolledAdaptive) {
-                        // A table that was never enrolled cannot have an anchor, and cannot have been applied
-                        // lazily either -- enrollment is what permits lazy apply, and it publishes the anchor
-                        // first. Its live state is exactly as durable as the mode it was written under
-                        // promised, so there is nothing here to roll forward. The TableWriter constructor
-                        // performs the crash-safe enrollment (baseline at the live cut, then the record)
-                        // before this table can be applied lazily for the first time.
-                        //
-                        // This is the ONLY case in which an absent anchor is not a hard failure. An enrolled
-                        // table with no anchor falls through to recoverTable and is refused: its state may be
-                        // ahead of a cut nothing can name any more.
                         continue;
                     }
                     recoverTable(token, src, dst, dir, checkpointEnrollments);
@@ -242,6 +269,11 @@ public class RecoveryCoordinator {
         }
     }
 
+    private boolean hasAnchor(TableToken token, Path markerPath) {
+        tablePath(markerPath, token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+        return ff.exists(markerPath.$());
+    }
+
     private boolean hasMetadataBoundEpoch(TableToken token, Path markerPath) {
         tablePath(markerPath, token).concat(TableUtils.SNAPSHOT_FILE_NAME);
         if (!ff.exists(markerPath.$())) {
@@ -263,9 +295,31 @@ public class RecoveryCoordinator {
         return false;
     }
 
+    private boolean hasNonEmptyMetadataFile(TableToken token, Path metaPath) {
+        tablePath(metaPath, token).concat(TableUtils.META_FILE_NAME);
+        return ff.length(metaPath.$()) > 0;
+    }
+
     private boolean isMarkedForRestoreEnrolment(TableToken token, Path dir) {
         tablePath(dir, token).concat(RESTORE_ENROL_FILE_NAME);
         return ff.exists(dir.$());
+    }
+
+    private boolean isRestoredWithoutAnchor(TableToken token, Path dir) {
+        return !hasAnchor(token, dir) && (checkpointRestored || isMarkedForRestoreEnrolment(token, dir));
+    }
+
+    /**
+     * Whether adaptive may have left this table's materialized state lazily ahead of its durable epoch, which
+     * is what makes a failure to reconcile it fatal. The enrolment record answers when {@code _meta} can be
+     * read. When it cannot, an anchor is the remaining evidence, since enrolment publishes one first.
+     */
+    private boolean mayHoldAdaptiveState(TableToken token, Path dir) {
+        try {
+            return readEnrolledCommitMode(token, dir) == CommitMode.ADAPTIVE;
+        } catch (CairoException | CairoError e) {
+            return hasAnchor(token, dir);
+        }
     }
 
     /**
@@ -273,11 +327,9 @@ public class RecoveryCoordinator {
      * (see {@link TableUtils#META_OFFSET_ENROLLED_COMMIT_MODE}). {@link CommitMode#ADAPTIVE} means the state
      * may be lazily ahead of the durable epoch; anything else means it may not.
      * <p>
-     * Fails closed on an unreadable {@code _meta} rather than defaulting to "not enrolled": the caller uses
-     * a non-ADAPTIVE answer to permit an absent anchor, and inferring that from a file it could not read
-     * would turn a corrupt table into a silent live-state fallback. The callers reach here only after the
-     * effective-mode resolution above has already read the same file, so this throws only if it became
-     * unreadable in between.
+     * Throws on an unreadable {@code _meta} rather than defaulting to "not enrolled": a non-ADAPTIVE answer
+     * skips the roll-forward, and inferring that from a file it could not read would turn a corrupt enrolled
+     * table into a silent live-state fallback. The caller decides what an unreadable table means.
      */
     private int readEnrolledCommitMode(TableToken token, Path metaPath) {
         tablePath(metaPath, token).concat(TableUtils.META_FILE_NAME);
