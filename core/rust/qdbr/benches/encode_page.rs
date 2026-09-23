@@ -124,6 +124,7 @@ fn write_options() -> WriteOptions {
         raw_array_encoding: true,
         min_compression_ratio: 0.0,
         bloom_filter_fpp: 0.01,
+        strict_utf16: false,
     }
 }
 

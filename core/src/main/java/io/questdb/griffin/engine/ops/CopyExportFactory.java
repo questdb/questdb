@@ -251,6 +251,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         statisticsEnabled,
                         parquetVersion,
                         rawArrayEncoding,
+                        executionContext.getCairoEngine().getConfiguration().isParquetExportFailOnInvalidUtf16(),
                         nowTimestampType,
                         now,
                         false,
