@@ -499,7 +499,7 @@ artifacts = {
     f'questdb-{version}.jar',
     f'questdb-{version}-sources.jar',
     f'questdb-{version}-javadoc.jar',
-    f'questdb-{version}-web-console.zip',
+    f'questdb-{version}.zip',
 }
 sidecars = ('.asc', '.md5', '.sha1', '.sha256', '.sha512')
 with zipfile.ZipFile(bundle_path) as bundle:
