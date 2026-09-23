@@ -25,9 +25,11 @@
 package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.client.Sender;
 import io.questdb.client.cutlass.http.client.WebSocketClient;
 import io.questdb.client.cutlass.http.client.WebSocketClientFactory;
 import io.questdb.client.cutlass.http.client.WebSocketFrameHandler;
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.cutlass.qwp.protocol.QwpSchemaProtocol;
 import io.questdb.client.cutlass.qwp.protocol.QwpSchemaResponse;
 import io.questdb.std.MemoryTag;
@@ -79,6 +81,49 @@ public class QwpSchemaDiscoveryLimitsE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertFalse(response.hasSchema());
             }
         });
+    }
+
+    @Test
+    public void testAutoCachesTooLargeUntilFeedbackReportsShrink() throws Exception {
+        StringBuilder ddl = new StringBuilder("create table schema_shrinks (");
+        for (int i = 0; i < 20; i++) {
+            ddl.append("column_name_long_enough_").append(i).append(" long, ");
+        }
+        ddl.append("ts timestamp) timestamp(ts) partition by day wal");
+        execute(ddl);
+
+        runInContext(port -> {
+            try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port
+                    + ";schema_mode=auto;auto_flush_rows=2147483647;auto_flush_bytes=0;"
+                    + "auto_flush_interval=2147483646;close_flush_timeout_millis=0;")) {
+                QwpWebSocketSender ws = (QwpWebSocketSender) sender;
+                // Too wide for a 512-byte send buffer: AUTO writes legacy rows and
+                // keeps the cached TOO_LARGE instead of asking on every batch.
+                for (int i = 0; i < 3; i++) {
+                    sender.table("schema_shrinks").longColumn("column_name_long_enough_0", i);
+                    Assert.assertNull(ws.getTableBuffer("schema_shrinks").getSchemaBinding());
+                    sender.atNow();
+                    Assert.assertTrue(sender.drain(10_000));
+                }
+                for (int i = 1; i < 20; i++) {
+                    execute("alter table schema_shrinks drop column column_name_long_enough_" + i);
+                }
+                // The next legacy frame sees the new version, so its ACK carries the
+                // now-describable schema and replaces the cached TOO_LARGE.
+                sender.table("schema_shrinks").longColumn("column_name_long_enough_0", 3).atNow();
+                Assert.assertTrue(sender.drain(10_000));
+                sender.table("schema_shrinks").longColumn("column_name_long_enough_0", 4);
+                Assert.assertNotNull("shrunk table must bind its schema",
+                        ws.getTableBuffer("schema_shrinks").getSchemaBinding());
+                sender.atNow();
+                Assert.assertTrue(sender.drain(10_000));
+            }
+            drainWalQueue();
+            assertQuery("select column_name_long_enough_0 from schema_shrinks")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column_name_long_enough_0\n0\n1\n2\n3\n4\n");
+        }, 65_536, recvChunk, sendChunk, 512, null);
     }
 
     @Test
