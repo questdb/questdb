@@ -33,6 +33,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -72,6 +73,13 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
     }
 
     private static Function dispatchUnaryFunc(Function operand, int operandType) {
+        // If the operand is known at compile time to never be null (e.g. a direct
+        // column reference to a NOT NULL column), `operand IS NULL` is always false.
+        // NegatingFunctionFactory handles the `IS NOT NULL` path by flipping the
+        // BooleanConstant result to true.
+        if (operand.isNotNull()) {
+            return BooleanConstant.FALSE;
+        }
         return switch (ColumnType.tagOf(operandType)) {
             case ColumnType.INT -> new FuncIntIsNaN(operand);
             case ColumnType.LONG -> new FuncLongIsNaN(operand);

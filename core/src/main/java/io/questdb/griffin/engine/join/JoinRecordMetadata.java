@@ -130,6 +130,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
                     m.getMetadata()
             );
             cm.setParquetEncodingConfig(m.getParquetEncodingConfig());
+            cm.setNotNullFlag(m.isNotNull());
         } else {
             cm = m;
         }

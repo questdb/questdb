@@ -42,6 +42,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class MinTimestampGroupByFunction extends TimestampFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private final int argColumnIndex;
     // Set when arg is the designated timestamp column. Page frame data is sorted ASC by the designated
     // timestamp, so the first row of any frame is its minimum and computeBatch can skip the column scan.
@@ -51,6 +52,7 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     public MinTimestampGroupByFunction(@NotNull Function arg, int timestampType) {
         super(timestampType);
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         // The factory derives timestampType from arg.getType(), so this check also
         // filters out non-direct args (e.g., CASTs) that happen to produce timestamps.
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, timestampType);
@@ -59,9 +61,9 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     @Override
     public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
         if (rowCount > 0) {
-            // Designated timestamp column has no nulls and is sorted ASC within a frame.
+            // Designated timestamps are validated and sorted ASC within a frame.
             final long batchMin = isDesignated ? Unsafe.getLong(dataAddr) : Vect.minLong(dataAddr, rowCount);
-            if (batchMin != Numbers.LONG_NULL) {
+            if (isArgNotNull || batchMin != Numbers.LONG_NULL) {
                 final long existing = mapValue.getTimestamp(valueIndex);
                 if (batchMin < existing || existing == Numbers.LONG_NULL) {
                     mapValue.putTimestamp(valueIndex, batchMin);
@@ -93,10 +95,12 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final long value = Unsafe.getLong(argAddr + (rowIndex << 3));
-                if (value != Numbers.LONG_NULL) {
+                if (isArgNotNull || value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getLong(addr);
-                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? Math.min(current, value) : value);
+                    if (Map.isNewBatchEntry(encoded) || value < current || (!isArgNotNull && current == Numbers.LONG_NULL)) {
+                        Unsafe.putLong(addr, value);
+                    }
                 }
             }
         } else {
@@ -104,10 +108,12 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final long value = arg.getTimestamp(record);
-                if (value != Numbers.LONG_NULL) {
+                if (isArgNotNull || value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getLong(addr);
-                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? Math.min(current, value) : value);
+                    if (Map.isNewBatchEntry(encoded) || value < current || (!isArgNotNull && current == Numbers.LONG_NULL)) {
+                        Unsafe.putLong(addr, value);
+                    }
                 }
             }
         }
@@ -115,7 +121,12 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        mapValue.minLong(valueIndex, arg.getTimestamp(record));
+        final long current = mapValue.getTimestamp(valueIndex);
+        final long value = arg.getTimestamp(record);
+        if ((isArgNotNull || value != Numbers.LONG_NULL)
+                && (value < current || (!isArgNotNull && current == Numbers.LONG_NULL))) {
+            mapValue.putTimestamp(valueIndex, value);
+        }
     }
 
     @Override
@@ -163,7 +174,8 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcMin = srcValue.getTimestamp(valueIndex);
         long destMin = destValue.getTimestamp(valueIndex);
-        if (srcMin != Numbers.LONG_NULL && (srcMin < destMin || destMin == Numbers.LONG_NULL)) {
+        if ((isArgNotNull || srcMin != Numbers.LONG_NULL)
+                && (srcMin < destMin || (!isArgNotNull && destMin == Numbers.LONG_NULL))) {
             destValue.putTimestamp(valueIndex, srcMin);
         }
     }
@@ -179,7 +191,9 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        // Ordinary NOT NULL timestamps stay on the per-row path because their sentinel is valid
+        // data. Designated timestamps cannot contain that sentinel and use the sorted-frame path.
+        return isDesignated || !isArgNotNull;
     }
 
     @Override

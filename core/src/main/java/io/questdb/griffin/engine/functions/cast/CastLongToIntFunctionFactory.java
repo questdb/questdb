@@ -52,7 +52,7 @@ public class CastLongToIntFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final long value = arg.getLong(rec);
-            return value == Numbers.LONG_NULL ? Numbers.INT_NULL : (int) value;
+            return !arg.isNotNull() && value == Numbers.LONG_NULL ? Numbers.INT_NULL : (int) value;
         }
     }
 }

@@ -37,6 +37,22 @@ import org.jetbrains.annotations.Nullable;
 public interface MetadataServiceStub extends MetadataService {
 
     @Override
+    default void addColumn(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            byte indexType,
+            int indexValueBlockCapacity,
+            boolean isSequential,
+            boolean isDedupKey,
+            boolean isNotNull,
+            SecurityContext securityContext
+    ) {
+        throw CairoException.critical(0).put("add column does not update sequencer metadata");
+    }
+
+    @Override
     default void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType) {
         throw CairoException.critical(0).put("add index does not update sequencer metadata");
     }
@@ -122,6 +138,18 @@ public interface MetadataServiceStub extends MetadataService {
     @Override
     default boolean removePartition(long partitionTimestamp) {
         throw CairoException.critical(0).put("remove partition does not update sequencer metadata");
+    }
+
+    /**
+     * SET/DROP NOT NULL is a structural change, so it is recorded in the sequencer metadata change
+     * log and is replayed against every consumer of that log, including consumers that track only
+     * one aspect of the metadata. Services that own sequencer metadata (SequencerMetadataService,
+     * WalWriter's metadata services) override this; for the rest the flag is irrelevant, so the
+     * default ignores it rather than failing the replay. This mirrors disableDeduplication() and
+     * enableDeduplicationWithUpsertKeys(), the other structural callbacks with benign defaults.
+     */
+    @Override
+    default void setColumnNotNull(CharSequence columnName, boolean isNotNull) {
     }
 
     @Override

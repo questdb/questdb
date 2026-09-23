@@ -161,7 +161,7 @@ public class PowerBiSqlTest extends AbstractCairoTest {
                         COLUMN_NAME\tORDINAL_POSITION\tIS_NULLABLE\tDATA_TYPE
                         a\t0\tyes\tinteger
                         b\t1\tyes\tdouble precision
-                        t\t2\tyes\ttimestamp without time zone
+                        t\t2\tno\ttimestamp without time zone
                         """);
     }
 

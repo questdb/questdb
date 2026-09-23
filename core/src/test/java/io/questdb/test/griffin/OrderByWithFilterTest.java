@@ -931,7 +931,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE 'network_nodes_test' (\s
-                    \ttimestamp TIMESTAMP,
+                    \ttimestamp TIMESTAMP NOT NULL,
                     \tnode_name SYMBOL CAPACITY 65536 CACHE INDEX CAPACITY 65536,
                     \thost_ip IPv4,
                     \tstatus SYMBOL CAPACITY 8 CACHE

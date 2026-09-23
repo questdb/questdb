@@ -41,6 +41,7 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
     private static final long NULL_VALUE = -1;
 
     private final Function arg;
+    private final boolean isArgNotNull;
     private final HyperLogLog hllA;
     private final HyperLogLog hllB;
     private int hllPtrIndex;
@@ -49,6 +50,7 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
 
     public ApproxCountDistinctIntGroupByFunction(Function arg, int precision) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         this.hllA = new HyperLogLog(precision);
         this.hllB = new HyperLogLog(precision);
     }
@@ -66,7 +68,7 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final int val = arg.getInt(record);
-        if (val != Numbers.INT_NULL) {
+        if (isArgNotNull || val != Numbers.INT_NULL) {
             final long hash = Hash.murmur3ToLong(val);
             long cardinality = hllA.of(0).addAndComputeCardinalityFast(hash);
             mapValue.putLong(hllPtrIndex, hllA.ptr());
@@ -81,7 +83,7 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final int val = arg.getInt(record);
-        if (val != Numbers.INT_NULL) {
+        if (isArgNotNull || val != Numbers.INT_NULL) {
             final long hash = Hash.murmur3ToLong(val);
             long ptr = mapValue.getLong(hllPtrIndex);
             long cardinality = hllA.of(ptr).addAndComputeCardinalityFast(hash);

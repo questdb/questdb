@@ -43,11 +43,13 @@ import org.jetbrains.annotations.NotNull;
 
 public class AvgIntGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private final int argColumnIndex;
     private int valueIndex;
 
     public AvgIntGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.INT);
     }
 
@@ -76,7 +78,7 @@ public class AvgIntGroupByFunction extends DoubleFunction implements GroupByFunc
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final int value = arg.getInt(record);
-        if (value != Numbers.INT_NULL) {
+        if (isArgNotNull || value != Numbers.INT_NULL) {
             mapValue.putDouble(valueIndex, value);
             mapValue.putLong(valueIndex + 1, 1);
         } else {
@@ -109,7 +111,7 @@ public class AvgIntGroupByFunction extends DoubleFunction implements GroupByFunc
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final int value = Unsafe.getInt(argAddr + (rowIndex << 2));
                 final long valueBase = baseValueAddr + Map.decodeBatchOffset(encoded);
-                applyAvg(valueBase + sumOffset, valueBase + countOffset, value, Map.isNewBatchEntry(encoded));
+                applyAvg(valueBase + sumOffset, valueBase + countOffset, value, Map.isNewBatchEntry(encoded), isArgNotNull);
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
@@ -117,7 +119,7 @@ public class AvgIntGroupByFunction extends DoubleFunction implements GroupByFunc
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final int value = arg.getInt(record);
                 final long valueBase = baseValueAddr + Map.decodeBatchOffset(encoded);
-                applyAvg(valueBase + sumOffset, valueBase + countOffset, value, Map.isNewBatchEntry(encoded));
+                applyAvg(valueBase + sumOffset, valueBase + countOffset, value, Map.isNewBatchEntry(encoded), isArgNotNull);
             }
         }
     }
@@ -125,7 +127,7 @@ public class AvgIntGroupByFunction extends DoubleFunction implements GroupByFunc
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final int value = arg.getInt(record);
-        if (value != Numbers.INT_NULL) {
+        if (isArgNotNull || value != Numbers.INT_NULL) {
             mapValue.addDouble(valueIndex, value);
             mapValue.addLong(valueIndex + 1, 1);
         }
@@ -215,7 +217,7 @@ public class AvgIntGroupByFunction extends DoubleFunction implements GroupByFunc
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return !isArgNotNull;
     }
 
     @Override
@@ -223,16 +225,16 @@ public class AvgIntGroupByFunction extends DoubleFunction implements GroupByFunc
         return UnaryFunction.super.supportsParallelism();
     }
 
-    private static void applyAvg(long sumAddr, long countAddr, int value, boolean isNew) {
+    private static void applyAvg(long sumAddr, long countAddr, int value, boolean isNew, boolean isArgNotNull) {
         if (isNew) {
-            if (value != Numbers.INT_NULL) {
+            if (isArgNotNull || value != Numbers.INT_NULL) {
                 Unsafe.putDouble(sumAddr, value);
                 Unsafe.putLong(countAddr, 1);
             } else {
                 Unsafe.putDouble(sumAddr, 0);
                 Unsafe.putLong(countAddr, 0);
             }
-        } else if (value != Numbers.INT_NULL) {
+        } else if (isArgNotNull || value != Numbers.INT_NULL) {
             Unsafe.putDouble(sumAddr, Unsafe.getDouble(sumAddr) + value);
             Unsafe.putLong(countAddr, Unsafe.getLong(countAddr) + 1);
         }

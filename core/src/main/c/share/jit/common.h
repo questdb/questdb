@@ -53,6 +53,22 @@ enum class data_kind_t : uint8_t {
     kFlagsNe,  // CMP emitted for inequality; use JE to skip if equal
 };
 
+// Per-instruction nullability flag carried in instruction_t::options next to the data type
+// code (low byte). The Java serializer (CompiledFilterIRSerializer.NULLABLE_TYPE_FLAG) sets it
+// on MEM loads of nullable columns, on every VAR (bind variables can be NULL at run time) and
+// on IMM operands whose payload is the type's NULL sentinel. Nullability is compile-time
+// information: the backends read it here, propagate it through jit_value_t and emit checked or
+// unchecked code per operand - no run-time nullability decisions exist in the generated loop.
+constexpr int32_t NULLABLE_TYPE_FLAG = 1 << 8;
+
+inline data_type_t ir_data_type(int32_t options) {
+    return static_cast<data_type_t>(options & 0xff);
+}
+
+inline bool ir_nullable(int32_t options) {
+    return (options & NULLABLE_TYPE_FLAG) != 0;
+}
+
 enum class opcodes : int32_t {
     Inv = -1,
     Ret = 0,
@@ -93,9 +109,10 @@ struct instruction_t {
 };
 
 // Carries one value through a backend's value stack: the register or memory operand holding it,
-// the width its instructions run at, where it came from, and how it spells a truth value.
+// the width its instructions run at, where it came from, whether it can be NULL, and how it
+// spells a truth value. The last two are independent flags - see nullable() and is_mask().
 //
-// The last of those exists because the SIMD backend spells one two ways. questdb::avx2::cmp_eq
+// The truth-value spelling exists because the SIMD backend spells one two ways. questdb::avx2::cmp_eq
 // emits vpcmpeqb / vpcmpeqd / ... , which write an all-ones lane for true and an all-zeros lane for
 // false; a BOOLEAN column, constant or bind variable arrives instead as the raw byte QuestDB
 // stores, 0 or 1. Neither dtype nor dkind can tell the two apart - mask_type() maps f32 and f64
@@ -112,10 +129,20 @@ struct instruction_t {
 struct jit_value_t {
 
     inline jit_value_t() noexcept
-            : op_(), type_(), kind_(), is_mask_(false) {}
+            : op_(), type_(), kind_(), nullable_(false), is_mask_(false) {}
 
-    inline jit_value_t(asmjit::Operand op, data_type_t type, data_kind_t kind, bool is_mask = false) noexcept
-            : op_(op), type_(type), kind_(kind), is_mask_(is_mask) {}
+    inline jit_value_t(asmjit::Operand op, data_type_t type, data_kind_t kind) noexcept
+            : op_(op), type_(type), kind_(kind), nullable_(false), is_mask_(false) {}
+
+    // nullable_ and is_mask_ are INDEPENDENT: the first says the value can carry the type's NULL
+    // sentinel, the second says it spells true as an all-ones lane. Neither ctor takes a default
+    // argument, so a four-argument call always means nullability and an is_mask value always has
+    // to be spelled out in the fifth position - mixing the two up compiles either way otherwise.
+    inline jit_value_t(asmjit::Operand op, data_type_t type, data_kind_t kind, bool nullable) noexcept
+            : op_(op), type_(type), kind_(kind), nullable_(nullable), is_mask_(false) {}
+
+    inline jit_value_t(asmjit::Operand op, data_type_t type, data_kind_t kind, bool nullable, bool is_mask) noexcept
+            : op_(op), type_(type), kind_(kind), nullable_(nullable), is_mask_(is_mask) {}
 
     inline jit_value_t(const jit_value_t &other) noexcept = default;
 
@@ -136,12 +163,19 @@ struct jit_value_t {
     // Reports whether this value spells true as an all-ones lane rather than as the byte 1.
     inline bool is_mask() const noexcept { return is_mask_; }
 
+    // Compile-time nullability of this operand: true when the value can carry the type's NULL
+    // sentinel AS NULL (nullable column load, bind variable, NULL-sentinel immediate, or a
+    // derived expression whose result can be NULL). The emitters select checked or unchecked
+    // code from it while compiling; the generated loop never re-decides.
+    inline bool nullable() const noexcept { return nullable_; }
+
     inline const asmjit::Operand &op() const noexcept { return op_; }
 
 private:
     asmjit::Operand op_;
     data_type_t type_;
     data_kind_t kind_;
+    bool nullable_;
     bool is_mask_;
 };
 

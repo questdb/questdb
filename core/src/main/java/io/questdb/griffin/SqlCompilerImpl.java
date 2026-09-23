@@ -969,7 +969,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final int indexValueBlockCapacity;
         final boolean cache;
         int symbolCapacity;
+        final boolean indexed;
         byte indexType = IndexType.NONE;
+        boolean isNotNull = false;
 
         if (
                 ColumnType.isSymbol(columnType)
@@ -1018,7 +1020,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             TableUtils.validateSymbolCapacityCached(cache, symbolCapacity, lexer.lastTokenPosition());
 
-            boolean indexed = Chars.equalsLowerCaseAsciiNc("index", tok);
+            indexed = Chars.equalsLowerCaseAsciiNc("index", tok);
             boolean indexTypeExplicit = false;
             if (indexed) {
                 tok = SqlUtil.fetchNext(lexer);
@@ -1057,17 +1059,35 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } catch (NumericException e) {
                     throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
                 }
-                SqlUtil.fetchNext(lexer);
+                tok = SqlUtil.fetchNext(lexer);
             } else {
                 indexValueBlockCapacity = configuration.getIndexValueBlockSize();
             }
-        } else { // set defaults
-            // ignore `NULL` and `NOT NULL`
-            if (tok != null && isNotKeyword(tok)) {
-                tok = SqlUtil.fetchNext(lexer);
-            }
 
-            if (tok != null && isNullKeyword(tok)) {
+            if (tok != null && isNotKeyword(tok)) {
+                int notPos = lexer.lastTokenPosition();
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && isNullKeyword(tok)) {
+                    isNotNull = true;
+                    SqlUtil.fetchNext(lexer);
+                } else {
+                    throw SqlException.$(notPos, "'NULL' expected after 'NOT'");
+                }
+            } else if (tok != null && isNullKeyword(tok)) {
+                SqlUtil.fetchNext(lexer);
+            }
+        } else { // set defaults
+            indexed = false;
+            if (tok != null && isNotKeyword(tok)) {
+                int notPos = lexer.lastTokenPosition();
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && isNullKeyword(tok)) {
+                    isNotNull = true;
+                    SqlUtil.fetchNext(lexer);
+                } else {
+                    throw SqlException.$(notPos, "'NULL' expected after 'NOT'");
+                }
+            } else if (tok != null && isNullKeyword(tok)) {
                 SqlUtil.fetchNext(lexer);
             }
 
@@ -1085,7 +1105,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     cache,
                     indexType,
                     Numbers.ceilPow2(indexValueBlockCapacity),
-                    false
+                    false,
+                    isNotNull
             );
         }
         lexer.unparseLast();
@@ -1303,6 +1324,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 configuration.getDefaultSymbolCacheFlag(), // ignored
                 IndexType.NONE, // ignored
                 Numbers.ceilPow2(configuration.getIndexValueBlockSize()), // ignored
+                false, // ignored
                 false // ignored
         );
 
@@ -1448,6 +1470,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         alterOperationBuilder.ofDropIndex(tableNamePosition, tableToken, metadata.getTableId(), columnName, columnNamePosition);
         executionContext.getSecurityContext().authorizeAlterTableDropIndex(tableToken, alterOperationBuilder.getExtraStrInfo());
+        compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    private void alterTableColumnDropNotNull(
+            int tableNamePosition,
+            TableToken tableToken,
+            CharSequence columnName,
+            TableRecordMetadata metadata,
+            int columnIndex
+    ) throws SqlException {
+        alterOperationBuilder.ofDropColumnNotNull(tableNamePosition, tableToken, metadata.getTableId(), columnName);
+        compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    private void alterTableColumnSetNotNull(
+            int tableNamePosition,
+            TableToken tableToken,
+            CharSequence columnName,
+            TableRecordMetadata metadata
+    ) {
+        alterOperationBuilder.ofSetColumnNotNull(tableNamePosition, tableToken, metadata.getTableId(), columnName);
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -2772,8 +2815,28 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 columnIndex
                         );
                     } else if (isSetKeyword(tok)) {
-                        tok = expectToken(lexer, "'parquet'");
-                        if (isParquetKeyword(tok)) {
+                        tok = expectToken(lexer, "'not', 'null' or 'parquet'");
+                        if (isNotKeyword(tok)) {
+                            tok = expectToken(lexer, "'null'");
+                            if (isNullKeyword(tok)) {
+                                alterTableColumnSetNotNull(
+                                        tableNamePosition,
+                                        tableToken,
+                                        columnName,
+                                        tableMetadata
+                                );
+                            } else {
+                                throw SqlException.$(lexer.lastTokenPosition(), "'null' expected");
+                            }
+                        } else if (isNullKeyword(tok)) {
+                            alterTableColumnDropNotNull(
+                                    tableNamePosition,
+                                    tableToken,
+                                    columnName,
+                                    tableMetadata,
+                                    columnIndex
+                            );
+                        } else if (isParquetKeyword(tok)) {
                             alterTableSetParquetEncoding(
                                     executionContext,
                                     tableNamePosition,
@@ -2783,7 +2846,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     columnIndex
                             );
                         } else {
-                            throw SqlException.$(lexer.lastTokenPosition(), "'parquet' expected");
+                            throw SqlException.$(lexer.lastTokenPosition(), "'not', 'null' or 'parquet' expected");
                         }
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'set', 'symbol', 'cache' or 'nocache' expected").put(" found '").put(tok).put('\'');
@@ -3473,6 +3536,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         int metadataColumnIndex = metadata.getColumnIndexQuiet(columnNameList.getQuick(i));
                         if (metadataColumnIndex > -1) {
                             final ExpressionNode node = insertModel.getRowTupleValues(tupleIndex).getQuick(i);
+                            rejectNullLiteralOnNotNullColumn(node, metadata, metadataColumnIndex, metadataTimestampIndex);
                             final Function function = functionParser.parseFunction(
                                     node,
                                     EmptyRecordMetadata.INSTANCE,
@@ -3515,6 +3579,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     for (int i = 0; i < columnCount; i++) {
                         final ExpressionNode node = values.getQuick(i);
+                        rejectNullLiteralOnNotNullColumn(node, metadata, i, metadataTimestampIndex);
 
                         Function function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
                         insertValidateFunctionAndAddToList(
@@ -3611,6 +3676,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.invalidColumn(model.getColumnPosition(i), columnName);
                     }
 
+                    rejectNullLiteralOnNotNullColumn(
+                            selectColumnAst(model, i),
+                            writerMetadata,
+                            index,
+                            writerTimestampIndex
+                    );
+
                     int fromType = cursorMetadata.getColumnType(i);
                     int toType = writerMetadata.getColumnType(index);
                     if (ColumnType.isConvertibleFrom(fromType, toType)) {
@@ -3666,6 +3738,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
 
                 for (int i = 0; i < n; i++) {
+                    rejectNullLiteralOnNotNullColumn(selectColumnAst(model, i), writerMetadata, i, writerTimestampIndex);
+
                     int fromType = cursorMetadata.getColumnType(i);
                     int toType = writerMetadata.getColumnType(i);
                     if (ColumnType.isConvertibleFrom(fromType, toType)) {
@@ -5283,6 +5357,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         TableToken updateTableToken = updateQueryModel.getUpdateTableToken();
         final IQueryModel selectQueryModel = updateQueryModel.getNestedModel();
 
+        rejectUpdateNullOnNotNullColumn(updateQueryModel, selectQueryModel, metadata);
+
         // Update IQueryModel structure is
         // IQueryModel with SET column expressions
         // |-- IQueryModel of select-virtual or select-choose of data selected for update
@@ -5690,6 +5766,104 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         executionContext.getSecurityContext().authorizeSuspendWal(tableToken);
         alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
+    }
+
+    /**
+     * Rejects an explicit NULL literal targeting a NOT NULL column. The designated timestamp is
+     * excluded because {@code compileInsert} reports it through a more specific message.
+     * <p>
+     * The check is deliberately syntactic. A NOT NULL column stores the type's legacy null-sentinel
+     * bit pattern as ordinary data, so the writer cannot tell a sentinel that the user meant as data
+     * from one produced by a runtime NULL. Only the literal spelling carries that intent, so only the
+     * literal spelling can be refused.
+     */
+    /**
+     * Returns the projected expression for cursor column {@code index}, or null when the model does
+     * not expose one (set operations, nested models). A null return disables the literal check for
+     * that column rather than guessing.
+     */
+    private static ExpressionNode selectColumnAst(InsertModel model, int index) {
+        final IQueryModel queryModel = model.getQueryModel();
+        if (queryModel == null) {
+            return null;
+        }
+        final ObjList<QueryColumn> columns = queryModel.getColumns();
+        if (columns == null || index < 0 || index >= columns.size()) {
+            return null;
+        }
+        final QueryColumn column = columns.getQuick(index);
+        return column != null ? column.getAst() : null;
+    }
+
+    private void rejectNullLiteralOnNotNullColumn(
+            ExpressionNode value,
+            TableRecordMetadata metadata,
+            int metadataColumnIndex,
+            int metadataTimestampIndex
+    ) throws SqlException {
+        if (metadataColumnIndex < 0 || metadataColumnIndex == metadataTimestampIndex) {
+            return;
+        }
+        if (!metadata.isNotNull(metadataColumnIndex)) {
+            return;
+        }
+        if (isExpressionConstantNull(value)) {
+            throw SqlException.$(value.position, "NOT NULL constraint violation [column=")
+                    .put(metadata.getColumnName(metadataColumnIndex)).put(']');
+        }
+    }
+
+    private void rejectUpdateNullOnNotNullColumn(
+            IQueryModel updateQueryModel,
+            IQueryModel selectQueryModel,
+            TableRecordMetadata metadata
+    ) throws SqlException {
+        if (updateQueryModel == null || selectQueryModel == null) {
+            return;
+        }
+        final ObjList<ExpressionNode> targetNames = updateQueryModel.getUpdateExpressions();
+        final ObjList<QueryColumn> valueColumns = selectQueryModel.getColumns();
+        if (targetNames == null || valueColumns == null) {
+            return;
+        }
+        final int n = Math.min(targetNames.size(), valueColumns.size());
+        for (int i = 0; i < n; i++) {
+            final ExpressionNode targetName = targetNames.getQuick(i);
+            final QueryColumn setColumn = valueColumns.getQuick(i);
+            if (targetName == null || setColumn == null) {
+                continue;
+            }
+            final int columnIndex = metadata.getColumnIndexQuiet(targetName.token);
+            if (columnIndex < 0 || !metadata.isNotNull(columnIndex)) {
+                continue;
+            }
+            if (isExpressionConstantNull(setColumn.getAst())) {
+                throw SqlException.$(setColumn.getAst().position, "NOT NULL constraint violation [column=")
+                        .put(targetName.token).put(']');
+            }
+        }
+    }
+
+    private static boolean isExpressionConstantNull(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        // Bare NULL literal.
+        if (node.type == ExpressionNode.CONSTANT && isNullKeyword(node.token)) {
+            return true;
+        }
+        // CAST(NULL AS T) -- the cast operator wraps the NULL literal.
+        if (node.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCaseNc("cast", node.token)) {
+            // cast has exactly 2 args: expression and type. Argument 0 is the
+            // expression being cast. If it is NULL, the cast returns NULL.
+            if (node.args.size() >= 2 && isExpressionConstantNull(node.args.getQuick(node.args.size() - 1))) {
+                return true;
+            }
+            if (node.lhs != null && isExpressionConstantNull(node.lhs)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private TableToken tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {

@@ -47,10 +47,10 @@ public class FirstNotNullDateGroupByFunction extends FirstDateGroupByFunction {
             long offset = 0;
             for (; dataAddr < hi; dataAddr += Long.BYTES) {
                 long value = Unsafe.getLong(dataAddr);
-                if (value != Numbers.LONG_NULL) {
+                if (isArgNotNull || value != Numbers.LONG_NULL) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);
-                    if (rowId < existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getDate(valueIndex + 1) == Numbers.LONG_NULL) {
+                    if (rowId < existingRowId || existingRowId == Numbers.LONG_NULL || (!isArgNotNull && mapValue.getDate(valueIndex + 1) == Numbers.LONG_NULL)) {
                         mapValue.putLong(valueIndex, rowId);
                         mapValue.putDate(valueIndex + 1, value);
                     }
@@ -84,11 +84,12 @@ public class FirstNotNullDateGroupByFunction extends FirstDateGroupByFunction {
                 final long value = Unsafe.getLong(argAddr + (rowIndex << 3));
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
-                if (value != Numbers.LONG_NULL || Map.isNewBatchEntry(encoded)) {
+                if (isArgNotNull || value != Numbers.LONG_NULL || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
+                    final long existingRowId = Unsafe.getLong(entryBase + rowIdOffset);
                     final long existingValue = Unsafe.getLong(entryBase + valueColumnOffset);
-                    if (existingValue == Numbers.LONG_NULL || rowId < Unsafe.getLong(entryBase + rowIdOffset)) {
+                    if (existingRowId == Numbers.LONG_NULL || rowId < existingRowId || (!isArgNotNull && existingValue == Numbers.LONG_NULL)) {
                         Unsafe.putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.putLong(entryBase + valueColumnOffset, value);
                     }
@@ -102,11 +103,12 @@ public class FirstNotNullDateGroupByFunction extends FirstDateGroupByFunction {
                 final long value = arg.getDate(record);
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
-                if (value != Numbers.LONG_NULL || Map.isNewBatchEntry(encoded)) {
+                if (isArgNotNull || value != Numbers.LONG_NULL || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
+                    final long existingRowId = Unsafe.getLong(entryBase + rowIdOffset);
                     final long existingValue = Unsafe.getLong(entryBase + valueColumnOffset);
-                    if (existingValue == Numbers.LONG_NULL || rowId < Unsafe.getLong(entryBase + rowIdOffset)) {
+                    if (existingRowId == Numbers.LONG_NULL || rowId < existingRowId || (!isArgNotNull && existingValue == Numbers.LONG_NULL)) {
                         Unsafe.putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.putLong(entryBase + valueColumnOffset, value);
                     }
@@ -118,8 +120,8 @@ public class FirstNotNullDateGroupByFunction extends FirstDateGroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         long val = arg.getDate(record);
-        if (val != Numbers.LONG_NULL) {
-            if (mapValue.getDate(valueIndex + 1) == Numbers.LONG_NULL || rowId < mapValue.getLong(valueIndex)) {
+        if (isArgNotNull || val != Numbers.LONG_NULL) {
+            if ((!isArgNotNull && mapValue.getDate(valueIndex + 1) == Numbers.LONG_NULL) || rowId < mapValue.getLong(valueIndex)) {
                 mapValue.putLong(valueIndex, rowId);
                 mapValue.putDate(valueIndex + 1, val);
             }
@@ -134,13 +136,13 @@ public class FirstNotNullDateGroupByFunction extends FirstDateGroupByFunction {
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcVal = srcValue.getDate(valueIndex + 1);
-        if (srcVal == Numbers.LONG_NULL) {
+        if (!isArgNotNull && srcVal == Numbers.LONG_NULL) {
             return;
         }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
         // srcRowId is non-null at this point since we know that the value is non-null
-        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || destValue.getDate(valueIndex + 1) == Numbers.LONG_NULL) {
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || (!isArgNotNull && destValue.getDate(valueIndex + 1) == Numbers.LONG_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putDate(valueIndex + 1, srcVal);
         }

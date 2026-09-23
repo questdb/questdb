@@ -106,10 +106,11 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
                 boolean isDedupKey,
                 boolean symbolIsCached,
                 int symbolCapacity,
-                @Transient IntList coveringColumnIndices
+                @Transient IntList coveringColumnIndices,
+                boolean isNotNull
         ) {
             if (columnType > -1L) {
-                TableColumnMetadata columnMetadata = new TableColumnMetadata(
+                var colMeta = new TableColumnMetadata(
                         columnName,
                         columnType,
                         indexType,
@@ -123,9 +124,10 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
                         symbolCapacity
                 );
                 if (coveringColumnIndices != null) {
-                    columnMetadata.setCoveringColumnIndices(new IntList(coveringColumnIndices));
+                    colMeta.setCoveringColumnIndices(new IntList(coveringColumnIndices));
                 }
-                add(columnMetadata);
+                colMeta.setNotNullFlag(isNotNull);
+                add(colMeta);
             }
         }
 

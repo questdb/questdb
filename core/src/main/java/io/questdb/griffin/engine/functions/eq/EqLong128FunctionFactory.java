@@ -29,7 +29,9 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class EqLong128FunctionFactory implements FunctionFactory {
@@ -45,7 +47,23 @@ public class EqLong128FunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0), args.getQuick(1));
+        final Function a = args.getQuick(0);
+        final Function b = args.getQuick(1);
+        // Fold `x = NULL` / `x IS NULL` to FALSE when the variable side is NOT NULL.
+        // LONG128 null is represented as (LONG_NULL, LONG_NULL) in the hi/lo halves.
+        // NegatingFunctionFactory handles the IS NOT NULL path by flipping the constant.
+        if (a.isConstant() && isLong128Null(a) && b.isNotNull()) {
+            return BooleanConstant.FALSE;
+        }
+        if (b.isConstant() && isLong128Null(b) && a.isNotNull()) {
+            return BooleanConstant.FALSE;
+        }
+        return new Func(a, b);
+    }
+
+    private static boolean isLong128Null(Function constFunc) {
+        return constFunc.getLong128Hi(null) == Numbers.LONG_NULL
+                && constFunc.getLong128Lo(null) == Numbers.LONG_NULL;
     }
 
     private static class Func extends AbstractEqBinaryFunction {

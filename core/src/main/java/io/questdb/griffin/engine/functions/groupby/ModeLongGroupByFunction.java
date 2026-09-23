@@ -44,12 +44,14 @@ import static io.questdb.std.Numbers.LONG_NULL;
 
 public class ModeLongGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private final GroupByLongLongHashMap mapA;
     private final GroupByLongLongHashMap mapB;
     private int valueIndex;
 
     public ModeLongGroupByFunction(@NotNull CairoConfiguration configuration, @NotNull Function arg) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         int initialCapacity = 4;
         double loadFactor = configuration.getSqlFastMapLoadFactor();
         mapA = new GroupByLongLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
@@ -65,7 +67,7 @@ public class ModeLongGroupByFunction extends LongFunction implements UnaryFuncti
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         long value = arg.getLong(record);
-        if (value != Numbers.LONG_NULL) {
+        if (isArgNotNull || value != Numbers.LONG_NULL) {
             mapA.of(0).inc(value);
             mapValue.putLong(valueIndex, mapA.ptr());
         } else {

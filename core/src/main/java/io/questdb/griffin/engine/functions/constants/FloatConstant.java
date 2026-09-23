@@ -39,7 +39,7 @@ public class FloatConstant extends FloatFunction implements ConstantFunction {
     }
 
     public static FloatConstant newInstance(float value) {
-        return Numbers.isFinite(value) ? new FloatConstant(value) : NULL;
+        return new FloatConstant(value);
     }
 
     @Override
@@ -53,14 +53,14 @@ public class FloatConstant extends FloatFunction implements ConstantFunction {
             return true;
         }
         if (obj instanceof FloatConstant that) {
-            return this.value == that.value;
+            // Use raw bits so that NaN == NaN and +0.0 != -0.0
+            return Float.floatToRawIntBits(this.value) == Float.floatToRawIntBits(that.value);
         }
         return false;
     }
 
     @Override
     public boolean isNullConstant() {
-        // NaN is used as a marker for NULL
         return Numbers.isNull(value);
     }
 

@@ -36,6 +36,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimals;
 import io.questdb.std.Interval;
+import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Uuid;
@@ -59,16 +60,29 @@ public class CursorPrinter {
 
     public static void printColumn(Record record, RecordMetadata metadata, int columnIndex, CharSink<?> sink, boolean symbolAsString, boolean printTypes, String nullStringValue) {
         final int columnType = metadata.getColumnType(columnIndex);
+        final boolean notNull = metadata.isNotNull(columnIndex);
         switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.DATE:
-                DateFormatUtils.appendDateTime(sink, record.getDate(columnIndex));
+            case ColumnType.DATE: {
+                long date = record.getDate(columnIndex);
+                if (notNull && date == Long.MIN_VALUE) {
+                    Numbers.append(sink, date, false);
+                } else {
+                    DateFormatUtils.appendDateTime(sink, date);
+                }
                 break;
-            case ColumnType.TIMESTAMP:
-                ColumnType.getTimestampDriver(columnType).append(sink, record.getTimestamp(columnIndex));
+            }
+            case ColumnType.TIMESTAMP: {
+                long ts = record.getTimestamp(columnIndex);
+                if (notNull && ts == Long.MIN_VALUE) {
+                    Numbers.append(sink, ts, false);
+                } else {
+                    ColumnType.getTimestampDriver(columnType).append(sink, ts);
+                }
                 break;
+            }
             case ColumnType.DOUBLE:
                 double v = record.getDouble(columnIndex);
-                if (Numbers.isFinite(v)) {
+                if (notNull || Numbers.isFinite(v)) {
                     sink.put(v);
                 } else {
                     sink.put("null");
@@ -76,14 +90,18 @@ public class CursorPrinter {
                 break;
             case ColumnType.FLOAT:
                 float f = record.getFloat(columnIndex);
-                if (Numbers.isFinite(f)) {
+                if (notNull || Numbers.isFinite(f)) {
                     sink.put(f);
                 } else {
                     sink.put("null");
                 }
                 break;
             case ColumnType.INT:
-                sink.put(record.getInt(columnIndex));
+                if (notNull) {
+                    Numbers.append(sink, (long) record.getInt(columnIndex), false);
+                } else {
+                    sink.put(record.getInt(columnIndex));
+                }
                 break;
             case ColumnType.NULL:
                 sink.put("null");
@@ -103,24 +121,28 @@ public class CursorPrinter {
                 break;
             case ColumnType.CHAR:
                 char c = record.getChar(columnIndex);
-                if (c > 0) {
+                if (notNull || c > 0) {
                     sink.put(c);
                 }
                 break;
             case ColumnType.LONG:
-                sink.put(record.getLong(columnIndex));
+                if (notNull) {
+                    Numbers.append(sink, record.getLong(columnIndex), false);
+                } else {
+                    sink.put(record.getLong(columnIndex));
+                }
                 break;
             case ColumnType.GEOBYTE:
-                putGeoHash(record.getGeoByte(columnIndex), ColumnType.getGeoHashBits(columnType), sink);
+                putGeoHash(record.getGeoByte(columnIndex), ColumnType.getGeoHashBits(columnType), sink, notNull);
                 break;
             case ColumnType.GEOSHORT:
-                putGeoHash(record.getGeoShort(columnIndex), ColumnType.getGeoHashBits(columnType), sink);
+                putGeoHash(record.getGeoShort(columnIndex), ColumnType.getGeoHashBits(columnType), sink, notNull);
                 break;
             case ColumnType.GEOINT:
-                putGeoHash(record.getGeoInt(columnIndex), ColumnType.getGeoHashBits(columnType), sink);
+                putGeoHash(record.getGeoInt(columnIndex), ColumnType.getGeoHashBits(columnType), sink, notNull);
                 break;
             case ColumnType.GEOLONG:
-                putGeoHash(record.getGeoLong(columnIndex), ColumnType.getGeoHashBits(columnType), sink);
+                putGeoHash(record.getGeoLong(columnIndex), ColumnType.getGeoHashBits(columnType), sink, notNull);
                 break;
             case ColumnType.BYTE:
                 // as int
@@ -138,21 +160,26 @@ public class CursorPrinter {
                 }
                 break;
             case ColumnType.LONG256:
-                record.getLong256(columnIndex, sink);
+                if (notNull) {
+                    Long256 l256 = record.getLong256A(columnIndex);
+                    Numbers.appendLong256(l256.getLong0(), l256.getLong1(), l256.getLong2(), l256.getLong3(), sink, false);
+                } else {
+                    record.getLong256(columnIndex, sink);
+                }
                 break;
             case ColumnType.LONG128:
                 // fall through
-            case ColumnType.UUID:
+            case ColumnType.UUID: {
                 long hi = record.getLong128Hi(columnIndex);
                 long lo = record.getLong128Lo(columnIndex);
-                if (!Uuid.isNull(lo, hi)) {
-                    Uuid uuid = new Uuid(lo, hi);
-                    uuid.toSink(sink);
+                if (notNull || !Uuid.isNull(lo, hi)) {
+                    Numbers.appendUuid(lo, hi, sink);
                 }
                 break;
+            }
             case ColumnType.IPv4: {
                 final int val = record.getIPv4(columnIndex);
-                if (val != IPv4_NULL) {
+                if (notNull || val != IPv4_NULL) {
                     Numbers.intToIPv4Sink(sink, val);
                 }
                 break;
@@ -167,7 +194,7 @@ public class CursorPrinter {
                 break;
             case ColumnType.INTERVAL:
                 Interval interval = record.getInterval(columnIndex);
-                if (!Interval.NULL.equals(interval)) {
+                if (notNull || !Interval.NULL.equals(interval)) {
                     interval.toSink(sink, columnType);
                 }
                 break;
@@ -182,22 +209,22 @@ public class CursorPrinter {
                 sink.put(record.getStrA(columnIndex));
                 break;
             case ColumnType.DECIMAL8:
-                putDecimal8Value(sink, record, columnIndex, columnType);
+                putDecimal8Value(sink, record, columnIndex, columnType, notNull);
                 break;
             case ColumnType.DECIMAL16:
-                putDecimal16Value(sink, record, columnIndex, columnType);
+                putDecimal16Value(sink, record, columnIndex, columnType, notNull);
                 break;
             case ColumnType.DECIMAL32:
-                putDecimal32Value(sink, record, columnIndex, columnType);
+                putDecimal32Value(sink, record, columnIndex, columnType, notNull);
                 break;
             case ColumnType.DECIMAL64:
-                putDecimal64Value(sink, record, columnIndex, columnType);
+                putDecimal64Value(sink, record, columnIndex, columnType, notNull);
                 break;
             case ColumnType.DECIMAL128:
-                putDecimal128Value(sink, record, columnIndex, columnType);
+                putDecimal128Value(sink, record, columnIndex, columnType, notNull);
                 break;
             case ColumnType.DECIMAL256:
-                putDecimal256Value(sink, record, columnIndex, columnType);
+                putDecimal256Value(sink, record, columnIndex, columnType, notNull);
                 break;
             default:
                 break;
@@ -288,52 +315,58 @@ public class CursorPrinter {
         }
     }
 
-    private static void putDecimal128Value(CharSink<?> sink, Record rec, int col, int type) {
+    private static void putDecimal128Value(CharSink<?> sink, Record rec, int col, int type, boolean notNull) {
         var decimal = Misc.getThreadLocalDecimal128();
         rec.getDecimal128(col, decimal);
-        if (!decimal.isNull()) {
+        if (notNull) {
+            Decimals.appendNonNull(decimal, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
+        } else if (!decimal.isNull()) {
             Decimals.append(decimal, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
         }
     }
 
-    private static void putDecimal16Value(CharSink<?> sink, Record rec, int col, int type) {
+    private static void putDecimal16Value(CharSink<?> sink, Record rec, int col, int type, boolean notNull) {
         short l = rec.getDecimal16(col);
-        if (l != Decimals.DECIMAL16_NULL) {
+        if (notNull || l != Decimals.DECIMAL16_NULL) {
             Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
         }
     }
 
-    private static void putDecimal256Value(CharSink<?> sink, Record rec, int col, int type) {
+    private static void putDecimal256Value(CharSink<?> sink, Record rec, int col, int type, boolean notNull) {
         var decimal = Misc.getThreadLocalDecimal256();
         rec.getDecimal256(col, decimal);
-        if (!decimal.isNull()) {
+        if (notNull) {
+            Decimals.appendNonNull(decimal, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
+        } else if (!decimal.isNull()) {
             Decimals.append(decimal, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
         }
     }
 
-    private static void putDecimal32Value(CharSink<?> sink, Record rec, int col, int type) {
+    private static void putDecimal32Value(CharSink<?> sink, Record rec, int col, int type, boolean notNull) {
         int l = rec.getDecimal32(col);
-        if (l != Decimals.DECIMAL32_NULL) {
+        if (notNull || l != Decimals.DECIMAL32_NULL) {
             Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
         }
     }
 
-    private static void putDecimal64Value(CharSink<?> sink, Record rec, int col, int type) {
+    private static void putDecimal64Value(CharSink<?> sink, Record rec, int col, int type, boolean notNull) {
         long l = rec.getDecimal64(col);
-        if (l != Decimals.DECIMAL64_NULL) {
+        if (notNull) {
+            Decimals.appendNonNull(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
+        } else if (l != Decimals.DECIMAL64_NULL) {
             Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
         }
     }
 
-    private static void putDecimal8Value(CharSink<?> sink, Record rec, int col, int type) {
+    private static void putDecimal8Value(CharSink<?> sink, Record rec, int col, int type, boolean notNull) {
         byte l = rec.getDecimal8(col);
-        if (l != Decimals.DECIMAL8_NULL) {
+        if (notNull || l != Decimals.DECIMAL8_NULL) {
             Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
         }
     }
 
-    private static void putGeoHash(long hash, int bits, CharSink<?> sink) {
-        if (hash == GeoHashes.NULL) {
+    private static void putGeoHash(long hash, int bits, CharSink<?> sink, boolean notNull) {
+        if (!notNull && hash == GeoHashes.NULL) {
             return;
         }
         if (bits % 5 == 0) {

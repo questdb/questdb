@@ -31,6 +31,8 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
@@ -50,7 +52,11 @@ public class CastLong256ToVarcharFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.get(0));
+        Function arg = args.get(0);
+        if (arg.isNotNull()) {
+            return new FuncNotNull(arg);
+        }
+        return new Func(arg);
     }
 
     public static class Func extends AbstractCastToVarcharFunction {
@@ -71,6 +77,31 @@ public class CastLong256ToVarcharFunctionFactory implements FunctionFactory {
         public Utf8Sequence getVarcharB(Record rec) {
             sinkB.clear();
             return SqlUtil.implicitCastLong256AsStr(arg.getLong256A(rec), sinkB) ? sinkB : null;
+        }
+    }
+
+    public static class FuncNotNull extends AbstractCastNotNullToVarcharFunction {
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
+
+        public FuncNotNull(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            sinkA.clear();
+            Long256 l256 = arg.getLong256A(rec);
+            Numbers.appendLong256(l256.getLong0(), l256.getLong1(), l256.getLong2(), l256.getLong3(), sinkA, false);
+            return sinkA;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            sinkB.clear();
+            Long256 l256 = arg.getLong256A(rec);
+            Numbers.appendLong256(l256.getLong0(), l256.getLong1(), l256.getLong2(), l256.getLong3(), sinkB, false);
+            return sinkB;
         }
     }
 }

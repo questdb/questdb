@@ -62,6 +62,11 @@ public class CastTimestampToLongFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isNotNull() {
+            return arg.isNotNull();
+        }
+
+        @Override
         public Function getTimestampArg() {
             return arg;
         }

@@ -1815,6 +1815,60 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return toleranceInterval;
     }
 
+    /**
+     * Set-operation result nullability follows the output row population:
+     * UNION and UNION ALL emit rows from both branches, so a result column is
+     * NOT NULL only when it is NOT NULL in both branches (conjunction, this
+     * method). The EXCEPT and INTERSECT families emit rows from branch A only,
+     * so they keep branch A's flags verbatim and must NOT call this method:
+     * dropping the flag there would re-interpret branch A's sentinel-as-data
+     * bit patterns as NULL.
+     * <p>
+     * The result metadata shares column instances with branch A's factory
+     * metadata (shallow copies), so a column whose flag must drop is replaced
+     * with a flag-cleared copy rather than mutated in place.
+     */
+    private static RecordMetadata unionResultNullability(RecordMetadata unionMetadata, RecordMetadata metadataB) {
+        final int columnCount = unionMetadata.getColumnCount();
+        boolean changeRequired = false;
+        for (int i = 0; i < columnCount; i++) {
+            if (unionMetadata.isNotNull(i) && !metadataB.isNotNull(i)) {
+                changeRequired = true;
+                break;
+            }
+        }
+        if (!changeRequired) {
+            return unionMetadata;
+        }
+        final GenericRecordMetadata conjoined = new GenericRecordMetadata();
+        for (int i = 0; i < columnCount; i++) {
+            final TableColumnMetadata column = unionMetadata.getColumnMetadata(i);
+            if (column.isNotNull() && !metadataB.isNotNull(i)) {
+                final TableColumnMetadata copy = new TableColumnMetadata(
+                        column.getColumnName(),
+                        column.getColumnType(),
+                        column.getIndexType(),
+                        column.getIndexValueBlockCapacity(),
+                        column.isSymbolTableStatic(),
+                        column.getMetadata(),
+                        column.getWriterIndex(),
+                        column.isDedupKeyFlag(),
+                        column.getReplacingIndex(),
+                        column.isSymbolCacheFlag(),
+                        column.getSymbolCapacity(),
+                        column.getOriginalWriterIndex()
+                );
+                copy.setParquetEncodingConfig(column.getParquetEncodingConfig());
+                // notNullFlag stays false: the nullable branch B contributes rows too
+                conjoined.add(copy);
+            } else {
+                conjoined.add(column);
+            }
+        }
+        conjoined.setTimestampIndex(unionMetadata.getTimestampIndex());
+        return conjoined;
+    }
+
     private static int validateAndGetSlaveTimestampIndex(RecordMetadata slaveMetadata, RecordCursorFactory slaveBase) {
         int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
         // slave.supportsFilterStealing() means slave is nothing but a filter.
@@ -1856,7 +1910,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int typeA = typesA.getColumnType(i);
             int typeB = typesB.getColumnType(i);
             int targetType = getUnionCastType(typeA, typeB);
-            metadata.add(new TableColumnMetadata(typesA.getColumnName(i), targetType));
+            TableColumnMetadata widened = new TableColumnMetadata(typesA.getColumnName(i), targetType);
+            // Explicitly nullable, for every set operation: widened values pass
+            // through cast functions that can map a branch's sentinel bit pattern
+            // to the target type's NULL, so NOT NULL cannot be promised here even
+            // when both branches carry the flag.
+            widened.setNotNullFlag(false);
+            metadata.add(widened);
         }
         return metadata;
     }
@@ -1867,7 +1927,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // uniformity here, not reachable with a protected token, and is not exercised by a test.
         int columnIndex;
         if (ast.type == FUNCTION && ast.paramCount == 1 && isSumKeyword(ast.token) && ast.rhs.type == LITERAL) {
-            columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
+            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            if (isVectorAggregateUnsafeForNotNull(metadata, columnIndex)) {
+                return null;
+            }
             tempVecConstructorArgIndexes.add(columnIndex);
             return sumConstructors.get(metadata.getColumnType(columnIndex));
         } else if (ast.type == FUNCTION && isCountKeyword(ast.token)
@@ -1876,31 +1939,72 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             tempVecConstructorArgIndexes.add(-1);
             return COUNT_CONSTRUCTOR;
         } else if (isSingleColumnFunction(ast, "count")) {
-            columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
+            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            if (isVectorAggregateUnsafeForNotNull(metadata, columnIndex)) {
+                return null;
+            }
             tempVecConstructorArgIndexes.add(columnIndex);
             return countConstructors.get(metadata.getColumnType(columnIndex));
         } else if (isSingleColumnFunction(ast, "ksum")) {
-            columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
+            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            if (isVectorAggregateUnsafeForNotNull(metadata, columnIndex)) {
+                return null;
+            }
             tempVecConstructorArgIndexes.add(columnIndex);
             return ksumConstructors.get(metadata.getColumnType(columnIndex));
         } else if (isSingleColumnFunction(ast, "nsum")) {
-            columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
+            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            if (isVectorAggregateUnsafeForNotNull(metadata, columnIndex)) {
+                return null;
+            }
             tempVecConstructorArgIndexes.add(columnIndex);
             return nsumConstructors.get(metadata.getColumnType(columnIndex));
         } else if (isSingleColumnFunction(ast, "avg")) {
-            columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
+            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            if (isVectorAggregateUnsafeForNotNull(metadata, columnIndex)) {
+                return null;
+            }
             tempVecConstructorArgIndexes.add(columnIndex);
             return avgConstructors.get(metadata.getColumnType(columnIndex));
         } else if (isSingleColumnFunction(ast, "min")) {
-            columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
+            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            if (isVectorAggregateUnsafeForNotNull(metadata, columnIndex)) {
+                return null;
+            }
             tempVecConstructorArgIndexes.add(columnIndex);
             return minConstructors.get(metadata.getColumnType(columnIndex));
         } else if (isSingleColumnFunction(ast, "max")) {
-            columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
+            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            if (isVectorAggregateUnsafeForNotNull(metadata, columnIndex)) {
+                return null;
+            }
             tempVecConstructorArgIndexes.add(columnIndex);
             return maxConstructors.get(metadata.getColumnType(columnIndex));
         }
         return null;
+    }
+
+    /**
+     * Returns true when the vectorized aggregate path must not be used for this column,
+     * because its NOT NULL semantic ("sentinels are valid values") isn't honored by the
+     * native kernels. Every kernel in Vect.* and Rosti::keyed* still treats the type's
+     * sentinel as null, so they would under-count / skip-in-sum values that the NOT NULL
+     * feature declares to be real data. The non-vectorized GroupByFunction pipeline, by
+     * contrast, is NOT-NULL-aware: its implementations branch on isArgNotNull (see
+     * CountLongGroupByFunction and the rest of the accumulator family) and count the
+     * sentinel as data. That asymmetry is why codegen refuses the vec path for these
+     * columns and routes them to the Java pipeline: it is the only pipeline that
+     * computes the correct answer today, and keeping the decision here leaves a single
+     * place to upgrade when NOT NULL-aware native kernels land. See the null-bitmaps
+     * plan.
+     */
+    private static boolean isVectorAggregateUnsafeForNotNull(RecordMetadata metadata, int columnIndex) {
+        // Designated timestamps are validated to exclude the sentinel, so native aggregation is
+        // safe for that one implicit NOT NULL column. Ordinary NOT NULL columns may store their
+        // sentinel as data and must remain on the non-vectorized path.
+        return columnIndex >= 0
+                && columnIndex != metadata.getTimestampIndex()
+                && metadata.isNotNull(columnIndex);
     }
 
     private boolean assembleKeysAndFunctionReferences(
@@ -2076,7 +2180,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         columnSizeShifts.add(Numbers.msb(typeSize));
                     }
 
-                    TableColumnMetadata columnMetadata = new TableColumnMetadata(
+                    TableColumnMetadata colMeta = new TableColumnMetadata(
                             metadata.getColumnName(columnIndex),
                             type,
                             metadata.getColumnIndexType(columnIndex),
@@ -2089,10 +2193,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag(),
                             metadata.getColumnMetadata(columnIndex).getSymbolCapacity()
                     );
-                    columnMetadata.setParquetEncodingConfig(
+                    colMeta.setNotNullFlag(metadata.isNotNull(columnIndex));
+                    colMeta.setParquetEncodingConfig(
                             metadata.getColumnMetadata(columnIndex).getParquetEncodingConfig()
                     );
-                    queryMeta.add(columnMetadata);
+                    queryMeta.add(colMeta);
 
                     if (columnIndex == readerTimestampIndex) {
                         queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
@@ -2102,15 +2207,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // select timestamp when it is required but not already selected
                 if (readerTimestampIndex != -1 && queryMeta.getTimestampIndex() == -1 && contextTimestampRequired) {
                     int timestampType = metadata.getColumnType(readerTimestampIndex);
-                    TableColumnMetadata timestampColumnMetadata = new TableColumnMetadata(
+                    TableColumnMetadata tsMeta = new TableColumnMetadata(
                             metadata.getColumnName(readerTimestampIndex),
                             timestampType,
                             metadata.getMetadata(readerTimestampIndex)
                     );
-                    timestampColumnMetadata.setParquetEncodingConfig(
+                    tsMeta.setNotNullFlag(metadata.isNotNull(readerTimestampIndex));
+                    tsMeta.setParquetEncodingConfig(
                             metadata.getColumnMetadata(readerTimestampIndex).getParquetEncodingConfig()
                     );
-                    queryMeta.add(timestampColumnMetadata);
+                    queryMeta.add(tsMeta);
                     queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
 
                     if (columnIndexes != null) {
@@ -2760,6 +2866,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (masterMetadata.getTimestampIndex() != -1) {
                 metadata.setTimestampIndex(masterMetadata.getTimestampIndex());
             }
+            // ASOF/LT are left-outer joins: an unmatched master row is paired
+            // with a null slave record, so NOT NULL constraints on the slave
+            // cannot be retained in the joined result metadata.
+            for (int i = masterMetadata.getColumnCount(), n = metadata.getColumnCount(); i < n; i++) {
+                metadata.getColumnMetadata(i).setNotNullFlag(false);
+            }
             return generator.create(
                     configuration,
                     metadata,
@@ -2973,6 +3085,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             metadata.add(slaveAlias, slaveMetadata.getColumnMetadata(i));
         }
 
+        // HORIZON is left-outer on the slave side: unmatched rows are
+        // represented by a null slave record.
+        int slaveOffset = masterMetadata.getColumnCount() + 2;
+        for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
+            metadata.getColumnMetadata(slaveOffset + i).setNotNullFlag(false);
+        }
+
         // Set timestamp index from master
         int masterTsIdx = masterMetadata.getTimestampIndex();
         if (masterTsIdx >= 0) {
@@ -3006,6 +3125,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata slaveMetadata,
             int timestampIndex
     ) {
+        return createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata, timestampIndex, false, false);
+    }
+
+    private JoinRecordMetadata createJoinMetadata(
+            CharSequence masterAlias,
+            RecordMetadata masterMetadata,
+            CharSequence slaveAlias,
+            RecordMetadata slaveMetadata,
+            int timestampIndex,
+            boolean nullableMaster,
+            boolean nullableSlave
+    ) {
         JoinRecordMetadata metadata;
         metadata = new JoinRecordMetadata(
                 configuration,
@@ -3020,6 +3151,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw th;
         }
 
+        if (nullableMaster) {
+            for (int i = 0, n = masterMetadata.getColumnCount(); i < n; i++) {
+                metadata.getColumnMetadata(i).setNotNullFlag(false);
+            }
+        }
+        if (nullableSlave) {
+            final int offset = masterMetadata.getColumnCount();
+            for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
+                metadata.getColumnMetadata(offset + i).setNotNullFlag(false);
+            }
+        }
         if (timestampIndex != -1) {
             metadata.setTimestampIndex(timestampIndex);
         }
@@ -3322,6 +3464,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0; i < columnCount; i++) {
             int toType = castToMetadata.getColumnType(i);
             int fromType = castFromMetadata.getColumnType(i);
+            final boolean fromNotNull = castFromMetadata.isNotNull(i);
             int toTag = tagOf(toType);
             int fromTag = tagOf(fromType);
             // VARCHAR_SLICE is a transient in-memory type (from read_parquet) accessed
@@ -3348,7 +3491,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(ByteColumn.newInstance(i));
                                 break;
                             case CHAR:
-                                castFunctions.add(new CharColumn(i));
+                                castFunctions.add(new CharColumn(i, fromNotNull));
                                 break;
                             case SHORT:
                                 castFunctions.add(ShortColumn.newInstance(i));
@@ -3367,7 +3510,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new CastByteToCharFunctionFactory.Func(ByteColumn.newInstance(i)));
                                 break;
                             case CHAR:
-                                castFunctions.add(new CharColumn(i));
+                                castFunctions.add(new CharColumn(i, fromNotNull));
                                 break;
                             // wider types are not possible here
                             // CHAR will be cast to wider types, not other way around
@@ -3387,10 +3530,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(ShortColumn.newInstance(i));
                                 break;
                             case CHAR:
-                                castFunctions.add(new CharColumn(i));
+                                castFunctions.add(new CharColumn(i, fromNotNull));
                                 break;
                             case INT:
-                                castFunctions.add(IntColumn.newInstance(i));
+                                castFunctions.add(IntColumn.newInstance(i, fromNotNull));
                                 break;
                             // wider types are not possible here
                             // INT will be cast to wider types, not other way around
@@ -3400,7 +3543,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         break;
                     case IPv4:
                         if (fromTag == IPv4) {
-                            castFunctions.add(IPv4Column.newInstance(i));
+                            castFunctions.add(IPv4Column.newInstance(i, fromNotNull));
                         } else {
                             throw SqlException.unsupportedCast(
                                     modelPosition,
@@ -3421,13 +3564,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(ShortColumn.newInstance(i));
                                 break;
                             case CHAR:
-                                castFunctions.add(new CharColumn(i));
+                                castFunctions.add(new CharColumn(i, fromNotNull));
                                 break;
                             case INT:
-                                castFunctions.add(IntColumn.newInstance(i));
+                                castFunctions.add(IntColumn.newInstance(i, fromNotNull));
                                 break;
                             case LONG:
-                                castFunctions.add(LongColumn.newInstance(i));
+                                castFunctions.add(LongColumn.newInstance(i, fromNotNull));
                                 break;
                             default:
                                 throw SqlException.unsupportedCast(
@@ -3444,7 +3587,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         break;
                     case DATE:
                         if (fromTag == DATE) {
-                            castFunctions.add(DateColumn.newInstance(i));
+                            castFunctions.add(DateColumn.newInstance(i, fromNotNull));
                         } else {
                             throw SqlException.unsupportedCast(
                                     modelPosition,
@@ -3456,22 +3599,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         break;
                     case UUID:
                         assert fromTag == UUID;
-                        castFunctions.add(UuidColumn.newInstance(i));
+                        castFunctions.add(UuidColumn.newInstance(i, fromNotNull));
                         break;
                     case LONG128:
                         assert fromTag == LONG128;
-                        castFunctions.add(Long128Column.newInstance(i));
+                        castFunctions.add(Long128Column.newInstance(i, fromNotNull));
                         break;
                     case TIMESTAMP:
                         switch (fromTag) {
                             case DATE:
-                                castFunctions.add(new CastDateToTimestampFunctionFactory.Func(DateColumn.newInstance(i), toType));
+                                castFunctions.add(new CastDateToTimestampFunctionFactory.Func(DateColumn.newInstance(i, fromNotNull), toType));
                                 break;
                             case TIMESTAMP:
                                 if (fromType == toType) {
-                                    castFunctions.add(TimestampColumn.newInstance(i, fromType));
+                                    castFunctions.add(TimestampColumn.newInstance(i, fromType, fromNotNull));
                                 } else {
-                                    castFunctions.add(new CastTimestampToTimestampFunctionFactory.Func(TimestampColumn.newInstance(i, fromType), fromType, toType));
+                                    castFunctions.add(new CastTimestampToTimestampFunctionFactory.Func(TimestampColumn.newInstance(i, fromType, fromNotNull), fromType, toType));
                                 }
                                 break;
                             default:
@@ -3492,13 +3635,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(ShortColumn.newInstance(i));
                                 break;
                             case INT:
-                                castFunctions.add(IntColumn.newInstance(i));
+                                castFunctions.add(IntColumn.newInstance(i, fromNotNull));
                                 break;
                             case LONG:
-                                castFunctions.add(LongColumn.newInstance(i));
+                                castFunctions.add(LongColumn.newInstance(i, fromNotNull));
                                 break;
                             case FLOAT:
-                                castFunctions.add(FloatColumn.newInstance(i));
+                                castFunctions.add(FloatColumn.newInstance(i, fromNotNull));
                                 break;
                             default:
                                 throw SqlException.unsupportedCast(
@@ -3518,16 +3661,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(ShortColumn.newInstance(i));
                                 break;
                             case INT:
-                                castFunctions.add(IntColumn.newInstance(i));
+                                castFunctions.add(IntColumn.newInstance(i, fromNotNull));
                                 break;
                             case LONG:
-                                castFunctions.add(LongColumn.newInstance(i));
+                                castFunctions.add(LongColumn.newInstance(i, fromNotNull));
                                 break;
                             case FLOAT:
-                                castFunctions.add(FloatColumn.newInstance(i));
+                                castFunctions.add(FloatColumn.newInstance(i, fromNotNull));
                                 break;
                             case DOUBLE:
-                                castFunctions.add(DoubleColumn.newInstance(i));
+                                castFunctions.add(DoubleColumn.newInstance(i, fromNotNull));
                                 break;
                             default:
                                 throw SqlException.unsupportedCast(
@@ -3551,58 +3694,58 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             case CHAR:
                                 // CharFunction has built-in cast to String
-                                castFunctions.add(new CharColumn(i));
+                                castFunctions.add(new CharColumn(i, fromNotNull));
                                 break;
                             case INT:
-                                castFunctions.add(new CastIntToStrFunctionFactory.Func(IntColumn.newInstance(i)));
+                                castFunctions.add(new CastIntToStrFunctionFactory.Func(IntColumn.newInstance(i, fromNotNull)));
                                 break;
                             case LONG:
-                                castFunctions.add(new CastLongToStrFunctionFactory.Func(LongColumn.newInstance(i)));
+                                castFunctions.add(new CastLongToStrFunctionFactory.Func(LongColumn.newInstance(i, fromNotNull)));
                                 break;
                             case DATE:
-                                castFunctions.add(new CastDateToStrFunctionFactory.Func(DateColumn.newInstance(i)));
+                                castFunctions.add(new CastDateToStrFunctionFactory.Func(DateColumn.newInstance(i, fromNotNull)));
                                 break;
                             case TIMESTAMP:
-                                castFunctions.add(new CastTimestampToStrFunctionFactory.Func(TimestampColumn.newInstance(i, fromType)));
+                                castFunctions.add(new CastTimestampToStrFunctionFactory.Func(TimestampColumn.newInstance(i, fromType, fromNotNull)));
                                 break;
                             case FLOAT:
                                 castFunctions.add(new CastFloatToStrFunctionFactory.Func(
-                                        FloatColumn.newInstance(i)
+                                        FloatColumn.newInstance(i, fromNotNull)
                                 ));
                                 break;
                             case DOUBLE:
                                 castFunctions.add(new CastDoubleToStrFunctionFactory.Func(
-                                        DoubleColumn.newInstance(i)
+                                        DoubleColumn.newInstance(i, fromNotNull)
                                 ));
                                 break;
                             case STRING:
-                                castFunctions.add(new StrColumn(i));
+                                castFunctions.add(new StrColumn(i, fromNotNull));
                                 break;
                             case VARCHAR:
                                 // VarcharFunction has built-in cast to string
-                                castFunctions.add(new VarcharColumn(i));
+                                castFunctions.add(new VarcharColumn(i, fromNotNull));
                                 break;
                             case UUID:
-                                castFunctions.add(new CastUuidToStrFunctionFactory.Func(UuidColumn.newInstance(i)));
+                                castFunctions.add(new CastUuidToStrFunctionFactory.Func(UuidColumn.newInstance(i, fromNotNull)));
                                 break;
                             case SYMBOL:
                                 castFunctions.add(
                                         new CastSymbolToStrFunctionFactory.Func(
-                                                new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i))
+                                                new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i), fromNotNull)
                                         )
                                 );
                                 break;
                             case LONG256:
                                 castFunctions.add(
                                         new CastLong256ToStrFunctionFactory.Func(
-                                                Long256Column.newInstance(i)
+                                                Long256Column.newInstance(i, fromNotNull)
                                         )
                                 );
                                 break;
                             case GEOBYTE:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoByteToStrCastFunction(
-                                                GeoByteColumn.newInstance(i, fromType),
+                                                GeoByteColumn.newInstance(i, fromType, fromNotNull),
                                                 getGeoHashBits(fromType)
                                         )
                                 );
@@ -3610,7 +3753,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case GEOSHORT:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoShortToStrCastFunction(
-                                                GeoShortColumn.newInstance(i, fromType),
+                                                GeoShortColumn.newInstance(i, fromType, fromNotNull),
                                                 getGeoHashBits(fromType)
                                         )
                                 );
@@ -3618,7 +3761,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case GEOINT:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoIntToStrCastFunction(
-                                                GeoIntColumn.newInstance(i, fromType),
+                                                GeoIntColumn.newInstance(i, fromType, fromNotNull),
                                                 getGeoHashBits(fromType)
                                         )
                                 );
@@ -3626,7 +3769,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case GEOLONG:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoLongToStrCastFunction(
-                                                GeoLongColumn.newInstance(i, fromType),
+                                                GeoLongColumn.newInstance(i, fromType, fromNotNull),
                                                 getGeoHashBits(fromType)
                                         )
                                 );
@@ -3637,22 +3780,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.DECIMAL64:
                                 castFunctions.add(
                                         new CastDecimalToStrFunctionFactory.Func64(
-                                                Decimal64LoaderFunctionFactory.getInstance(DecimalColumn.newInstance(i, fromType))
+                                                Decimal64LoaderFunctionFactory.getInstance(new DecimalColumn(i, fromType, fromNotNull))
                                         )
                                 );
                                 break;
                             case ColumnType.DECIMAL128:
                                 castFunctions.add(
-                                        new CastDecimalToStrFunctionFactory.Func128(DecimalColumn.newInstance(i, fromType))
+                                        new CastDecimalToStrFunctionFactory.Func128(new DecimalColumn(i, fromType, fromNotNull))
                                 );
                                 break;
                             case ColumnType.DECIMAL256:
                                 castFunctions.add(
-                                        new CastDecimalToStrFunctionFactory.Func(DecimalColumn.newInstance(i, fromType))
+                                        new CastDecimalToStrFunctionFactory.Func(new DecimalColumn(i, fromType, fromNotNull))
                                 );
                                 break;
                             case INTERVAL:
-                                castFunctions.add(new CastIntervalToStrFunctionFactory.Func(IntervalColumn.newInstance(i, fromType)));
+                                castFunctions.add(new CastIntervalToStrFunctionFactory.Func(IntervalColumn.newInstance(i, fromType, fromNotNull)));
                                 break;
                             case BINARY:
                                 throw SqlException.unsupportedCast(
@@ -3671,23 +3814,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             toType
                                     );
                                 }
-                                castFunctions.add(new CastDoubleArrayToStrFunctionFactory.Func(ArrayColumn.newInstance(i, fromType)));
+                                castFunctions.add(new CastDoubleArrayToStrFunctionFactory.Func(new ArrayColumn(i, fromType, fromNotNull)));
                                 break;
                             case IPv4:
-                                castFunctions.add(new CastIPv4ToStrFunctionFactory.Func(IPv4Column.newInstance(i)));
+                                castFunctions.add(new CastIPv4ToStrFunctionFactory.Func(IPv4Column.newInstance(i, fromNotNull)));
                                 break;
                         }
                         break;
                     case SYMBOL:
                         castFunctions.add(new CastSymbolToStrFunctionFactory.Func(
-                                new SymbolColumn(
-                                        i,
-                                        castFromMetadata.isSymbolTableStatic(i)
-                                )
+                                new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i), fromNotNull)
                         ));
                         break;
                     case LONG256:
-                        castFunctions.add(Long256Column.newInstance(i));
+                        castFunctions.add(Long256Column.newInstance(i, fromNotNull));
                         break;
                     case GEOBYTE:
                         switch (fromTag) {
@@ -3696,7 +3836,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         CastStrToGeoHashFunctionFactory.newInstance(
                                                 0,
                                                 toType,
-                                                new StrColumn(i)
+                                                new StrColumn(i, fromNotNull)
                                         )
                                 );
                                 break;
@@ -3705,18 +3845,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         CastVarcharToGeoHashFunctionFactory.newInstance(
                                                 0,
                                                 toType,
-                                                new VarcharColumn(i)
+                                                new VarcharColumn(i, fromNotNull)
                                         )
                                 );
                                 break;
                             case GEOBYTE:
-                                castFunctions.add(GeoByteColumn.newInstance(i, fromType));
+                                castFunctions.add(GeoByteColumn.newInstance(i, fromType, fromNotNull));
                                 break;
                             case GEOSHORT:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.newInstance(
                                                 0,
-                                                GeoShortColumn.newInstance(i, fromType),
+                                                GeoShortColumn.newInstance(i, fromType, fromNotNull),
                                                 toType,
                                                 fromType
                                         )
@@ -3726,7 +3866,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.newInstance(
                                                 0,
-                                                GeoIntColumn.newInstance(i, fromType),
+                                                GeoIntColumn.newInstance(i, fromType, fromNotNull),
                                                 toType,
                                                 fromType
                                         )
@@ -3736,7 +3876,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.newInstance(
                                                 0,
-                                                GeoLongColumn.newInstance(i, fromType),
+                                                GeoLongColumn.newInstance(i, fromType, fromNotNull),
                                                 toType,
                                                 fromType
                                         )
@@ -3758,7 +3898,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         CastStrToGeoHashFunctionFactory.newInstance(
                                                 0,
                                                 toType,
-                                                new StrColumn(i)
+                                                new StrColumn(i, fromNotNull)
                                         )
                                 );
                                 break;
@@ -3767,18 +3907,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         CastVarcharToGeoHashFunctionFactory.newInstance(
                                                 0,
                                                 toType,
-                                                new VarcharColumn(i)
+                                                new VarcharColumn(i, fromNotNull)
                                         )
                                 );
                                 break;
                             case GEOSHORT:
-                                castFunctions.add(GeoShortColumn.newInstance(i, toType));
+                                castFunctions.add(GeoShortColumn.newInstance(i, toType, fromNotNull));
                                 break;
                             case GEOINT:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.newInstance(
                                                 0,
-                                                GeoIntColumn.newInstance(i, fromType),
+                                                GeoIntColumn.newInstance(i, fromType, fromNotNull),
                                                 toType,
                                                 fromType
                                         )
@@ -3788,7 +3928,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.newInstance(
                                                 0,
-                                                GeoLongColumn.newInstance(i, fromType),
+                                                GeoLongColumn.newInstance(i, fromType, fromNotNull),
                                                 toType,
                                                 fromType
                                         )
@@ -3810,7 +3950,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         CastStrToGeoHashFunctionFactory.newInstance(
                                                 0,
                                                 toType,
-                                                new StrColumn(i)
+                                                new StrColumn(i, fromNotNull)
                                         )
                                 );
                                 break;
@@ -3819,18 +3959,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         CastVarcharToGeoHashFunctionFactory.newInstance(
                                                 0,
                                                 toType,
-                                                new VarcharColumn(i)
+                                                new VarcharColumn(i, fromNotNull)
                                         )
                                 );
                                 break;
                             case GEOINT:
-                                castFunctions.add(GeoIntColumn.newInstance(i, fromType));
+                                castFunctions.add(GeoIntColumn.newInstance(i, fromType, fromNotNull));
                                 break;
                             case GEOLONG:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.newInstance(
                                                 0,
-                                                GeoLongColumn.newInstance(i, fromType),
+                                                GeoLongColumn.newInstance(i, fromType, fromNotNull),
                                                 toType,
                                                 fromType
                                         )
@@ -3852,7 +3992,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         CastStrToGeoHashFunctionFactory.newInstance(
                                                 0,
                                                 toType,
-                                                new StrColumn(i)
+                                                new StrColumn(i, fromNotNull)
                                         )
                                 );
                                 break;
@@ -3861,12 +4001,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         CastVarcharToGeoHashFunctionFactory.newInstance(
                                                 0,
                                                 toType,
-                                                new VarcharColumn(i)
+                                                new VarcharColumn(i, fromNotNull)
                                         )
                                 );
                                 break;
                             case GEOLONG:
-                                castFunctions.add(GeoLongColumn.newInstance(i, fromType));
+                                castFunctions.add(GeoLongColumn.newInstance(i, fromType, fromNotNull));
                                 break;
                             default:
                                 throw SqlException.unsupportedCast(
@@ -3885,13 +4025,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     case ColumnType.DECIMAL256:
                         if (ColumnType.isDecimalType(fromTag)) {
                             if (fromType == toType) {
-                                castFunctions.add(DecimalColumn.newInstance(i, fromType));
+                                castFunctions.add(new DecimalColumn(i, fromType, fromNotNull));
                                 break;
                             }
                             castFunctions.add(
                                     CastDecimalToDecimalFunctionFactory.newInstance(
                                             0,
-                                            new DecimalColumn(i, fromType),
+                                            new DecimalColumn(i, fromType, fromNotNull),
                                             toType,
                                             executionContext
                                     )
@@ -3903,7 +4043,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(
                                         CastIntToDecimalFunctionFactory.newInstance(
                                                 0,
-                                                IntColumn.newInstance(i),
+                                                IntColumn.newInstance(i, fromNotNull),
                                                 toType,
                                                 executionContext
                                         )
@@ -3923,7 +4063,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(
                                         CastLongToDecimalFunctionFactory.newInstance(
                                                 0,
-                                                LongColumn.newInstance(i),
+                                                LongColumn.newInstance(i, fromNotNull),
                                                 toType,
                                                 executionContext.getDecimal256()
                                         )
@@ -3945,7 +4085,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 executionContext.getDecimal256(),
                                                 0,
                                                 toType,
-                                                new StrColumn(i)
+                                                new StrColumn(i, fromNotNull)
                                         )
                                 );
                                 break;
@@ -3955,7 +4095,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 executionContext.getDecimal256(),
                                                 0,
                                                 toType,
-                                                new VarcharColumn(i)
+                                                new VarcharColumn(i, fromNotNull)
                                         )
                                 );
                                 break;
@@ -3969,7 +4109,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                         break;
                     case BINARY:
-                        castFunctions.add(BinColumn.newInstance(i));
+                        castFunctions.add(BinColumn.newInstance(i, fromNotNull));
                         break;
                     case VARCHAR:
                         switch (fromTag) {
@@ -3984,61 +4124,61 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             case CHAR:
                                 // CharFunction has built-in cast to varchar
-                                castFunctions.add(new CharColumn(i));
+                                castFunctions.add(new CharColumn(i, fromNotNull));
                                 break;
                             case INT:
-                                castFunctions.add(new CastIntToVarcharFunctionFactory.Func(IntColumn.newInstance(i)));
+                                castFunctions.add(new CastIntToVarcharFunctionFactory.Func(IntColumn.newInstance(i, fromNotNull)));
                                 break;
                             case LONG:
-                                castFunctions.add(new CastLongToVarcharFunctionFactory.Func(LongColumn.newInstance(i)));
+                                castFunctions.add(new CastLongToVarcharFunctionFactory.Func(LongColumn.newInstance(i, fromNotNull)));
                                 break;
                             case DATE:
-                                castFunctions.add(new CastDateToVarcharFunctionFactory.Func(DateColumn.newInstance(i)));
+                                castFunctions.add(new CastDateToVarcharFunctionFactory.Func(DateColumn.newInstance(i, fromNotNull)));
                                 break;
                             case TIMESTAMP:
-                                castFunctions.add(new CastTimestampToVarcharFunctionFactory.Func(TimestampColumn.newInstance(i, fromType), fromType));
+                                castFunctions.add(new CastTimestampToVarcharFunctionFactory.Func(TimestampColumn.newInstance(i, fromType, fromNotNull), fromType));
                                 break;
                             case FLOAT:
                                 castFunctions.add(new CastFloatToVarcharFunctionFactory.Func(
-                                        FloatColumn.newInstance(i)
+                                        FloatColumn.newInstance(i, fromNotNull)
                                 ));
                                 break;
                             case DOUBLE:
                                 castFunctions.add(new CastDoubleToVarcharFunctionFactory.Func(
-                                        DoubleColumn.newInstance(i)
+                                        DoubleColumn.newInstance(i, fromNotNull)
                                 ));
                                 break;
                             case STRING:
                                 // StrFunction has built-in cast to varchar
-                                castFunctions.add(new StrColumn(i));
+                                castFunctions.add(new StrColumn(i, fromNotNull));
                                 break;
                             case VARCHAR:
-                                castFunctions.add(new VarcharColumn(i));
+                                castFunctions.add(new VarcharColumn(i, fromNotNull));
                                 break;
                             case UUID:
-                                castFunctions.add(new CastUuidToVarcharFunctionFactory.Func(UuidColumn.newInstance(i)));
+                                castFunctions.add(new CastUuidToVarcharFunctionFactory.Func(UuidColumn.newInstance(i, fromNotNull)));
                                 break;
                             case IPv4:
-                                castFunctions.add(new CastIPv4ToVarcharFunctionFactory.Func(IPv4Column.newInstance(i)));
+                                castFunctions.add(new CastIPv4ToVarcharFunctionFactory.Func(IPv4Column.newInstance(i, fromNotNull)));
                                 break;
                             case SYMBOL:
                                 castFunctions.add(
                                         new CastSymbolToVarcharFunctionFactory.Func(
-                                                new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i))
+                                                new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i), fromNotNull)
                                         )
                                 );
                                 break;
                             case LONG256:
                                 castFunctions.add(
                                         new CastLong256ToVarcharFunctionFactory.Func(
-                                                Long256Column.newInstance(i)
+                                                Long256Column.newInstance(i, fromNotNull)
                                         )
                                 );
                                 break;
                             case GEOBYTE:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoByteToVarcharCastFunction(
-                                                GeoByteColumn.newInstance(i, fromType),
+                                                GeoByteColumn.newInstance(i, fromType, fromNotNull),
                                                 getGeoHashBits(fromType)
                                         )
                                 );
@@ -4046,7 +4186,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case GEOSHORT:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoShortToVarcharCastFunction(
-                                                GeoShortColumn.newInstance(i, fromType),
+                                                GeoShortColumn.newInstance(i, fromType, fromNotNull),
                                                 getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
@@ -4054,7 +4194,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case GEOINT:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoIntToVarcharCastFunction(
-                                                GeoIntColumn.newInstance(i, fromType),
+                                                GeoIntColumn.newInstance(i, fromType, fromNotNull),
                                                 getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
@@ -4062,7 +4202,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case GEOLONG:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoLongToVarcharCastFunction(
-                                                GeoLongColumn.newInstance(i, fromType),
+                                                GeoLongColumn.newInstance(i, fromType, fromNotNull),
                                                 getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
@@ -4084,14 +4224,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             toType
                                     );
                                 }
-                                castFunctions.add(new CastDoubleArrayToVarcharFunctionFactory.Func(ArrayColumn.newInstance(i, fromType)));
+                                castFunctions.add(new CastDoubleArrayToVarcharFunctionFactory.Func(new ArrayColumn(i, fromType, fromNotNull)));
                                 break;
                             default:
                                 assert false;
                         }
                         break;
                     case INTERVAL:
-                        castFunctions.add(IntervalColumn.newInstance(i, toType));
+                        castFunctions.add(IntervalColumn.newInstance(i, toType, fromNotNull));
                         break;
                     case ARRAY:
                         switch (fromTag) {
@@ -4105,7 +4245,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             .put(castFromMetadata.getColumnName(i)).put(']');
                                 }
                                 if (fromDims == toDims) {
-                                    castFunctions.add(ArrayColumn.newInstance(i, fromType));
+                                    castFunctions.add(new ArrayColumn(i, fromType, fromNotNull));
                                 } else {
                                     if (fromDims > toDims) {
                                         throw SqlException.$(modelPosition, "array cast to lower dimensionality is not supported [column=")
@@ -4113,9 +4253,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
                                     if (fromDims == -1) {
                                         // must be a bind variable, i.e. weak dimensionality case
-                                        castFunctions.add(new CastDoubleArrayToDoubleArrayFunctionFactory.WeakDimsFunc(ArrayColumn.newInstance(i, fromType), toType, modelPosition));
+                                        castFunctions.add(new CastDoubleArrayToDoubleArrayFunctionFactory.WeakDimsFunc(new ArrayColumn(i, fromType, fromNotNull), toType, modelPosition));
                                     } else {
-                                        castFunctions.add(new CastDoubleArrayToDoubleArrayFunctionFactory.Func(ArrayColumn.newInstance(i, fromType), toType, toDims - fromDims));
+                                        castFunctions.add(new CastDoubleArrayToDoubleArrayFunctionFactory.Func(new ArrayColumn(i, fromType, fromNotNull), toType, toDims - fromDims));
                                     }
                                 }
                                 break;
@@ -4127,7 +4267,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             .$(modelPosition, "cast to array bind variable type is not supported [column=").put(castFromMetadata.getColumnName(i))
                                             .put(']');
                                 }
-                                castFunctions.add(new CastDoubleToDoubleArray.Func(DoubleColumn.newInstance(i), toType));
+                                castFunctions.add(new CastDoubleToDoubleArray.Func(DoubleColumn.newInstance(i, fromNotNull), toType));
                                 break;
                             default:
                                 assert false;
@@ -5822,7 +5962,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
         }
 
-        final JoinRecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata);
+        final JoinRecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata, masterMetadata.getTimestampIndex(), false, true);
         try {
             boolean hasLinearHint = SqlHints.hasAsOfLinearHint(model, masterAlias, slaveAlias);
             if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
@@ -6176,7 +6316,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
         }
 
-        JoinRecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata);
+        JoinRecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata, masterMetadata.getTimestampIndex(), false, true);
         try {
             if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                 int[][] ltSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
@@ -6327,7 +6467,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         masterMetadata,
                                         slaveModel.getName(),
                                         slaveMetadata,
-                                        joinType == IQueryModel.JOIN_CROSS_LEFT ? masterMetadata.getTimestampIndex() : -1
+                                        joinType == IQueryModel.JOIN_CROSS_LEFT ? masterMetadata.getTimestampIndex() : -1,
+                                        joinType == IQueryModel.JOIN_CROSS_RIGHT || joinType == IQueryModel.JOIN_CROSS_FULL,
+                                        joinType == IQueryModel.JOIN_CROSS_LEFT || joinType == IQueryModel.JOIN_CROSS_FULL
                                 );
                                 joinFilter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
                                 master = switch (joinType) {
@@ -6427,8 +6569,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 if (slaveToFree.recordCursorSupportsRandomAccess() && master.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     master = createSpliceJoin(
-                                            // splice join result does not have timestamp
-                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, -1),
+                                            // A splice result can synthesize a null record on either side.
+                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, -1, true, true),
                                             master,
                                             createRecordCopierMaster(masterMetadata),
                                             slaveToFree,
@@ -7194,7 +7336,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             default:
                                 processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
-                                joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, joinType == IQueryModel.JOIN_RIGHT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER ? -1 : masterMetadata.getTimestampIndex());
+                                joinMetadata = createJoinMetadata(
+                                        masterAlias,
+                                        masterMetadata,
+                                        slaveModel.getName(),
+                                        slaveMetadata,
+                                        joinType == IQueryModel.JOIN_RIGHT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER ? -1 : masterMetadata.getTimestampIndex(),
+                                        joinType == IQueryModel.JOIN_RIGHT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER,
+                                        joinType == IQueryModel.JOIN_LEFT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER
+                                );
                                 if (slaveModel.getOuterJoinExpressionClause() != null) {
                                     joinFilter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
                                 }
@@ -9871,7 +10021,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (queryColumn.getAlias() == null) {
                 queryMetadata.add(metadata.getColumnMetadata(index));
             } else {
-                TableColumnMetadata aliasedColumn = new TableColumnMetadata(
+                TableColumnMetadata aliasedMeta = new TableColumnMetadata(
                         SqlUtil.toColumnName(queryColumn.getAlias()),
                         metadata.getColumnType(index),
                         metadata.getColumnIndexType(index),
@@ -9879,10 +10029,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         metadata.isSymbolTableStatic(index),
                         metadata.getMetadata(index)
                 );
-                aliasedColumn.setParquetEncodingConfig(
+                aliasedMeta.setNotNullFlag(metadata.isNotNull(index));
+                aliasedMeta.setParquetEncodingConfig(
                         metadata.getColumnMetadata(index).getParquetEncodingConfig()
                 );
-                queryMetadata.add(aliasedColumn);
+                queryMetadata.add(aliasedMeta);
             }
 
             if (index == timestampIndex) {
@@ -9902,7 +10053,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         if (!timestampSet && executionContext.isTimestampRequired()) {
             TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
-            TableColumnMetadata implicitTs = new TableColumnMetadata(
+            TableColumnMetadata implicitTsMeta = new TableColumnMetadata(
                     "", // implicitly added timestamp - should never be referenced by a user, we only need the timestamp index position
                     colMetadata.getColumnType(),
                     colMetadata.getIndexType(),
@@ -9910,8 +10061,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     colMetadata.isSymbolTableStatic(),
                     metadata
             );
-            implicitTs.setParquetEncodingConfig(colMetadata.getParquetEncodingConfig());
-            queryMetadata.add(implicitTs);
+            implicitTsMeta.setNotNullFlag(colMetadata.isNotNull());
+            implicitTsMeta.setParquetEncodingConfig(colMetadata.getParquetEncodingConfig());
+            queryMetadata.add(implicitTsMeta);
             queryMetadata.setTimestampIndex(queryMetadata.getColumnCount() - 1);
             columnCrossIndex.add(timestampIndex);
         }
@@ -10770,6 +10922,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                 }
                 assert m != null;
+                // A pass-through of a NOT NULL column stays NOT NULL; a computed
+                // column is nullable unless the function proves otherwise.
+                m.setNotNullFlag(function.isNotNull());
                 final ColumnFunction cf = ColumnFunction.unwrap(function);
                 if (cf != null) {
                     final int baseColIdx = cf.getColumnIndex();
@@ -10811,6 +10966,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 timestampType,
                                 timestampFunction.getMetadata()
                         );
+                        m.setNotNullFlag(timestampFunction.isNotNull());
                         virtualMetadata.add(m);
                         priorityMetadata.add(m);
                         isTimestampRestored = true;
@@ -10851,6 +11007,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 timestampFunction.getType(),
                                 timestampFunction.getMetadata()
                         );
+                        m.setNotNullFlag(timestampFunction.isNotNull());
                         virtualMetadata.add(m);
                         priorityMetadata.add(m);
                         break;
@@ -11202,15 +11359,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
                         factoryMetadata.add(i, m);
                     } else { // keep alias
-                        factoryMetadata.add(i, new TableColumnMetadata(
-                                        SqlUtil.toColumnName(qc.getAlias()),
-                                        m.getColumnType(),
-                                        m.getIndexType(),
-                                        m.getIndexValueBlockCapacity(),
-                                        m.isSymbolTableStatic(),
-                                        baseMetadata
-                                )
+                        TableColumnMetadata windowMeta = new TableColumnMetadata(
+                                SqlUtil.toColumnName(qc.getAlias()),
+                                m.getColumnType(),
+                                m.getIndexType(),
+                                m.getIndexValueBlockCapacity(),
+                                m.isSymbolTableStatic(),
+                                baseMetadata
                         );
+                        windowMeta.setNotNullFlag(m.isNotNull());
+                        factoryMetadata.add(i, windowMeta);
                     }
                 }
             }
@@ -11350,15 +11508,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
                         factoryMetadata.add(i, m);
                     } else { // keep alias
-                        factoryMetadata.add(i, new TableColumnMetadata(
-                                        SqlUtil.toColumnName(qc.getAlias()),
-                                        m.getColumnType(),
-                                        m.getIndexType(),
-                                        m.getIndexValueBlockCapacity(),
-                                        m.isSymbolTableStatic(),
-                                        baseMetadata
-                                )
+                        TableColumnMetadata windowMeta2 = new TableColumnMetadata(
+                                SqlUtil.toColumnName(qc.getAlias()),
+                                m.getColumnType(),
+                                m.getIndexType(),
+                                m.getIndexValueBlockCapacity(),
+                                m.isSymbolTableStatic(),
+                                baseMetadata
                         );
+                        windowMeta2.setNotNullFlag(m.isNotNull());
+                        factoryMetadata.add(i, windowMeta2);
                     }
                     chainTypes.add(i, m.getColumnType());
                     listColumnFilterA.extendAndSet(i, i + 1);
@@ -11826,7 +11985,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             isSeedRequired,
                             pendingSymbolColumnsB
                     );
-                    final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
+                    final RecordMetadata unionMetadata = castIsRequired
+                            ? widenSetMetadata(metadataA, metadataB)
+                            : unionResultNullability(GenericRecordMetadata.removeTimestamp(metadataA), metadataB);
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
                         castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
@@ -11864,7 +12025,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             castFunctionsA = generateCastFunctions(executionContext, mergeMetadata, metadataA, positionA);
                             castFunctionsB = generateCastFunctions(executionContext, mergeMetadata, metadataB, positionB);
                         } else {
-                            mergeMetadata = GenericRecordMetadata.copyOfNew(metadataA);
+                            mergeMetadata = unionResultNullability(GenericRecordMetadata.copyOfNew(metadataA), metadataB);
                         }
                         return generateMergeUnionAllFactory(
                                 model,
@@ -11880,7 +12041,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     prepareMergeUnionAllFactory(factoryA);
                     prepareMergeUnionAllFactory(factoryB);
-                    final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
+                    final RecordMetadata unionMetadata = castIsRequired
+                            ? widenSetMetadata(metadataA, metadataB)
+                            : unionResultNullability(GenericRecordMetadata.removeTimestamp(metadataA), metadataB);
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
                         castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
@@ -11899,6 +12062,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 case IQueryModel.SET_OPERATION_EXCEPT: {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
+                    // EXCEPT emits branch A rows only: keep branch A's nullability flags (see unionResultNullability)
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
@@ -11919,6 +12083,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 case IQueryModel.SET_OPERATION_EXCEPT_ALL: {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
+                    // EXCEPT ALL emits branch A rows only: keep branch A's nullability flags (see unionResultNullability)
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
@@ -11938,6 +12103,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 case IQueryModel.SET_OPERATION_INTERSECT: {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
+                    // INTERSECT emits branch A rows only: keep branch A's nullability flags (see unionResultNullability)
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
@@ -11958,6 +12124,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 case IQueryModel.SET_OPERATION_INTERSECT_ALL: {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
+                    // INTERSECT ALL emits branch A rows only: keep branch A's nullability flags (see unionResultNullability)
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);

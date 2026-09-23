@@ -39,6 +39,10 @@ import io.questdb.std.Uuid;
 
 public class CountDistinctUuidGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
+    // Whether the argument is known NOT NULL at plan time. The sentinel-skip
+    // below is gated on this so that NOT NULL columns still accept the bit
+    // pattern that would otherwise read as NULL.
+    private final boolean isArgNotNull;
     private final GroupByLong128HashSet setA;
     private final GroupByLong128HashSet setB;
     private long cardinality;
@@ -46,6 +50,7 @@ public class CountDistinctUuidGroupByFunction extends LongFunction implements Un
 
     public CountDistinctUuidGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         setA = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
         setB = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
     }
@@ -60,14 +65,24 @@ public class CountDistinctUuidGroupByFunction extends LongFunction implements Un
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final long lo = arg.getLong128Lo(record);
         final long hi = arg.getLong128Hi(record);
-        if (!Uuid.isNull(lo, hi)) {
+        if (isArgNotNull && Uuid.isNull(lo, hi)) {
+            // NOT NULL admits the sentinel bit pattern as data, but the hash
+            // sets reserve that exact value as their empty marker, so its
+            // membership lives in the dedicated flag slot
+            mapValue.putLong(valueIndex, 1);
+            mapValue.putLong(valueIndex + 1, 0);
+            mapValue.putBool(valueIndex + 2, true);
+            cardinality++;
+        } else if (!Uuid.isNull(lo, hi)) {
             mapValue.putLong(valueIndex, 1);
             setA.of(0).add(lo, hi);
             mapValue.putLong(valueIndex + 1, setA.ptr());
+            mapValue.putBool(valueIndex + 2, false);
             cardinality++;
         } else {
             mapValue.putLong(valueIndex, 0);
             mapValue.putLong(valueIndex + 1, 0);
+            mapValue.putBool(valueIndex + 2, false);
         }
     }
 
@@ -75,7 +90,13 @@ public class CountDistinctUuidGroupByFunction extends LongFunction implements Un
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final long lo = arg.getLong128Lo(record);
         final long hi = arg.getLong128Hi(record);
-        if (!Uuid.isNull(lo, hi)) {
+        if (isArgNotNull && Uuid.isNull(lo, hi)) {
+            if (!mapValue.getBool(valueIndex + 2)) {
+                mapValue.putBool(valueIndex + 2, true);
+                mapValue.addLong(valueIndex, 1);
+                cardinality++;
+            }
+        } else if (!Uuid.isNull(lo, hi)) {
             final long ptr = mapValue.getLong(valueIndex + 1);
             final long index = setA.of(ptr).keyIndex(lo, hi);
             if (index >= 0) {
@@ -125,10 +146,14 @@ public class CountDistinctUuidGroupByFunction extends LongFunction implements Un
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         valueIndex = columnTypes.getColumnCount();
-        // count
+        // count, including the sentinel when the flag below is set
         columnTypes.add(ColumnType.LONG);
-        // GroupByLong128HashSet pointer (count>1)
+        // GroupByLong128HashSet pointer; 0 while the group holds at most the sentinel
         columnTypes.add(ColumnType.LONG);
+        // sentinel membership flag: the hash sets reserve the type's null
+        // bit pattern as their empty marker, so a NOT NULL argument's
+        // sentinel value cannot live in the set and is tracked here instead
+        columnTypes.add(ColumnType.BOOLEAN);
     }
 
     @Override
@@ -147,29 +172,48 @@ public class CountDistinctUuidGroupByFunction extends LongFunction implements Un
         if (srcCount == 0 || srcCount == Numbers.LONG_NULL) {
             return;
         }
+        final boolean srcSentinel = srcValue.getBool(valueIndex + 2);
         final long srcPtr = srcValue.getLong(valueIndex + 1);
 
         final long destCount = destValue.getLong(valueIndex);
         if (destCount == 0 || destCount == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcCount);
             destValue.putLong(valueIndex + 1, srcPtr);
+            destValue.putBool(valueIndex + 2, srcSentinel);
             return;
         }
+        final boolean destSentinel = destValue.getBool(valueIndex + 2);
+        final boolean sentinel = srcSentinel || destSentinel;
+        final long sentinelInc = sentinel ? 1 : 0;
         final long destPtr = destValue.getLong(valueIndex + 1);
+
+        if (srcPtr == 0) { // src holds only the sentinel
+            destValue.putLong(valueIndex, (destSentinel ? destCount - 1 : destCount) + sentinelInc);
+            destValue.putBool(valueIndex + 2, sentinel);
+            return;
+        }
+
+        if (destPtr == 0) { // dest holds at most the sentinel, adopt src's set
+            destValue.putLong(valueIndex, (srcSentinel ? srcCount - 1 : srcCount) + sentinelInc);
+            destValue.putLong(valueIndex + 1, srcPtr);
+            destValue.putBool(valueIndex + 2, sentinel);
+            return;
+        }
 
         setA.of(destPtr);
         setB.of(srcPtr);
 
         if (setA.size() > (setB.size() >>> 1)) {
             setA.merge(setB);
-            destValue.putLong(valueIndex, setA.size());
+            destValue.putLong(valueIndex, setA.size() + sentinelInc);
             destValue.putLong(valueIndex + 1, setA.ptr());
         } else {
             // Set A is significantly smaller than set B, so we merge it into set B.
             setB.merge(setA);
-            destValue.putLong(valueIndex, setB.size());
+            destValue.putLong(valueIndex, setB.size() + sentinelInc);
             destValue.putLong(valueIndex + 1, setB.ptr());
         }
+        destValue.putBool(valueIndex + 2, sentinel);
     }
 
     @Override
@@ -187,18 +231,21 @@ public class CountDistinctUuidGroupByFunction extends LongFunction implements Un
     public void setEmpty(MapValue mapValue) {
         mapValue.putLong(valueIndex, 0);
         mapValue.putLong(valueIndex + 1, 0);
+        mapValue.putBool(valueIndex + 2, false);
     }
 
     @Override
     public void setLong(MapValue mapValue, long value) {
         mapValue.putLong(valueIndex, value);
         mapValue.putLong(valueIndex + 1, 0);
+        mapValue.putBool(valueIndex + 2, false);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putLong(valueIndex + 1, 0);
+        mapValue.putBool(valueIndex + 2, false);
     }
 
     @Override

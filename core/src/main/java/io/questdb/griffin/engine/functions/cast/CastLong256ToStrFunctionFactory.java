@@ -28,12 +28,11 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
@@ -52,21 +51,19 @@ public class CastLong256ToStrFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.get(0));
+        Function arg = args.get(0);
+        if (arg.isNotNull()) {
+            return new FuncNotNull(arg);
+        }
+        return new Func(arg);
     }
 
-    public static class Func extends StrFunction implements UnaryFunction {
-        private final Function arg;
+    public static class Func extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
         public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
@@ -80,15 +77,30 @@ public class CastLong256ToStrFunctionFactory implements FunctionFactory {
             sinkB.clear();
             return SqlUtil.implicitCastLong256AsStr(arg.getLong256A(rec), sinkB) ? sinkB : null;
         }
+    }
 
-        @Override
-        public boolean isThreadSafe() {
-            return false;
+    public static class FuncNotNull extends AbstractCastNotNullToStrFunction {
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public FuncNotNull(Function arg) {
+            super(arg);
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(arg).val("::string");
+        public CharSequence getStrA(Record rec) {
+            sinkA.clear();
+            Long256 l256 = arg.getLong256A(rec);
+            Numbers.appendLong256(l256.getLong0(), l256.getLong1(), l256.getLong2(), l256.getLong3(), sinkA, false);
+            return sinkA;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            sinkB.clear();
+            Long256 l256 = arg.getLong256A(rec);
+            Numbers.appendLong256(l256.getLong0(), l256.getLong1(), l256.getLong2(), l256.getLong3(), sinkB, false);
+            return sinkB;
         }
     }
 }

@@ -33,16 +33,22 @@ import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COL
 public class DateColumn extends DateFunction implements ColumnFunction {
     private static final ObjList<DateColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
+    private final boolean isNotNull;
 
-    private DateColumn(int columnIndex) {
+    private DateColumn(int columnIndex, boolean isNotNull) {
         this.columnIndex = columnIndex;
+        this.isNotNull = isNotNull;
     }
 
     public static DateColumn newInstance(int columnIndex) {
-        if (columnIndex < STATIC_COLUMN_COUNT) {
+        return newInstance(columnIndex, false);
+    }
+
+    public static DateColumn newInstance(int columnIndex, boolean isNotNull) {
+        if (!isNotNull && columnIndex < STATIC_COLUMN_COUNT) {
             return COLUMNS.getQuick(columnIndex);
         }
-        return new DateColumn(columnIndex);
+        return new DateColumn(columnIndex, isNotNull);
     }
 
     @Override
@@ -56,6 +62,11 @@ public class DateColumn extends DateFunction implements ColumnFunction {
     }
 
     @Override
+    public boolean isNotNull() {
+        return isNotNull;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return true;
     }
@@ -63,7 +74,7 @@ public class DateColumn extends DateFunction implements ColumnFunction {
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
-            COLUMNS.setQuick(i, new DateColumn(i));
+            COLUMNS.setQuick(i, new DateColumn(i, false));
         }
     }
 }

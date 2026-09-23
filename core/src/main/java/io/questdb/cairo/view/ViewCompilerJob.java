@@ -195,6 +195,12 @@ public class ViewCompilerJob implements Job, QuietCloseable {
                     metadataChanged = true;
                     break;
                 }
+                // NOT NULL decides how the sentinel bit pattern renders, so a
+                // nullability-only change must refresh the view's catalogue metadata
+                if (currentMetadata.isNotNull(i) != newMetadata.isNotNull(i)) {
+                    metadataChanged = true;
+                    break;
+                }
             }
             if (newMetadata.getTimestampIndex() != currentMetadata.getTimestampIndex()) {
                 metadataChanged = true;

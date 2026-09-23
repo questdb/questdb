@@ -347,6 +347,19 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return false;
     }
 
+    /**
+     * Returns true when this function's result is guaranteed never to be null.
+     * The chief use is constant-folding of `expr IS NULL` / `expr IS NOT NULL` at
+     * compile time: if the operand reports {@code isNotNull() == true}, the null
+     * check collapses to a constant result.
+     * <p>
+     * Column functions read from a NOT NULL column return true; every other
+     * function defaults to false unless it can prove non-nullness.
+     */
+    default boolean isNotNull() {
+        return false;
+    }
+
     default boolean isNullConstant() {
         return false;
     }

@@ -43,11 +43,13 @@ import org.jetbrains.annotations.NotNull;
 public class FirstShortGroupByFunction extends ShortFunction implements GroupByFunction, UnaryFunction {
     protected final Function arg;
     protected final int argColumnIndex;
+    private final boolean isArgNotNull;
     protected int valueIndex;
 
     public FirstShortGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.SHORT);
+        this.isArgNotNull = arg.isNotNull();
     }
 
     @Override
@@ -189,7 +191,10 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        // NOT NULL columns take the per-row compute path; the native batch
+        // kernel treats the type sentinel as null and under-counts / skips
+        // values the NOT NULL contract declares to be real data.
+        return !isArgNotNull;
     }
 
     @Override

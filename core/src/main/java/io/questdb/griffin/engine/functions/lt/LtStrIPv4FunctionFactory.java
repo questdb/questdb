@@ -63,6 +63,16 @@ public class LtStrIPv4FunctionFactory implements FunctionFactory {
         final Function ipv4Func = args.getQuick(1);
         if (strFunc.isConstant()) {
             int constIPv4 = strFunc.getIPv4(null);
+            // Nullability is static information, resolved ONCE at bind time: on a
+            // never-null IPv4 operand the comparison is a plain unsigned one (0.0.0.0
+            // spelled out is data), and a genuine NULL bound orders nothing. Nullable
+            // operands keep today's behaviour bit-identically.
+            if (ipv4Func.isNotNull()) {
+                if (constIPv4 == Numbers.IPv4_NULL && strFunc.getStrA(null) == null) {
+                    return new NullBoundFunc(strFunc, ipv4Func);
+                }
+                return new DataConstStrFunc(constIPv4, ipv4Func);
+            }
             return new ConstStrFunc(constIPv4, ipv4Func);
         } else if (strFunc.isRuntimeConstant()) {
             return new RuntimeConstStrFunc(strFunc, ipv4Func);
@@ -98,6 +108,78 @@ public class LtStrIPv4FunctionFactory implements FunctionFactory {
                 sink.val('<');
             }
             sink.val(arg);
+        }
+    }
+
+    private static class DataConstStrFunc extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function arg;
+        private final int constIPv4;
+
+        public DataConstStrFunc(int constIPv4, Function arg) {
+            this.constIPv4 = constIPv4;
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            final long l = Numbers.ipv4ToLong(constIPv4);
+            final long r = Numbers.ipv4ToLong(arg.getIPv4(rec));
+            return negated ? l >= r : l < r;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.valIPv4(constIPv4);
+            if (negated) {
+                sink.val(">=");
+            } else {
+                sink.val('<');
+            }
+            sink.val(arg);
+        }
+    }
+
+    // `NULL < ipv4` / `NULL >= ipv4` on a never-null operand: a NULL bound orders no
+    // row, whichever way the comparison is spelled, so this cannot fold to a
+    // BooleanConstant (negation would flip it to TRUE).
+    private static class NullBoundFunc extends NegatableBooleanFunction implements BinaryFunction {
+        private final Function ipv4Func;
+        private final Function strFunc;
+
+        public NullBoundFunc(Function strFunc, Function ipv4Func) {
+            this.strFunc = strFunc;
+            this.ipv4Func = ipv4Func;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return false;
+        }
+
+        @Override
+        public Function getLeft() {
+            return strFunc;
+        }
+
+        @Override
+        public Function getRight() {
+            return ipv4Func;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(strFunc);
+            if (negated) {
+                sink.val(">=");
+            } else {
+                sink.val('<');
+            }
+            sink.val(ipv4Func);
         }
     }
 

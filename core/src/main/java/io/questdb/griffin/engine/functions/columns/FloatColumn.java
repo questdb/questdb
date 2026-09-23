@@ -33,16 +33,22 @@ import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COL
 public class FloatColumn extends FloatFunction implements ColumnFunction {
     private static final ObjList<FloatColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
+    private final boolean isNotNull;
 
-    private FloatColumn(int columnIndex) {
+    private FloatColumn(int columnIndex, boolean isNotNull) {
         this.columnIndex = columnIndex;
+        this.isNotNull = isNotNull;
     }
 
     public static FloatColumn newInstance(int columnIndex) {
-        if (columnIndex < STATIC_COLUMN_COUNT) {
+        return newInstance(columnIndex, false);
+    }
+
+    public static FloatColumn newInstance(int columnIndex, boolean isNotNull) {
+        if (!isNotNull && columnIndex < STATIC_COLUMN_COUNT) {
             return COLUMNS.getQuick(columnIndex);
         }
-        return new FloatColumn(columnIndex);
+        return new FloatColumn(columnIndex, isNotNull);
     }
 
     @Override
@@ -56,6 +62,11 @@ public class FloatColumn extends FloatFunction implements ColumnFunction {
     }
 
     @Override
+    public boolean isNotNull() {
+        return isNotNull;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return true;
     }
@@ -63,7 +74,7 @@ public class FloatColumn extends FloatFunction implements ColumnFunction {
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
-            COLUMNS.setQuick(i, new FloatColumn(i));
+            COLUMNS.setQuick(i, new FloatColumn(i, false));
         }
     }
 }

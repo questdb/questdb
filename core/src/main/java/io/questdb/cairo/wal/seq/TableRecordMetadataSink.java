@@ -31,7 +31,10 @@ import io.questdb.std.Transient;
 
 public interface TableRecordMetadataSink extends Mutable {
 
-    void addColumn(
+    /**
+     * Legacy overload retained for sinks compiled against the pre-NOT-NULL API.
+     */
+    default void addColumn(
             String columnName,
             int columnType,
             byte indexType,
@@ -42,7 +45,56 @@ public interface TableRecordMetadataSink extends Mutable {
             boolean symbolIsCached,
             int symbolCapacity,
             @Transient IntList coveringColumnIndices
-    );
+    ) {
+        addColumn(
+                columnName,
+                columnType,
+                indexType,
+                indexValueBlockCapacity,
+                symbolTableStatic,
+                writerIndex,
+                isDedupKey,
+                symbolIsCached,
+                symbolCapacity,
+                coveringColumnIndices,
+                false
+        );
+    }
+
+    /**
+     * Primary overload. Covering-index metadata is attached to the column being
+     * added, so each sink stores it against its own notion of the column - there
+     * is no shared index space between the sequencer (writer slots, deleted
+     * columns included) and compressed sinks (live columns only). The default
+     * delegates to the legacy overload so pre-NOT-NULL sinks keep receiving the
+     * covering list exactly as before.
+     */
+    default void addColumn(
+            String columnName,
+            int columnType,
+            byte indexType,
+            int indexValueBlockCapacity,
+            boolean symbolTableStatic,
+            int writerIndex,
+            boolean isDedupKey,
+            boolean symbolIsCached,
+            int symbolCapacity,
+            @Transient IntList coveringColumnIndices,
+            boolean isNotNull
+    ) {
+        addColumn(
+                columnName,
+                columnType,
+                indexType,
+                indexValueBlockCapacity,
+                symbolTableStatic,
+                writerIndex,
+                isDedupKey,
+                symbolIsCached,
+                symbolCapacity,
+                coveringColumnIndices
+        );
+    }
 
     default boolean requiresFullReadColumnOrder() {
         return false;

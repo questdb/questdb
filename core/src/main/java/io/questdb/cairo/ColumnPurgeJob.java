@@ -101,7 +101,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                         .$("CREATE TABLE IF NOT EXISTS \"")
                         .$(tableName)
                         .$("\" (" +
-                                "ts timestamp, " + // 0
+                                "ts timestamp NOT NULL, " + // 0
                                 "table_name symbol, " + // 1
                                 "column_name symbol, " + // 2
                                 "table_id int, " + // 3

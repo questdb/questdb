@@ -185,6 +185,10 @@ namespace questdb::avx2 {
         return null_check && (t == data_type_t::i32 || t == data_type_t::i64);
     }
 
+    inline bool is_int_null_type(data_type_t t) {
+        return t == data_type_t::i32 || t == data_type_t::i64;
+    }
+
     inline Vec is_nan(Compiler &c, data_type_t type, const Vec &x) {
         Vec sub = c.new_ymm();
         Vec dst = c.new_ymm();
@@ -267,24 +271,46 @@ namespace questdb::avx2 {
         return dst;
     }
 
-    inline Vec nulls_mask(Compiler &c, data_type_t &type, const Vec &lhs, const Vec &rhs) {
-        Vec lhs_nulls = cmp_eq_null(c, type, lhs);
-        Vec rhs_nulls = cmp_eq_null(c, type, rhs);
-        return mask_or(c, lhs_nulls, rhs_nulls);
+    // Per-operand null-lane masks, resolved at compile time: only a NULLABLE operand
+    // contributes its sentinel lanes; an unchecked (never-null) operand contributes a zero
+    // mask, so its sentinel bit pattern stays data. The callers skip the masking entirely when
+    // neither side is nullable; the neither-checked arm below makes that invariant hold inside
+    // the helper too, instead of silently answering cmp_eq_null(rhs).
+    inline Vec nulls_mask(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool check_lhs, bool check_rhs) {
+        if (!check_lhs && !check_rhs) {
+            // neither operand is nullable, so no lane is NULL: the all-zero mask
+            Vec none = c.new_ymm();
+            c.vpxor(none, none, none);
+            return none;
+        }
+        if (check_lhs && check_rhs) {
+            Vec lhs_nulls = cmp_eq_null(c, type, lhs);
+            Vec rhs_nulls = cmp_eq_null(c, type, rhs);
+            return mask_or(c, lhs_nulls, rhs_nulls);
+        }
+        return cmp_eq_null(c, type, check_lhs ? lhs : rhs);
     }
 
-    inline Vec not_nulls_mask(Compiler &c, data_type_t &type, const Vec &lhs, const Vec &rhs) {
-        return mask_not(c, nulls_mask(c, type, lhs, rhs));
+    inline Vec not_nulls_mask(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool check_lhs, bool check_rhs) {
+        return mask_not(c, nulls_mask(c, type, lhs, rhs, check_lhs, check_rhs));
     }
 
-    inline Vec xor_nulls_mask(Compiler &c, data_type_t &type, const Vec &lhs, const Vec &rhs) {
-        Vec lhs_nulls = cmp_eq_null(c, type, lhs);
-        Vec rhs_nulls = cmp_eq_null(c, type, rhs);
-        return mask_xor(c, lhs_nulls, rhs_nulls);
-    }
-
-    inline Vec not_xor_nulls_mask(Compiler &c, data_type_t &type, const Vec &lhs, const Vec &rhs) {
-        return mask_not(c, xor_nulls_mask(c, type, lhs, rhs));
+    // !(lhs_is_null XOR rhs_is_null) with per-operand checks: an unchecked side contributes
+    // constant false to the XOR, so the mask reduces to !other_is_null. With neither side
+    // checked the formula is !(false XOR false), the all-ones mask - see nulls_mask for why
+    // the helper answers that itself rather than relying on caller discipline.
+    inline Vec not_xor_nulls_mask(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool check_lhs, bool check_rhs) {
+        if (!check_lhs && !check_rhs) {
+            Vec all = c.new_ymm();
+            c.vpcmpeqd(all, all, all);
+            return all;
+        }
+        if (check_lhs && check_rhs) {
+            Vec lhs_nulls = cmp_eq_null(c, type, lhs);
+            Vec rhs_nulls = cmp_eq_null(c, type, rhs);
+            return mask_not(c, mask_xor(c, lhs_nulls, rhs_nulls));
+        }
+        return mask_not(c, cmp_eq_null(c, type, check_lhs ? lhs : rhs));
     }
 
     inline Vec cmp_eq_float(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs) {
@@ -406,57 +432,70 @@ namespace questdb::avx2 {
         return cmp_lt(c, type, rhs, lhs);
     }
 
-    inline Vec cmp_gt(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
-        if(!is_check_for_null(type, null_check)) {
+    inline Vec cmp_gt(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool check_lhs, bool check_rhs) {
+        if (!check_lhs && !check_rhs) {
             return cmp_gt(c, type, lhs, rhs);
         } else {
             Vec r = cmp_gt(c, type, lhs, rhs);
-            Vec not_nulls = not_nulls_mask(c, type, lhs, rhs);
+            Vec not_nulls = not_nulls_mask(c, type, lhs, rhs, check_lhs, check_rhs);
             return mask_and(c, r, not_nulls);
         }
     }
 
-    inline Vec cmp_lt(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
-        if(!is_check_for_null(type, null_check)) {
+    inline Vec cmp_lt(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool check_lhs, bool check_rhs) {
+        if (!check_lhs && !check_rhs) {
             return cmp_lt(c, type, lhs, rhs);
         } else {
             Vec r = cmp_lt(c, type, lhs, rhs);
-            Vec not_nulls = not_nulls_mask(c, type, lhs, rhs);
+            Vec not_nulls = not_nulls_mask(c, type, lhs, rhs, check_lhs, check_rhs);
             return mask_and(c, r, not_nulls);
         }
     }
 
-    inline Vec cmp_le(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check);
+    inline Vec cmp_le(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool check_lhs, bool check_rhs);
 
-    inline Vec cmp_ge(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
+    // The integer arm applies the null-lane exclusion ONLY when a side is nullable: with
+    // null checks off (NOT NULL operands) the sentinel bit pattern is data and the mask
+    // must not run, matching the scalar tail. Nullable operands keep the exact
+    // !(lhs_null XOR rhs_null) mask they had.
+    inline Vec cmp_ge(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool check_lhs, bool check_rhs) {
         switch (type) {
             case data_type_t::f32:
             case data_type_t::f64:
-                return cmp_le(c, type, rhs, lhs, null_check);
+                return cmp_le(c, type, rhs, lhs, check_rhs, check_lhs);
             default: {
                 Vec mask = mask_not(c, cmp_lt(c, type, lhs, rhs));
-                Vec not_xor_nulls = not_xor_nulls_mask(c, type, lhs, rhs);
-                return mask_and(c, mask, not_xor_nulls);
+                if ((check_lhs || check_rhs) && is_int_null_type(type)) {
+                    Vec not_xor_nulls = not_xor_nulls_mask(c, type, lhs, rhs, check_lhs, check_rhs);
+                    return mask_and(c, mask, not_xor_nulls);
+                }
+                return mask;
             }
         }
     }
 
-    inline Vec cmp_le(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
+    inline Vec cmp_le(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool check_lhs, bool check_rhs) {
         switch (type) {
             case data_type_t::f32: {
                 Vec eq = cmp_eq_float(c, type, lhs, rhs);
                 Vec dst = c.new_ymm();
                 c.vcmpps(dst.ymm(), lhs.ymm(), rhs.ymm(), CmpImm::kLE);
+                if (check_lhs || check_rhs) {
+                    dst = mask_and(c, dst, not_nulls_mask(c, type, lhs, rhs, check_lhs, check_rhs));
+                }
                 return mask_or(c, dst, eq);
             }
             case data_type_t::f64: {
                 Vec eq = cmp_eq_double(c, type, lhs, rhs);
                 Vec dst = c.new_ymm();
                 c.vcmppd(dst.ymm(), lhs.ymm(), rhs.ymm(), CmpImm::kLE);
+                if (check_lhs || check_rhs) {
+                    dst = mask_and(c, dst, not_nulls_mask(c, type, lhs, rhs, check_lhs, check_rhs));
+                }
                 return mask_or(c, dst, eq);
             }
             default:
-                return cmp_ge(c, type, rhs, lhs, null_check);
+                return cmp_ge(c, type, rhs, lhs, check_rhs, check_lhs);
         }
     }
 
@@ -487,8 +526,8 @@ namespace questdb::avx2 {
         return dst;
     }
 
-    inline Vec blend_with_nulls(Compiler &c, data_type_t &type, const Vec &t, const Vec &lhs, const Vec &rhs) {
-        Vec nulls_msk = nulls_mask(c, type, lhs, rhs);
+    inline Vec blend_with_nulls(Compiler &c, data_type_t type, const Vec &t, const Vec &lhs, const Vec &rhs, bool check_lhs, bool check_rhs) {
+        Vec nulls_msk = nulls_mask(c, type, lhs, rhs, check_lhs, check_rhs);
         Mem nulls_const =  (type == data_type_t::i32) ? vec_int_null(c) : vec_long_null(c);
         return select_bytes(c, nulls_msk, t, nulls_const);
     }
@@ -504,12 +543,16 @@ namespace questdb::avx2 {
         return select_bytes(c, non_finite, x, nan_const);
     }
 
-    inline Vec add(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
-        if(!is_check_for_null(type, null_check)) {
+    // Per-operand NULL propagation for vector int arithmetic, resolved at compile time:
+    // only a nullable operand's sentinel lanes force the result lane to NULL; a never-null
+    // operand's identical bit pattern is data. Mirrors the interpreted
+    // AddIntFunctionFactory-family and the scalar check_int32_null.
+    inline Vec add(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool check_lhs, bool check_rhs) {
+        if (!is_int_null_type(type) || (!check_lhs && !check_rhs)) {
             return add(c, type, lhs, rhs);
         } else {
             Vec t = add(c, type, lhs, rhs);
-            return blend_with_nulls(c, type, t, lhs, rhs);
+            return blend_with_nulls(c, type, t, lhs, rhs, check_lhs, check_rhs);
         }
     }
 
@@ -540,12 +583,12 @@ namespace questdb::avx2 {
         return dst;
     }
 
-    inline Vec sub(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
-        if(!is_check_for_null(type, null_check)) {
+    inline Vec sub(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool check_lhs, bool check_rhs) {
+        if (!is_int_null_type(type) || (!check_lhs && !check_rhs)) {
             return sub(c, type, lhs, rhs);
         } else {
             Vec t = sub(c, type, lhs, rhs);
-            return blend_with_nulls(c, type, t, lhs, rhs);
+            return blend_with_nulls(c, type, t, lhs, rhs, check_lhs, check_rhs);
         }
     }
 
@@ -628,16 +671,16 @@ namespace questdb::avx2 {
         return dst;
     }
 
-    inline Vec mul(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
-        if(!is_check_for_null(type, null_check)) {
+    inline Vec mul(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool check_lhs, bool check_rhs) {
+        if (!is_int_null_type(type) || (!check_lhs && !check_rhs)) {
             return mul(c, type, lhs, rhs);
         } else {
             Vec t = mul(c, type, lhs, rhs);
-            return blend_with_nulls(c, type, t, lhs, rhs);
+            return blend_with_nulls(c, type, t, lhs, rhs, check_lhs, check_rhs);
         }
     }
 
-    inline Vec div_unrolled(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs) {
+    inline Vec div_unrolled(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool check_lhs, bool check_rhs) {
         Vec dst = c.new_ymm();
         switch (type) {
             case data_type_t::i8:
@@ -668,7 +711,7 @@ namespace questdb::avx2 {
                             c.movsx(a.r32(), lhs_m);
                             rhs_m.set_offset(i * size);
                             c.movsx(b.r32(), rhs_m);
-                            Gp r = x86::int32_div(c, a.r32(), b.r32(), true);
+                            Gp r = x86::int32_div(c, a.r32(), b.r32(), check_lhs, check_rhs);
                             c.mov(lhs_m, r.r8());
                         }
 
@@ -690,7 +733,7 @@ namespace questdb::avx2 {
                             rhs_m.set_offset(i * size);
                             c.movsx(b.r32(), rhs_m);
 
-                            Gp r = x86::int32_div(c, a.r32(), b.r32(), true);
+                            Gp r = x86::int32_div(c, a.r32(), b.r32(), check_lhs, check_rhs);
                             c.mov(lhs_m, r.r16());
                         }
                     }
@@ -710,7 +753,7 @@ namespace questdb::avx2 {
                             c.mov(a.r32(), lhs_m);
                             rhs_m.set_offset(i * size);
                             c.mov(b.r32(), rhs_m);
-                            Gp r = x86::int32_div(c, a.r32(), b.r32(), true);
+                            Gp r = x86::int32_div(c, a.r32(), b.r32(), check_lhs, check_rhs);
                             c.mov(lhs_m, r.r32());
                         }
                     }
@@ -730,7 +773,7 @@ namespace questdb::avx2 {
                             rhs_m.set_offset(i * size);
                             c.mov(a, lhs_m);
                             c.mov(b, rhs_m);
-                            Gp r = x86::int64_div(c, a.r64(), b.r64(), true);
+                            Gp r = x86::int64_div(c, a.r64(), b.r64(), check_lhs, check_rhs);
                             c.mov(lhs_m, r);
                         }
                     }
@@ -756,12 +799,14 @@ namespace questdb::avx2 {
         return dst;
     }
 
-    inline Vec div(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
-        if(!is_check_for_null(type, null_check)) {
-            return div_unrolled(c, type, lhs, rhs);
+    // Division: a zero divisor yields NULL for every nullability combination (the per-lane
+    // scalar division handles that); sentinel operands yield NULL only on nullable sides.
+    inline Vec div(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool check_lhs, bool check_rhs) {
+        if (!is_int_null_type(type) || (!check_lhs && !check_rhs)) {
+            return div_unrolled(c, type, lhs, rhs, check_lhs, check_rhs);
         } else {
-            Vec t = div_unrolled(c, type, lhs, rhs);
-            return blend_with_nulls(c, type, t, lhs, rhs);
+            Vec t = div_unrolled(c, type, lhs, rhs, check_lhs, check_rhs);
+            return blend_with_nulls(c, type, t, lhs, rhs, check_lhs, check_rhs);
         }
     }
 
@@ -772,7 +817,7 @@ namespace questdb::avx2 {
     }
 
     inline Vec neg(Compiler &c, data_type_t type, const Vec &rhs, bool null_check) {
-        if(!is_check_for_null(type, null_check)) {
+        if (!is_check_for_null(type, null_check)) {
             return neg(c, type, rhs);
         } else {
             Vec r = neg(c, type, rhs);

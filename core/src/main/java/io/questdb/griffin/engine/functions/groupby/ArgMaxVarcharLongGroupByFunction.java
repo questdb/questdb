@@ -44,6 +44,7 @@ import org.jetbrains.annotations.Nullable;
  */
 public class ArgMaxVarcharLongGroupByFunction extends VarcharFunction implements GroupByFunction, BinaryFunction {
     private final Function keyArg;
+    private final boolean isArgNotNull;
     private final StableAwareUtf8StringHolder sink = new StableAwareUtf8StringHolder();
     private final Function valueArg;
     private int valueIndex;
@@ -51,6 +52,7 @@ public class ArgMaxVarcharLongGroupByFunction extends VarcharFunction implements
     public ArgMaxVarcharLongGroupByFunction(@NotNull Function valueArg, @NotNull Function keyArg) {
         this.valueArg = valueArg;
         this.keyArg = keyArg;
+        this.isArgNotNull = keyArg != null && keyArg.isNotNull();
     }
 
     @Override
@@ -61,7 +63,7 @@ public class ArgMaxVarcharLongGroupByFunction extends VarcharFunction implements
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         long key = keyArg.getLong(record);
-        if (key == Numbers.LONG_NULL) {
+        if (!isArgNotNull && key == Numbers.LONG_NULL) {
             mapValue.putLong(valueIndex, Numbers.LONG_NULL);
             mapValue.putLong(valueIndex + 1, 0);
             mapValue.putBool(valueIndex + 2, true);
@@ -82,7 +84,7 @@ public class ArgMaxVarcharLongGroupByFunction extends VarcharFunction implements
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         long nextKey = keyArg.getLong(record);
-        if (nextKey == Numbers.LONG_NULL) {
+        if (!isArgNotNull && nextKey == Numbers.LONG_NULL) {
             return;
         }
         long maxKey = mapValue.getLong(valueIndex);
@@ -166,7 +168,7 @@ public class ArgMaxVarcharLongGroupByFunction extends VarcharFunction implements
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcMaxKey = srcValue.getLong(valueIndex);
-        if (srcMaxKey == Numbers.LONG_NULL) {
+        if (!isArgNotNull && srcMaxKey == Numbers.LONG_NULL) {
             return;
         }
         long destMaxKey = destValue.getLong(valueIndex);

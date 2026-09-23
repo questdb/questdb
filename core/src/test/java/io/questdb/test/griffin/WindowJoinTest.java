@@ -2847,7 +2847,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
-                            "      vectorized: true\n" +
+                            "      vectorized: false\n" +
                             "      symbol: sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " following\n" +
@@ -3860,7 +3860,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
-                            "      vectorized: true\n" +
+                            "      vectorized: false\n" +
                             "      symbol: sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
@@ -3908,7 +3908,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Join workers: 1\n" +
-                            "      vectorized: true\n" +
+                            "      vectorized: false\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
                             "        PageFrame\n" +
@@ -3933,7 +3933,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Join workers: 1\n" +
-                            "      vectorized: true\n" +
+                            "      vectorized: false\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
                             "        PageFrame\n" +

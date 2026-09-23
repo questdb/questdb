@@ -248,6 +248,8 @@ fn prepare_column_meta<'a>(
         column_top: 0,
         format,
         ascii,
+
+        not_null: false,
     };
 
     let descriptor = reconstruct_descriptor(

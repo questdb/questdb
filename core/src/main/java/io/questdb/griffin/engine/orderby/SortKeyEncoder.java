@@ -80,6 +80,7 @@ public class SortKeyEncoder implements QuietCloseable {
     private final Decimal256 decimal256Sink;
     private final boolean hasBorrowedRankMaps;
     private final boolean[] isDesc;
+    private final boolean[] isNotNull;
     private final boolean[] isStaticSymbol;
     // Encode fast-path selector; keyType is the entry layout (the two are not redundant).
     private final KeyShape keyShape;
@@ -108,6 +109,7 @@ public class SortKeyEncoder implements QuietCloseable {
         this.columnIndices = new int[n];
         this.columnTypes = new int[n];
         this.isDesc = new boolean[n];
+        this.isNotNull = new boolean[n];
         this.isStaticSymbol = new boolean[n];
         this.offsets = new int[n];
         this.columnByteWidths = new int[n];
@@ -123,6 +125,7 @@ public class SortKeyEncoder implements QuietCloseable {
                 isDesc[i] = encoded < 0;
                 columnIndices[i] = (encoded > 0 ? encoded : -encoded) - 1;
                 columnTypes[i] = ColumnType.tagOf(metadata.getColumnType(columnIndices[i]));
+                isNotNull[i] = metadata.isNotNull(columnIndices[i]);
                 hasDecimal128 |= columnTypes[i] == ColumnType.DECIMAL128;
                 hasDecimal256 |= columnTypes[i] == ColumnType.DECIMAL256;
                 if (ColumnType.isSymbol(columnTypes[i]) && metadata.isSymbolTableStatic(columnIndices[i])) {
@@ -503,28 +506,28 @@ public class SortKeyEncoder implements QuietCloseable {
         topK.endAppend();
     }
 
-    private static void batchDouble(EncodedTopKBuffer topK, long colAddr, long rowIdBase, DirectLongList rows, long rowCount, boolean desc) {
+    private static void batchDouble(EncodedTopKBuffer topK, long colAddr, long rowIdBase, DirectLongList rows, long rowCount, boolean desc, boolean notNull) {
         if (rows == null) {
             for (long r = 0; r < rowCount; r++) {
-                appendEntry(topK, doubleKey(Unsafe.getDouble(colAddr + (r << 3)), desc), rowIdBase + r);
+                appendEntry(topK, doubleKey(Unsafe.getDouble(colAddr + (r << 3)), desc, notNull), rowIdBase + r);
             }
         } else {
             for (long p = 0; p < rowCount; p++) {
                 final long r = rows.get(p);
-                appendEntry(topK, doubleKey(Unsafe.getDouble(colAddr + (r << 3)), desc), rowIdBase + r);
+                appendEntry(topK, doubleKey(Unsafe.getDouble(colAddr + (r << 3)), desc, notNull), rowIdBase + r);
             }
         }
     }
 
-    private static void batchFloat(EncodedTopKBuffer topK, long colAddr, long rowIdBase, DirectLongList rows, long rowCount, boolean desc) {
+    private static void batchFloat(EncodedTopKBuffer topK, long colAddr, long rowIdBase, DirectLongList rows, long rowCount, boolean desc, boolean notNull) {
         if (rows == null) {
             for (long r = 0; r < rowCount; r++) {
-                appendEntry(topK, floatKey(Unsafe.getFloat(colAddr + (r << 2)), desc), rowIdBase + r);
+                appendEntry(topK, floatKey(Unsafe.getFloat(colAddr + (r << 2)), desc, notNull), rowIdBase + r);
             }
         } else {
             for (long p = 0; p < rowCount; p++) {
                 final long r = rows.get(p);
-                appendEntry(topK, floatKey(Unsafe.getFloat(colAddr + (r << 2)), desc), rowIdBase + r);
+                appendEntry(topK, floatKey(Unsafe.getFloat(colAddr + (r << 2)), desc, notNull), rowIdBase + r);
             }
         }
     }
@@ -617,8 +620,8 @@ public class SortKeyEncoder implements QuietCloseable {
         }
     }
 
-    private static long doubleKey(double value, boolean desc) {
-        final long bits = Double.doubleToLongBits(value);
+    private static long doubleKey(double value, boolean desc, boolean notNull) {
+        final long bits = Double.doubleToLongBits(!notNull && !Numbers.isFinite(value) ? Double.NaN : value);
         if (desc) {
             return bits >= 0 ? bits ^ Long.MAX_VALUE : bits;
         }
@@ -639,8 +642,8 @@ public class SortKeyEncoder implements QuietCloseable {
         Unsafe.putShort(addr, Short.reverseBytes(s));
     }
 
-    private static void encodeDouble(long addr, double value, boolean desc) {
-        long bits = Double.doubleToLongBits(value);
+    private static void encodeDouble(long addr, double value, boolean desc, boolean notNull) {
+        long bits = Double.doubleToLongBits(!notNull && !Numbers.isFinite(value) ? Double.NaN : value);
         if (desc) {
             bits = bits >= 0 ? bits ^ Long.MAX_VALUE : bits;
         } else {
@@ -649,8 +652,8 @@ public class SortKeyEncoder implements QuietCloseable {
         Unsafe.putLong(addr, Long.reverseBytes(bits));
     }
 
-    private static void encodeFloat(long addr, float value, boolean desc) {
-        int bits = Float.floatToIntBits(value);
+    private static void encodeFloat(long addr, float value, boolean desc, boolean notNull) {
+        int bits = Float.floatToIntBits(!notNull && !Numbers.isFinite(value) ? Float.NaN : value);
         if (desc) {
             bits = bits >= 0 ? bits ^ Integer.MAX_VALUE : bits;
         } else {
@@ -728,8 +731,8 @@ public class SortKeyEncoder implements QuietCloseable {
         };
     }
 
-    private static long floatKey(float value, boolean desc) {
-        int bits = Float.floatToIntBits(value);
+    private static long floatKey(float value, boolean desc, boolean notNull) {
+        int bits = Float.floatToIntBits(!notNull && !Numbers.isFinite(value) ? Float.NaN : value);
         if (desc) {
             bits = bits >= 0 ? bits ^ Integer.MAX_VALUE : bits;
         } else {
@@ -1138,7 +1141,8 @@ public class SortKeyEncoder implements QuietCloseable {
                     Integer.toUnsignedLong(record.getDecimal32(colIdx) ^ (desc ? 0x7FFFFFFF : 0x80000000));
             case ColumnType.IPv4 -> Integer.toUnsignedLong(desc ? ~record.getIPv4(colIdx) : record.getIPv4(colIdx));
             case ColumnType.FLOAT -> {
-                int bits = Float.floatToIntBits(record.getFloat(colIdx));
+                final float value = record.getFloat(colIdx);
+                int bits = Float.floatToIntBits(!isNotNull[0] && !Numbers.isFinite(value) ? Float.NaN : value);
                 if (desc) {
                     bits = bits >= 0 ? bits ^ Integer.MAX_VALUE : bits;
                 } else {
@@ -1152,7 +1156,8 @@ public class SortKeyEncoder implements QuietCloseable {
             case ColumnType.DATE -> record.getDate(colIdx) ^ (desc ? Long.MAX_VALUE : Long.MIN_VALUE);
             case ColumnType.DECIMAL64 -> record.getDecimal64(colIdx) ^ (desc ? Long.MAX_VALUE : Long.MIN_VALUE);
             case ColumnType.DOUBLE -> {
-                long bits = Double.doubleToLongBits(record.getDouble(colIdx));
+                final double value = record.getDouble(colIdx);
+                long bits = Double.doubleToLongBits(!isNotNull[0] && !Numbers.isFinite(value) ? Double.NaN : value);
                 if (desc) {
                     yield bits >= 0 ? bits ^ Long.MAX_VALUE : bits;
                 } else {
@@ -1181,8 +1186,8 @@ public class SortKeyEncoder implements QuietCloseable {
         final boolean desc = isDesc[0];
         switch (columnTypes[0]) {
             case ColumnType.SYMBOL -> batchSymbol(topK, colAddr, rowIdBase, rows, rowCount, desc);
-            case ColumnType.FLOAT -> batchFloat(topK, colAddr, rowIdBase, rows, rowCount, desc);
-            case ColumnType.DOUBLE -> batchDouble(topK, colAddr, rowIdBase, rows, rowCount, desc);
+            case ColumnType.FLOAT -> batchFloat(topK, colAddr, rowIdBase, rows, rowCount, desc, isNotNull[0]);
+            case ColumnType.DOUBLE -> batchDouble(topK, colAddr, rowIdBase, rows, rowCount, desc, isNotNull[0]);
             // BOOLEAN is stored as exactly 0 or 1 (putBool), so xor-ing the raw byte reproduces the
             // per-row getBool() normalization in encodeFixed8.
             case ColumnType.BOOLEAN -> batchIntegral1(topK, colAddr, rowIdBase, rows, rowCount, desc ? 0xFFL : 0L);
@@ -1229,8 +1234,8 @@ public class SortKeyEncoder implements QuietCloseable {
             case ColumnType.DECIMAL64 -> encodeLong(addr, record.getDecimal64(colIdx), desc);
             case ColumnType.DATE -> encodeLong(addr, record.getDate(colIdx), desc);
             case ColumnType.TIMESTAMP -> encodeLong(addr, record.getTimestamp(colIdx), desc);
-            case ColumnType.FLOAT -> encodeFloat(addr, record.getFloat(colIdx), desc);
-            case ColumnType.DOUBLE -> encodeDouble(addr, record.getDouble(colIdx), desc);
+            case ColumnType.FLOAT -> encodeFloat(addr, record.getFloat(colIdx), desc, isNotNull[i]);
+            case ColumnType.DOUBLE -> encodeDouble(addr, record.getDouble(colIdx), desc, isNotNull[i]);
             case ColumnType.LONG128 -> {
                 encodeLong(addr, record.getLong128Hi(colIdx), desc);
                 encodeUnsignedLong(addr + 8, record.getLong128Lo(colIdx), desc);

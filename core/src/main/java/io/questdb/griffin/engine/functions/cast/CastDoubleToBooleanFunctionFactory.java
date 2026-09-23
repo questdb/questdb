@@ -52,7 +52,7 @@ public class CastDoubleToBooleanFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             double dbl = arg.getDouble(rec);
-            return !Numbers.isNull(dbl) && Math.signum(dbl) != 0;
+            return (arg.isNotNull() || !Numbers.isNull(dbl)) && Math.signum(dbl) != 0;
         }
     }
 }

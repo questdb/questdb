@@ -43,11 +43,13 @@ import org.jetbrains.annotations.NotNull;
 public class MinFloatGroupByFunction extends FloatFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private final int argColumnIndex;
+    private final boolean isArgNotNull;
     private int valueIndex;
 
     public MinFloatGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.FLOAT);
+        this.isArgNotNull = arg.isNotNull();
     }
 
     @Override
@@ -57,12 +59,12 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
             float min = Float.NaN;
             for (; dataAddr < hi; dataAddr += Float.BYTES) {
                 float value = Unsafe.getFloat(dataAddr);
-                if (value < min || Numbers.isNull(min)) {
+                if (value < min || (!isArgNotNull && Numbers.isNull(min))) {
                     min = value;
                 }
             }
             final float existing = mapValue.getFloat(valueIndex);
-            if (min < existing || Numbers.isNull(existing)) {
+            if (min < existing || (!isArgNotNull && Numbers.isNull(existing))) {
                 mapValue.putFloat(valueIndex, min);
             }
         }
@@ -95,7 +97,8 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
                 final float value = Unsafe.getFloat(argAddr + (rowIndex << 2));
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final float current = Unsafe.getFloat(addr);
-                if (value < current || Numbers.isNull(current)) {
+                if (Map.isNewBatchEntry(encoded)
+                        || (isArgNotNull ? Float.isNaN(value) || value < current : value < current || Numbers.isNull(current))) {
                     Unsafe.putFloat(addr, value);
                 }
             }
@@ -106,7 +109,8 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
                 final float value = arg.getFloat(record);
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final float current = Unsafe.getFloat(addr);
-                if (value < current || Numbers.isNull(current)) {
+                if (Map.isNewBatchEntry(encoded)
+                        || (isArgNotNull ? Float.isNaN(value) || value < current : value < current || Numbers.isNull(current))) {
                     Unsafe.putFloat(addr, value);
                 }
             }
@@ -117,7 +121,7 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         float min = mapValue.getFloat(valueIndex);
         float next = arg.getFloat(record);
-        if (next < min || Numbers.isNull(min)) {
+        if (isArgNotNull ? Float.isNaN(next) || next < min : next < min || Numbers.isNull(min)) {
             mapValue.putFloat(valueIndex, next);
         }
     }
@@ -172,7 +176,7 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
     public void merge(MapValue destValue, MapValue srcValue) {
         float srcMin = srcValue.getFloat(valueIndex);
         float destMin = destValue.getFloat(valueIndex);
-        if (srcMin < destMin || Numbers.isNull(destMin)) {
+        if (isArgNotNull ? Float.isNaN(srcMin) || srcMin < destMin : srcMin < destMin || Numbers.isNull(destMin)) {
             destValue.putFloat(valueIndex, srcMin);
         }
     }
@@ -189,7 +193,10 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        // NOT NULL columns take the per-row compute path; the native batch
+        // kernel treats the type sentinel as null and under-counts / skips
+        // values the NOT NULL contract declares to be real data.
+        return !isArgNotNull;
     }
 
     @Override

@@ -43,11 +43,13 @@ import org.jetbrains.annotations.NotNull;
 public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     protected final Function arg;
     protected final int argColumnIndex;
+    protected final boolean isArgNotNull;
     protected int valueIndex;
 
     public FirstDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.DOUBLE);
+        this.isArgNotNull = arg.isNotNull();
     }
 
     @Override
@@ -190,7 +192,7 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return !isArgNotNull;
     }
 
     @Override

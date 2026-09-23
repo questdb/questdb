@@ -246,7 +246,7 @@ public class CopyExportContext {
                     .$("CREATE TABLE IF NOT EXISTS \"")
                     .$(statusTableName)
                     .$("\" (" +
-                            "ts TIMESTAMP, " + // 0
+                            "ts TIMESTAMP NOT NULL, " + // 0
                             "id VARCHAR, " + // 1
                             "table_name SYMBOL, " + // 2
                             "export_path SYMBOL, " + // 3

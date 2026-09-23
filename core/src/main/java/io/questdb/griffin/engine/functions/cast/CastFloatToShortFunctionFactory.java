@@ -52,7 +52,7 @@ public class CastFloatToShortFunctionFactory implements FunctionFactory {
         @Override
         public short getShort(Record rec) {
             final float value = arg.getFloat(rec);
-            return Numbers.isNull(value) || value > Short.MAX_VALUE || value < Short.MIN_VALUE ? 0 : (short) value;
+            return (!arg.isNotNull() && Numbers.isNull(value)) || value > Short.MAX_VALUE || value < Short.MIN_VALUE ? 0 : (short) value;
         }
     }
 }

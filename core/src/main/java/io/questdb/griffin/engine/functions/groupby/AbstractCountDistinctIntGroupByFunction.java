@@ -45,6 +45,12 @@ public abstract class AbstractCountDistinctIntGroupByFunction extends LongFuncti
      */
     protected final Function arg;
     /**
+     * Whether the argument is known NOT NULL at plan time. Subclasses gate
+     * their sentinel-skip on this so that NOT NULL columns still accept
+     * the bit pattern that would otherwise read as NULL.
+     */
+    protected final boolean isArgNotNull;
+    /**
      * Primary hash set for counting distinct values.
      */
     protected final GroupByIntHashSet setA;
@@ -70,6 +76,7 @@ public abstract class AbstractCountDistinctIntGroupByFunction extends LongFuncti
      */
     public AbstractCountDistinctIntGroupByFunction(Function arg, GroupByIntHashSet setA, GroupByIntHashSet setB) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         this.setA = setA;
         this.setB = setB;
     }
@@ -118,10 +125,16 @@ public abstract class AbstractCountDistinctIntGroupByFunction extends LongFuncti
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         valueIndex = columnTypes.getColumnCount();
-        // count
+        // count, including the sentinel when the flag below is set
         columnTypes.add(ColumnType.LONG);
-        // inlined single value (count=1) or GroupByIntHashSet pointer (count>1)
+        // inlined single non-sentinel value or GroupByIntHashSet pointer;
+        // which one is decided by the stored count: count minus the sentinel
+        // flag is 1 for an inlined value and greater for a set pointer
         columnTypes.add(ColumnType.LONG);
+        // sentinel membership flag: the hash sets reserve the type's null
+        // bit pattern as their empty marker, so a NOT NULL argument's
+        // sentinel value cannot live in the set and is tracked here instead
+        columnTypes.add(ColumnType.BOOLEAN);
     }
 
     @Override
@@ -140,39 +153,62 @@ public abstract class AbstractCountDistinctIntGroupByFunction extends LongFuncti
         if (srcCount == 0 || srcCount == Numbers.LONG_NULL) {
             return;
         }
+        final boolean srcSentinel = srcValue.getBool(valueIndex + 2);
+        final long srcStored = srcSentinel ? srcCount - 1 : srcCount;
 
         final long destCount = destValue.getLong(valueIndex);
         if (destCount == 0 || destCount == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcCount);
             destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
+            destValue.putBool(valueIndex + 2, srcSentinel);
+            return;
+        }
+        final boolean destSentinel = destValue.getBool(valueIndex + 2);
+        final long destStored = destSentinel ? destCount - 1 : destCount;
+        final boolean sentinel = srcSentinel || destSentinel;
+        final long sentinelInc = sentinel ? 1 : 0;
+
+        if (srcStored == 0) { // src holds only the sentinel
+            destValue.putLong(valueIndex, destStored + sentinelInc);
+            destValue.putBool(valueIndex + 2, sentinel);
             return;
         }
 
-        if (srcCount == 1) { // inlined src value
+        if (destStored == 0) { // dest holds at most the sentinel, adopt src's values
+            destValue.putLong(valueIndex, srcStored + sentinelInc);
+            destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
+            destValue.putBool(valueIndex + 2, sentinel);
+            return;
+        }
+
+        if (srcStored == 1) { // inlined src value
             final int srcVal = (int) srcValue.getLong(valueIndex + 1);
-            if (destCount == 1) { // dest also holds inlined value
+            if (destStored == 1) { // dest also holds inlined value
                 final int destVal = (int) destValue.getLong(valueIndex + 1);
                 if (destVal != srcVal) {
                     setA.of(0).add(srcVal);
                     setA.add(destVal);
-                    destValue.putLong(valueIndex, 2);
+                    destValue.putLong(valueIndex, 2 + sentinelInc);
                     destValue.putLong(valueIndex + 1, setA.ptr());
+                } else {
+                    destValue.putLong(valueIndex, 1 + sentinelInc);
                 }
             } else { // dest holds a set
                 final long destPtr = destValue.getLong(valueIndex + 1);
                 setA.of(destPtr).add(srcVal);
-                destValue.putLong(valueIndex, setA.size());
+                destValue.putLong(valueIndex, setA.size() + sentinelInc);
                 destValue.putLong(valueIndex + 1, setA.ptr());
             }
+            destValue.putBool(valueIndex + 2, sentinel);
             return;
         }
 
         // src holds a set
         final long srcPtr = srcValue.getLong(valueIndex + 1);
-        if (destCount == 1) { // dest holds inlined value
+        if (destStored == 1) { // dest holds inlined value
             final int destVal = (int) destValue.getLong(valueIndex + 1);
             setA.of(srcPtr).add(destVal);
-            destValue.putLong(valueIndex, setA.size());
+            destValue.putLong(valueIndex, setA.size() + sentinelInc);
             destValue.putLong(valueIndex + 1, setA.ptr());
         } else { // dest holds a set
             final long destPtr = destValue.getLong(valueIndex + 1);
@@ -181,15 +217,16 @@ public abstract class AbstractCountDistinctIntGroupByFunction extends LongFuncti
 
             if (setA.size() > (setB.size() >>> 1)) {
                 setA.merge(setB);
-                destValue.putLong(valueIndex, setA.size());
+                destValue.putLong(valueIndex, setA.size() + sentinelInc);
                 destValue.putLong(valueIndex + 1, setA.ptr());
             } else {
                 // Set A is significantly smaller than set B, so we merge it into set B.
                 setB.merge(setA);
-                destValue.putLong(valueIndex, setB.size());
+                destValue.putLong(valueIndex, setB.size() + sentinelInc);
                 destValue.putLong(valueIndex + 1, setB.ptr());
             }
         }
+        destValue.putBool(valueIndex + 2, sentinel);
     }
 
     @Override
@@ -207,18 +244,21 @@ public abstract class AbstractCountDistinctIntGroupByFunction extends LongFuncti
     public void setEmpty(MapValue mapValue) {
         mapValue.putLong(valueIndex, 0);
         mapValue.putLong(valueIndex + 1, 0);
+        mapValue.putBool(valueIndex + 2, false);
     }
 
     @Override
     public void setLong(MapValue mapValue, long value) {
         mapValue.putLong(valueIndex, value);
         mapValue.putLong(valueIndex + 1, 0);
+        mapValue.putBool(valueIndex + 2, false);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putLong(valueIndex + 1, 0);
+        mapValue.putBool(valueIndex + 2, false);
     }
 
     @Override

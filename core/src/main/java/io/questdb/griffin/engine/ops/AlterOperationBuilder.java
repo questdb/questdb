@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
@@ -58,12 +59,26 @@ public class AlterOperationBuilder implements Mutable {
             int indexValueBlockCapacity,
             boolean dedupKey
     ) {
+        addColumnToList(columnName, columnNamePosition, type, symbolCapacity, cache, indexType, indexValueBlockCapacity, dedupKey, false);
+    }
+
+    public void addColumnToList(
+            CharSequence columnName,
+            int columnNamePosition,
+            int type,
+            int symbolCapacity,
+            boolean cache,
+            byte indexType,
+            int indexValueBlockCapacity,
+            boolean dedupKey,
+            boolean notNull
+    ) {
         assert columnName != null && !columnName.isEmpty();
         extraStrInfo.add(columnName);
         extraInfo.add(type);
         extraInfo.add(symbolCapacity);
         extraInfo.add(cache ? 1 : -1);
-        extraInfo.add(getFlags(indexType, dedupKey));
+        extraInfo.add(getFlags(indexType, dedupKey, notNull));
         extraInfo.add(indexValueBlockCapacity);
         extraInfo.add(columnNamePosition);
     }
@@ -107,12 +122,16 @@ public class AlterOperationBuilder implements Mutable {
     }
 
     public void ofAddColumn(CharSequence columnName, int columnNamePosition, int type, int symbolCapacity, boolean cache, byte indexType, int indexValueBlockCapacity) {
+        ofAddColumn(columnName, columnNamePosition, type, symbolCapacity, cache, indexType != IndexType.NONE, indexValueBlockCapacity, false);
+    }
+
+    public void ofAddColumn(CharSequence columnName, int columnNamePosition, int type, int symbolCapacity, boolean cache, boolean indexed, int indexValueBlockCapacity, boolean notNull) {
         assert columnName != null && !columnName.isEmpty();
         extraStrInfo.add(columnName);
         extraInfo.add(type);
         extraInfo.add(symbolCapacity);
         extraInfo.add(cache ? 1 : -1);
-        extraInfo.add(getFlags(indexType, false));
+        extraInfo.add(getFlags(indexed, false, notNull));
         extraInfo.add(indexValueBlockCapacity);
         extraInfo.add(columnNamePosition);
     }
@@ -205,6 +224,15 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
+    public AlterOperationBuilder ofDropColumnNotNull(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName) {
+        this.command = DROP_COLUMN_NOT_NULL;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
+        this.extraStrInfo.add(columnName);
+        return this;
+    }
+
     public void ofDropIndex(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int columnNamePosition) {
         this.command = DROP_INDEX;
         this.tableNamePosition = tableNamePosition;
@@ -250,6 +278,15 @@ public class AlterOperationBuilder implements Mutable {
     public void ofRenameColumn(CharSequence columnName, CharSequence newName) {
         extraStrInfo.add(columnName);
         extraStrInfo.add(newName);
+    }
+
+    public AlterOperationBuilder ofSetColumnNotNull(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName) {
+        this.command = SET_COLUMN_NOT_NULL;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
+        this.extraStrInfo.add(columnName);
+        return this;
     }
 
     public AlterOperationBuilder ofSetMatViewRefresh(

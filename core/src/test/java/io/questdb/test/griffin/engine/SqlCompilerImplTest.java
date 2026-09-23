@@ -7546,7 +7546,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Filter filter: (null=T2.created or 0<T2.created::long)
+                                Filter filter: 0<T2.created::long
                                     Nested Loop Right Join
                                       filter: T1.created<T2.created
                                         Limit value: -1 skip-rows: 2 take-rows: 1
@@ -7698,7 +7698,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Filter filter: null=T4.created
+                                Filter filter: false
                                     Nested Loop Right Join
                                       filter: T3.created<T4.created
                                         Hash Right Outer Join Light

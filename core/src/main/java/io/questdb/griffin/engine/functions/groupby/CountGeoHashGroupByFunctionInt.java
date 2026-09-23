@@ -61,7 +61,7 @@ public class CountGeoHashGroupByFunctionInt extends AbstractCountGroupByFunction
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final int value = arg.getGeoInt(record);
-        if (value != GeoHashes.INT_NULL) {
+        if (isArgNotNull || value != GeoHashes.INT_NULL) {
             mapValue.putLong(valueIndex, 1);
         } else {
             mapValue.putLong(valueIndex, 0);
@@ -88,7 +88,7 @@ public class CountGeoHashGroupByFunctionInt extends AbstractCountGroupByFunction
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final int value = Unsafe.getInt(argAddr + (rowIndex << 2));
-                if (value != GeoHashes.INT_NULL) {
+                if (isArgNotNull || value != GeoHashes.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
                 }
@@ -98,7 +98,7 @@ public class CountGeoHashGroupByFunctionInt extends AbstractCountGroupByFunction
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final int value = arg.getGeoInt(record);
-                if (value != GeoHashes.INT_NULL) {
+                if (isArgNotNull || value != GeoHashes.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
                 }
@@ -109,7 +109,7 @@ public class CountGeoHashGroupByFunctionInt extends AbstractCountGroupByFunction
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final int value = arg.getGeoInt(record);
-        if (value != GeoHashes.INT_NULL) {
+        if (isArgNotNull || value != GeoHashes.INT_NULL) {
             mapValue.addLong(valueIndex, 1);
         }
     }
@@ -121,6 +121,9 @@ public class CountGeoHashGroupByFunctionInt extends AbstractCountGroupByFunction
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        // NOT NULL columns take the per-row compute path; the native batch
+        // kernel treats the type sentinel as null and under-counts / skips
+        // values the NOT NULL contract declares to be real data.
+        return !isArgNotNull;
     }
 }

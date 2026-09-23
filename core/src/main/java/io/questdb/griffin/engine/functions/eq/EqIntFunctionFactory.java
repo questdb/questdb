@@ -29,7 +29,9 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class EqIntFunctionFactory implements FunctionFactory {
@@ -45,7 +47,22 @@ public class EqIntFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0), args.getQuick(1));
+        final Function left = args.getQuick(0);
+        final Function right = args.getQuick(1);
+        // `x IS NULL` / `x = NULL` on a NOT NULL INT column constant-folds to false.
+        // NegatingFunctionFactory flips BooleanConstant.FALSE → TRUE for the IS NOT NULL
+        // path, so both sides of the constraint stay correct.
+        if (isIntNullConstant(right) && left.isNotNull()) {
+            return BooleanConstant.FALSE;
+        }
+        if (isIntNullConstant(left) && right.isNotNull()) {
+            return BooleanConstant.FALSE;
+        }
+        return new Func(left, right);
+    }
+
+    private static boolean isIntNullConstant(Function f) {
+        return f.isConstant() && f.getInt(null) == Numbers.INT_NULL;
     }
 
     private static class Func extends AbstractEqBinaryFunction {

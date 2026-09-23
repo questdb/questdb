@@ -108,12 +108,13 @@ public abstract class LongFunction implements Function {
     @Override
     public double getDouble(Record rec) {
         final long val = getLong(rec);
-        return val != Numbers.LONG_NULL ? val : Double.NaN;
+        return isNotNull() || val != Numbers.LONG_NULL ? val : Double.NaN;
     }
 
     @Override
     public float getFloat(Record rec) {
-        return Numbers.longToFloat(getLong(rec));
+        final long val = getLong(rec);
+        return isNotNull() || val != Numbers.LONG_NULL ? val : Float.NaN;
     }
 
     @Override

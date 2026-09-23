@@ -145,6 +145,12 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
     }
 
     private static Function createConstCheckFunc(Function function, long value, int valType) {
+        // `x = NULL` / `x IS NULL` on a NOT NULL GEOHASH column is always false at
+        // compile time. NegatingFunctionFactory handles IS NOT NULL by flipping the
+        // constant.
+        if (value == GeoHashes.NULL && function.isNotNull()) {
+            return BooleanConstant.FALSE;
+        }
         switch (ColumnType.tagOf(valType)) {
             case ColumnType.GEOBYTE:
                 return new ConstCheckFuncByte(function, (byte) value);

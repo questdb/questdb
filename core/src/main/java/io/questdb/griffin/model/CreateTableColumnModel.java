@@ -45,6 +45,7 @@ public class CreateTableColumnModel implements Mutable {
     private int indexValueBlockSize;
     private byte indexType;
     private boolean isCast;
+    private boolean notNullFlag;
     private boolean parquetBloomFilter;
     private int parquetCompression = -1;
     private int parquetCompressionLevel = -1;
@@ -69,6 +70,7 @@ public class CreateTableColumnModel implements Mutable {
         indexValueBlockSize = 0;
         indexType = IndexType.NONE;
         isCast = false;
+        notNullFlag = false;
         parquetBloomFilter = false;
         parquetCompression = -1;
         parquetCompressionLevel = -1;
@@ -172,6 +174,10 @@ public class CreateTableColumnModel implements Mutable {
         return IndexType.isIndexed(indexType);
     }
 
+    public boolean isNotNull() {
+        return notNullFlag;
+    }
+
     public void setCastType(int columnType, int columnTypePos) {
         this.isCast = true;
         this.columnType = columnType;
@@ -194,6 +200,10 @@ public class CreateTableColumnModel implements Mutable {
 
     public void setIsDedupKey() {
         dedupKeyFlag = true;
+    }
+
+    public void setNotNullFlag(boolean notNullFlag) {
+        this.notNullFlag = notNullFlag;
     }
 
     public void setParquetBloomFilter(boolean parquetBloomFilter) {

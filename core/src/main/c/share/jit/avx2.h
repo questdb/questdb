@@ -52,7 +52,7 @@ namespace questdb::avx2 {
         for (size_t i = 0; i < size; ++i) {
             auto &instr = istream[i];
             if (instr.opcode == opcodes::Imm) {
-                auto type = static_cast<data_type_t>(instr.options);
+                auto type = ir_data_type(instr.options);
                 switch (type) {
                     case data_type_t::i8:
                     case data_type_t::i16:
@@ -136,16 +136,19 @@ namespace questdb::avx2 {
     }
 
     jit_value_t
-    read_vars_mem(Compiler &c, data_type_t type, int32_t idx, const Gp &vars_ptr, ValueCacheYmm &value_cache) {
+    read_vars_mem(Compiler &c, data_type_t type, int32_t idx, bool nullable, const Gp &vars_ptr, ValueCacheYmm &value_cache) {
         // A bind variable is loop-invariant, so the broadcast is pure waste past the first one in a
         // body. The cache does not hoist it out of the loop - that is a larger change - it only
         // stops the CHAR and IPv4 ordering expansions re-broadcasting the same variable four or
         // five times per body.
         Vec cached;
         if (value_cache.find(idx, type, true, cached)) {
-            return {cached, type, data_kind_t::kConst};
+            // The cache keys on index + type + is_var and stores no nullability, so the caller's
+            // nullable is re-stamped on every hit. The register holds the same bits either way;
+            // only the compile-time flag that selects checked vs unchecked code travels with it.
+            return {cached, type, data_kind_t::kConst, nullable};
         }
-        auto value = x86::read_vars_mem(c, type, idx, vars_ptr);
+        auto value = x86::read_vars_mem(c, type, idx, nullable, vars_ptr);
         Mem mem = value.op().as<Mem>();
         Vec val = c.new_ymm();
         switch (type) {
@@ -181,7 +184,7 @@ namespace questdb::avx2 {
                 __builtin_unreachable();
         }
         value_cache.add(idx, type, true, val);
-        return {val, type, data_kind_t::kConst};
+        return {val, type, data_kind_t::kConst, nullable};
     }
 
     inline Mem vec_broadcast_long(Compiler &c, uint32_t value) {
@@ -284,6 +287,10 @@ namespace questdb::avx2 {
         c.vinserti128(length_data, length_data, acc.xmm(), 1);
 
         c.bind(l_nonzero);
+        // The three-arg ctor leaves the value not nullable, which drops the column's own
+        // nullability. That is safe because ensureOnlyVarSizeHeaderChecks() on the Java side
+        // restricts var-size header operands to EQ / NE, and both are emitted the same way for
+        // either nullability: the header sentinel is compared as a plain value.
         return {length_data, data_type_t::i64, data_kind_t::kMemory};
     }
 
@@ -320,11 +327,13 @@ namespace questdb::avx2 {
         c.vpermq(headers_2_3, headers_2_3, 0b10000000);
         c.vinserti128(headers_2_3, headers_2_3, headers_0_1.xmm(), 0);
 
+        // Not nullable by construction - see read_mem_varsize: ensureOnlyVarSizeHeaderChecks()
+        // restricts var-size header operands to EQ / NE, which are nullability-independent.
         return {headers_2_3, data_type_t::i64, data_kind_t::kMemory};
     }
 
     jit_value_t
-    read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &input_index, bool wide_lane,
+    read_mem(Compiler &c, data_type_t type, int32_t column_idx, bool nullable, const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &input_index, bool wide_lane,
              const ColumnAddressCache &cache, ValueCacheYmm &value_cache) {
         // The var-size header reads below stay uncached. They are the only shape a predicate reads
         // at most once - serializeColumn admits a var-size column solely inside an IS [NOT] NULL
@@ -355,7 +364,12 @@ namespace questdb::avx2 {
         // the loaded vector on its own.
         Vec cached;
         if (value_cache.find(column_idx, type, false, cached)) {
-            return {cached, type, data_kind_t::kMemory};
+            // The cache keys on column index + type + is_var and stores no nullability, so the
+            // caller's nullable is re-stamped on every hit. Two reads of the same column in one
+            // predicate always agree on it anyway - serializeColumn derives it from the column's
+            // metadata - but the flag has to travel with the value rather than default to false,
+            // or a cache hit would silently emit unchecked code for a nullable column.
+            return {cached, type, data_kind_t::kMemory, nullable};
         }
 
         // Use cached column address if available
@@ -438,25 +452,26 @@ namespace questdb::avx2 {
                 __builtin_unreachable();
         }
         value_cache.add(column_idx, type, false, row_data);
-        return {row_data, type, data_kind_t::kMemory};
+        return {row_data, type, data_kind_t::kMemory, nullable};
     }
 
     jit_value_t read_imm(Compiler &c, const instruction_t &instr, const ConstantCacheYmm&cache) {
-        auto type = static_cast<data_type_t>(instr.options);
+        auto type = ir_data_type(instr.options);
+        auto nullable = ir_nullable(instr.options);
 
         // Check cache for integer constants
         if (type == data_type_t::i8 || type == data_type_t::i16 ||
             type == data_type_t::i32 || type == data_type_t::i64) {
             Vec cached;
             if (cache.findInt(instr.ipayload.lo, type, cached)) {
-                return {cached, type, data_kind_t::kConst};
+                return {cached, type, data_kind_t::kConst, nullable};
             }
         }
         // Check cache for float constants
         if (type == data_type_t::f32 || type == data_type_t::f64) {
             Vec cached;
             if (cache.findFloat(instr.dpayload, type, cached)) {
-                return {cached, type, data_kind_t::kConst};
+                return {cached, type, data_kind_t::kConst, nullable};
             }
         }
 
@@ -509,13 +524,16 @@ namespace questdb::avx2 {
             default:
                 __builtin_unreachable();
         }
-        return {val, type, data_kind_t::kConst};
+        return {val, type, data_kind_t::kConst, nullable};
     }
 
-    jit_value_t neg(Compiler &c, const jit_value_t &lhs, bool null_check) {
+    // The result of a derived arithmetic expression is nullable regardless of operand
+    // nullability (see questdb::x86::neg): the interpreted filter's derived functions report
+    // isNotNull() == false, so downstream comparisons null-check their value.
+    jit_value_t neg(Compiler &c, const jit_value_t &lhs) {
         auto dt = lhs.dtype();
         auto dk = lhs.dkind();
-        return {neg(c, dt, lhs.vec(), null_check), dt, dk};
+        return {neg(c, dt, lhs.vec(), lhs.nullable()), dt, dk, true};
     }
 
     jit_value_t normalize_wide_mask(Compiler &c, const jit_value_t &value) {
@@ -524,7 +542,7 @@ namespace questdb::avx2 {
         }
         Vec dst = c.new_ymm("wide_mask");
         c.vpmovsxdq(dst, value.vec().xmm());
-        return {dst, data_type_t::i64, value.dkind(), value.is_mask()};
+        return {dst, data_type_t::i64, value.dkind(), value.nullable(), value.is_mask()};
     }
 
     // Declines the filter instead of emitting a widening that would be wrong for the loop it lands
@@ -574,7 +592,9 @@ namespace questdb::avx2 {
         }
         Vec dst = c.new_ymm("bool_mask");
         c.vpcmpeqb(dst, value.vec(), vec_bool_true(c));
-        return {dst, value.dtype(), value.dkind(), true};
+        // Respelling the truth value changes neither the operand's nullability nor which rows it
+        // selects, so nullable travels across unchanged and only is_mask flips.
+        return {dst, value.dtype(), value.dkind(), value.nullable(), /*is_mask*/ true};
     }
 
     // Puts both operands of a boolean operation into the same spelling before the operation runs.
@@ -607,10 +627,11 @@ namespace questdb::avx2 {
         // 0x01 gives 0xFE, which is neither spelling of a truth value and which every top-bit test
         // downstream reads as true.
         auto value = to_mask(c, lhs);
-        return {mask_not(c, value.vec()), value.dtype(), value.dkind(), true};
+        return {mask_not(c, value.vec()), value.dtype(), value.dkind(), /*nullable*/ false, /*is_mask*/ true};
     }
 
-    jit_value_t sx_i64(Compiler &c, const jit_value_t &value, bool null_check) {
+    jit_value_t sx_i64(Compiler &c, const jit_value_t &value) {
+        const bool null_check = value.nullable();
         if (value.dtype() != data_type_t::i32) {
             // Fail closed. The frontend emits SX_I64 only over a narrow-int leaf that
             // isWideLaneEligible has admitted, so this is unreachable today; a future gap there
@@ -619,7 +640,7 @@ namespace questdb::avx2 {
             decline_filter(c, "sx_i64 expects an i32 operand");
             Vec zero = c.new_ymm("sx_i64_declined");
             c.vpxor(zero, zero, zero);
-            return {zero, data_type_t::i64, value.dkind(), value.is_mask()};
+            return {zero, data_type_t::i64, value.dkind(), value.nullable(), value.is_mask()};
         }
 
         Vec extended = c.new_ymm("sx_i64");
@@ -636,7 +657,7 @@ namespace questdb::avx2 {
         // dropping the flag here would make harmonise_booleans decline a pairing this handles
         // correctly. The frontend emits SX_I64 only over a narrow-int leaf, where the flag is
         // false; convert()'s i32-with-i64 arm is the caller that can hand it a mask.
-        return {extended, data_type_t::i64, value.dkind(), value.is_mask()};
+        return {extended, data_type_t::i64, value.dkind(), value.nullable(), value.is_mask()};
     }
 
     // AND and OR are bitwise, so they agree with themselves in either spelling - but only when both
@@ -671,7 +692,7 @@ namespace questdb::avx2 {
         auto operands = harmonise_booleans(c, left, right);
         auto dk = dst_kind(operands.first, operands.second);
         return {mask_and(c, operands.first.vec(), operands.second.vec()), operands.first.dtype(), dk,
-                operands.first.is_mask()};
+                /*nullable*/ false, operands.first.is_mask()};
     }
 
     // Shares bin_and's reasoning above, the same-lane-width invariant included.
@@ -681,7 +702,7 @@ namespace questdb::avx2 {
         auto operands = harmonise_booleans(c, left, right);
         auto dk = dst_kind(operands.first, operands.second);
         return {mask_or(c, operands.first.vec(), operands.second.vec()), operands.first.dtype(), dk,
-                operands.first.is_mask()};
+                /*nullable*/ false, operands.first.is_mask()};
     }
 
     // Equality is where the two spellings actually meet: "(a = b) = aboolean" puts a mask beside a
@@ -693,7 +714,7 @@ namespace questdb::avx2 {
         auto dt = operands.first.dtype();
         auto dk = dst_kind(operands.first, operands.second);
         auto mt = mask_type(dt);
-        return {cmp_eq(c, dt, operands.first.vec(), operands.second.vec()), mt, dk, true};
+        return {cmp_eq(c, dt, operands.first.vec(), operands.second.vec()), mt, dk, /*nullable*/ false, /*is_mask*/ true};
     }
 
     jit_value_t cmp_ne(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
@@ -701,63 +722,66 @@ namespace questdb::avx2 {
         auto dt = operands.first.dtype();
         auto dk = dst_kind(operands.first, operands.second);
         auto mt = mask_type(dt);
-        return {cmp_ne(c, dt, operands.first.vec(), operands.second.vec()), mt, dk, true};
+        return {cmp_ne(c, dt, operands.first.vec(), operands.second.vec()), mt, dk, /*nullable*/ false, /*is_mask*/ true};
     }
 
-    jit_value_t cmp_gt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+    // A comparison result is a mask and is never itself NULL, so nullable is false and is_mask is
+    // true on every one of them.
+    jit_value_t cmp_gt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         reject_mask_operands(c, lhs, rhs);
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
         auto mt = mask_type(dt);
-        return {cmp_gt(c, dt, lhs.vec(), rhs.vec(), null_check), mt, dk, true};
+        return {cmp_gt(c, dt, lhs.vec(), rhs.vec(), lhs.nullable(), rhs.nullable()), mt, dk, /*nullable*/ false, /*is_mask*/ true};
     }
 
-    jit_value_t cmp_ge(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+    jit_value_t cmp_ge(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         reject_mask_operands(c, lhs, rhs);
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
         auto mt = mask_type(dt);
-        return {cmp_ge(c, dt, lhs.vec(), rhs.vec(), null_check), mt, dk, true};
+        return {cmp_ge(c, dt, lhs.vec(), rhs.vec(), lhs.nullable(), rhs.nullable()), mt, dk, /*nullable*/ false, /*is_mask*/ true};
     }
 
-    jit_value_t cmp_lt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+    jit_value_t cmp_lt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         reject_mask_operands(c, lhs, rhs);
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
         auto mt = mask_type(dt);
-        return {cmp_lt(c, dt, lhs.vec(), rhs.vec(), null_check), mt, dk, true};
+        return {cmp_lt(c, dt, lhs.vec(), rhs.vec(), lhs.nullable(), rhs.nullable()), mt, dk, /*nullable*/ false, /*is_mask*/ true};
     }
 
-    jit_value_t cmp_le(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+    jit_value_t cmp_le(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         reject_mask_operands(c, lhs, rhs);
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
         auto mt = mask_type(dt);
-        return {cmp_le(c, dt, lhs.vec(), rhs.vec(), null_check), mt, dk, true};
+        return {cmp_le(c, dt, lhs.vec(), rhs.vec(), lhs.nullable(), rhs.nullable()), mt, dk, /*nullable*/ false, /*is_mask*/ true};
     }
 
-    jit_value_t add(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+    // Derived arithmetic results are always nullable - see neg() above.
+    jit_value_t add(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
-        return {add(c, dt, lhs.vec(), rhs.vec(), null_check), dt, dk};
+        return {add(c, dt, lhs.vec(), rhs.vec(), lhs.nullable(), rhs.nullable()), dt, dk, true};
     }
 
-    jit_value_t sub(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+    jit_value_t sub(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
-        return {sub(c, dt, lhs.vec(), rhs.vec(), null_check), dt, dk};
+        return {sub(c, dt, lhs.vec(), rhs.vec(), lhs.nullable(), rhs.nullable()), dt, dk, true};
     }
 
-    jit_value_t mul(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+    jit_value_t mul(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
-        return {mul(c, dt, lhs.vec(), rhs.vec(), null_check), dt, dk};
+        return {mul(c, dt, lhs.vec(), rhs.vec(), lhs.nullable(), rhs.nullable()), dt, dk, true};
     }
 
-    jit_value_t div(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+    jit_value_t div(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
-        return {div(c, dt, lhs.vec(), rhs.vec(), null_check), dt, dk};
+        return {div(c, dt, lhs.vec(), rhs.vec(), lhs.nullable(), rhs.nullable()), dt, dk, true};
     }
 
     // Harmonises the two operands of a binary op before emit_bin_op issues the instruction, which
@@ -788,7 +812,7 @@ namespace questdb::avx2 {
     // frontend types the sentinel to match the lane instead. The mixed-width arms stay for the
     // pairings that still reach them.
     inline std::pair<jit_value_t, jit_value_t>
-    convert(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check, uint32_t lane_count) {
+    convert(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, uint32_t lane_count) {
         // data_type_t::i32 -> data_type_t::f32
         // data_type_t::i64 -> data_type_t::f64
         const bool four_lane = lane_count == 4;
@@ -797,18 +821,18 @@ namespace questdb::avx2 {
                 switch (rhs.dtype()) {
                     case data_type_t::f32:
                         return std::make_pair(
-                                jit_value_t(cvt_itof(c, lhs.vec(), null_check), data_type_t::f32, lhs.dkind()), rhs);
+                                jit_value_t(cvt_itof(c, lhs.vec(), lhs.nullable()), data_type_t::f32, lhs.dkind(), lhs.nullable()), rhs);
                     case data_type_t::i64:
                         if (!four_lane) {
                             return decline_pairing(c, lhs, rhs, "i32-with-i64 pairing outside the four-lane loop");
                         }
-                        return std::make_pair(sx_i64(c, lhs, null_check), rhs);
+                        return std::make_pair(sx_i64(c, lhs), rhs);
                     case data_type_t::f64:
                         if (!four_lane) {
                             return decline_pairing(c, lhs, rhs, "i32-with-f64 pairing outside the four-lane loop");
                         }
                         return std::make_pair(
-                                jit_value_t(cvt_itod(c, lhs.vec(), null_check), data_type_t::f64, lhs.dkind()),
+                                jit_value_t(cvt_itod(c, lhs.vec(), lhs.nullable()), data_type_t::f64, lhs.dkind(), lhs.nullable()),
                                 rhs);
                     default:
                         break;
@@ -820,20 +844,20 @@ namespace questdb::avx2 {
                         if (!four_lane) {
                             return decline_pairing(c, lhs, rhs, "i64-with-i32 pairing outside the four-lane loop");
                         }
-                        return std::make_pair(lhs, sx_i64(c, rhs, null_check));
+                        return std::make_pair(lhs, sx_i64(c, rhs));
                     case data_type_t::f32:
                         if (!four_lane) {
                             return decline_pairing(c, lhs, rhs, "i64-with-f32 pairing outside the four-lane loop");
                         }
                         return std::make_pair(
-                                jit_value_t(cvt_ltod(c, lhs.vec(), null_check), data_type_t::f64, lhs.dkind()),
-                                jit_value_t(cvt_ftod(c, rhs.vec()), data_type_t::f64, rhs.dkind()));
+                                jit_value_t(cvt_ltod(c, lhs.vec(), lhs.nullable()), data_type_t::f64, lhs.dkind(), lhs.nullable()),
+                                jit_value_t(cvt_ftod(c, rhs.vec()), data_type_t::f64, rhs.dkind(), rhs.nullable()));
                     case data_type_t::f64:
                         if (!four_lane) {
                             return decline_pairing(c, lhs, rhs, "i64-with-f64 pairing outside the four-lane loop");
                         }
                         return std::make_pair(
-                                jit_value_t(cvt_ltod(c, lhs.vec(), null_check), data_type_t::f64, lhs.dkind()), rhs);
+                                jit_value_t(cvt_ltod(c, lhs.vec(), lhs.nullable()), data_type_t::f64, lhs.dkind(), lhs.nullable()), rhs);
                     default:
                         break;
                 }
@@ -841,21 +865,21 @@ namespace questdb::avx2 {
             case data_type_t::f32:
                 switch (rhs.dtype()) {
                     case data_type_t::i32:
-                        return std::make_pair(lhs, jit_value_t(cvt_itof(c, rhs.vec(), null_check), data_type_t::f32,
-                                                               rhs.dkind()));
+                        return std::make_pair(lhs, jit_value_t(cvt_itof(c, rhs.vec(), rhs.nullable()), data_type_t::f32,
+                                                               rhs.dkind(), rhs.nullable()));
                     case data_type_t::i64:
                         if (!four_lane) {
                             return decline_pairing(c, lhs, rhs, "f32-with-i64 pairing outside the four-lane loop");
                         }
                         return std::make_pair(
-                                jit_value_t(cvt_ftod(c, lhs.vec()), data_type_t::f64, lhs.dkind()),
-                                jit_value_t(cvt_ltod(c, rhs.vec(), null_check), data_type_t::f64, rhs.dkind()));
+                                jit_value_t(cvt_ftod(c, lhs.vec()), data_type_t::f64, lhs.dkind(), lhs.nullable()),
+                                jit_value_t(cvt_ltod(c, rhs.vec(), rhs.nullable()), data_type_t::f64, rhs.dkind(), rhs.nullable()));
                     case data_type_t::f64:
                         if (!four_lane) {
                             return decline_pairing(c, lhs, rhs, "f32-with-f64 pairing outside the four-lane loop");
                         }
                         return std::make_pair(
-                                jit_value_t(cvt_ftod(c, lhs.vec()), data_type_t::f64, lhs.dkind()), rhs);
+                                jit_value_t(cvt_ftod(c, lhs.vec()), data_type_t::f64, lhs.dkind(), lhs.nullable()), rhs);
                     default:
                         break;
                 }
@@ -868,18 +892,18 @@ namespace questdb::avx2 {
                         }
                         return std::make_pair(
                                 lhs,
-                                jit_value_t(cvt_itod(c, rhs.vec(), null_check), data_type_t::f64, rhs.dkind()));
+                                jit_value_t(cvt_itod(c, rhs.vec(), rhs.nullable()), data_type_t::f64, rhs.dkind(), rhs.nullable()));
                     case data_type_t::i64:
                         if (!four_lane) {
                             return decline_pairing(c, lhs, rhs, "f64-with-i64 pairing outside the four-lane loop");
                         }
-                        return std::make_pair(lhs, jit_value_t(cvt_ltod(c, rhs.vec(), null_check), data_type_t::f64,
-                                                               rhs.dkind()));
+                        return std::make_pair(lhs, jit_value_t(cvt_ltod(c, rhs.vec(), rhs.nullable()), data_type_t::f64,
+                                                               rhs.dkind(), rhs.nullable()));
                     case data_type_t::f32:
                         if (!four_lane) {
                             return decline_pairing(c, lhs, rhs, "f64-with-f32 pairing outside the four-lane loop");
                         }
-                        return std::make_pair(lhs, jit_value_t(cvt_ftod(c, rhs.vec()), data_type_t::f64, rhs.dkind()));
+                        return std::make_pair(lhs, jit_value_t(cvt_ftod(c, rhs.vec()), data_type_t::f64, rhs.dkind(), rhs.nullable()));
                     default:
                         break;
                 }
@@ -920,13 +944,13 @@ namespace questdb::avx2 {
     }
 
     inline std::pair<jit_value_t, jit_value_t>
-    get_arguments(Compiler &c, ArenaVector<jit_value_t> &values, bool ncheck, uint32_t lane_count) {
+    get_arguments(Compiler &c, ArenaVector<jit_value_t> &values, uint32_t lane_count) {
         auto lhs = values.pop();
         auto rhs = values.pop();
-        return convert(c, lhs, rhs, ncheck, lane_count);
+        return convert(c, lhs, rhs, lane_count);
     }
 
-    void emit_bin_op(Compiler &c, Arena &arena, const instruction_t &instr, ArenaVector<jit_value_t> &values, bool ncheck, bool wide_lane,
+    void emit_bin_op(Compiler &c, Arena &arena, const instruction_t &instr, ArenaVector<jit_value_t> &values, bool wide_lane,
                      uint32_t lane_count) {
         // AND and OR combine comparison MASKS, not values, and bin_and / bin_or already widen a
         // four-lane i32 mask themselves. Routing them through convert() would take the i32-with-i64
@@ -950,7 +974,7 @@ namespace questdb::avx2 {
             default:
                 break;
         }
-        auto args = get_arguments(c, values, ncheck, lane_count);
+        auto args = get_arguments(c, values, lane_count);
         auto lhs = args.first;
         auto rhs = args.second;
         switch (instr.opcode) {
@@ -961,28 +985,28 @@ namespace questdb::avx2 {
                 values.append(arena, cmp_ne(c, lhs, rhs));
                 break;
             case opcodes::Gt:
-                values.append(arena, cmp_gt(c, lhs, rhs, ncheck));
+                values.append(arena, cmp_gt(c, lhs, rhs));
                 break;
             case opcodes::Ge:
-                values.append(arena, cmp_ge(c, lhs, rhs, ncheck));
+                values.append(arena, cmp_ge(c, lhs, rhs));
                 break;
             case opcodes::Lt:
-                values.append(arena, cmp_lt(c, lhs, rhs, ncheck));
+                values.append(arena, cmp_lt(c, lhs, rhs));
                 break;
             case opcodes::Le:
-                values.append(arena, cmp_le(c, lhs, rhs, ncheck));
+                values.append(arena, cmp_le(c, lhs, rhs));
                 break;
             case opcodes::Add:
-                values.append(arena, add(c, lhs, rhs, ncheck));
+                values.append(arena, add(c, lhs, rhs));
                 break;
             case opcodes::Sub:
-                values.append(arena, sub(c, lhs, rhs, ncheck));
+                values.append(arena, sub(c, lhs, rhs));
                 break;
             case opcodes::Mul:
-                values.append(arena, mul(c, lhs, rhs, ncheck));
+                values.append(arena, mul(c, lhs, rhs));
                 break;
             case opcodes::Div:
-                values.append(arena, div(c, lhs, rhs, ncheck));
+                values.append(arena, div(c, lhs, rhs));
                 break;
             default:
                 // Fail closed. emit_code() routes EVERY opcode it does not handle itself into this
@@ -1005,7 +1029,7 @@ namespace questdb::avx2 {
     }
 
     void
-    emit_code(Compiler &c, Arena &arena, const instruction_t *istream, size_t size, ArenaVector<jit_value_t> &values, bool ncheck, bool wide_lane,
+    emit_code(Compiler &c, Arena &arena, const instruction_t *istream, size_t size, ArenaVector<jit_value_t> &values, bool wide_lane,
               uint32_t lane_count,
               const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &vars_ptr, const Gp &input_index,
               const ColumnAddressCache &addr_cache, const ConstantCacheYmm&const_cache,
@@ -1024,22 +1048,22 @@ namespace questdb::avx2 {
                 case opcodes::Ret:
                     return;
                 case opcodes::Var: {
-                    auto type = static_cast<data_type_t>(instr.options);
+                    auto type = ir_data_type(instr.options);
                     auto idx = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(arena, read_vars_mem(c, type, idx, vars_ptr, value_cache));
+                    values.append(arena, read_vars_mem(c, type, idx, ir_nullable(instr.options), vars_ptr, value_cache));
                 }
                     break;
                 case opcodes::Mem: {
-                    auto type = static_cast<data_type_t>(instr.options);
+                    auto type = ir_data_type(instr.options);
                     auto idx = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(arena, read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index, wide_lane, addr_cache, value_cache));
+                    values.append(arena, read_mem(c, type, idx, ir_nullable(instr.options), data_ptr, varsize_aux_ptr, input_index, wide_lane, addr_cache, value_cache));
                 }
                     break;
                 case opcodes::Imm:
                     values.append(arena, read_imm(c, instr, const_cache));
                     break;
                 case opcodes::Neg:
-                    values.append(arena, neg(c, get_argument(values), ncheck));
+                    values.append(arena, neg(c, get_argument(values)));
                     break;
                 case opcodes::Not:
                     values.append(arena, bin_not(c, get_argument(values)));
@@ -1066,10 +1090,10 @@ namespace questdb::avx2 {
                         // so the stack stays balanced; the declined function never runs.
                         decline_filter(c, "SX_I64 outside the wide-lane loop");
                     }
-                    values.append(arena, sx_i64(c, get_argument(values), ncheck));
+                    values.append(arena, sx_i64(c, get_argument(values)));
                     break;
                 default:
-                    emit_bin_op(c, arena, instr, values, ncheck, wide_lane, lane_count);
+                    emit_bin_op(c, arena, instr, values, wide_lane, lane_count);
                     break;
             }
         }

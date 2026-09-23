@@ -613,8 +613,7 @@ public class MetadataCache implements QuietCloseable {
                 column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
                 column.setSymbolTableStaticFlag(true);
                 column.setDedupKeyFlag(TableUtils.isColumnDedupKey(metaMem, writerIndex));
-                // Pre-9.3.4 _meta files can carry non-zero bytes at column-entry offset 20 from
-                // older layouts (e.g. Mig608 wrote a random column hash at 20-27); read 0 there.
+                column.setNotNullFlag(TableUtils.isColumnNotNull(metaMem, writerIndex) || writerIndex == timestampWriterIndex);
                 column.setParquetEncodingConfig(hasParquetEncodingConfig ? TableUtils.getParquetEncodingConfig(metaMem, writerIndex) : 0);
                 column.setWriterIndex(writerIndex);
 
@@ -1090,6 +1089,7 @@ public class MetadataCache implements QuietCloseable {
                 column.setCoveringColumnIndices(columnMetadata.getCoveringColumnIndices());
                 column.setSymbolTableStaticFlag(columnMetadata.isSymbolTableStatic());
                 column.setDedupKeyFlag(columnMetadata.isDedupKeyFlag());
+                column.setNotNullFlag(columnMetadata.isNotNull());
                 column.setParquetEncodingConfig(columnMetadata.getParquetEncodingConfig());
 
                 int writerIndex = columnMetadata.getWriterIndex();

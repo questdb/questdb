@@ -52,7 +52,7 @@ public class CastFloatToByteFunctionFactory implements FunctionFactory {
         @Override
         public byte getByte(Record rec) {
             final float value = arg.getFloat(rec);
-            return Numbers.isNull(value) || value > Byte.MAX_VALUE || value < Byte.MIN_VALUE ? 0 : (byte) value;
+            return (!arg.isNotNull() && Numbers.isNull(value)) || value > Byte.MAX_VALUE || value < Byte.MIN_VALUE ? 0 : (byte) value;
         }
     }
 }

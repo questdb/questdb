@@ -44,11 +44,13 @@ import org.jetbrains.annotations.NotNull;
 public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private final int argColumnIndex;
+    private final boolean isArgNotNull;
     private int valueIndex;
 
     public MinDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.DOUBLE);
+        this.isArgNotNull = arg.isNotNull();
     }
 
     @Override
@@ -56,7 +58,7 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
         if (rowCount > 0) {
             final double batchMin = Vect.minDouble(dataAddr, rowCount);
             final double existing = mapValue.getDouble(valueIndex);
-            if (batchMin < existing || Numbers.isNull(existing)) {
+            if (batchMin < existing || (!isArgNotNull && Numbers.isNull(existing))) {
                 mapValue.putDouble(valueIndex, batchMin);
             }
         }
@@ -90,7 +92,8 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 final double value = Unsafe.getDouble(argAddr + (rowIndex << 3));
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final double current = Unsafe.getDouble(addr);
-                if (value < current || Numbers.isNull(current)) {
+                if (Map.isNewBatchEntry(encoded)
+                        || (isArgNotNull ? Double.isNaN(value) || value < current : value < current || Numbers.isNull(current))) {
                     Unsafe.putDouble(addr, value);
                 }
             }
@@ -101,7 +104,8 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 final double value = arg.getDouble(record);
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final double current = Unsafe.getDouble(addr);
-                if (value < current || Numbers.isNull(current)) {
+                if (Map.isNewBatchEntry(encoded)
+                        || (isArgNotNull ? Double.isNaN(value) || value < current : value < current || Numbers.isNull(current))) {
                     Unsafe.putDouble(addr, value);
                 }
             }
@@ -112,7 +116,7 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         double min = mapValue.getDouble(valueIndex);
         double next = arg.getDouble(record);
-        if (next < min || Numbers.isNull(min)) {
+        if (isArgNotNull ? Double.isNaN(next) || next < min : next < min || Numbers.isNull(min)) {
             mapValue.putDouble(valueIndex, next);
         }
     }
@@ -167,7 +171,7 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void merge(MapValue destValue, MapValue srcValue) {
         double srcMin = srcValue.getDouble(valueIndex);
         double destMin = destValue.getDouble(valueIndex);
-        if (srcMin < destMin || Numbers.isNull(destMin)) {
+        if (isArgNotNull ? Double.isNaN(srcMin) || srcMin < destMin : srcMin < destMin || Numbers.isNull(destMin)) {
             destValue.putDouble(valueIndex, srcMin);
         }
     }
@@ -184,7 +188,10 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        // NOT NULL columns take the per-row compute path; the native batch
+        // kernel treats the type sentinel as null and under-counts / skips
+        // values the NOT NULL contract declares to be real data.
+        return !isArgNotNull;
     }
 
     @Override

@@ -70,6 +70,38 @@ public interface MetadataService {
      * @param isSequential            for columns that contain sequential values query optimiser can make assumptions on range searches (future feature)
      * @param isDedupKey              when set to true, column will be used as deduplication key
      */
+    /**
+     * Legacy overload retained for source and binary compatibility.
+     */
+    default void addColumn(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            byte indexType,
+            int indexValueBlockCapacity,
+            boolean isSequential,
+            boolean isDedupKey,
+            SecurityContext securityContext
+    ) {
+        addColumn(
+                columnName,
+                columnType,
+                symbolCapacity,
+                symbolCacheFlag,
+                indexType,
+                indexValueBlockCapacity,
+                isSequential,
+                isDedupKey,
+                false,
+                securityContext
+        );
+    }
+
+    // The only abstract addColumn overload: the default overloads above and below all
+    // delegate here. Keeping exactly one non-default overload prevents the mutual-
+    // recursion StackOverflowError an implementer would hit if two defaults called
+    // each other and neither was overridden.
     void addColumn(
             CharSequence columnName,
             int columnType,
@@ -79,6 +111,7 @@ public interface MetadataService {
             int indexValueBlockCapacity,
             boolean isSequential,
             boolean isDedupKey,
+            boolean isNotNull,
             SecurityContext securityContext
     );
 
@@ -101,6 +134,7 @@ public interface MetadataService {
                 indexValueBlockCapacity,
                 isSequential,
                 isDedupKey,
+                false,
                 null
         );
     }
@@ -206,6 +240,14 @@ public interface MetadataService {
      * @param parquetEncodingConfig packed encoding/compression config
      */
     void setColumnParquetEncoding(CharSequence columnName, int parquetEncodingConfig);
+
+    /**
+     * Sets or clears NOT NULL. Legacy metadata services may not support this
+     * operation, so retain a default implementation for compatibility.
+     */
+    default void setColumnNotNull(CharSequence columnName, boolean isNotNull) {
+        throw new UnsupportedOperationException("NOT NULL metadata changes are not supported");
+    }
 
     /**
      * Sets refresh type and settings for materialized view.

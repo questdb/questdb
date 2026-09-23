@@ -43,11 +43,13 @@ import org.jetbrains.annotations.NotNull;
 
 public class MinIntGroupByFunction extends IntFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private final int argColumnIndex;
     private int valueIndex;
 
     public MinIntGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.INT);
     }
 
@@ -55,7 +57,7 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
         if (rowCount > 0) {
             final int batchMin = Vect.minInt(dataAddr, rowCount);
-            if (batchMin != Numbers.INT_NULL) {
+            if (isArgNotNull || batchMin != Numbers.INT_NULL) {
                 final int existing = mapValue.getInt(valueIndex);
                 if (batchMin < existing || existing == Numbers.INT_NULL) {
                     mapValue.putInt(valueIndex, batchMin);
@@ -87,10 +89,12 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final int value = Unsafe.getInt(argAddr + (rowIndex << 2));
-                if (value != Numbers.INT_NULL) {
+                if (isArgNotNull || value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final int current = Unsafe.getInt(addr);
-                    Unsafe.putInt(addr, current != Numbers.INT_NULL ? Math.min(current, value) : value);
+                    if (Map.isNewBatchEntry(encoded) || value < current || (!isArgNotNull && current == Numbers.INT_NULL)) {
+                        Unsafe.putInt(addr, value);
+                    }
                 }
             }
         } else {
@@ -98,10 +102,12 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final int value = arg.getInt(record);
-                if (value != Numbers.INT_NULL) {
+                if (isArgNotNull || value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final int current = Unsafe.getInt(addr);
-                    Unsafe.putInt(addr, current != Numbers.INT_NULL ? Math.min(current, value) : value);
+                    if (Map.isNewBatchEntry(encoded) || value < current || (!isArgNotNull && current == Numbers.INT_NULL)) {
+                        Unsafe.putInt(addr, value);
+                    }
                 }
             }
         }
@@ -109,7 +115,12 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        mapValue.minInt(valueIndex, arg.getInt(record));
+        final int current = mapValue.getInt(valueIndex);
+        final int value = arg.getInt(record);
+        if ((isArgNotNull || value != Numbers.INT_NULL)
+                && (value < current || (!isArgNotNull && current == Numbers.INT_NULL))) {
+            mapValue.putInt(valueIndex, value);
+        }
     }
 
     @Override
@@ -162,7 +173,8 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     public void merge(MapValue destValue, MapValue srcValue) {
         int srcMin = srcValue.getInt(valueIndex);
         int destMin = destValue.getInt(valueIndex);
-        if (srcMin != Numbers.INT_NULL && (srcMin < destMin || destMin == Numbers.INT_NULL)) {
+        if ((isArgNotNull || srcMin != Numbers.INT_NULL)
+                && (srcMin < destMin || (!isArgNotNull && destMin == Numbers.INT_NULL))) {
             destValue.putInt(valueIndex, srcMin);
         }
     }
@@ -179,7 +191,7 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return !isArgNotNull;
     }
 
     @Override

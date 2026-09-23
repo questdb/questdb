@@ -38,6 +38,7 @@ import io.questdb.std.Numbers;
 
 public class CountDistinctLongGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private final GroupByLongHashSet setA;
     private final GroupByLongHashSet setB;
     private long cardinality;
@@ -45,6 +46,7 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
 
     public CountDistinctLongGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         setA = new GroupByLongHashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
         setB = new GroupByLongHashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
     }
@@ -58,31 +60,48 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final long value = arg.getLong(record);
-        if (value != Numbers.LONG_NULL) {
+        if (isArgNotNull && value == Numbers.LONG_NULL) {
+            // NOT NULL admits the sentinel bit pattern as data, but the hash
+            // sets reserve that exact value as their empty marker, so its
+            // membership lives in the dedicated flag slot
+            mapValue.putLong(valueIndex, 1);
+            mapValue.putLong(valueIndex + 1, 0);
+            mapValue.putBool(valueIndex + 2, true);
+            cardinality++;
+        } else if (value != Numbers.LONG_NULL) {
             mapValue.putLong(valueIndex, 1);
             mapValue.putLong(valueIndex + 1, value);
+            mapValue.putBool(valueIndex + 2, false);
             cardinality++;
         } else {
             mapValue.putLong(valueIndex, 0);
             mapValue.putLong(valueIndex + 1, 0);
+            mapValue.putBool(valueIndex + 2, false);
         }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final long value = arg.getLong(record);
-        if (value != Numbers.LONG_NULL) {
+        if (isArgNotNull && value == Numbers.LONG_NULL) {
+            if (!mapValue.getBool(valueIndex + 2)) {
+                mapValue.putBool(valueIndex + 2, true);
+                mapValue.addLong(valueIndex, 1);
+                cardinality++;
+            }
+        } else if (value != Numbers.LONG_NULL) {
             final long cnt = mapValue.getLong(valueIndex);
-            if (cnt == 0) {
-                mapValue.putLong(valueIndex, 1);
+            final long stored = mapValue.getBool(valueIndex + 2) ? cnt - 1 : cnt;
+            if (stored == 0) {
+                mapValue.putLong(valueIndex, cnt + 1);
                 mapValue.putLong(valueIndex + 1, value);
                 cardinality++;
-            } else if (cnt == 1) { // inlined value
+            } else if (stored == 1) { // inlined value
                 final long valueB = mapValue.getLong(valueIndex + 1);
                 if (value != valueB) {
                     setA.of(0).add(value);
                     setA.add(valueB);
-                    mapValue.putLong(valueIndex, 2);
+                    mapValue.putLong(valueIndex, cnt + 1);
                     mapValue.putLong(valueIndex + 1, setA.ptr());
                     cardinality++;
                 }
@@ -137,10 +156,16 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         valueIndex = columnTypes.getColumnCount();
-        // count
+        // count, including the sentinel when the flag below is set
         columnTypes.add(ColumnType.LONG);
-        // inlined single value (count=1) or GroupByLongHashSet pointer (count>1)
+        // inlined single non-sentinel value or GroupByLongHashSet pointer;
+        // which one is decided by the stored count: count minus the sentinel
+        // flag is 1 for an inlined value and greater for a set pointer
         columnTypes.add(ColumnType.LONG);
+        // sentinel membership flag: the hash sets reserve LONG_NULL as their
+        // empty marker, so a NOT NULL argument's sentinel value cannot live
+        // in the set and is tracked here instead
+        columnTypes.add(ColumnType.BOOLEAN);
     }
 
     @Override
@@ -159,39 +184,62 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
         if (srcCount == 0 || srcCount == Numbers.LONG_NULL) {
             return;
         }
+        final boolean srcSentinel = srcValue.getBool(valueIndex + 2);
+        final long srcStored = srcSentinel ? srcCount - 1 : srcCount;
 
         final long destCount = destValue.getLong(valueIndex);
         if (destCount == 0 || destCount == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcCount);
             destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
+            destValue.putBool(valueIndex + 2, srcSentinel);
+            return;
+        }
+        final boolean destSentinel = destValue.getBool(valueIndex + 2);
+        final long destStored = destSentinel ? destCount - 1 : destCount;
+        final boolean sentinel = srcSentinel || destSentinel;
+        final long sentinelInc = sentinel ? 1 : 0;
+
+        if (srcStored == 0) { // src holds only the sentinel
+            destValue.putLong(valueIndex, destStored + sentinelInc);
+            destValue.putBool(valueIndex + 2, sentinel);
             return;
         }
 
-        if (srcCount == 1) { // inlined src value
+        if (destStored == 0) { // dest holds at most the sentinel, adopt src's values
+            destValue.putLong(valueIndex, srcStored + sentinelInc);
+            destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
+            destValue.putBool(valueIndex + 2, sentinel);
+            return;
+        }
+
+        if (srcStored == 1) { // inlined src value
             final long srcVal = srcValue.getLong(valueIndex + 1);
-            if (destCount == 1) { // dest also holds inlined value
+            if (destStored == 1) { // dest also holds inlined value
                 final long destVal = destValue.getLong(valueIndex + 1);
                 if (destVal != srcVal) {
                     setA.of(0).add(srcVal);
                     setA.add(destVal);
-                    destValue.putLong(valueIndex, 2);
+                    destValue.putLong(valueIndex, 2 + sentinelInc);
                     destValue.putLong(valueIndex + 1, setA.ptr());
+                } else {
+                    destValue.putLong(valueIndex, 1 + sentinelInc);
                 }
             } else { // dest holds a set
                 final long destPtr = destValue.getLong(valueIndex + 1);
                 setA.of(destPtr).add(srcVal);
-                destValue.putLong(valueIndex, setA.size());
+                destValue.putLong(valueIndex, setA.size() + sentinelInc);
                 destValue.putLong(valueIndex + 1, setA.ptr());
             }
+            destValue.putBool(valueIndex + 2, sentinel);
             return;
         }
 
         // src holds a set
         final long srcPtr = srcValue.getLong(valueIndex + 1);
-        if (destCount == 1) { // dest holds inlined value
+        if (destStored == 1) { // dest holds inlined value
             final long destVal = destValue.getLong(valueIndex + 1);
             setA.of(srcPtr).add(destVal);
-            destValue.putLong(valueIndex, setA.size());
+            destValue.putLong(valueIndex, setA.size() + sentinelInc);
             destValue.putLong(valueIndex + 1, setA.ptr());
         } else { // dest holds a set
             final long destPtr = destValue.getLong(valueIndex + 1);
@@ -200,15 +248,16 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
 
             if (setA.size() > (setB.size() >>> 1)) {
                 setA.merge(setB);
-                destValue.putLong(valueIndex, setA.size());
+                destValue.putLong(valueIndex, setA.size() + sentinelInc);
                 destValue.putLong(valueIndex + 1, setA.ptr());
             } else {
                 // Set A is significantly smaller than set B, so we merge it into set B.
                 setB.merge(setA);
-                destValue.putLong(valueIndex, setB.size());
+                destValue.putLong(valueIndex, setB.size() + sentinelInc);
                 destValue.putLong(valueIndex + 1, setB.ptr());
             }
         }
+        destValue.putBool(valueIndex + 2, sentinel);
     }
 
     @Override
@@ -226,18 +275,21 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     public void setEmpty(MapValue mapValue) {
         mapValue.putLong(valueIndex, 0);
         mapValue.putLong(valueIndex + 1, 0);
+        mapValue.putBool(valueIndex + 2, false);
     }
 
     @Override
     public void setLong(MapValue mapValue, long value) {
         mapValue.putLong(valueIndex, value);
         mapValue.putLong(valueIndex + 1, 0);
+        mapValue.putBool(valueIndex + 2, false);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putLong(valueIndex + 1, 0);
+        mapValue.putBool(valueIndex + 2, false);
     }
 
     @Override

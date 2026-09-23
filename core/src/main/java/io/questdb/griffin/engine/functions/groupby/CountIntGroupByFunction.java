@@ -58,7 +58,7 @@ public class CountIntGroupByFunction extends AbstractCountGroupByFunction {
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final int value = arg.getInt(record);
-        if (value != Numbers.INT_NULL) {
+        if (isArgNotNull || value != Numbers.INT_NULL) {
             mapValue.putLong(valueIndex, 1);
         } else {
             mapValue.putLong(valueIndex, 0);
@@ -84,7 +84,7 @@ public class CountIntGroupByFunction extends AbstractCountGroupByFunction {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final int value = Unsafe.getInt(argAddr + (rowIndex << 2));
-                if (value != Numbers.INT_NULL) {
+                if (isArgNotNull || value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
                 }
@@ -94,7 +94,7 @@ public class CountIntGroupByFunction extends AbstractCountGroupByFunction {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final int value = arg.getInt(record);
-                if (value != Numbers.INT_NULL) {
+                if (isArgNotNull || value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
                 }
@@ -105,7 +105,7 @@ public class CountIntGroupByFunction extends AbstractCountGroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final int value = arg.getInt(record);
-        if (value != Numbers.INT_NULL) {
+        if (isArgNotNull || value != Numbers.INT_NULL) {
             mapValue.addLong(valueIndex, 1);
         }
     }
@@ -117,6 +117,6 @@ public class CountIntGroupByFunction extends AbstractCountGroupByFunction {
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return !isArgNotNull;
     }
 }

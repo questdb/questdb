@@ -97,7 +97,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
     private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(MicrosTimestampDriver::partitionFloorYYYY, YEAR_FORMAT);
 
     private final ColumnTypeConverter.Var2FixedConverter<CharSequence> converterStr2Timestamp = this::appendToMem;
-    private final ColumnTypeConverter.Fixed2VarConverter converterTimestamp2Str = (addr, sink, unused1, unused2) -> append(addr, sink);
+    private final ColumnTypeConverter.Fixed2VarConverter converterTimestamp2Str = (addr, sink, unused1, unused2) -> append(addr, sink, unused1 != 0);
     private Clock clock = MicrosecondClockImpl.INSTANCE;
 
     private MicrosTimestampDriver() {
@@ -204,9 +204,9 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public boolean append(long fixedAddr, CharSink<?> sink) {
+    public boolean append(long fixedAddr, CharSink<?> sink, boolean notNull) {
         long value = Unsafe.getLong(fixedAddr);
-        if (value != Numbers.LONG_NULL) {
+        if (notNull || value != Numbers.LONG_NULL) {
             MicrosFormatUtils.appendDateTimeUSec(sink, value);
             return true;
         }

@@ -43,10 +43,6 @@ import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 
 final class ParquetColumnTypeConverter {
-    // Write-time hint mirrored by Rust's parquet encoder. It does not change
-    // parquet schema repetition; SYMBOL columns remain Optional.
-    static final int PARQUET_SYMBOL_NOT_NULL_HINT = Integer.MIN_VALUE;
-
     private ParquetColumnTypeConverter() {
     }
 

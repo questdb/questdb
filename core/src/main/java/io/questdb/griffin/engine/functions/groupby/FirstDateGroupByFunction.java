@@ -43,11 +43,13 @@ import org.jetbrains.annotations.NotNull;
 public class FirstDateGroupByFunction extends DateFunction implements GroupByFunction, UnaryFunction {
     protected final Function arg;
     protected final int argColumnIndex;
+    protected final boolean isArgNotNull;
     protected int valueIndex;
 
     public FirstDateGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.DATE);
+        this.isArgNotNull = arg.isNotNull();
     }
 
     @Override
@@ -178,7 +180,7 @@ public class FirstDateGroupByFunction extends DateFunction implements GroupByFun
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return !isArgNotNull;
     }
 
     @Override

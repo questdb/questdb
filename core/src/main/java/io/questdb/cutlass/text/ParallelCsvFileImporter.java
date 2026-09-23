@@ -1697,6 +1697,16 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
+        public boolean isIndexed(int columnIndex) {
+            return !ignoreColumnIndexedFlag && Numbers.decodeHighInt(columnBits.getQuick(columnIndex)) != 0;
+        }
+
+        @Override
+        public boolean isNotNull(int columnIndex) {
+            return columnIndex == getTimestampIndex();
+        }
+
+        @Override
         public boolean isWalEnabled() {
             return configuration.getWalEnabledDefault() && PartitionBy.isPartitioned(partitionBy);
         }

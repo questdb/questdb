@@ -82,7 +82,7 @@ public class CastTimestampToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
+            if (!arg.isNotNull() && value == Numbers.LONG_NULL) {
                 return SymbolTable.VALUE_IS_NULL;
             }
 
@@ -101,7 +101,7 @@ public class CastTimestampToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getSymbol(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
+            if (!arg.isNotNull() && value == Numbers.LONG_NULL) {
                 return null;
             }
 

@@ -32,6 +32,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -70,6 +71,12 @@ public class EqIPv4FunctionFactory implements FunctionFactory {
     private static Function createHalfConstantFunc(Function constFunc, Function varFunc) {
         int constValue = constFunc.getIPv4(null);
         if (constValue == IPv4_NULL) {
+            // `x IS NULL` / `x = NULL`. When the column is NOT NULL, this is always
+            // false at compile time. NegatingFunctionFactory flips BooleanConstant.FALSE
+            // to TRUE for the IS NOT NULL path.
+            if (varFunc.isNotNull()) {
+                return BooleanConstant.FALSE;
+            }
             return new NullCheckFunc(varFunc);
         }
         return new ConstCheckFunc(varFunc, constValue);

@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.BitSet;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 /**
@@ -81,6 +82,12 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
                 return symbolConstant == timestampFunc.getLong(null) ? BooleanConstant.TRUE : BooleanConstant.FALSE;
             }
 
+            // `tsCol = <nullSymbol>` on a NOT NULL TIMESTAMP column is always false.
+            // NegatingFunctionFactory flips the constant for IS NOT NULL.
+            if (symbolConstant == Numbers.LONG_NULL && timestampFunc.isNotNull()) {
+                return BooleanConstant.FALSE;
+            }
+
             return new ConstSymbolVarTimestampFunction(symbolFunc, timestampFunc, symbolConstant);
         }
 
@@ -90,7 +97,13 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
         }
 
         if (timestampFunc.isConstant() && !symbolFunc.isNonDeterministic()) {
-            return new VarSymbolConstTimestampFunction(symbolFunc, timestampFunc, timestampFunc.getTimestamp(null), driver);
+            final long timestampConstant = timestampFunc.getTimestamp(null);
+            // `symCol = <nullTimestamp>` on a NOT NULL SYMBOL column is always false.
+            // NegatingFunctionFactory flips the constant for IS NOT NULL.
+            if (timestampConstant == Numbers.LONG_NULL && symbolFunc.isNotNull()) {
+                return BooleanConstant.FALSE;
+            }
+            return new VarSymbolConstTimestampFunction(symbolFunc, timestampFunc, timestampConstant, driver);
         }
 
         return new VarSymbolVarTimestampFunction(symbolFunc, timestampFunc, driver);

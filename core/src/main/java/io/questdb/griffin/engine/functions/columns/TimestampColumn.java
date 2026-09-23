@@ -37,18 +37,24 @@ import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COL
 public class TimestampColumn extends TimestampFunction implements ColumnFunction {
     private static final ObjList<TimestampColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
+    private final boolean isNotNull;
 
-    private TimestampColumn(int columnIndex, int timestampType) {
+    private TimestampColumn(int columnIndex, int timestampType, boolean isNotNull) {
         super(timestampType);
         this.columnIndex = columnIndex;
+        this.isNotNull = isNotNull;
     }
 
     public static TimestampColumn newInstance(int columnIndex, int timestampType) {
-        if (columnIndex < STATIC_COLUMN_COUNT) {
+        return newInstance(columnIndex, timestampType, false);
+    }
+
+    public static TimestampColumn newInstance(int columnIndex, int timestampType, boolean isNotNull) {
+        if (!isNotNull && columnIndex < STATIC_COLUMN_COUNT) {
             TimestampColumn column = COLUMNS.getQuick(columnIndex);
             column.setType(timestampType);
         }
-        return new TimestampColumn(columnIndex, timestampType);
+        return new TimestampColumn(columnIndex, timestampType, isNotNull);
     }
 
     @Override
@@ -62,6 +68,11 @@ public class TimestampColumn extends TimestampFunction implements ColumnFunction
     }
 
     @Override
+    public boolean isNotNull() {
+        return isNotNull;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return true;
     }
@@ -69,7 +80,7 @@ public class TimestampColumn extends TimestampFunction implements ColumnFunction
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
-            COLUMNS.setQuick(i, new TimestampColumn(i, ColumnType.TIMESTAMP_MICRO));
+            COLUMNS.setQuick(i, new TimestampColumn(i, ColumnType.TIMESTAMP_MICRO, false));
         }
     }
 }

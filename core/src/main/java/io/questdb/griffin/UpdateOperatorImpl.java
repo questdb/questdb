@@ -37,6 +37,7 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -50,6 +51,8 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.BoolList;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.FilesFacade;
@@ -60,6 +63,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
 
 import static io.questdb.cairo.ColumnType.isVarSize;
 import static io.questdb.cairo.TableUtils.dFile;
@@ -77,6 +81,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     private final ObjList<MemoryCMR> srcColumns = new ObjList<>();
     private final TableWriter tableWriter;
     private final IntList updateColumnIndexes = new IntList();
+    private final BoolList updateColumnRejectsNull = new BoolList();
     private IndexBuilder indexBuilder;
 
     public UpdateOperatorImpl(
@@ -137,11 +142,28 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
 
                 // Build index column map from table to update to values returned from the update statement row cursors
                 updateColumnIndexes.clear();
+                updateColumnRejectsNull.clear();
                 for (int i = 0; i < affectedColumnCount; i++) {
                     CharSequence columnName = updateMetadata.getColumnName(i);
                     int tableColumnIndex = tableMetadata.getColumnIndex(columnName);
                     assert tableColumnIndex >= 0;
                     updateColumnIndexes.add(tableColumnIndex);
+                    // Runtime NOT NULL enforcement is deliberately limited to reference
+                    // types (STRING/VARCHAR/SYMBOL/BINARY/ARRAY). A numeric NOT NULL
+                    // column treats its legacy sentinel bit pattern as data, so a
+                    // runtime-derived NULL stores the sentinel and remains a legitimate,
+                    // visible value. A reference-typed null has no such reading: the
+                    // stored null IS the encoding the IS NULL operator matches, while
+                    // IS NULL on a NOT NULL column constant-folds to FALSE, so an
+                    // accepted null would make the row unreachable by any null
+                    // predicate. Do not "unify" the two. Nullability is static table
+                    // metadata, so it is resolved here, once per update statement --
+                    // never per row.
+                    final int columnType = tableMetadata.getColumnType(tableColumnIndex);
+                    updateColumnRejectsNull.add(
+                            isReferenceType(ColumnType.tagOf(columnType))
+                                    && TableUtils.isEnforceableNotNull(columnType, tableMetadata.isNotNull(tableColumnIndex))
+                    );
                 }
 
                 // Create update memory list of all columns to be updated
@@ -439,33 +461,58 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                 case ColumnType.GEOLONG:
                     dstFixMem.putLong(masterRecord.getGeoLong(i));
                     break;
-                case ColumnType.SYMBOL:
+                case ColumnType.SYMBOL: {
                     // Use special method to write new symbol values
                     // which does not update _txn file transient symbol counts
                     // so that if update fails and rolled back ILP will not use "dirty" symbol indexes
                     // pre-looked up during update run to insert rows
+                    final CharSequence value = masterRecord.getSymA(i);
+                    if (value == null && updateColumnRejectsNull.get(i)) {
+                        throw notNullViolation(tableMetadata, columnIndex);
+                    }
                     dstFixMem.putInt(
-                            tableWriter.getSymbolIndexNoTransientCountUpdate(updateColumnIndexes.get(i), masterRecord.getSymA(i))
+                            tableWriter.getSymbolIndexNoTransientCountUpdate(updateColumnIndexes.get(i), value)
                     );
                     break;
-                case ColumnType.STRING:
-                    dstFixMem.putLong(dstVarMem.putStr(masterRecord.getStrA(i)));
+                }
+                case ColumnType.STRING: {
+                    final CharSequence value = masterRecord.getStrA(i);
+                    if (value == null && updateColumnRejectsNull.get(i)) {
+                        throw notNullViolation(tableMetadata, columnIndex);
+                    }
+                    dstFixMem.putLong(dstVarMem.putStr(value));
                     break;
-                case ColumnType.VARCHAR:
-                    VarcharTypeDriver.appendValue(dstFixMem, dstVarMem, masterRecord.getVarcharA(i));
+                }
+                case ColumnType.VARCHAR: {
+                    final Utf8Sequence value = masterRecord.getVarcharA(i);
+                    if (value == null && updateColumnRejectsNull.get(i)) {
+                        throw notNullViolation(tableMetadata, columnIndex);
+                    }
+                    VarcharTypeDriver.appendValue(dstFixMem, dstVarMem, value);
                     break;
-                case ColumnType.BINARY:
-                    dstFixMem.putLong(dstVarMem.putBin(masterRecord.getBin(i)));
+                }
+                case ColumnType.BINARY: {
+                    final BinarySequence value = masterRecord.getBin(i);
+                    if (value == null && updateColumnRejectsNull.get(i)) {
+                        throw notNullViolation(tableMetadata, columnIndex);
+                    }
+                    dstFixMem.putLong(dstVarMem.putBin(value));
                     break;
+                }
                 case ColumnType.LONG128:
                     // fall-through
                 case ColumnType.UUID:
                     dstFixMem.putLong(masterRecord.getLong128Lo(i));
                     dstFixMem.putLong(masterRecord.getLong128Hi(i));
                     break;
-                case ColumnType.ARRAY:
-                    ArrayTypeDriver.appendValue(dstFixMem, dstVarMem, masterRecord.getArray(i, toType));
+                case ColumnType.ARRAY: {
+                    final ArrayView value = masterRecord.getArray(i, toType);
+                    if ((value == null || value.isNull()) && updateColumnRejectsNull.get(i)) {
+                        throw notNullViolation(tableMetadata, columnIndex);
+                    }
+                    ArrayTypeDriver.appendValue(dstFixMem, dstVarMem, value);
                     break;
+                }
                 case ColumnType.DECIMAL8:
                     dstFixMem.putByte(masterRecord.getDecimal8(i));
                     break;
@@ -694,6 +741,22 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         );
         rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), tableMetadata, tableWriter);
         tableWriter.markPartitionDataChanged(partitionIndex);
+    }
+
+    private static boolean isReferenceType(short columnTag) {
+        return switch (columnTag) {
+            case ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL, ColumnType.BINARY, ColumnType.ARRAY -> true;
+            default -> false;
+        };
+    }
+
+    private static CairoException notNullViolation(RecordMetadata tableMetadata, int columnIndex) {
+        // Same message the INSERT path throws from TableWriter.RowImpl.checkNotNullValue,
+        // so both producers of a runtime NULL fail identically.
+        return CairoException.nonCritical()
+                .put("NOT NULL constraint violation, column is required [column=")
+                .put(tableMetadata.getColumnName(columnIndex))
+                .put(']');
     }
 
     private void openColumns(ObjList<? extends MemoryCM> columns, int partitionIndex, boolean forWrite) {

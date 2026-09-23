@@ -58,5 +58,10 @@ public class CastDateToDoubleFunctionFactory implements FunctionFactory {
         public double getDouble(Record rec) {
             return arg.getDouble(rec);
         }
+
+        @Override
+        public boolean isNotNull() {
+            return arg.isNotNull();
+        }
     }
 }

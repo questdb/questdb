@@ -79,6 +79,11 @@ public class DivLongFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isNotNull() {
+            return false;
+        }
+
+        @Override
         public Function getLeft() {
             return left;
         }
@@ -87,7 +92,9 @@ public class DivLongFunctionFactory implements FunctionFactory {
         public long getLong(Record rec) {
             final long l = left.getLong(rec);
             final long r = right.getLong(rec);
-            if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL || r == 0) {
+            if ((!left.isNotNull() && l == Numbers.LONG_NULL)
+                    || (!right.isNotNull() && r == Numbers.LONG_NULL)
+                    || r == 0) {
                 return Numbers.LONG_NULL;
             }
             return l / r;

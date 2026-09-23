@@ -52,7 +52,7 @@ public class CastFloatToBooleanFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             float flt = arg.getFloat(rec);
-            return !Numbers.isNull(flt) && Math.signum(flt) != 0;
+            return (arg.isNotNull() || !Numbers.isNull(flt)) && Math.signum(flt) != 0;
         }
     }
 }

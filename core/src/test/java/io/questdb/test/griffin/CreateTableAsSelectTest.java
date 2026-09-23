@@ -65,7 +65,7 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'dest' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \tv LONG
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """);
@@ -126,7 +126,7 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'dest' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \tv LONG PARQUET(delta_binary_packed, zstd(3))
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """);
