@@ -122,34 +122,31 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
     @Test
     public void testLagLeadOverSymbolIgnoreNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
-                    "CREATE TABLE symbols (" +
-                            "  sym SYMBOL," +
-                            "  ts TIMESTAMP" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY"
-            );
-            execute(
-                    "INSERT INTO symbols VALUES" +
-                            " ('a', '2024-01-01T00:00:00.000000Z')," +
-                            " (null, '2024-01-01T00:01:00.000000Z')," +
-                            " ('b', '2024-01-01T00:02:00.000000Z')," +
-                            " (null, '2024-01-01T00:03:00.000000Z')," +
-                            " ('c', '2024-01-01T00:04:00.000000Z')"
-            );
+            execute("CREATE TABLE symbols (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO symbols VALUES
+                    ('a', '2024-01-01T00:00:00.000000Z'),
+                    (null, '2024-01-01T00:01:00.000000Z'),
+                    ('b', '2024-01-01T00:02:00.000000Z'),
+                    (null, '2024-01-01T00:03:00.000000Z'),
+                    ('c', '2024-01-01T00:04:00.000000Z')
+                    """);
 
-            assertQuery(
-                    "SELECT sym," +
-                            "   LAG(sym, 1) ignore nulls OVER (ORDER BY ts) AS prev_sym," +
-                            "   LEAD(sym, 1) ignore nulls OVER (ORDER BY ts) AS next_sym" +
-                            " FROM symbols"
-            ).expectSize().returns(
-                    "sym\tprev_sym\tnext_sym\n" +
-                            "a\t\tb\n" +
-                            "\ta\tb\n" +
-                            "b\ta\tc\n" +
-                            "\tb\tc\n" +
-                            "c\tb\t\n"
-            );
+            assertQuery("""
+                    SELECT sym,
+                        LAG(sym, 1) IGNORE NULLS OVER (ORDER BY ts) AS prev_sym,
+                        LEAD(sym, 1) IGNORE NULLS OVER (ORDER BY ts) AS next_sym
+                    FROM symbols
+                    """)
+                    .expectSize()
+                    .returns("""
+                            sym\tprev_sym\tnext_sym
+                            a\t\tb
+                            \ta\tb
+                            b\ta\tc
+                            \tb\tc
+                            c\tb\t
+                            """);
         });
     }
 
@@ -345,69 +342,65 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
     public void testLagLeadSymbolNonLightCachedWindow() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, false);
         assertMemoryLeak(() -> {
-            execute(
-                    "CREATE TABLE balances (" +
-                            "  sym SYMBOL," +
-                            "  quantity DOUBLE," +
-                            "  ts TIMESTAMP" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY"
-            );
-            execute(
-                    "INSERT INTO balances VALUES" +
-                            " ('a', 1.0, '2024-01-01T00:00:00.000000Z')," +
-                            " ('b', 2.0, '2024-01-01T00:01:00.000000Z')," +
-                            " ('c', 3.0, '2024-01-01T00:02:00.000000Z')"
-            );
+            execute("CREATE TABLE balances (sym SYMBOL, quantity DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO balances VALUES
+                    ('a', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('b', 2.0, '2024-01-01T00:01:00.000000Z'),
+                    ('c', 3.0, '2024-01-01T00:02:00.000000Z')
+                    """);
 
-            assertQuery(
-                    "SELECT sym," +
-                            "   LAG(sym, 1) OVER (ORDER BY ts) AS prev_sym," +
-                            "   LEAD(sym, 1) OVER (ORDER BY ts) AS next_sym" +
-                            " FROM balances"
-            ).expectSize().withPlanContaining("CachedWindow\n").returns(
-                    "sym\tprev_sym\tnext_sym\n" +
-                            "a\t\tb\n" +
-                            "b\ta\tc\n" +
-                            "c\tb\t\n"
-            );
+            assertQuery("""
+                    SELECT sym,
+                        LAG(sym, 1) OVER (ORDER BY ts) AS prev_sym,
+                        LEAD(sym, 1) OVER (ORDER BY ts) AS next_sym
+                    FROM balances
+                    """)
+                    .expectSize()
+                    .withPlanContaining("CachedWindow\n")
+                    .returns("""
+                            sym\tprev_sym\tnext_sym
+                            a\t\tb
+                            b\ta\tc
+                            c\tb\t
+                            """);
         });
     }
 
     @Test
     public void testLagLeadSymbolNullDefault() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
-                    "CREATE TABLE symbols (" +
-                            "  sym SYMBOL," +
-                            "  ts TIMESTAMP" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY"
-            );
-            execute(
-                    "INSERT INTO symbols VALUES" +
-                            " ('a', '2024-01-01T00:00:00.000000Z')," +
-                            " ('b', '2024-01-01T00:01:00.000000Z')," +
-                            " ('c', '2024-01-01T00:02:00.000000Z')"
-            );
+            execute("CREATE TABLE symbols (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO symbols VALUES
+                    ('a', '2024-01-01T00:00:00.000000Z'),
+                    ('b', '2024-01-01T00:01:00.000000Z'),
+                    ('c', '2024-01-01T00:02:00.000000Z')
+                    """);
 
-            assertQuery(
-                    "SELECT sym," +
-                            "   LAG(sym, 1, null) OVER (ORDER BY ts) AS prev_sym," +
-                            "   LEAD(sym, 1, null) OVER (ORDER BY ts) AS next_sym" +
-                            " FROM symbols"
-            ).expectSize().returns(
-                    "sym\tprev_sym\tnext_sym\n" +
-                            "a\t\tb\n" +
-                            "b\ta\tc\n" +
-                            "c\tb\t\n"
-            );
+            assertQuery("""
+                    SELECT sym,
+                        LAG(sym, 1, null) OVER (ORDER BY ts) AS prev_sym,
+                        LEAD(sym, 1, null) OVER (ORDER BY ts) AS next_sym
+                    FROM symbols
+                    """)
+                    .expectSize()
+                    .returns("""
+                            sym\tprev_sym\tnext_sym
+                            a\t\tb
+                            b\ta\tc
+                            c\tb\t
+                            """);
         });
     }
 
     @Test
     public void testLagLeadSymbolNullEquality() throws Exception {
-        // Neither source column stores a NULL, so both dictionaries report
-        // containsNullValue() == false, yet lag()/lead() mint a NULL for the missing neighbor.
-        // NULL = NULL has to hold regardless, in line with the STRING comparison.
+        // Neither source column stores a NULL, yet lag()/lead() mint a NULL for the missing
+        // neighbor. The window column wraps its argument's dictionary in a view that reports
+        // containsNullValue() == true, so NULL = NULL holds in line with the STRING comparison.
+        // EqSymFunctionFactoryTest.testNullFromOuterJoinMatchesNull covers a NULL that reaches
+        // the comparison from a dictionary that does not report it.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (id INT, grp SYMBOL, left_sym SYMBOL, right_sym SYMBOL)");
             execute("""
@@ -735,47 +728,37 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
     @Test
     public void testNestedLagOverSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
-                    "CREATE TABLE balances (" +
-                            "  sym SYMBOL," +
-                            "  quantity DOUBLE," +
-                            "  ts TIMESTAMP" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY"
-            );
-            execute(
-                    "INSERT INTO balances VALUES" +
-                            " ('a', 1.0, '2024-01-01T00:00:00.000000Z')," +
-                            " ('a', 2.0, '2024-01-01T00:01:00.000000Z')," +
-                            " ('a', 3.0, '2024-01-01T00:02:00.000000Z')"
-            );
+            execute("CREATE TABLE balances (sym SYMBOL, quantity DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO balances VALUES
+                    ('a', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('a', 2.0, '2024-01-01T00:01:00.000000Z'),
+                    ('a', 3.0, '2024-01-01T00:02:00.000000Z')
+                    """);
 
-            assertQuery(
-                    "WITH step1 AS (" +
-                            "  SELECT ts, sym," +
-                            "    LAG(sym) OVER (PARTITION BY sym ORDER BY ts) AS prev_sym" +
-                            "  FROM balances" +
-                            ")" +
-                            " SELECT sym, prev_sym," +
-                            "   LAG(prev_sym) OVER (PARTITION BY sym ORDER BY ts) AS prev_prev_sym" +
-                            " FROM step1"
-            ).noRandomAccess().expectSize().returns(
-                    "sym\tprev_sym\tprev_prev_sym\n" +
-                            "a\t\t\n" +
-                            "a\ta\t\n" +
-                            "a\ta\ta\n"
-            );
+            assertQuery("""
+                    WITH step1 AS (
+                        SELECT ts, sym, LAG(sym) OVER (PARTITION BY sym ORDER BY ts) AS prev_sym
+                        FROM balances
+                    )
+                    SELECT sym, prev_sym, LAG(prev_sym) OVER (PARTITION BY sym ORDER BY ts) AS prev_prev_sym
+                    FROM step1
+                    """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sym\tprev_sym\tprev_prev_sym
+                            a\t\t
+                            a\ta\t
+                            a\ta\ta
+                            """);
         });
     }
 
     @Test
     public void testRejectsNonNullSymbolDefault() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
-                    "CREATE TABLE symbols (" +
-                            "  sym SYMBOL," +
-                            "  ts TIMESTAMP" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY"
-            );
+            execute("CREATE TABLE symbols (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
 
             assertQuery("select lag(sym, 1, 'x') over () from symbols")
                     .noLeakCheck()
