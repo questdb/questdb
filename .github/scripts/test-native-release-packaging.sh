@@ -628,6 +628,7 @@ PY
     [[ -z "$(git -C "${probe_root}" tag -l)" ]] || fail "snapshot release:prepare created a local tag"
     [[ ! -s "${probe_receives}" ]] || fail "snapshot release:prepare pushed to the audited remote"
     git -C "${probe_root}" clean -fd > /dev/null
+    printf 'snapshot release:prepare negative probe passed\n'
 
     python3 - "${probe_root}/pom.xml" "${probe_root}/core/pom.xml" "${probe_remote}" <<'PY'
 from pathlib import Path
@@ -641,13 +642,17 @@ root.write_text(root_text)
 core_text = core.read_text().replace('1.3.999-SNAPSHOT', '1.3.8')
 core.write_text(core_text)
 PY
-    (
+    if ! (
         cd "${probe_root}"
         git add pom.xml core/pom.xml
         git commit -m 'make release-plugin probe releasable' > /dev/null
         mvn -B release:prepare -DpreparationGoals=validate -DautoVersionSubmodules=true > "${temp_dir}/release-prepare-safe.log" 2>&1
         mvn -B release:perform -Dgoals=validate -DlocalCheckout=true > "${temp_dir}/release-perform-safe.log" 2>&1
-    )
+    ); then
+        cat "${temp_dir}/release-prepare-safe.log" >&2 || true
+        cat "${temp_dir}/release-perform-safe.log" >&2 || true
+        fail "safe release prepare/perform probe failed"
+    fi
     grep -F 'BUILD SUCCESS' "${temp_dir}/release-perform-safe.log" > /dev/null \
         || fail "safe release:perform probe did not complete"
     if grep -Eq 'require-aggregated-rust-native-artifacts|Profile "include-rust-native-artifacts" is not activated' "${temp_dir}/release-perform-safe.log"; then
