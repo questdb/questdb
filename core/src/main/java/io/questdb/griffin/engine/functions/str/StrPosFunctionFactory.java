@@ -136,8 +136,7 @@ public class StrPosFunctionFactory implements FunctionFactory {
             if (str == null) {
                 return Numbers.INT_NULL;
             }
-            // opposite A/B slots: both arguments may resolve through the same symbol table
-            final CharSequence substr = this.substrFunc.getStrB(rec);
+            final CharSequence substr = this.substrFunc.getStrA(rec);
             if (substr == null) {
                 return Numbers.INT_NULL;
             }

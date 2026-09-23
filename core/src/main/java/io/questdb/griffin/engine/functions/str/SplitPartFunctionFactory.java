@@ -117,7 +117,6 @@ public class SplitPartFunctionFactory implements FunctionFactory {
         protected final Function indexFunc;
         protected final Function strFunc;
         private final int indexPosition;
-        private final StringSink aliasSink = new StringSink();
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
@@ -148,31 +147,14 @@ public class SplitPartFunctionFactory implements FunctionFactory {
             return indexFunc;
         }
 
-        // Both arguments may resolve through one symbol table, e.g. lag(s) and s::string over a
-        // NOCACHE column, and a non-static table hands out a single view per A/B slot. When the
-        // second read lands on the object the first returned, it has overwritten the first
-        // value: copy the second out and read the first again. Each path touches only its own
-        // slot, so a caller holding the other slot's value is not disturbed.
         @Override
         public CharSequence getStrA(Record rec) {
-            CharSequence str = strFunc.getStrA(rec);
-            CharSequence delimiter = delimiterFunc.getStrA(rec);
-            if (str != null && str == delimiter) {
-                delimiter = copyAlias(delimiter);
-                str = strFunc.getStrA(rec);
-            }
-            return split(rec, str, delimiter, sinkA);
+            return getStrWithClear(rec, sinkA);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            CharSequence str = strFunc.getStrB(rec);
-            CharSequence delimiter = delimiterFunc.getStrB(rec);
-            if (str != null && str == delimiter) {
-                delimiter = copyAlias(delimiter);
-                str = strFunc.getStrB(rec);
-            }
-            return split(rec, str, delimiter, sinkB);
+            return getStrWithClear(rec, sinkB);
         }
 
         @Override
@@ -191,14 +173,10 @@ public class SplitPartFunctionFactory implements FunctionFactory {
             return false;
         }
 
-        private CharSequence copyAlias(CharSequence cs) {
-            aliasSink.clear();
-            aliasSink.put(cs);
-            return aliasSink;
-        }
-
-        private StringSink split(Record rec, CharSequence str, CharSequence delimiter, StringSink sink) {
+        private StringSink getStrWithClear(Record rec, StringSink sink) {
             sink.clear();
+            CharSequence str = strFunc.getStrA(rec);
+            CharSequence delimiter = delimiterFunc.getStrA(rec);
             int index = getIndex(rec);
             if (str == null || delimiter == null || index == Numbers.INT_NULL) {
                 return null;

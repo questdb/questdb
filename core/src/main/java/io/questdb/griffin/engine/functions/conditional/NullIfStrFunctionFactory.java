@@ -32,7 +32,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Chars;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -55,7 +54,6 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends StrFunction implements BinaryFunction {
-        private final StringSink aliasSink = new StringSink();
         private final Function strFunc1;
         private final Function strFunc2;
 
@@ -79,11 +77,6 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
             return strFunc2;
         }
 
-        // Both arguments may resolve through one symbol table, e.g. lag(s) and s::string over a
-        // NOCACHE column, and a non-static table hands out a single view per A/B slot. When the
-        // second read lands on the object the first returned, it has overwritten the first
-        // value: copy the second out and read the first again. Each path touches only its own
-        // slot, so a caller holding the other slot's value is not disturbed.
         @Override
         public CharSequence getStrA(Record rec) {
             CharSequence cs1 = strFunc1.getStrA(rec);
@@ -91,10 +84,6 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             CharSequence cs2 = strFunc2.getStrA(rec);
-            if (cs1 == cs2) {
-                cs2 = copyAlias(cs2);
-                cs1 = strFunc1.getStrA(rec);
-            }
             if (cs2 == null || !Chars.equals(cs1, cs2)) {
                 return cs1;
             }
@@ -108,20 +97,10 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             CharSequence cs2 = strFunc2.getStrB(rec);
-            if (cs1 == cs2) {
-                cs2 = copyAlias(cs2);
-                cs1 = strFunc1.getStrB(rec);
-            }
             if (cs2 == null || !Chars.equals(cs1, cs2)) {
                 return cs1;
             }
             return null;
-        }
-
-        private CharSequence copyAlias(CharSequence cs) {
-            aliasSink.clear();
-            aliasSink.put(cs);
-            return aliasSink;
         }
     }
 }
