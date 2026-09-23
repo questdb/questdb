@@ -250,10 +250,9 @@ class WalEventWriter implements Closeable {
         // -1 end-of-events marker to a readable record, so it must come LAST: a reader following the tail
         // of a segment the writer is still appending to sees whatever is there the instant it looks, and
         // a record published ahead of its sidecar entry reads back with the entry's preallocated zeros --
-        // storedOffset=0, storedLen=0, expected=0 -- which verifyRecordChecksum() reports as TORN. That
-        // fault is not hypothetical: it suspended a table on arm64 mac CI while every x86 Linux leg stayed
-        // green, because the window is a couple of instructions on a strongly-ordered machine and an
-        // unordered pair of stores on a weakly-ordered one.
+        // storedOffset=0, storedLen=0, expected=0. That once suspended a table on arm64 mac CI (the window
+        // is a couple of instructions on x86, an unordered store pair on arm64). Such an entry now reads
+        // unverified, which still costs a live reader the torn-length settle only a sealed entry drives.
         //
         // The checksum therefore covers the record BODY only (everything after the 4-byte length header),
         // since the length cannot be in memory before the entry that describes it is durable to a reader.
@@ -263,9 +262,9 @@ class WalEventWriter implements Closeable {
         eventChecksumMem.jumpTo(WALE_CHECKSUM_HEADER_SIZE + (long) txn * WALE_CHECKSUM_ENTRY_SIZE);
         eventChecksumMem.putLong(startOffset);
         eventChecksumMem.putInt(length);
-        eventChecksumMem.putInt(0);
+        eventChecksumMem.putInt(sealEventChecksumEntry(txn, startOffset, length, checksum));
         eventChecksumMem.putLong(checksum);
-        // Release: the entry's stores must not sink past the publishing store below.
+        // Release: the entry's stores, seal included, must not sink past the publishing store below.
         Unsafe.storeFence();
         eventMem.putInt(startOffset, length);
         eventMem.putInt(-1);
@@ -325,9 +324,8 @@ class WalEventWriter implements Closeable {
         payload.write(eventMem);
         // Close the record through the SHARED epilogue, exactly like every other appender. Writing the
         // length, terminator, index entry and max-txn by hand here would skip the mandatory _event.c
-        // checksum entry, and the reader treats a record with no sidecar entry as TORN (see
-        // WalEventCursor.verifyRecordChecksum) — so every custom event would be unreadable the moment it
-        // was written.
+        // checksum entry, and every custom event would silently read unverified (see
+        // WalEventCursor.verifyRecordChecksum).
         finishRecord();
         return txn++;
     }

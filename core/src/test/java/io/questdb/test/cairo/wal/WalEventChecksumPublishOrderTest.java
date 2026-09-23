@@ -170,7 +170,7 @@ public class WalEventChecksumPublishOrderTest extends AbstractCairoTest {
                     MemoryCMRImpl sidecar = new MemoryCMRImpl(ff, path.of(sidecarPath.toString()).$(), -1, MemoryTag.MMAP_TABLE_WAL_READER)
             ) {
                 final WalEventCursor cursor = new WalEventCursor(event, sidecar);
-                cursor.setChecksumRequired(true);
+                cursor.setChecksumRequired(true, null);
 
                 // Undershoot: the torn value sizes the mapping short of the real record, so settling must
                 // also re-extend it. Runs everywhere, the mapping never reaches past the file.
@@ -298,15 +298,17 @@ public class WalEventChecksumPublishOrderTest extends AbstractCairoTest {
                         + ", storedLen=" + storedLength + ']');
                 return;
             }
-            if (storedLength == 0) {
-                // The entry's offset is filled but its length is not, so the entry itself is only partly
-                // written while the record is already readable. A torn read of the _event header cannot
-                // produce this -- storedLength comes from the sidecar, and the writer's fence orders the
-                // whole entry ahead of the publishing store -- so it is an ordering violation of its own:
-                // the length was published before the entry that describes it was complete.
+            final int storedSeal = readInt(sidecar, (int) (entry + WalUtils.WALE_CHECKSUM_ENTRY_SEAL_OFFSET));
+            final long storedChecksum = ByteBuffer.wrap(sidecar,
+                            (int) (entry + WalUtils.WALE_CHECKSUM_ENTRY_VALUE_OFFSET), Long.BYTES)
+                    .order(ByteOrder.LITTLE_ENDIAN).getLong();
+            if (storedSeal != WalUtils.sealEventChecksumEntry(txn, storedOffset, storedLength, storedChecksum)) {
+                // The entry names the record but is not sealed, so it was only partly written when the
+                // record became readable: the length was published before the entry was complete. A torn
+                // _event header cannot cause this, since every sealed field comes from the sidecar.
                 violation.compareAndSet(null, "record txn=" + txn + " at offset=" + offset + ", len=" + length
                         + " is readable but its sidecar entry is only partly written [storedOffset=" + storedOffset
-                        + ", storedLen=0]");
+                        + ", storedLen=" + storedLength + ", storedSeal=" + storedSeal + ']');
                 return;
             }
             if (storedLength != length) {

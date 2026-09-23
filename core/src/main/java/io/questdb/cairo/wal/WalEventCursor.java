@@ -34,6 +34,8 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.griffin.SqlException;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimals;
@@ -47,6 +49,8 @@ import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
@@ -58,6 +62,7 @@ public class WalEventCursor {
     private static final int REPLACE_RANGE_LO_OFFSET = REPLACE_RANGE_HI_OFFSET + Long.BYTES;
     private static final int REPLACE_RANGE_EXTRA_OFFSET = REPLACE_RANGE_LO_OFFSET + Long.BYTES;
     private static final int DEDUP_FOOTER_SIZE = REPLACE_RANGE_EXTRA_OFFSET;
+    private static final Log LOG = LogFactory.getLog(WalEventCursor.class);
     // Re-reads of a length header that disagrees with a present sidecar entry before the record is
     // declared torn. The publishing store drains within nanoseconds, so a torn read settles on the
     // first or second re-read; the budget is slack, not a wait.
@@ -68,11 +73,15 @@ public class WalEventCursor {
     private final LiveViewDataInfo lvDataInfo = new LiveViewDataInfo();
     private final MatViewDataInfo mvDataInfo = new MatViewDataInfo();
     private final MatViewInvalidationInfo mvInvalidationInfo = new MatViewInvalidationInfo();
+    private final Utf8StringSink sidecarPath = new Utf8StringSink();
     private final SqlInfo sqlInfo = new SqlInfo();
     private final UnknownInfo unknownInfo = new UnknownInfo();
     private final ViewDefinitionInfo viewDefinitionInfo = new ViewDefinitionInfo();
+    private boolean isUnverifiedReadLogged;
     private long memSize;
     private long nextOffset = Integer.BYTES;
+    // Txn expected at nextOffset; -1 after resumeFrom(), where it is unknown.
+    private long nextTxn = -1;
     private long offset = Integer.BYTES; // skip wal meta version
     private long txn = END_OF_EVENTS;
     private byte type = NONE;
@@ -188,20 +197,23 @@ public class WalEventCursor {
         // store and a reader following a live segment's tail can catch it mid-flight. See
         // verifyRecordChecksum(); the returned length differs from the header only after such a read
         // settled, and the mapping already covers it.
-        length = verifyRecordChecksum(recordStart, length);
+        length = verifyRecordChecksum(recordStart, length, nextTxn);
         nextOffset = recordStart + length;
         txn = readLong();
         if (txn == END_OF_EVENTS) {
             return false;
         }
+        // Records are numbered 0, 1, 2, ... in file order, so the next txn is known without trusting
+        // this record's txn field.
+        nextTxn = (nextTxn > -1 ? nextTxn : txn) + 1;
         readRecord();
         return true;
     }
 
     /**
      * Re-reads the length header at {@code recordStart} until it agrees with the sidecar or the re-read
-     * budget is spent, and returns the last value read. Called only when the sidecar entry describes this
-     * exact offset with a different length: the entry is complete, so the header is the writer's
+     * budget is spent, and returns the last value read. Called only when a sealed sidecar entry describes
+     * this exact offset with a different length: the entry is complete, so the header is the writer's
      * publishing store observed mid-flight. That store drains within nanoseconds and a re-read or two
      * settles it; a corrupt header never settles, keeps its observed value, and is rejected by the caller
      * exactly as before.
@@ -221,6 +233,14 @@ public class WalEventCursor {
      * Verifies the record at {@code recordStart} against its sidecar entry and returns the length the
      * entry vouches for. Without a sidecar (legacy segment) the header is trusted as read.
      * <p>
+     * Only a sealed entry is evidence (see {@link WalUtils#sealEventChecksumEntry}). An entry that is zero,
+     * half-written or past the end of the sidecar is what a power cut leaves under NOSYNC/ASYNC, and the
+     * record then reads unverified. A sealed entry that disagrees with the record means the record is torn.
+     * <p>
+     * {@code expectedTxn} picks the entry when the caller knows the txn -- from {@code _event.i}, or from
+     * the previous record on a walk -- so a corrupt txn field fails the hash instead of pointing at an
+     * empty slot. -1 falls back to the record's own txn.
+     * <p>
      * The length header is the publishing store (see {@code WalEventWriter.finishRecord()}): the writer
      * fills the entry, fences, then flips the header from the {@code -1} end-of-events marker to the
      * length. Record starts are not 4-byte aligned, so on a weakly-ordered machine that store is not
@@ -232,7 +252,7 @@ public class WalEventCursor {
      * declared torn, and nothing is hashed until the entry has vouched for the length: a torn value must
      * never size the hash.
      */
-    private int verifyRecordChecksum(long recordStart, int length) {
+    private int verifyRecordChecksum(long recordStart, int length, long expectedTxn) {
         if (!checksumRequired) {
             return length;
         }
@@ -246,19 +266,23 @@ public class WalEventCursor {
         // caller just read is the publishing store, so neither the txn, nor the sidecar entry that
         // describes the record, nor its body may be loaded from before it.
         Unsafe.loadFence();
-        final long recordTxn = eventMem.getLong(recordStart + Integer.BYTES);
+        final long recordTxn = expectedTxn > -1 ? expectedTxn : eventMem.getLong(recordStart + Integer.BYTES);
         if (recordTxn < 0 || recordTxn > Integer.MAX_VALUE) {
             throw CairoException.critical(CairoException.METADATA_VALIDATION)
                     .put("invalid checksummed WAL event txn [txn=").put(recordTxn).put(']');
         }
         final long entryOffset = WALE_CHECKSUM_HEADER_SIZE + recordTxn * WALE_CHECKSUM_ENTRY_SIZE;
-        if (entryOffset + WALE_CHECKSUM_ENTRY_SIZE > checksumMem.size()) {
-            throw CairoException.critical(CairoException.METADATA_VALIDATION)
-                    .put("WAL event checksum sidecar is truncated [txn=").put(recordTxn).put(']');
+        final long entryEnd = entryOffset + WALE_CHECKSUM_ENTRY_SIZE;
+        if (entryEnd > checksumMem.size() && !extendChecksumMapping(entryEnd)) {
+            return acceptUnverified(recordStart, recordTxn, length);
         }
         final long storedOffset = checksumMem.getLong(entryOffset + WALE_CHECKSUM_ENTRY_OFFSET_OFFSET);
         final int storedLength = checksumMem.getInt(entryOffset + WALE_CHECKSUM_ENTRY_LENGTH_OFFSET);
+        final int storedSeal = checksumMem.getInt(entryOffset + WALE_CHECKSUM_ENTRY_SEAL_OFFSET);
         final long stored = checksumMem.getLong(entryOffset + WALE_CHECKSUM_ENTRY_VALUE_OFFSET);
+        if (storedSeal != sealEventChecksumEntry(recordTxn, storedOffset, storedLength, stored)) {
+            return acceptUnverified(recordStart, recordTxn, length);
+        }
         if (storedOffset == recordStart && storedLength != length && storedLength >= Integer.BYTES + Long.BYTES) {
             length = settleTornLength(recordStart, length, storedLength);
             if (length == storedLength && memSize < recordStart + length) {
@@ -267,7 +291,7 @@ public class WalEventCursor {
                 memSize = eventMem.size();
             }
         }
-        if (storedOffset != recordStart || storedLength != length || stored == 0) {
+        if (storedOffset != recordStart || storedLength != length) {
             throw CairoException.critical(CairoException.METADATA_VALIDATION)
                     .put("torn WAL event record [txn=").put(recordTxn)
                     .put(", offset=").put(recordStart).put(", len=").put(length)
@@ -287,13 +311,23 @@ public class WalEventCursor {
         return length;
     }
 
-    public void setChecksumRequired(boolean checksumRequired) {
+    /**
+     * Arms verification for the segment about to be read. {@code sidecarPath} only feeds the log line of
+     * an unverified read, and may be null.
+     */
+    public void setChecksumRequired(boolean checksumRequired, @Nullable Utf8Sequence sidecarPath) {
         this.checksumRequired = checksumRequired;
+        this.isUnverifiedReadLogged = false;
+        this.sidecarPath.clear();
+        if (checksumRequired && sidecarPath != null) {
+            this.sidecarPath.put(sidecarPath);
+        }
     }
 
     public void reset() {
         memSize = eventMem.size();
         nextOffset = WALE_HEADER_SIZE; // skip wal meta version
+        nextTxn = 0;
         txn = END_OF_EVENTS;
         type = WalTxnType.NONE;
     }
@@ -311,6 +345,7 @@ public class WalEventCursor {
         eventMem.extend(resumeOffset + Integer.BYTES);
         memSize = eventMem.size();
         nextOffset = resumeOffset;
+        nextTxn = -1;
         txn = END_OF_EVENTS;
         type = WalTxnType.NONE;
     }
@@ -325,11 +360,41 @@ public class WalEventCursor {
         return nextOffset;
     }
 
+    /**
+     * Reads the record unverified, as if there were no sidecar. Logs once per segment bind, since one lost
+     * page takes out many entries.
+     */
+    private int acceptUnverified(long recordStart, long recordTxn, int length) {
+        if (!isUnverifiedReadLogged) {
+            isUnverifiedReadLogged = true;
+            LOG.info().$("WAL event record has no intact checksum entry, reading it unverified [sidecar=").$(sidecarPath)
+                    .$(", txn=").$(recordTxn)
+                    .$(", offset=").$(recordStart)
+                    .$(", len=").$(length)
+                    .I$();
+        }
+        return length;
+    }
+
     private void checkMemSize(long requiredBytes) {
         if (memSize < offset + requiredBytes) {
             throw CairoException.critical(0).put("WAL event file is too small, size=").put(memSize)
                     .put(", required=").put(offset + requiredBytes);
         }
+    }
+
+    /**
+     * Grows the sidecar mapping to {@code size} if the file already covers it: a live-tail walk reaches
+     * entries the writer added after the mapping was sized. Maps no further than {@code size}, because
+     * Windows rejects a read-only mapping past EOF and the writer truncates the file when it finalises the
+     * segment. Returns false when the file is shorter, i.e. a crash lost its growth.
+     */
+    private boolean extendChecksumMapping(long size) {
+        if (checksumMem.getFilesFacade().length(checksumMem.getFd()) < size) {
+            return false;
+        }
+        checksumMem.extend(size);
+        return true;
     }
 
     private ArrayView readArray(BorrowedArray array) {
@@ -543,15 +608,16 @@ public class WalEventCursor {
         }
     }
 
-    void openOffset(long offset) {
+    void openOffset(long offset, long segmentTxn) {
         reset();
         if (offset > 0) {
             this.offset = offset;
             // Must precede verifyRecordChecksum(): it reads memSize to bound the record before hashing.
             this.memSize = eventMem.size();
             final int headerLength = readInt();
-            final int size = verifyRecordChecksum(offset, headerLength);
+            final int size = verifyRecordChecksum(offset, headerLength, segmentTxn);
             this.nextOffset = offset + size;
+            this.nextTxn = segmentTxn + 1;
             this.txn = readLong();
 
             readRecord();

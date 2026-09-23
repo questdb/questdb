@@ -13,10 +13,16 @@
 
 package io.questdb.test.cairo.wal;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.vm.MemoryCMRImpl;
+import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -33,6 +39,8 @@ import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 public class WalEventChecksumTest extends AbstractCairoTest {
@@ -53,6 +61,16 @@ public class WalEventChecksumTest extends AbstractCairoTest {
                     WalUtils.WALE_CHECKSUM_HEADER_SIZE + WalUtils.WALE_CHECKSUM_ENTRY_LENGTH_OFFSET));
             Assert.assertEquals(WalUtils.WALE_HEADER_SIZE, readLong(checksum,
                     WalUtils.WALE_CHECKSUM_HEADER_SIZE + WalUtils.WALE_CHECKSUM_ENTRY_OFFSET_OFFSET));
+            // The writer seals the entry.
+            Assert.assertEquals(
+                    WalUtils.sealEventChecksumEntry(
+                            0,
+                            WalUtils.WALE_HEADER_SIZE,
+                            recordLength,
+                            readLong(checksum, WalUtils.WALE_CHECKSUM_HEADER_SIZE + WalUtils.WALE_CHECKSUM_ENTRY_VALUE_OFFSET)
+                    ),
+                    readInt(checksum, WalUtils.WALE_CHECKSUM_HEADER_SIZE + WalUtils.WALE_CHECKSUM_ENTRY_SEAL_OFFSET)
+            );
         });
     }
 
@@ -190,20 +208,146 @@ public class WalEventChecksumTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A flipped bit in the sidecar breaks the entry's seal, so the damage is the sidecar's, not the
+     * record's: the intact record applies unverified. A record that disagrees with an intact entry still
+     * suspends, see {@link #testCorruptBodySuspendsTable}.
+     */
     @Test
-    public void testCorruptSidecarSuspendsTable() throws Exception {
+    public void testCorruptSidecarEntryReadsUnverified() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
-            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
-            TableToken tt = engine.verifyTableName("x");
-            // Release the pooled WalWriter before mutating the sidecar -- see testCorruptBodySuspendsTable.
-            engine.releaseInactive();
-            Path checksumPath = findWalFile(tt.getDirName(), WalUtils.EVENT_CHECKSUM_FILE_NAME);
-            byte[] checksum = Files.readAllBytes(checksumPath);
-            checksum[WalUtils.WALE_CHECKSUM_HEADER_SIZE + WalUtils.WALE_CHECKSUM_ENTRY_VALUE_OFFSET] ^= 0x40;
-            Files.write(checksumPath, checksum);
+            final TableToken tt = createTableWithThreeCommits();
+            damageSidecar(tt, checksum -> checksum[entryOffset(0) + WalUtils.WALE_CHECKSUM_ENTRY_VALUE_OFFSET] ^= 0x40);
+            assertAllCommitsApplied(tt);
+        });
+    }
+
+    /**
+     * A NOSYNC/ASYNC power cut can zero a mid-segment {@code _event.c} entry while its record survives.
+     * The record must apply unverified instead of suspending the table as torn.
+     */
+    @Test
+    public void testLostSidecarEntryReadsUnverified() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken tt = createTableWithThreeCommits();
+            damageSidecar(tt, checksum -> Arrays.fill(
+                    checksum, entryOffset(1), entryOffset(1) + WalUtils.WALE_CHECKSUM_ENTRY_SIZE, (byte) 0));
+            assertAllCommitsApplied(tt);
+        });
+    }
+
+    /**
+     * Entries straddle page boundaries, so a lost page can take half an entry. A half entry is absent,
+     * not torn.
+     */
+    @Test
+    public void testHalfLandedSidecarEntryReadsUnverified() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken tt = createTableWithThreeCommits();
+            damageSidecar(tt, checksum -> {
+                // Page boundary after the offset field: everything past it lost.
+                Arrays.fill(checksum, entryOffset(1) + Long.BYTES, entryOffset(2), (byte) 0);
+                // Page boundary before the checksum field: only the checksum lost.
+                Arrays.fill(checksum, entryOffset(2) + WalUtils.WALE_CHECKSUM_ENTRY_VALUE_OFFSET,
+                        entryOffset(3), (byte) 0);
+            });
+            assertAllCommitsApplied(tt);
+        });
+    }
+
+    /**
+     * After a power cut the sidecar can end before entries whose records survived. Those entries are
+     * absent, not a corrupt sidecar.
+     */
+    @Test
+    public void testSidecarShorterThanItsRecordsReadsUnverified() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken tt = createTableWithThreeCommits();
+            final Path checksumPath = findWalFile(tt.getDirName(), WalUtils.EVENT_CHECKSUM_FILE_NAME);
+            try (java.io.RandomAccessFile f = new java.io.RandomAccessFile(checksumPath.toFile(), "rw")) {
+                f.setLength(entryOffset(1));
+            }
+            assertAllCommitsApplied(tt);
+        });
+    }
+
+    /**
+     * A zero sidecar header is a lost first page, so the segment reads as if it had no sidecar.
+     */
+    @Test
+    public void testZeroSidecarHeaderReadsUnverified() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken tt = createTableWithThreeCommits();
+            damageSidecar(tt, checksum -> Arrays.fill(checksum, 0, WalUtils.WALE_CHECKSUM_HEADER_SIZE, (byte) 0));
+            assertAllCommitsApplied(tt);
+        });
+    }
+
+    /**
+     * A corrupt txn field must not point verification at an empty slot. The apply path knows which txn it
+     * expects, so it checks the record against that entry and the corrupt field fails the hash.
+     */
+    @Test
+    public void testCorruptRecordTxnStillSuspends() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken tt = createTableWithThreeCommits();
+            final Path eventPath = findWalFile(tt.getDirName(), WalUtils.EVENT_FILE_NAME);
+            final byte[] event = Files.readAllBytes(eventPath);
+            final int record0 = WalUtils.WALE_HEADER_SIZE;
+            final int record1 = record0 + readInt(event, record0);
+            Assert.assertEquals("precondition: record 1 holds txn 1", 1, readLong(event, record1 + Integer.BYTES));
+            ByteBuffer.wrap(event, record1 + Integer.BYTES, Long.BYTES).order(ByteOrder.LITTLE_ENDIAN).putLong(1_000);
+            Files.write(eventPath, event);
+
             drainWalQueue();
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tt));
+            TestUtils.assertContains(
+                    engine.getTableSequencerAPI().getTxnTracker(tt).getErrorMessage(),
+                    "torn WAL event record [txn=1"
+            );
+        });
+    }
+
+    /**
+     * A live-tail walk reaches entries past the sidecar mapping taken when the segment opened. The cursor
+     * must grow the mapping and verify them, so a corrupt record there is still caught.
+     */
+    @Test
+    public void testWalkVerifiesEntriesPastTheInitialSidecarMapping() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken tt = createTableWithThreeCommits();
+            final Path eventPath = findWalFile(tt.getDirName(), WalUtils.EVENT_FILE_NAME);
+            final Path sidecarPath = findWalFile(tt.getDirName(), WalUtils.EVENT_CHECKSUM_FILE_NAME);
+            final byte[] event = Files.readAllBytes(eventPath);
+            final int record0 = WalUtils.WALE_HEADER_SIZE;
+            final int record1 = record0 + readInt(event, record0);
+            final int record2 = record1 + readInt(event, record1);
+            // Past the length, txn and type, like testCorruptBodySuspendsTable.
+            event[record2 + Integer.BYTES + Long.BYTES + 1] ^= 0x40;
+            Files.write(eventPath, event);
+
+            final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            try (
+                    io.questdb.std.str.Path path = new io.questdb.std.str.Path();
+                    MemoryCMRImpl eventMem = new MemoryCMRImpl(ff, path.of(eventPath.toString()).$(), -1, MemoryTag.MMAP_TABLE_WAL_READER);
+                    // Mapped as if opened before records 1 and 2 were appended: header and entry 0 only.
+                    MemoryCMRImpl sidecarMem = new MemoryCMRImpl(ff, path.of(sidecarPath.toString()).$(), entryOffset(1), MemoryTag.MMAP_TABLE_WAL_READER)
+            ) {
+                final WalEventCursor cursor = new WalEventCursor(eventMem, sidecarMem);
+                cursor.setChecksumRequired(true, null);
+                cursor.reset();
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(0, cursor.getTxn());
+                Assert.assertTrue("record 1 is intact and its entry lies past the initial mapping", cursor.hasNext());
+                Assert.assertEquals(1, cursor.getTxn());
+                Assert.assertTrue("the cursor must have grown the sidecar mapping", sidecarMem.size() > entryOffset(1));
+                try {
+                    cursor.hasNext();
+                    Assert.fail("record 2 is corrupt and its entry is intact, so it must be rejected, not read unverified");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "torn WAL event record [txn=2");
+                }
+            }
         });
     }
 
@@ -258,6 +402,43 @@ public class WalEventChecksumTest extends AbstractCairoTest {
                     .findFirst()
                     .orElseThrow(() -> new AssertionError("no " + name + " under " + tableDir));
         }
+    }
+
+    private void assertAllCommitsApplied(TableToken tt) throws Exception {
+        drainWalQueue();
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tt));
+        assertQuery("select count(), sum(v) from x").noLeakCheck().noRandomAccess().expectSize().returns("""
+                count\tsum
+                3\t6
+                """);
+    }
+
+    private static TableToken createTableWithThreeCommits() throws Exception {
+        execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+        execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
+        execute("insert into x values ('2024-01-01T00:00:01.000000Z', 2)");
+        execute("insert into x values ('2024-01-01T00:00:02.000000Z', 3)");
+        final TableToken tt = engine.verifyTableName("x");
+        // Release the pooled WalWriter before mutating its files -- see testCorruptBodySuspendsTable.
+        engine.releaseAllWalWriters();
+        final byte[] event = Files.readAllBytes(findWalFile(tt.getDirName(), WalUtils.EVENT_FILE_NAME));
+        Assert.assertEquals(
+                "precondition: one segment holds all three commits",
+                2,
+                readInt(event, (int) WalUtils.WALE_MAX_TXN_OFFSET_32)
+        );
+        return tt;
+    }
+
+    private static void damageSidecar(TableToken tt, Consumer<byte[]> damage) throws Exception {
+        final Path checksumPath = findWalFile(tt.getDirName(), WalUtils.EVENT_CHECKSUM_FILE_NAME);
+        final byte[] checksum = Files.readAllBytes(checksumPath);
+        damage.accept(checksum);
+        Files.write(checksumPath, checksum);
+    }
+
+    private static int entryOffset(int txn) {
+        return WalUtils.WALE_CHECKSUM_HEADER_SIZE + txn * WalUtils.WALE_CHECKSUM_ENTRY_SIZE;
     }
 
     private static int readInt(byte[] bytes, int offset) {

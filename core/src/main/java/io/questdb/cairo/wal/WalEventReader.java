@@ -29,6 +29,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -41,6 +43,7 @@ import java.io.Closeable;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalEventReader implements Closeable {
+    private static final Log LOG = LogFactory.getLog(WalEventReader.class);
     private final WalEventCursor eventCursor;
     private final MemoryCMR eventChecksumMem;
     private final MemoryCMR eventIndexMem;
@@ -154,17 +157,27 @@ public class WalEventReader implements Closeable {
                             .put("WAL event checksum sidecar is truncated [path=").put(path)
                             .put(", size=").put(checksumSize).put(']');
                 }
-                checksumRequired = true;
-                if (eventChecksumMem.getLong(0) != WALE_CHECKSUM_MAGIC
+                final long magic = eventChecksumMem.getLong(0);
+                final long versionAndEntrySize = eventChecksumMem.getLong(Long.BYTES);
+                if (magic == 0 && versionAndEntrySize == 0) {
+                    // A lost page, not a malformed file: under NOSYNC/ASYNC a power cut can lose _event.c's
+                    // first page while _event survives. Read the segment unverified, as with no sidecar.
+                    LOG.info().$("WAL event checksum sidecar header is zero, reading the segment unverified [path=")
+                            .$(path).I$();
+                    checksumRequired = false;
+                    eventChecksumMem.close();
+                } else if (magic != WALE_CHECKSUM_MAGIC
                         || eventChecksumMem.getInt(Long.BYTES) != WALE_CHECKSUM_FILE_VERSION
                         || eventChecksumMem.getInt(Long.BYTES + Integer.BYTES) != WALE_CHECKSUM_ENTRY_SIZE) {
                     throw TableUtils.validationException().put("invalid WAL event checksum sidecar header [path=").put(path).put(']');
+                } else {
+                    checksumRequired = true;
                 }
             } else {
                 checksumRequired = false;
                 eventChecksumMem.close();
             }
-            eventCursor.setChecksumRequired(checksumRequired);
+            eventCursor.setChecksumRequired(checksumRequired, path);
             path.trimTo(pathLen).concat(EVENT_FILE_NAME);
 
             if (segmentTxn > -1) {
@@ -258,12 +271,12 @@ public class WalEventReader implements Closeable {
                     // As such, we need this extra `+ Integer.BYTES` here, or we would not be able to read it.
                     final long eventMapSize = size + Integer.BYTES;
                     eventMem.extend(eventMapSize);
-                    eventCursor.openOffset(offset);
+                    eventCursor.openOffset(offset, segmentTxn);
                 } finally {
                     Misc.free(eventIndexMem);
                 }
             } else {
-                eventCursor.openOffset(-1);
+                eventCursor.openOffset(-1, -1);
             }
 
             return eventCursor;

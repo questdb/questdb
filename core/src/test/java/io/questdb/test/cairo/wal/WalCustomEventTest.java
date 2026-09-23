@@ -522,7 +522,7 @@ public class WalCustomEventTest extends AbstractCairoTest {
      * whatever the record currently holds.
      * <p>
      * The tests above tamper with {@code _event} bytes to exercise FRAME-level validation. Every record also
-     * carries a sidecar entry (offset, length, xxh3), and {@code WalEventCursor.verifyRecordChecksum} runs
+     * carries a sidecar entry (offset, length, seal, xxh3), and {@code WalEventCursor.verifyRecordChecksum} runs
      * FIRST — so without this the reader correctly rejects the tampered record as torn and the frame check
      * under test is never reached. Re-deriving the entry from what is now on disk keeps the corruption
      * "well-formed but wrong", which is the case those tests are about; detection of a byte that does NOT
@@ -562,6 +562,8 @@ public class WalCustomEventTest extends AbstractCairoTest {
                     final long entry = mem + WalUtils.WALE_CHECKSUM_HEADER_SIZE;
                     Unsafe.getUnsafe().putLong(entry + WalUtils.WALE_CHECKSUM_ENTRY_OFFSET_OFFSET, recordStart);
                     Unsafe.getUnsafe().putInt(entry + WalUtils.WALE_CHECKSUM_ENTRY_LENGTH_OFFSET, length);
+                    Unsafe.getUnsafe().putInt(entry + WalUtils.WALE_CHECKSUM_ENTRY_SEAL_OFFSET,
+                            WalUtils.sealEventChecksumEntry(0, recordStart, length, checksum));
                     Unsafe.getUnsafe().putLong(entry + WalUtils.WALE_CHECKSUM_ENTRY_VALUE_OFFSET, checksum);
                 } finally {
                     ff.munmap(mem, fileSize, MemoryTag.NATIVE_DEFAULT);

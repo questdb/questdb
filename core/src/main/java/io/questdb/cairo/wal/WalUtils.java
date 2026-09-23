@@ -113,13 +113,14 @@ public class WalUtils {
     public static final int WALE_HEADER_SIZE = Integer.BYTES + Integer.BYTES;
     // The high half of the existing format word is ignored by old readers and positively declares
     // that _event.c is mandatory. The sidecar header is followed by fixed-size entries indexed by
-    // segment txn: [recordOffset:long, recordLength:int, reserved:int, checksum:long].
+    // segment txn: [recordOffset:long, recordLength:int, seal:int, checksum:long]. Version 1 had no seal.
     public static final long WALE_CHECKSUM_MAGIC = 0x57414C45434B5331L;
-    public static final int WALE_CHECKSUM_FILE_VERSION = 1;
+    public static final int WALE_CHECKSUM_FILE_VERSION = 2;
     public static final int WALE_CHECKSUM_HEADER_SIZE = 2 * Long.BYTES;
     public static final int WALE_CHECKSUM_ENTRY_SIZE = 3 * Long.BYTES;
     public static final int WALE_CHECKSUM_ENTRY_OFFSET_OFFSET = 0;
     public static final int WALE_CHECKSUM_ENTRY_LENGTH_OFFSET = Long.BYTES;
+    public static final int WALE_CHECKSUM_ENTRY_SEAL_OFFSET = Long.BYTES + Integer.BYTES;
     public static final int WALE_CHECKSUM_ENTRY_VALUE_OFFSET = 2 * Long.BYTES;
     public static final long WALE_MAX_TXN_OFFSET_32 = 0L;
     // DEFAULT DEDUP mode means following the table definition. If the table has dedup enabled, then
@@ -581,6 +582,33 @@ public class WalUtils {
                     .$(", error=").$(e).I$();
             return -1;
         }
+    }
+
+    /**
+     * Seal of one {@code _event.c} entry: a digest of its fields and its txn, kept in the entry's seal int.
+     * <p>
+     * Under NOSYNC and ASYNC, {@code _event.c} reaches disk independently of {@code _event}, so a power cut
+     * can leave an entry zero or half-written beside an intact record. A matching seal proves the entry
+     * landed whole and may judge its record; any other entry is no evidence, and the record reads
+     * unverified. Standalone so the on-disk format cannot drift with {@code Hash}. Never 0, the value of a
+     * slot that never landed.
+     */
+    public static int sealEventChecksumEntry(long txn, long recordOffset, int recordLength, long checksum) {
+        // Odd multiplier: changing any one field changes the pre-image, and fmix64 is a bijection, so a
+        // damaged entry keeps a matching seal only by a 2^-32 accident.
+        final long m = 0x9E3779B97F4A7C15L;
+        long h = txn;
+        h = h * m + recordOffset;
+        h = h * m + recordLength;
+        h = h * m + checksum;
+        // murmur3 fmix64
+        h ^= h >>> 33;
+        h *= 0xff51afd7ed558ccdL;
+        h ^= h >>> 33;
+        h *= 0xc4ceb9fe1a85ec53L;
+        h ^= h >>> 33;
+        final int seal = (int) (h ^ (h >>> 32));
+        return seal != 0 ? seal : 1;
     }
 
     /**

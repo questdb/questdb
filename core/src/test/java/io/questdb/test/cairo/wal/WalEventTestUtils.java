@@ -36,7 +36,7 @@ public final class WalEventTestUtils {
      * the {@code _event} bytes currently on disk.
      * <p>
      * Any test that edits {@code _event} in place must call this. Each record carries a mandatory sidecar
-     * entry (offset, length, xxh3 of the body), {@code WalEventCursor.verifyRecordChecksum()} runs before
+     * entry (offset, length, seal, xxh3 of the body), {@code WalEventCursor.verifyRecordChecksum()} runs before
      * anything else looks at the record, and a record whose bytes no longer match its entry is TORN -- so
      * without a re-stamp the reader rejects the edit and the table suspends, long before the behaviour the
      * test is actually about. Re-deriving the entries keeps the edit "well-formed but wrong", which is what
@@ -77,6 +77,8 @@ public final class WalEventTestUtils {
                             eventMem + offset + Integer.BYTES, length - Integer.BYTES);
                     Unsafe.getUnsafe().putLong(sidecarMem + entry + WalUtils.WALE_CHECKSUM_ENTRY_OFFSET_OFFSET, offset);
                     Unsafe.getUnsafe().putInt(sidecarMem + entry + WalUtils.WALE_CHECKSUM_ENTRY_LENGTH_OFFSET, length);
+                    Unsafe.getUnsafe().putInt(sidecarMem + entry + WalUtils.WALE_CHECKSUM_ENTRY_SEAL_OFFSET,
+                            WalUtils.sealEventChecksumEntry(txn, offset, length, checksum));
                     Unsafe.getUnsafe().putLong(sidecarMem + entry + WalUtils.WALE_CHECKSUM_ENTRY_VALUE_OFFSET, checksum);
                     offset += length;
                 }
