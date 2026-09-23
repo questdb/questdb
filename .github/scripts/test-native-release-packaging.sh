@@ -25,6 +25,8 @@ readonly repo_dir
 readonly stage_script="${script_dir}/stage-rust-native-artifacts.sh"
 readonly jar_verifier="${script_dir}/verify-rust-native-jar.sh"
 readonly runtime_verifier="${script_dir}/verify-rust-native-runtime-archive.sh"
+readonly central_bundle_verifier="${script_dir}/verify-central-bundle.py"
+readonly license_generator="${repo_dir}/ci/generate_third_party_licenses.sh"
 temp_dir="$(mktemp -d)"
 readonly temp_dir
 central_endpoint_pid=""
@@ -145,6 +147,8 @@ if mode == "empty":
     payload = b""
 if mode == "wrong-name":
     name = "questdb-test/lib/libquestdbr-wrong.so"
+if mode == "wrong-path":
+    name = "questdb-test/not-runtime/lib/" + pathlib.PurePosixPath(source).name
 with tarfile.open(archive_path, "w:gz") as archive:
     info = tarfile.TarInfo(name)
     info.size = len(payload)
@@ -159,6 +163,8 @@ PY
 [[ -x "${stage_script}" ]] || fail "staging script is missing or not executable"
 [[ -x "${jar_verifier}" ]] || fail "jar verifier is missing or not executable"
 [[ -x "${runtime_verifier}" ]] || fail "runtime verifier is missing or not executable"
+[[ -x "${central_bundle_verifier}" ]] || fail "Central bundle verifier is missing or not executable"
+[[ -x "${license_generator}" ]] || fail "third-party license generator is missing or not executable"
 
 valid_raw="${temp_dir}/raw-valid"
 valid_stage="${temp_dir}/staged"
@@ -199,7 +205,7 @@ for mode in valid missing renamed extra duplicate empty; do
     fi
 done
 
-for mode in valid empty wrong-name duplicate; do
+for mode in valid empty wrong-name wrong-path duplicate; do
     archive_path="${temp_dir}/runtime-${mode}.tar.gz"
     create_runtime_archive "${archive_path}" linux-x86-64 "${mode}" "${valid_stage}"
     if [[ "${mode}" == valid ]]; then
@@ -208,6 +214,111 @@ for mode in valid empty wrong-name duplicate; do
         assert_failure "runtime-${mode}" "${runtime_verifier}" "${archive_path}" linux-x86-64 "${valid_stage}"
     fi
 done
+
+create_incomplete_central_bundle() {
+    local bundle_path="$1"
+    local is_duplicate="$2"
+
+    python3 - "${bundle_path}" "${is_duplicate}" <<'PY'
+import sys
+import zipfile
+
+bundle_path = sys.argv[1]
+is_duplicate = sys.argv[2] == "duplicate"
+version = "9.9.9"
+base = f"org/questdb/questdb/{version}/"
+artifacts = (
+    f"questdb-{version}.pom",
+    f"questdb-{version}.jar",
+    f"questdb-{version}-sources.jar",
+    f"questdb-{version}-javadoc.jar",
+    f"questdb-{version}.zip",
+)
+with zipfile.ZipFile(bundle_path, "w") as bundle:
+    for artifact in artifacts:
+        bundle.writestr(base + artifact, b"fixture")
+    if is_duplicate:
+        bundle.writestr(base + artifacts[0], b"fixture")
+PY
+}
+
+missing_sidecar_bundle="${temp_dir}/central-missing-sidecar.zip"
+create_incomplete_central_bundle "${missing_sidecar_bundle}" false
+assert_failure central-missing-sidecar \
+    "${central_bundle_verifier}" "${missing_sidecar_bundle}" "${temp_dir}/unused.jar" "${valid_stage}" --version 9.9.9
+
+duplicate_central_bundle="${temp_dir}/central-duplicate.zip"
+create_incomplete_central_bundle "${duplicate_central_bundle}" duplicate
+assert_failure central-duplicate-entry \
+    "${central_bundle_verifier}" "${duplicate_central_bundle}" "${temp_dir}/unused.jar" "${valid_stage}" --version 9.9.9
+
+valid_central_bundle="${temp_dir}/central-valid.zip"
+python3 - "${valid_central_bundle}" "${temp_dir}/valid.jar" <<'PY'
+import sys
+import zipfile
+
+bundle_path, main_jar = sys.argv[1:]
+version = "9.9.9"
+base = f"org/questdb/questdb/{version}/"
+artifacts = {
+    f"questdb-{version}.pom": b"<project><version>9.9.9</version></project>",
+    f"questdb-{version}.jar": open(main_jar, "rb").read(),
+    f"questdb-{version}-sources.jar": b"sources",
+    f"questdb-{version}-javadoc.jar": b"javadocs",
+    f"questdb-{version}.zip": b"web-console",
+}
+with zipfile.ZipFile(bundle_path, "w") as bundle:
+    for artifact, payload in artifacts.items():
+        bundle.writestr(base + artifact, payload)
+        for suffix in (".asc", ".md5", ".sha1", ".sha256", ".sha512"):
+            bundle.writestr(base + artifact + suffix, suffix.encode())
+PY
+"${central_bundle_verifier}" "${valid_central_bundle}" "${temp_dir}/valid.jar" "${valid_stage}" --version 9.9.9 > "${temp_dir}/central-valid.out"
+
+verify_cargo_deny_checksum_guard() {
+    local fixture_root="${temp_dir}/cargo-deny-fixture"
+    local fake_bin="${fixture_root}/bin"
+    local archive_path="${fixture_root}/untrusted-cargo-deny.tar.gz"
+    local install_marker="${fixture_root}/install-called"
+
+    mkdir -p "${fixture_root}/ci" "${fixture_root}/core/rust/qdbr" "${fake_bin}"
+    cp "${license_generator}" "${fixture_root}/ci/generate_third_party_licenses.sh"
+    python3 - "${archive_path}" <<'PY'
+import io
+import sys
+import tarfile
+
+with tarfile.open(sys.argv[1], "w:gz") as archive:
+    payload = b"#!/usr/bin/env bash\\nexit 0\\n"
+    member = tarfile.TarInfo("cargo-deny-0.19.8/cargo-deny")
+    member.mode = 0o755
+    member.size = len(payload)
+    archive.addfile(member, io.BytesIO(payload))
+PY
+    cat > "${fake_bin}/cargo" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    cat > "${fake_bin}/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "-fsSL" && "${2:-}" == "--output" ]]; then
+    cp "${FAKE_CARGO_DENY_ARCHIVE:?}" "$3"
+else
+    cat "${FAKE_CARGO_DENY_ARCHIVE:?}"
+fi
+EOF
+    cat > "${fake_bin}/install" <<'EOF'
+#!/usr/bin/env bash
+: > "${FAKE_CARGO_DENY_INSTALL_MARKER:?}"
+EOF
+    chmod +x "${fake_bin}/cargo" "${fake_bin}/curl" "${fake_bin}/install"
+
+    assert_failure cargo-deny-corrupt-archive bash -c "PATH='${fake_bin}:/usr/bin:/bin' FAKE_CARGO_DENY_ARCHIVE='${archive_path}' FAKE_CARGO_DENY_INSTALL_MARKER='${install_marker}' CARGO_DENY_VERSION=0.19.8 '${fixture_root}/ci/generate_third_party_licenses.sh'"
+    [[ ! -e "${install_marker}" ]] || fail "cargo-deny installer ran after a checksum mismatch"
+}
+
+verify_cargo_deny_checksum_guard
 
 python3 - "${repo_dir}/core/pom.xml" "${repo_dir}/pom.xml" <<'PY'
 import sys
@@ -252,14 +363,23 @@ if "release-preparation-safety" not in release_profiles:
     raise SystemExit("release lifecycle must reject external SNAPSHOT dependencies before tagging")
 PY
 
-python3 - "${repo_dir}/.github/workflows/github-binaries-release.yml" "${repo_dir}/pkg/ami/marketplace/packer.json" <<'PY'
+python3 - "${repo_dir}/.github/workflows/github-binaries-release.yml" "${repo_dir}/pkg/ami/marketplace/packer.json" "${repo_dir}/pkg/ami/marketplace/Makefile" <<'PY'
 import json
 import pathlib
 import sys
 
+import yaml
+
 workflow_path = pathlib.Path(sys.argv[1])
 packer_path = pathlib.Path(sys.argv[2])
+makefile_path = pathlib.Path(sys.argv[3])
 workflow = workflow_path.read_text()
+workflow_document = yaml.load(workflow, Loader=yaml.BaseLoader)
+if not isinstance(workflow_document, dict):
+    raise SystemExit("release workflow is not a mapping")
+jobs = workflow_document.get("jobs")
+if not isinstance(jobs, dict):
+    raise SystemExit("release workflow has no jobs mapping")
 
 for required in (
     "execution_mode:",
@@ -286,8 +406,8 @@ for required in (
     "publish-ami:",
     "github.event_name == 'push'",
     "startsWith(github.ref, 'refs/tags/')",
-    "FORCE_DEREGISTER=false",
-    "FORCE_DELETE_SNAPSHOT=false",
+    "publish-github-release-assets.sh",
+    "publish-ami-release.sh",
 ):
     if required not in workflow:
         raise SystemExit(f"release workflow is missing {required}")
@@ -300,6 +420,26 @@ if "gh release upload \"${tag_name}\" artifacts/*.gz" in workflow:
     raise SystemExit("workflow uses unchecked glob GitHub release uploads")
 if "  release:\n" in workflow:
     raise SystemExit("workflow retains the combined release job")
+
+for job_name in ("publish-github", "publish-ami"):
+    job = jobs.get(job_name)
+    if not isinstance(job, dict):
+        raise SystemExit(f"release workflow has no {job_name} job")
+    condition = job.get("if")
+    if not isinstance(condition, str) or "github.event_name == 'push'" not in condition or "startsWith(github.ref, 'refs/tags/')" not in condition:
+        raise SystemExit(f"{job_name} does not have the exact tag-push publication guard")
+
+ami_job = jobs["publish-ami"]
+ami_env = ami_job.get("env")
+if not isinstance(ami_env, dict) or set(("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION")) - set(ami_env):
+    raise SystemExit("AMI preflight does not receive job-scoped AWS credentials and a region")
+if "PACKER_VERSION=1.10.0" not in workflow or '"packer=${PACKER_VERSION}-1"' not in workflow:
+    raise SystemExit("release workflow does not pin the Packer package version")
+
+windows_steps = jobs.get("package-windows", {}).get("steps", [])
+provenance_step = next((step for step in windows_steps if isinstance(step, dict) and step.get("name") == "Write package provenance"), None)
+if not isinstance(provenance_step, dict) or provenance_step.get("env", {}).get("RAW_LINUX_X64_ATTEMPT") != "${{ needs.package-linux.outputs.raw-linux-x64-producer-attempt }}":
+    raise SystemExit("provenance must retain the raw Linux producer attempt")
 
 for artifact_name in (
     "rust-linux-x64",
@@ -325,7 +465,142 @@ if packer["variables"].get("force_deregister") != "false" or packer["variables"]
     raise SystemExit("release Packer defaults must not deregister AMIs or delete snapshots")
 if builder.get("force_deregister") != "{{user `force_deregister`}}" or builder.get("force_delete_snapshot") != "{{user `force_delete_snapshot`}}":
     raise SystemExit("Packer builder does not use the non-destructive release force flags")
+
+makefile = makefile_path.read_text()
+if "PACKER_AMAZON_PLUGIN_VERSION ?= 1.3.10" not in makefile or "plugins install github.com/hashicorp/amazon $(PACKER_AMAZON_PLUGIN_VERSION)" not in makefile:
+    raise SystemExit("Packer Amazon plugin version is not pinned")
 PY
+
+verify_github_publication_recovery() {
+    local fixture_root="${temp_dir}/github-publication-fixture"
+    local fake_bin="${fixture_root}/bin"
+    local call_log="${fixture_root}/calls.log"
+
+    mkdir -p "${fixture_root}/linux" "${fixture_root}/windows" "${fixture_root}/assets" "${fake_bin}"
+    printf 'linux archive\n' > "${fixture_root}/linux/questdb-linux.tar.gz"
+    printf 'windows archive\n' > "${fixture_root}/windows/questdb-windows.tar.gz"
+    cp "${fixture_root}/linux/questdb-linux.tar.gz" "${fixture_root}/assets/"
+    cp "${fixture_root}/windows/questdb-windows.tar.gz" "${fixture_root}/assets/"
+    cat > "${fake_bin}/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$1 $2" in
+    "release view")
+        if [[ "${GH_FIXTURE_MODE:?}" != "absent" ]]; then
+            printf '%s\n' questdb-linux.tar.gz questdb-windows.tar.gz
+        fi
+        ;;
+    "release download")
+        pattern=""
+        destination=""
+        while [[ "$#" -gt 0 ]]; do
+            case "$1" in
+                --pattern) pattern="$2"; shift 2 ;;
+                --dir) destination="$2"; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        mkdir -p "${destination}"
+        if [[ "${GH_FIXTURE_MODE:?}" == "mismatch" ]]; then
+            printf 'mismatched archive\n' > "${destination}/${pattern}"
+        else
+            cp "${GH_FIXTURE_ARCHIVES:?}/${pattern}" "${destination}/${pattern}"
+        fi
+        ;;
+    "release upload") printf 'upload %s\n' "$4" >> "${GH_FIXTURE_CALL_LOG:?}" ;;
+    "release edit") printf 'edit\n' >> "${GH_FIXTURE_CALL_LOG:?}" ;;
+    *) echo "unexpected gh invocation: $*" >&2; exit 1 ;;
+esac
+EOF
+    chmod +x "${fake_bin}/gh"
+
+    run_github_fixture() {
+        local mode="$1"
+        rm -rf "${fixture_root}/existing"
+        : > "${call_log}"
+        if [[ "${mode}" == "mismatch" ]]; then
+            assert_failure github-asset-mismatch bash -c "cd '${fixture_root}' && PATH='${fake_bin}:/usr/bin:/bin' GH_FIXTURE_MODE='${mode}' GH_FIXTURE_ARCHIVES='${fixture_root}/assets' GH_FIXTURE_CALL_LOG='${call_log}' '${script_dir}/publish-github-release-assets.sh' 9.9.9 linux windows"
+        else
+            (
+                cd "${fixture_root}"
+                PATH="${fake_bin}:/usr/bin:/bin" \
+                    GH_FIXTURE_MODE="${mode}" \
+                    GH_FIXTURE_ARCHIVES="${fixture_root}/assets" \
+                    GH_FIXTURE_CALL_LOG="${call_log}" \
+                    "${script_dir}/publish-github-release-assets.sh" 9.9.9 linux windows
+            )
+        fi
+    }
+
+    run_github_fixture absent
+    [[ "$(grep -c '^upload ' "${call_log}")" == 2 ]] || fail "absent GitHub assets were not uploaded"
+    [[ "$(grep -c '^edit$' "${call_log}")" == 1 ]] || fail "GitHub release was not finalized after uploads"
+
+    run_github_fixture equal
+    [[ ! -s "${call_log}" || "$(cat "${call_log}")" == "edit" ]] || fail "checksum-equal GitHub assets were unexpectedly uploaded"
+
+    run_github_fixture mismatch
+    [[ ! -s "${call_log}" ]] || fail "mismatched GitHub asset reached an external side effect"
+}
+
+verify_ami_publication_recovery() {
+    local fixture_root="${temp_dir}/ami-publication-fixture"
+    local fake_bin="${fixture_root}/bin"
+    local call_log="${fixture_root}/calls.log"
+    local regions
+
+    mkdir -p "${fake_bin}"
+    cat > "${fake_bin}/aws" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+: "${AWS_ACCESS_KEY_ID:?}" "${AWS_SECRET_ACCESS_KEY:?}" "${AWS_DEFAULT_REGION:?}"
+printf 'aws %s\n' "$*" >> "${AMI_FIXTURE_CALL_LOG:?}"
+if [[ "$2" == "describe-regions" ]]; then
+    printf 'eu-west-1\tus-west-2\n'
+    exit 0
+fi
+if [[ "$2" == "describe-images" ]]; then
+    region=""
+    while [[ "$#" -gt 0 ]]; do
+        if [[ "$1" == "--region" ]]; then
+            region="$2"
+            break
+        fi
+        shift
+    done
+    if [[ "${AMI_FIXTURE_MODE:?}" == "duplicate" && "${region}" == "us-west-2" ]]; then
+        printf '1\n'
+    else
+        printf '0\n'
+    fi
+    exit 0
+fi
+echo "unexpected aws invocation: $*" >&2
+exit 1
+EOF
+    cat > "${fake_bin}/make" <<'EOF'
+#!/usr/bin/env bash
+printf 'make %s\n' "$*" >> "${AMI_FIXTURE_CALL_LOG:?}"
+EOF
+    chmod +x "${fake_bin}/aws" "${fake_bin}/make"
+
+    : > "${call_log}"
+    assert_failure ami-duplicate-preflight bash -c "PATH='${fake_bin}:/usr/bin:/bin' AWS_ACCESS_KEY_ID=fixture AWS_SECRET_ACCESS_KEY=fixture AWS_DEFAULT_REGION=eu-west-1 AMI_FIXTURE_MODE=duplicate AMI_FIXTURE_CALL_LOG='${call_log}' '${script_dir}/publish-ami-release.sh' preflight 9.9.9"
+    [[ ! -s "${call_log}" || -z "$(grep '^make ' "${call_log}" || true)" ]] || fail "duplicate AMI preflight invoked Packer through make"
+    grep -F -- '--region eu-west-1' "${call_log}" > /dev/null || fail "AMI preflight did not inspect the source region"
+    grep -F -- '--region us-west-2' "${call_log}" > /dev/null || fail "AMI preflight did not inspect a non-default destination region"
+
+    : > "${call_log}"
+    regions="$(PATH="${fake_bin}:/usr/bin:/bin" AWS_ACCESS_KEY_ID=fixture AWS_SECRET_ACCESS_KEY=fixture AWS_DEFAULT_REGION=eu-west-1 AMI_FIXTURE_MODE=absent AMI_FIXTURE_CALL_LOG="${call_log}" "${script_dir}/publish-ami-release.sh" preflight 9.9.9)"
+    [[ "${regions}" == "eu-west-1,us-west-2" ]] || fail "AMI preflight returned unexpected regions: ${regions}"
+    PATH="${fake_bin}:/usr/bin:/bin" AWS_ACCESS_KEY_ID=fixture AWS_SECRET_ACCESS_KEY=fixture AWS_DEFAULT_REGION=eu-west-1 AMI_FIXTURE_MODE=absent AMI_FIXTURE_CALL_LOG="${call_log}" "${script_dir}/publish-ami-release.sh" publish 9.9.9 "${regions}"
+    grep -F 'make install_aws_plugin' "${call_log}" > /dev/null || fail "AMI publication did not install the pinned plugin"
+    grep -F 'make build_release AMI_REGIONS=eu-west-1,us-west-2 QUESTDB_VERSION=9.9.9 FORCE_DEREGISTER=false FORCE_DELETE_SNAPSHOT=false' "${call_log}" > /dev/null \
+        || fail "AMI publication did not use non-destructive Packer arguments"
+}
+
+verify_github_publication_recovery
+verify_ami_publication_recovery
 
 run_release_lifecycle_probes() {
     local lifecycle_root
@@ -344,6 +619,13 @@ run_release_lifecycle_probes() {
     local probe_remote
     local probe_receives
     local probe_head_before
+    local fixture_project_version
+    local fixture_release_version
+    local fixture_client_version
+    local fixture_release_client_version
+    local release_core_jar
+    local probe_project_version
+    local probe_snapshot_client_version
 
     if ! java -version 2>&1 | grep -Eq 'version "(2[5-9]|[3-9][0-9])\.'; then
         fail "RUN_MAVEN_LIFECYCLE_TESTS=1 requires JDK 25 or newer"
@@ -406,16 +688,36 @@ EOF
     grep -F 'Profile "include-rust-native-artifacts" is not activated.' "${temp_dir}/forged-central-marker.out" > /dev/null \
         || fail "forged Central marker did not fail through RequireActiveProfile"
 
+    read -r fixture_project_version fixture_client_version < <(python3 - "${lifecycle_root}/pom.xml" "${lifecycle_root}/core/pom.xml" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+namespace = {'m': 'http://maven.apache.org/POM/4.0.0'}
+root = ET.parse(sys.argv[1]).getroot()
+core = ET.parse(sys.argv[2]).getroot()
+project_version = root.findtext('m:version', namespaces=namespace)
+client_version = core.findtext('.//m:questdb.client.version', namespaces=namespace)
+if not project_version or not client_version:
+    raise SystemExit('fixture could not read the project or client version')
+print(project_version, client_version)
+PY
+)
+    fixture_release_version="${fixture_project_version%-SNAPSHOT}"
+    fixture_release_client_version="$(curl -fsSL https://repo1.maven.org/maven2/org/questdb/questdb-client/maven-metadata.xml | python3 -c 'import sys, xml.etree.ElementTree as ET; version = ET.parse(sys.stdin).findtext("./versioning/release"); assert version and "SNAPSHOT" not in version; print(version)')"
+    [[ -n "${fixture_release_version}" && -n "${fixture_release_client_version}" ]] \
+        || fail "fixture could not derive release versions"
+
     release_root="${temp_dir}/central-release-root"
     cp -a "${lifecycle_root}" "${release_root}"
-    python3 - "${release_root}/pom.xml" "${release_root}/core/pom.xml" <<'PY'
+    python3 - "${release_root}/pom.xml" "${release_root}/core/pom.xml" "${fixture_project_version}" "${fixture_release_version}" "${fixture_client_version}" "${fixture_release_client_version}" <<'PY'
 from pathlib import Path
 import sys
 
-for path in map(Path, sys.argv[1:]):
+root_pom, core_pom, project_version, release_version, client_version, release_client_version = sys.argv[1:]
+for path in map(Path, (root_pom, core_pom)):
     text = path.read_text()
-    text = text.replace('10.0.2-SNAPSHOT', '10.0.2')
-    text = text.replace('1.3.10-SNAPSHOT', '1.3.8')
+    text = text.replace(project_version, release_version)
+    text = text.replace(client_version, release_client_version)
     if 'SNAPSHOT' in text:
         raise SystemExit(f'fixture left a SNAPSHOT value in {path}')
     path.write_text(text)
@@ -487,66 +789,11 @@ PY
     grep -Eiq 'skip.*publish|publish.*skip' "${central_log}" || fail "Central plugin did not report skipPublishing"
     bundle="$(find "${central_output}" -type f -name 'central-bundle.zip' -print -quit)"
     [[ -n "${bundle}" ]] || fail "Central plugin did not produce its local bundle"
-    python3 - "${bundle}" "${release_root}/core/target/questdb-10.0.2.jar" "${release_root}/core/target/native-libs" <<'PY'
-import hashlib
-import io
-import pathlib
-import sys
-import xml.etree.ElementTree as ET
-import zipfile
-
-bundle_path, main_jar, staged_root = map(pathlib.Path, sys.argv[1:])
-version = '10.0.2'
-base = f'org/questdb/questdb/{version}/'
-artifacts = {
-    f'questdb-{version}.pom',
-    f'questdb-{version}.jar',
-    f'questdb-{version}-sources.jar',
-    f'questdb-{version}-javadoc.jar',
-    f'questdb-{version}.zip',
-}
-sidecars = ('.asc', '.md5', '.sha1', '.sha256', '.sha512')
-with zipfile.ZipFile(bundle_path) as bundle:
-    files = [name for name in bundle.namelist() if not name.endswith('/')]
-    if not files or any(not name.startswith(base) for name in files):
-        raise SystemExit('Central bundle contains an unplanned coordinate')
-    bases = set()
-    for name in files:
-        filename = name.removeprefix(base)
-        artifact = next((item for item in artifacts if filename == item or filename.startswith(item + '.')), None)
-        if artifact is None:
-            raise SystemExit(f'Central bundle contains an unexpected artifact or sidecar: {name}')
-        suffix = filename[len(artifact):]
-        if suffix and suffix not in sidecars:
-            raise SystemExit(f'Central bundle contains an unexpected sidecar: {name}')
-        bases.add(artifact)
-    if bases != artifacts:
-        raise SystemExit(f'Central bundle allowlist mismatch: {bases}')
-    if any('-tests.jar' in name for name in files):
-        raise SystemExit('Central bundle contains a tests jar')
-    pom = ET.fromstring(bundle.read(base + f'questdb-{version}.pom'))
-    if any('SNAPSHOT' in (node.text or '') for node in pom.iter()):
-        raise SystemExit('Central bundled POM contains a SNAPSHOT dependency')
-    bundled_jar = bundle.read(base + f'questdb-{version}.jar')
-    if bundled_jar != main_jar.read_bytes():
-        raise SystemExit('Central bundled core jar differs from the verified core jar')
-    expected = {
-        'io/questdb/bin/linux-x86-64/libquestdbr.so',
-        'io/questdb/bin/linux-aarch64/libquestdbr.so',
-        'io/questdb/bin/darwin-aarch64/libquestdbr.dylib',
-        'io/questdb/bin/windows-x86-64/questdbr.dll',
-    }
-    with zipfile.ZipFile(io.BytesIO(bundled_jar)) as jar:
-        actual = [entry.filename for entry in jar.infolist() if entry.filename in expected]
-        if set(actual) != expected or len(actual) != len(expected):
-            raise SystemExit('Central bundled core jar does not contain exactly four Rust entries')
-        for entry in actual:
-            digest = hashlib.sha256(jar.read(entry)).hexdigest()
-            source = hashlib.sha256((staged_root / entry).read_bytes()).hexdigest()
-            if digest != source:
-                raise SystemExit(f'Central bundled native checksum mismatch: {entry}')
-print('Central bundle allowlist, POM, jar identity, and native checks passed')
-PY
+    release_core_jar="${release_root}/core/target/questdb-${fixture_release_version}.jar"
+    [[ -n "${release_core_jar}" ]] || fail "Central fixture did not produce a core jar"
+    "${release_root}/.github/scripts/verify-central-bundle.py" \
+        "${bundle}" "${release_core_jar}" "${release_root}/core/target/native-libs" \
+        --version "${fixture_release_version}"
     local verifier_line central_line
     verifier_line="$(grep -n 'io/questdb/bin/windows-x86-64/questdbr.dll' "${central_log}" | head -1 | cut -d: -f1 || true)"
     central_line="$(grep -Ein 'skip.*publish|publish.*skip' "${central_log}" | tail -1 | cut -d: -f1 || true)"
@@ -589,9 +836,25 @@ PY
         --exclude target \
         --exclude docs/superpowers \
         "${repo_dir}/" "${probe_root}/"
+    probe_project_version="${fixture_release_version}-fixture-SNAPSHOT"
+    probe_snapshot_client_version="${fixture_release_client_version}-fixture-SNAPSHOT"
+    python3 - "${probe_root}" "${fixture_project_version}" "${probe_project_version}" "${fixture_client_version}" "${fixture_release_client_version}" <<'PY'
+from pathlib import Path
+import sys
+
+repository, project_version, probe_project_version, client_version, release_client_version = sys.argv[1:]
+for path in Path(repository).rglob('pom.xml'):
+    if 'java-questdb-client' in path.parts:
+        continue
+    text = path.read_text()
+    text = text.replace(project_version, probe_project_version)
+    text = text.replace(client_version, release_client_version)
+    path.write_text(text)
+PY
     probe_remote="${temp_dir}/release-prepare-remote.git"
     probe_receives="${temp_dir}/release-prepare-receives.log"
     git init --bare "${probe_remote}" > /dev/null
+    git --git-dir "${probe_remote}" symbolic-ref HEAD refs/heads/master
     cat > "${probe_remote}/hooks/pre-receive" <<EOF
 #!/usr/bin/env bash
 cat >> '${probe_receives}'
@@ -608,12 +871,13 @@ EOF
         git push origin master > /dev/null
     )
     : > "${probe_receives}"
-    python3 - "${probe_root}/core/pom.xml" <<'PY'
+    python3 - "${probe_root}/core/pom.xml" "${fixture_release_client_version}" "${probe_snapshot_client_version}" <<'PY'
 from pathlib import Path
 import sys
+
 path = Path(sys.argv[1])
-text = path.read_text().replace('1.3.10-SNAPSHOT', '1.3.999-SNAPSHOT')
-path.write_text(text)
+release_client_version, snapshot_client_version = sys.argv[2:]
+path.write_text(path.read_text().replace(release_client_version, snapshot_client_version))
 PY
     (
         cd "${probe_root}"
@@ -631,27 +895,27 @@ PY
     git -C "${probe_root}" clean -fd > /dev/null
     printf 'snapshot release:prepare negative probe passed\n'
 
-    python3 - "${probe_root}/pom.xml" "${probe_root}/core/pom.xml" "${probe_remote}" <<'PY'
+    python3 - "${probe_root}" "${probe_remote}" "${probe_snapshot_client_version}" "${fixture_release_client_version}" <<'PY'
 from pathlib import Path
 import sys
 
-root, core, remote = map(Path, sys.argv[1:])
+repository, remote, snapshot_client_version, release_client_version = sys.argv[1:]
+root = Path(repository) / 'pom.xml'
 root_text = root.read_text()
 root_text = root_text.replace('scm:git:https://github.com/questdb/questdb.git', f'scm:git:file://{remote}')
 root_text = root_text.replace('https://github.com/questdb/questdb', f'file://{remote}')
 root.write_text(root_text)
-for path in root.parent.rglob('pom.xml'):
-    text = path.read_text()
-    text = text.replace('1.3.999-SNAPSHOT', '1.3.8')
-    text = text.replace('1.3.10-SNAPSHOT', '1.3.8')
-    path.write_text(text)
+for path in Path(repository).rglob('pom.xml'):
+    if 'java-questdb-client' in path.parts:
+        continue
+    path.write_text(path.read_text().replace(snapshot_client_version, release_client_version))
 PY
     if ! (
         cd "${probe_root}"
         git add -u
         git commit -m 'make release-plugin probe releasable' > /dev/null
         mvn -B release:prepare -DpreparationGoals=validate -DautoVersionSubmodules=true > "${temp_dir}/release-prepare-safe.log" 2>&1
-        mvn -B release:perform -Dgoals=validate -DlocalCheckout=true > "${temp_dir}/release-perform-safe.log" 2>&1
+        mvn -B release:perform -Dgoals=validate -DlocalCheckout=false > "${temp_dir}/release-perform-safe.log" 2>&1
     ); then
         cat "${temp_dir}/release-prepare-safe.log" >&2 || true
         cat "${temp_dir}/release-perform-safe.log" >&2 || true

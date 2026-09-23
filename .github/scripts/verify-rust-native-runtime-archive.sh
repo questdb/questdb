@@ -60,16 +60,14 @@ try:
         rust_members = [
             member
             for member in archive.getmembers()
-            if member.isfile()
-            and "questdbr" in pathlib.PurePosixPath(member.name).name
-            and "lib" in pathlib.PurePosixPath(member.name).parts
+            if member.isfile() and "questdbr" in pathlib.PurePosixPath(member.name).name
         ]
         if len(rust_members) != 1:
             fail(f"runtime archive must contain exactly one Rust library, got {len(rust_members)}")
         member = rust_members[0]
         member_path = pathlib.PurePosixPath(member.name)
-        if member_path.name != expected_name:
-            fail(f"unexpected Rust runtime library: {member.name}")
+        if len(member_path.parts) != 3 or member_path.parts[1] != "lib" or member_path.name != expected_name:
+            fail(f"Rust runtime library must use <root>/lib/{expected_name}: {member.name}")
         if member.size == 0:
             fail(f"empty Rust runtime library: {member.name}")
         member_file = archive.extractfile(member)

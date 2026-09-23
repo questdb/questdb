@@ -585,26 +585,7 @@ jobs:
           artifact-ids: ${{ needs.package-windows.outputs.release-artifact-id }}
           path: artifacts/windows
       - name: Upload or verify every GitHub release asset
-        run: |
-          set -euo pipefail
-          tag_name="${GITHUB_REF_NAME}"
-          for archive in artifacts/linux/*.tar.gz artifacts/windows/*.tar.gz; do
-            asset_name="$(basename "${archive}")"
-            expected_sha256="$(sha256sum "${archive}" | awk '{print $1}')"
-            if gh release view "${tag_name}" --json assets --jq '.assets[].name' | grep -Fxq "${asset_name}"; then
-              mkdir -p existing
-              gh release download "${tag_name}" --pattern "${asset_name}" --dir existing --clobber
-              actual_sha256="$(sha256sum "existing/${asset_name}" | awk '{print $1}')"
-              if [[ "${actual_sha256}" != "${expected_sha256}" ]]; then
-                echo "release asset checksum mismatch: ${asset_name}" >&2
-                exit 1
-              fi
-              echo "reusing checksum-equal release asset: ${asset_name}"
-            else
-              gh release upload "${tag_name}" "${archive}#${asset_name}"
-            fi
-          done
-          gh release edit "${tag_name}" --draft=false --latest
+        run: .github/scripts/publish-github-release-assets.sh "${GITHUB_REF_NAME}" artifacts/linux artifacts/windows
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -615,34 +596,25 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: eu-west-1
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: false
       - name: Install Packer
         run: |
+          set -euo pipefail
+          PACKER_VERSION=1.10.0
           curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
-          sudo apt-get update && sudo apt-get install -y packer jq
+          sudo apt-get update && sudo apt-get install -y "packer=${PACKER_VERSION}-1" jq
+          packer version
       - name: Refuse to replace an existing release AMI
         run: |
-          set -euo pipefail
-          release_name="questdb-${GITHUB_REF_NAME}-al2023-x86_64-ebs"
-          AMI_REGIONS="$(aws ec2 describe-regions --query 'Regions[].RegionName' --output text | tr '\t' ',')"
+          AMI_REGIONS="$(.github/scripts/publish-ami-release.sh preflight "${GITHUB_REF_NAME}")"
           echo "AMI_REGIONS=${AMI_REGIONS}" >> "${GITHUB_ENV}"
-          for region in ${AMI_REGIONS//,/ }; do
-            count="$(aws ec2 describe-images --region "${region}" --owners self --filters "Name=name,Values=${release_name}" --query 'length(Images)' --output text)"
-            if [[ "${count}" != 0 ]]; then
-              echo "release AMI already exists in ${region}: ${release_name}" >&2
-              exit 1
-            fi
-          done
       - name: Deploy AMI without destructive replacement
-        run: |
-          cd pkg/ami/marketplace
-          make install_aws_plugin
-          make build_release FORCE_DEREGISTER=false FORCE_DELETE_SNAPSHOT=false
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: eu-west-1
+        run: .github/scripts/publish-ami-release.sh publish "${GITHUB_REF_NAME}" "${AMI_REGIONS}"

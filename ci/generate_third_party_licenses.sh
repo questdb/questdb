@@ -37,11 +37,22 @@ if ! command -v cargo-deny >/dev/null 2>&1; then
         *) echo "Unsupported architecture for cargo-deny: $(uname -m)" >&2; exit 1 ;;
     esac
 
+    case "${CARGO_DENY_VERSION}:${deny_arch}" in
+        0.19.8:x86_64) deny_sha256="70e769ae3872e34d45132b17040859175e11401dc12dddb0303e0b8c7d088f3f" ;;
+        0.19.8:aarch64) deny_sha256="67ef48056523d27f58a527c5e49172bc24758f7b8147998d47219d45b181c354" ;;
+        *)
+            echo "No pinned SHA-256 for cargo-deny ${CARGO_DENY_VERSION} (${deny_arch})" >&2
+            exit 1
+            ;;
+    esac
+
     archive="cargo-deny-${CARGO_DENY_VERSION}-${deny_arch}-unknown-linux-musl.tar.gz"
     echo "Installing cargo-deny ${CARGO_DENY_VERSION} (${deny_arch})"
     tmp_dir="$(mktemp -d)"
-    curl -fsSL "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/${archive}" \
-        | tar -xz --strip-components=1 -C "${tmp_dir}"
+    archive_path="${tmp_dir}/${archive}"
+    curl -fsSL --output "${archive_path}" "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/${archive}"
+    printf '%s  %s\n' "${deny_sha256}" "${archive_path}" | sha256sum --check --status
+    tar -xzf "${archive_path}" --strip-components=1 -C "${tmp_dir}"
     install -m 0755 "${tmp_dir}/cargo-deny" /usr/local/bin/cargo-deny
     rm -rf "${tmp_dir}"
 fi
