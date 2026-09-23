@@ -5950,6 +5950,15 @@ public class IODispatcherTest extends AbstractTest {
 
                         // stale If-Range falls back to the full file
                         sendAndReceive(rangeRequest("bytes=0-0", "\"1\""), fullHeader + content);
+
+                        // Given different ETags with the same numeric value
+                        for (String ifRange : new String[]{"\"0122299092\"", "\"122299092L\""}) {
+                            // When the client requests a range with a different ETag
+                            final String request = rangeRequest("bytes=0-0", ifRange);
+
+                            // Then the server returns the full file
+                            sendAndReceive(request, fullHeader + content);
+                        }
                     } finally {
                         workerPool.halt();
                         TestUtils.remove(path.$());

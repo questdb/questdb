@@ -246,15 +246,9 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
         if (ifRange == null) {
             return true;
         }
-        final int l = ifRange.size();
-        if (l < 3 || ifRange.byteAt(0) != '"' || ifRange.byteAt(l - 1) != '"') {
-            return false;
-        }
-        try {
-            return Numbers.parseLong(ifRange, 1, l - 1) == ff.getLastModified(path);
-        } catch (NumericException e) {
-            return false;
-        }
+        utf8Sink.clear();
+        utf8Sink.putAscii('"').put(ff.getLastModified(path)).putAscii('"');
+        return Utf8s.equals(ifRange, utf8Sink);
     }
 
     private void sendRange(
