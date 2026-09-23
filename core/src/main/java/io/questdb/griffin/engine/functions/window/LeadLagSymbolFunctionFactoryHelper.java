@@ -62,6 +62,11 @@ class LeadLagSymbolFunctionFactoryHelper {
 
     private abstract static class BaseSymbolWindowFunction extends SymbolFunction implements WindowFunction {
         private NullIncludingSymbolTable staticSymbolTable;
+        // Resolves keys through a view this function owns rather than through the argument. A
+        // non-cached dictionary keeps a single A/B pair of flyweights per view, so resolving
+        // through the argument's view would alias this column with the source column and with
+        // every other function that reads the same dictionary in the same expression.
+        private SymbolTable symbolTable;
         protected final SymbolFunction arg;
         protected final Function defaultValue;
         protected final boolean ignoreNulls;
@@ -79,6 +84,7 @@ class LeadLagSymbolFunctionFactoryHelper {
         @Override
         public void close() {
             staticSymbolTable = null;
+            symbolTable = Misc.freeIfCloseable(symbolTable);
             Misc.free(arg);
             Misc.free(defaultValue);
         }
@@ -126,6 +132,8 @@ class LeadLagSymbolFunctionFactoryHelper {
             if (defaultValue != null) {
                 defaultValue.init(symbolTableSource, executionContext);
             }
+            symbolTable = Misc.freeIfCloseable(symbolTable);
+            symbolTable = arg.newSymbolTable();
         }
 
         @Override
@@ -168,12 +176,12 @@ class LeadLagSymbolFunctionFactoryHelper {
 
         @Override
         public CharSequence valueBOf(int key) {
-            return arg.valueBOf(key);
+            return symbolTable != null ? symbolTable.valueBOf(key) : arg.valueBOf(key);
         }
 
         @Override
         public CharSequence valueOf(int key) {
-            return arg.valueOf(key);
+            return symbolTable != null ? symbolTable.valueOf(key) : arg.valueOf(key);
         }
 
         protected void toPlanArgs(PlanSink sink) {

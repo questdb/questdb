@@ -339,6 +339,68 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLagLeadSymbolIsolatedFromSourceDictionaryView() throws Exception {
+        // A NOCACHE dictionary keeps one A/B pair of flyweights per view. The window column
+        // resolves through its own view, so a wrapper that reads the column through slot A
+        // (trim, lower, concat) cannot overwrite the value the source column just returned.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE n (ts TIMESTAMP, a SYMBOL NOCACHE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO n VALUES
+                    ('2024-01-01T00:00:00', 'a1'),
+                    ('2024-01-01T01:00:00', 'b1'),
+                    ('2024-01-01T02:00:00', 'a1'),
+                    ('2024-01-01T03:00:00', 'a1')
+                    """);
+            for (String wrapper : List.of("trim(x)", "lower(x)", "concat(x, '')", "x::string")) {
+                assertQuery("SELECT ts FROM (SELECT ts, a, lag(a) OVER () x FROM n) WHERE a = " + wrapper)
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .noLeakCheck()
+                        .returns("""
+                                ts
+                                2024-01-01T03:00:00.000000Z
+                                """);
+                assertQuery("SELECT ts FROM (SELECT ts, a, lag(a) OVER () x FROM n) WHERE a::string = " + wrapper)
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .noLeakCheck()
+                        .returns("""
+                                ts
+                                2024-01-01T03:00:00.000000Z
+                                """);
+            }
+            assertQuery("""
+                    SELECT ts, starts_with(a::string, trim(x)) sw, nullif(x, trim(a::string)) nf, lpad(a::string, 4, trim(x)) lp
+                    FROM (SELECT ts, a, lag(a) OVER () x FROM n)
+                    """)
+                    .timestamp("ts")
+                    .expectSize()
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tsw\tnf\tlp
+                            2024-01-01T00:00:00.000000Z\tfalse\t\t
+                            2024-01-01T01:00:00.000000Z\tfalse\ta1\ta1b1
+                            2024-01-01T02:00:00.000000Z\tfalse\tb1\tb1a1
+                            2024-01-01T03:00:00.000000Z\ttrue\t\ta1a1
+                            """);
+            // two window columns over one dictionary, neither aliases the other; the first row
+            // has no neighbor on either side and NULL = NULL holds
+            assertQuery("""
+                    SELECT ts FROM (SELECT ts, lag(a) OVER () x, lag(a, 2) OVER () y FROM n) WHERE trim(x) = y
+                    """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            ts
+                            2024-01-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testLagLeadSymbolNonLightCachedWindow() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, false);
         assertMemoryLeak(() -> {
