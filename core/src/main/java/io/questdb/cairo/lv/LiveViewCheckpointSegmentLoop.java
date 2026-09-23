@@ -24,7 +24,8 @@
 
 package io.questdb.cairo.lv;
 
-import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.DirectIntList;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -64,7 +65,9 @@ import org.jetbrains.annotations.Nullable;
  * the loop parks on the segments a keyed replay is <i>not</i> taken for, precisely because
  * a keyed replay never parks, so the segments behind a park are the ones most likely to be
  * keyed. {@code Q} is a per-segment coordinate like the bounds beside it, and it travels
- * for the same reason they do.
+ * for the same reason they do. It travels as the pinned reader's own symbol integers, which
+ * stay valid for as long as the loop does: the loop is meaningless without that snapshot,
+ * and a symbol integer a reader has handed out never names another value in it.
  */
 public final class LiveViewCheckpointSegmentLoop {
     // segmentStart, minTs, maxTs, keySetIndex, hasNullKey per queued entry, oldest first -
@@ -75,8 +78,10 @@ public final class LiveViewCheckpointSegmentLoop {
     // Q per queued segment, named by an index the entry carries rather than by the entry's
     // position: the queue drains from its head, and an index that travels with the entry is
     // one no removal has to move. Retained across repairs and cleared rather than dropped,
-    // so a worker pays for the growth once.
-    private final ObjList<CharSequenceHashSet> keySets = new ObjList<>();
+    // so a worker pays for the growth once. On the heap rather than native because the
+    // loop holds no resource: a copy of int keys allocates nothing once the lists have
+    // grown, and nothing has to close them.
+    private final ObjList<IntList> keySets = new ObjList<>();
     private final LongList segments = new LongList();
     private long durableOutputMaxTs = Numbers.LONG_NULL;
     private long finalSeqTxn = Numbers.LONG_NULL;
@@ -97,10 +102,11 @@ public final class LiveViewCheckpointSegmentLoop {
      * Queues one segment the loop has not reached yet, with the key domain its repair may
      * follow.
      *
-     * @param keys       the segment's affected keys, or null when its repair must read every
-     *                   row of it. Copied rather than referenced: the change set these come
-     *                   from is refilled by the next repair this worker classifies, and the
-     *                   loop may outlive that by any number of turns
+     * @param keys       the segment's affected keys as the pinned reader's symbol integers,
+     *                   or null when its repair must read every row of it. Copied rather
+     *                   than referenced: the change set these come from is refilled by the
+     *                   next repair this worker classifies, and the loop may outlive that by
+     *                   any number of turns
      * @param hasNullKey whether a correction carried the null partition key, which the
      *                   change set holds beside its set rather than in it
      */
@@ -108,17 +114,17 @@ public final class LiveViewCheckpointSegmentLoop {
             long segmentStart,
             long minTs,
             long maxTs,
-            @Nullable CharSequenceHashSet keys,
+            @Nullable DirectIntList keys,
             boolean hasNullKey
     ) {
         int keySetIndex = -1;
         if (keys != null) {
             keySetIndex = segments.size() / STRIDE;
-            final CharSequenceHashSet carried = keySetAt(keySetIndex);
+            final IntList carried = keySetAt(keySetIndex);
             carried.clear();
-            // The values are Strings by the time the change set holds them, so this is a
-            // copy of references rather than of characters.
-            carried.addAll(keys);
+            for (long i = 0, n = keys.size(); i < n; i++) {
+                carried.add(keys.get(i));
+            }
         }
         segments.add(segmentStart);
         segments.add(minTs);
@@ -206,11 +212,11 @@ public final class LiveViewCheckpointSegmentLoop {
 
     /**
      * @return the affected keys of the segment the loop is repairing, or null when that
-     * segment has none and its repair must read every row of it. A non-null set is the
+     * segment has none and its repair must read every row of it. A non-null list is the
      * verdict as well as the domain: the loop carries {@code Q} only for the segments the
      * cost model priced a keyed read cheaper on
      */
-    public @Nullable CharSequenceHashSet getInFlightKeys() {
+    public @Nullable IntList getInFlightKeys() {
         return inFlightKeySetIndex < 0 ? null : keySets.getQuick(inFlightKeySetIndex);
     }
 
@@ -387,9 +393,9 @@ public final class LiveViewCheckpointSegmentLoop {
      * would leave nulls in the ones it stepped over. Everything that walks the pool -
      * {@link #clear()}, {@link #copyFrom} - walks all of it.
      */
-    private @NotNull CharSequenceHashSet keySetAt(int index) {
+    private @NotNull IntList keySetAt(int index) {
         while (keySets.size() <= index) {
-            keySets.add(new CharSequenceHashSet());
+            keySets.add(new IntList());
         }
         return keySets.getQuick(index);
     }

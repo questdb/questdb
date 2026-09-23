@@ -78,6 +78,15 @@ public class LiveViewNoGcSourceHygieneTest {
             "\\b(?:encodeKeySchema|encodeUtf8|putUtf8)\\s*\\(|\\.\\s*(?:getEncoded|getWindowIdentity)\\s*\\("
                     + "|\\.\\s*getBytes\\s*\\(\\s*(?:StandardCharsets\\s*\\.\\s*)?UTF_8\\s*\\)"
     );
+    /**
+     * A heap object per repair key: a String-keyed collection, a String or sink, or a copy
+     * of a character sequence into one. The repair's key collection holds the pinned base
+     * reader's symbol integers, so none of these has a reason to appear in it.
+     */
+    private static final Pattern HEAP_REPAIR_KEY = Pattern.compile(
+            "\\b(?:CharSequence[A-Za-z]*(?:Set|Map|List)|String|StringSink)\\b"
+                    + "|\\bChars\\s*\\.\\s*toString\\s*\\(|\\.\\s*toString\\s*\\("
+    );
     private static final Pattern METHOD_INVOCATION = Pattern.compile(
             "\\b([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\("
     );
@@ -178,6 +187,35 @@ public class LiveViewNoGcSourceHygieneTest {
         }
         Assert.assertTrue(
                 "timeline lifecycle no-GC source violations:" + System.lineSeparator()
+                        + String.join(System.lineSeparator(), violations),
+                violations.isEmpty()
+        );
+    }
+
+    @Test
+    public void testRepairKeyCollectionHoldsNoHeapKeys() throws IOException {
+        // The change-set decomposition runs on every out-of-order repair and collects up to
+        // the per-segment key budget for each of up to 64 segments. It used to copy each key
+        // off the WAL's flyweight into a String; it now keeps the base reader's symbol
+        // integers in native lists, and the segment loop carries them as ints.
+        final Path sourceRoot = findSourceRoot();
+        final List<String> violations = new ArrayList<>();
+        final String[] files = {
+                "io/questdb/cairo/lv/LiveViewCheckpointSegmentChangeSet.java",
+                "io/questdb/cairo/lv/LiveViewCheckpointSegmentLoop.java"
+        };
+        for (int i = 0; i < files.length; i++) {
+            final Path file = sourceRoot.resolve(files[i]);
+            final String code = stripCommentsAndLiterals(Files.readString(file, StandardCharsets.UTF_8));
+            final Matcher matcher = HEAP_REPAIR_KEY.matcher(code);
+            while (matcher.find()) {
+                addViolation(sourceRoot, file, code, matcher.start(), matcher.group(), violations);
+            }
+            findForbiddenTypes(sourceRoot, file, code, violations);
+            findBoxedCollectionTypes(sourceRoot, file, code, violations);
+        }
+        Assert.assertTrue(
+                "repair key collection heap-key violations:" + System.lineSeparator()
                         + String.join(System.lineSeparator(), violations),
                 violations.isEmpty()
         );

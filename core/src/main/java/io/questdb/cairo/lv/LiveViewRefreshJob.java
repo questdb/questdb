@@ -32,7 +32,6 @@ import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
@@ -93,7 +92,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.Job;
 import io.questdb.std.Chars;
-import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -378,6 +377,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final LiveViewCheckpointKeyedScanCost keyedScanCost = new LiveViewCheckpointKeyedScanCost();
     // The keys of the segment being priced, in the pinned reader's own symbol space.
     private final IntList keyedScanKeys = new IntList();
+    // The open segment's key domain on the heap, for the keyed replay's arm, which takes
+    // the same list type the segment loop carries a closed segment's domain in.
+    private final IntList openSegmentArmKeys = new IntList();
     // Segment starts whose keyed scan the cost model priced below the whole-segment one,
     // filled by priceKeyedSegmentScans and read by armKeyedReplay. Refilled per change-set
     // classification, so it describes the loop currently being driven and no other.
@@ -721,6 +723,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         stagingBuffer = Misc.free(stagingBuffer);
         Misc.free(rowsBounds);
         Misc.free(keyedReplay);
+        Misc.free(segmentChangeSet);
         Misc.free(transplantKeyMemory);
         Misc.freeObjListIfCloseable(flushSymbolResolverPool);
         flushSymbolResolverPool.clear();
@@ -5067,7 +5070,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long indexOpenRows = engine.getConfiguration().getLiveViewCheckpointRepairKeyedScanIndexOpenRows();
         final long indexSeekRows = LiveViewCheckpointKeyedScanCost.indexSeekRows(indexOpenRows);
         try {
-            final SymbolMapReader symbols = reader.getSymbolMapReader(readerColumnIndex);
             scanCost.of(reader);
             keyedScanCost.of(reader, executionContext);
             for (int i = 0; i < segmentCount; i++) {
@@ -5091,7 +5093,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     keyedScanUnpricedCount++;
                     continue;
                 }
-                if (!resolveSegmentKeys(symbols, i)) {
+                if (!loadSegmentKeys(i)) {
                     keyedScanUnpricedCount++;
                     continue;
                 }
@@ -5289,10 +5291,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
             final LiveViewCheckpointOpenSegmentCost elapsedCost = instance.getOpenSegmentRepairCost();
-            // The key count resolveScanKeys leaves in keyedScanKeys when it succeeds - one key
+            // The key count loadScanKeys leaves in keyedScanKeys when it succeeds - one key
             // per residual value and one for the null flag - read off the domain, so a resume
-            // the break-even below settles returns before any symbol lookup.
-            final int keyCount = segmentChangeSet.getResidualKeys().size()
+            // the break-even below settles returns before the keys are copied. The list is
+            // bounded by the int per-segment key budget, so the narrowing is exact.
+            final int keyCount = (int) segmentChangeSet.getResidualKeys().size()
                     + (segmentChangeSet.hasResidualNullKey() ? 1 : 0);
             final long postingBudgetRows;
             if (wholeRangeRows > 0) {
@@ -5340,8 +5343,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         ? Long.MAX_VALUE
                         : maxKeyedCostRows / mergeRowsPerPostingRow + 1;
             }
-            if (!resolveScanKeys(
-                    reader.getSymbolMapReader(readerColumnIndex),
+            if (!loadScanKeys(
                     segmentChangeSet.getResidualKeys(),
                     segmentChangeSet.hasResidualNullKey()
             )) {
@@ -5458,47 +5460,37 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Resolves one segment's logical partition keys to the table-local keys the pinned
-     * reader's posting index names rows by.
-     * <p>
-     * The two spaces are not the same one: the change set collected its values through a
-     * WAL segment's own symbol space, which is per transaction, and the index is keyed by
-     * the table's. A value this reader has never seen resolves to
-     * {@link SymbolTable#VALUE_NOT_FOUND} - impossible for a reader pinned at or above the
-     * commit that introduced it, and refused rather than dropped, because a key silently
-     * missing from a keyed scan is a key whose rows it would not repair.
+     * Loads one closed segment's partition keys into {@link #keyedScanKeys}.
      *
-     * @return false when a key does not resolve, leaving the segment unpriced
+     * @return false when the segment carries no key, leaving it unpriced
      */
-    private boolean resolveSegmentKeys(SymbolMapReader symbols, int segmentIndex) {
-        return resolveScanKeys(
-                symbols,
+    private boolean loadSegmentKeys(int segmentIndex) {
+        return loadScanKeys(
                 segmentChangeSet.getSegmentKeys(segmentIndex),
                 segmentChangeSet.hasSegmentNullKey(segmentIndex)
         );
     }
 
     /**
-     * Resolves one key domain into {@link #keyedScanKeys}, the pinned reader's own symbol
-     * space. Shared by the closed segments and by the open one, which collect their keys
-     * the same way and differ only in where the caller reads them from.
+     * Loads one key domain into {@link #keyedScanKeys}. Shared by the closed segments and
+     * by the open one, which collect their keys the same way and differ only in where the
+     * caller reads them from.
+     * <p>
+     * A copy rather than a lookup: the change set already holds the pinned reader's own
+     * symbol integers, which is what the posting index names rows by, and a key that
+     * reader could not name left the domain incomplete before the caller got here.
      *
-     * @return false when a key does not resolve, leaving the range unpriced
+     * @return false when the domain holds no key, leaving the range unpriced
      */
-    private boolean resolveScanKeys(SymbolMapReader symbols, CharSequenceHashSet keys, boolean hasNullKey) {
+    private boolean loadScanKeys(DirectIntList keys, boolean hasNullKey) {
         keyedScanKeys.clear();
         if (hasNullKey) {
             // A partition key like any other: the index names the null value's rows under
             // its own key.
             keyedScanKeys.add(SymbolTable.VALUE_IS_NULL);
         }
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            final int symbolKey = symbols.keyOf(keys.get(i));
-            if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                keyedScanKeys.clear();
-                return false;
-            }
-            keyedScanKeys.add(symbolKey);
+        for (long i = 0, n = keys.size(); i < n; i++) {
+            keyedScanKeys.add(keys.get(i));
         }
         return keyedScanKeys.size() > 0;
     }
@@ -5629,7 +5621,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * distinct segments than {@link LiveViewCheckpointSegmentChangeSet#MAX_CLOSED_SEGMENTS},
      * or a base schema that drifted under the compiled projection. None of those is an
      * error: the repair simply plans the way it always did.
+     * <p>
+     * Each collected key is resolved to {@code baseKeySymbols}' own integer on the way in.
+     * {@code toSeqTxn} is the pinned reader's own {@code seqTxn}, so every transaction the
+     * walk reads is one that reader applied, along with every symbol value it added; a
+     * transaction above the pin is not walked here and is left to the next repair.
      *
+     * @param baseKeySymbols the pinned reader's symbol table for the key column, or null
+     *                       when {@code baseKeyWriterIndex} is negative
      * @return true when every row in the range landed in a segment or in the residual
      */
     private boolean classifyChangeSetSegments(
@@ -5637,6 +5636,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             RecordMetadata baseMetadata,
             int baseTimestampWriterIndex,
             int baseKeyWriterIndex,
+            @Nullable StaticSymbolTable baseKeySymbols,
             long fromSeqTxn,
             long toSeqTxn,
             long viewLowerBoundTimestamp,
@@ -5644,16 +5644,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long activeSegmentStart,
             boolean collectResidualKeys
     ) {
-        final boolean keyed = baseKeyWriterIndex > -1;
+        final boolean keyed = baseKeyWriterIndex > -1 && baseKeySymbols != null;
         // The open segment's own keys, for the resume that follows them. Collecting them
         // costs the walk the shortcut below skips - every commit's rows rather than every
         // deep commit's - so it is asked for rather than always taken.
         final boolean residualKeys = keyed && collectResidualKeys;
         segmentChangeSet.of(
                 activeSegmentStart,
-                keyed ? (int) Math.min(Integer.MAX_VALUE, engine.getConfiguration().getLiveViewCheckpointRepairScanMaxKeys()) : 0,
+                keyed ? segmentKeyBudgetOf(engine.getConfiguration().getLiveViewCheckpointRepairScanMaxKeys()) : 0,
                 residualKeys
         );
+        // An unkeyed walk passes a budget of zero, which collects no key, and addRow then
+        // reads none, so the row loop skips resolving one rather than paying a base symbol
+        // lookup per row for a key the change set drops.
+        final boolean isResolvingKeys = keyed && segmentChangeSet.isCollectingKeys();
         // The projection: the designated timestamp, named by its base-table WRITER index,
         // which is what WalSegmentPageFrameCursor matches against the segment's own
         // timestamp index. A scan-metadata position would name a different column on any
@@ -5669,9 +5673,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (keyed) {
             // And the partition key beside it, as the segment's own 4-byte SYMBOL keys.
             // Those index the WAL transaction's symbol space rather than the table's, so
-            // each is resolved through the frame cursor's symbol table below: what the
-            // change set retains is the logical value, which the repair re-resolves against
-            // whichever pinned reader it eventually replays under.
+            // each is resolved through the frame cursor's symbol table to its value and
+            // from there to the pinned reader's own integer, which is what the change set
+            // retains and what the keyed scan and the keyed replay follow.
             segmentClassifyColumnIndexes.add(baseKeyWriterIndex);
             segmentClassifyColumnSizeShifts.add(2);
         }
@@ -5753,17 +5757,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 final long address = frame.getPageAddress(0);
                 final long keyAddress = keyed ? frame.getPageAddress(1) : 0;
                 final StaticSymbolTable keySymbols = keyed ? walFrameCursor.getSymbolTable(1) : null;
+                // This transaction's symbol integers mean something else in the next one.
+                segmentChangeSet.ofTransaction();
                 for (long row = 0, rowCount = endRow - startRow; row < rowCount; row++) {
                     final long ts = Unsafe.getUnsafe().getLong(address + (row << 3));
                     if (ts < viewLowerBoundTimestamp) {
                         continue;
                     }
-                    CharSequence key = null;
-                    if (keyed && (residualKeys || ts < activeSegmentStart)) {
+                    int key = SymbolTable.VALUE_IS_NULL;
+                    if (isResolvingKeys && (residualKeys || ts < activeSegmentStart)) {
                         // A row that lands in a closed segment always has a key worth
                         // resolving. A residual row has one only for a caller collecting
                         // the open segment's domain; the ordinary resume follows no key.
-                        key = keySymbols.valueOf(Unsafe.getUnsafe().getInt(keyAddress + (row << 2)));
+                        key = segmentChangeSet.resolveKey(
+                                Unsafe.getUnsafe().getInt(keyAddress + (row << 2)),
+                                keySymbols,
+                                baseKeySymbols
+                        );
                     }
                     if (!segmentChangeSet.addRow(ts, key, anchorPlan)) {
                         return false;
@@ -5779,6 +5789,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
         return true;
+    }
+
+    /**
+     * Maps {@code cairo.live.view.checkpoint.repair.scan.max.keys} to the per-segment key
+     * budget {@link LiveViewCheckpointSegmentChangeSet#of(long, int, boolean)} takes. A value
+     * at or below zero is unlimited, as server.conf documents it and as
+     * {@link LiveViewCheckpointRowsBounds} reads the same key, so it maps to
+     * {@link Integer#MAX_VALUE} rather than to the change set's zero, which collects no key
+     * at all. A positive value past the int range saturates there too, and a negative one
+     * takes the unlimited arm before the narrowing, so no value reaches the {@code (int)}
+     * cast outside the int range and reads as whatever its low 32 bits hold.
+     * <p>
+     * An unlimited budget still bounds what the change set holds: each walked row adds at
+     * most one key to one segment's domain, so the domains together hold no more keys than
+     * the walk reads rows, and no one domain more than the key column holds symbols.
+     */
+    private static int segmentKeyBudgetOf(long configured) {
+        return configured > 0 ? (int) Math.min(Integer.MAX_VALUE, configured) : Integer.MAX_VALUE;
     }
 
     /**
@@ -5951,6 +5979,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final int baseKeyWriterIndex = isBaseDeduplicating
                 ? -1
                 : keyedScanColumnWriterIndex(instance, baseToken, compiledPlan);
+        // The pinned reader's symbol table for that column, which every collected key is
+        // resolved against: the keyed scan, the loop and the keyed replay all follow this
+        // same reader's posting index.
+        final StaticSymbolTable baseKeySymbols = baseKeyWriterIndex > -1
+                ? reader.getSymbolMapReader(
+                compiledPlan.getPageFrameFactory().getBaseColumnIndex(keyedScanColumnIndex(instance, compiledPlan)))
+                : null;
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
         final long pinnedSeqTxn = reader.getSeqTxn();
         // The walk's own floor. A keyed resume re-emits the rows of its key domain and no
@@ -5966,6 +6001,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 baseMetadata,
                 baseTimestampWriterIndex,
                 baseKeyWriterIndex,
+                baseKeySymbols,
                 walkFromSeqTxn,
                 pinnedSeqTxn,
                 viewLowerBoundTimestamp,
@@ -6259,11 +6295,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         final int readerColumnIndex = compiledPlan.getPageFrameFactory().getBaseColumnIndex(scanColumnIndex);
         try {
+            final DirectIntList residualKeys = segmentChangeSet.getResidualKeys();
+            openSegmentArmKeys.clear();
+            for (long i = 0, n = residualKeys.size(); i < n; i++) {
+                openSegmentArmKeys.add(residualKeys.get(i));
+            }
             return keyedReplay.arm(
                     scanColumnIndex,
                     reader.getSymbolMapReader(readerColumnIndex),
                     projector.getCheckpointKeyColumnTypes(),
-                    segmentChangeSet.getResidualKeys(),
+                    openSegmentArmKeys,
                     segmentChangeSet.hasResidualNullKey()
             );
         } catch (Throwable t) {
@@ -6382,7 +6423,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (!engine.getConfiguration().isLiveViewCheckpointRepairKeyedReplayEnabled()) {
             return false;
         }
-        final CharSequenceHashSet segmentKeys = loop.getInFlightKeys();
+        final IntList segmentKeys = loop.getInFlightKeys();
         if (segmentKeys == null) {
             // Either the segment was not priced - no key domain, no index, a key the
             // reader does not hold - or the whole-segment read is the cheaper of the two.

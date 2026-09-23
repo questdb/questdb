@@ -320,6 +320,45 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAnApplyAheadCommitIntroducingAnAccountIsRepairedByItsOwnKeys() throws Exception {
+        // The change set keeps each key as the pinned base reader's symbol integer, which it
+        // resolves while it walks the WAL. The WAL carries values the base had never seen
+        // when the drain broke on its trigger - here an account first written by the commit
+        // apply raced past it - and the walk has to find each one in the reader it pinned
+        // for the repair. It can, because it walks no commit above that reader's own; a
+        // value the reader could not name would leave the day's domain incomplete, and the
+        // day would read whole rather than by key.
+        armKeyedReplay();
+        assertMemoryLeak(() -> {
+            createView(seedEightAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, "acct-1"), job);
+                final long rowsBefore = count("select count() from lv");
+
+                execute("insert into tx values " + correction("acct-1"));
+                execute("insert into tx values " + row(3, 0, 30, 2, "acct-new"));
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                Assert.assertEquals(
+                        "both days must be repaired by key, the new account's included",
+                        2,
+                        job.keyedReplaySegmentCountForTest()
+                );
+                Assert.assertEquals(
+                        "the second day copies seven accounts forward and the third all eight",
+                        (ACCOUNTS - 1 + ACCOUNTS) * ROWS_PER_ACCOUNT_PER_DAY,
+                        job.keyedReplayMergedRowsForTest()
+                );
+                Assert.assertEquals(rowsBefore + 2, count("select count() from lv"));
+                Assert.assertEquals(1, count("select count() from lv where account_id = 'acct-new'"));
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
     public void testADedupReplacementAppliedBehindTheCleanRangeCheckIsRepairedWhole() throws Exception {
         // The replacement moves 2026-01-03T01:00:01 from acct-1 to acct-5 in the day above
         // the correction's.
@@ -855,6 +894,27 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
         });
     }
 
+    @Test
+    public void testAKeyBudgetOfZeroIsUnlimited() throws Exception {
+        // server.conf documents a key budget at or below zero as unlimited, and the rows
+        // bound discovery reads the same key that way. The change set's key collection has
+        // to agree: a budget of zero must not collect nothing and quietly lose the keyed
+        // route, which keyed.replay.enabled=false is the switch for.
+        assertAKeyBudgetAtOrBelowZeroIsUnlimited(0);
+    }
+
+    @Test
+    public void testANegativeKeyBudgetIsUnlimited() throws Exception {
+        assertAKeyBudgetAtOrBelowZeroIsUnlimited(-1);
+    }
+
+    @Test
+    public void testANegativeKeyBudgetBelowTheIntRangeIsUnlimited() throws Exception {
+        // -(2^32 - 1): an (int) narrowing keeps its low 32 bits, which read as a budget of
+        // one key, and the correction below carries two.
+        assertAKeyBudgetAtOrBelowZeroIsUnlimited(-4_294_967_295L);
+    }
+
     /**
      * Turns the keyed route on, and prices one index open at one base row.
      * <p>
@@ -874,6 +934,39 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
         // would be reported as kept rather than merged. LiveViewSparsePublicationTest owns
         // that route.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "false");
+    }
+
+    /**
+     * Corrects two of the eight accounts inside one closed day under {@code keyBudget}, and
+     * holds the repair to the keyed route and the view to a from-base recompute.
+     */
+    private void assertAKeyBudgetAtOrBelowZeroIsUnlimited(long keyBudget) throws Exception {
+        armKeyedReplay();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, keyBudget);
+        assertMemoryLeak(() -> {
+            createView(seedEightAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, "acct-1"), job);
+                final long rowsBefore = count("select count() from lv");
+
+                commit(correction("acct-1") + ", " + row(2, 0, 31, 0, "acct-2"), job);
+
+                Assert.assertEquals(
+                        "a key budget of " + keyBudget + " must leave the day repaired by key",
+                        1,
+                        job.keyedReplaySegmentCountForTest()
+                );
+                Assert.assertEquals(
+                        "the six untouched accounts' rows are the ones copied forward",
+                        (ACCOUNTS - 2) * ROWS_PER_ACCOUNT_PER_DAY,
+                        job.keyedReplayMergedRowsForTest()
+                );
+                Assert.assertEquals(1, job.segmentRepairCountForTest());
+                Assert.assertEquals(rowsBefore + 2, count("select count() from lv"));
+                assertViewMatchesRecompute();
+            }
+        });
     }
 
     /**

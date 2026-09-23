@@ -123,9 +123,11 @@ import org.jetbrains.annotations.Nullable;
  * <h2>Why the two key spaces</h2>
  * The base table and the view keep separate symbol maps over the same strings, so
  * neither's integers name a key in the other, and the checkpoint roots name keys in a
- * third encoding again. {@link #arm} resolves {@code Q} in all three, and refuses the
- * route rather than dropping a key it cannot resolve against the base: a key missing from
- * a keyed scan is a key whose rows the repair would not correct.
+ * third encoding again. {@code Q} arrives in the base reader's own integers, which the
+ * change-set decomposition resolved against the same pinned reader, and {@link #arm}
+ * resolves it into the other two through the value each integer names. It refuses the
+ * route rather than dropping a key the base reader cannot name: a key missing from a keyed
+ * scan is a key whose rows the repair would not correct.
  */
 public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCursor.RowDrain, QuietCloseable {
     // The reader-local base symbol keys the indexed scan follows, in the order it takes
@@ -182,11 +184,13 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
      * symbol map - is open.
      *
      * @param baseKeyColumnIndex the key column's index in the base scan's metadata
-     * @param baseSymbols        the base reader's symbol map for that column
+     * @param baseSymbols        the base reader's symbol map for that column - the reader
+     *                           {@code keys} were resolved against
      * @param checkpointKeyTypes the key shape a checkpoint partition map keys by, which a
      *                           keyed replay requires to be the single STRING one SYMBOL
      *                           partition column encodes to
-     * @param keys               the segment's logical key values
+     * @param keys               the segment's distinct keys as that reader's symbol
+     *                           integers, without the null one
      * @param hasNullKey         whether the correction also touched the null key, which
      *                           both indexes name under a key of its own
      * @return false when the domain could not be resolved, leaving this disarmed and the
@@ -196,7 +200,7 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
             int baseKeyColumnIndex,
             @NotNull StaticSymbolTable baseSymbols,
             @NotNull ColumnTypes checkpointKeyTypes,
-            @NotNull CharSequenceHashSet keys,
+            @NotNull IntList keys,
             boolean hasNullKey
     ) {
         clear();
@@ -221,18 +225,18 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
             addOutputKey(null);
         }
         for (int i = 0, n = keys.size(); i < n; i++) {
-            final CharSequence key = keys.get(i);
-            if (key == null) {
-                // The change set holds the null key beside its set rather than in it, and
+            final int baseKey = keys.getQuick(i);
+            if (baseKey == SymbolTable.VALUE_IS_NULL) {
+                // The change set holds the null key beside its list rather than in it, and
                 // hasNullKey above is what carries it. A second VALUE_IS_NULL here would
                 // put two cursors over one key into the scan and yield its rows twice.
                 continue;
             }
-            final int baseKey = baseSymbols.keyOf(key);
-            if (baseKey == SymbolTable.VALUE_NOT_FOUND) {
-                // Impossible for a reader pinned at or above the commit that introduced
-                // the value, and refused rather than dropped: a key silently missing from
-                // a keyed scan is a key whose rows it would not repair.
+            final CharSequence key = baseSymbols.valueOf(baseKey);
+            if (key == null) {
+                // Impossible for the reader the key was resolved against, and refused
+                // rather than dropped: a key silently missing from a keyed scan is a key
+                // whose rows it would not repair.
                 clear();
                 return false;
             }

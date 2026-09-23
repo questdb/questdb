@@ -24,13 +24,19 @@
 
 package io.questdb.cairo.lv;
 
-import io.questdb.std.CharSequenceHashSet;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.std.DirectIntIntHashMap;
+import io.questdb.std.DirectIntList;
+import io.questdb.std.DirectLongHashSet;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 /**
  * One out-of-order change set decomposed into the anchor segments it actually touches.
@@ -63,18 +69,27 @@ import org.jetbrains.annotations.Nullable;
  * A segment also collects the partition keys its corrections carried, when the caller asks
  * for them. Inside one closed segment only those keys' output has changed - every other key
  * is already correct - so they are what a keyed replay would follow through the base's
- * posting index instead of reading every row of the segment. The values are the resolved
- * logical ones rather than the WAL's own symbol integers, because those index one
- * transaction's symbol space and a repair replays against a table reader's.
+ * posting index instead of reading every row of the segment. The values are the base
+ * table's own integer symbol keys, as the repair's pinned reader names them, rather than
+ * the WAL's: a WAL symbol integer indexes one transaction's symbol space, while the keyed
+ * scan and the keyed replay both follow the posting index of the reader the repair pins.
+ * {@link #resolveKey} translates one into the other, and the caller resolves against that
+ * same pinned reader, so nothing downstream has to look a key up a second time.
  * <p>
  * The collection is bounded per segment and its overflow is not a denial: a segment past
  * its budget reports {@link #isSegmentKeyDomainComplete(int)} false and reads whole, which
- * costs the same write and only a larger read.
+ * costs the same write and only a larger read. A key the pinned reader does not hold is
+ * treated the same way. The caller walks no transaction above the pinned reader's own, so
+ * every key it resolves is one that reader applied; a key it still cannot find would be a
+ * key whose rows a keyed replay would miss, so it leaves the domain incomplete rather than
+ * dropping out of it.
  * <p>
- * Worker-owned scratch: {@link #of} clears every field, so one instance serves every
- * repair a refresh worker plans.
+ * Worker-owned scratch: {@link #of} clears every field, so one instance serves every repair
+ * a refresh worker plans. The keys live in native memory the instance allocates on the
+ * first keyed repair and retains across repairs, so collecting a key costs no heap object;
+ * {@link #close()} releases it.
  */
-public final class LiveViewCheckpointSegmentChangeSet {
+public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable {
     /**
      * How many distinct closed segments one change set may decompose into before the
      * decomposition stops being worth taking. Each segment costs its own replay, its own
@@ -83,18 +98,26 @@ public final class LiveViewCheckpointSegmentChangeSet {
      * 1.68 and its maximum 35.
      */
     public static final int MAX_CLOSED_SEGMENTS = 64;
+    // No WAL symbol integer is negative but the null one, which resolveKey answers without
+    // the map, so -1 can mark an empty slot.
+    private static final int NO_WAL_KEY = -1;
+    // The key-set ordinal the open segment's keys are deduplicated under. The closed
+    // segments take ordinals 0..MAX_CLOSED_SEGMENTS - 1, in the order they were opened.
+    private static final int RESIDUAL_KEY_SET = MAX_CLOSED_SEGMENTS;
     // segmentStart, segmentEndExclusive, minTs, maxTs, keySetIndex,
     // isKeyDomainOverflowed, hasNullKey per entry, ordered by segmentStart ascending.
     private static final int STRIDE = 7;
     // The affected keys of each segment, in the order the segments were opened rather than
-    // in segment order: an entry names its set by index, so a segment inserted ahead of
-    // another does not have to move anyone's keys. Retained across repairs and cleared
-    // rather than dropped, so a worker pays for the growth once.
-    private final ObjList<CharSequenceHashSet> keySets = new ObjList<>();
-    // The open segment's own affected keys, kept apart from the closed segments' sets
+    // in segment order: an entry names its list by index, so a segment inserted ahead of
+    // another does not have to move anyone's keys. Each list holds distinct base symbol
+    // keys in the order they arrived, which keyMembership guarantees. Retained across
+    // repairs and cleared rather than dropped, so a worker pays for the growth once; a list
+    // allocates its native block on its first key.
+    private final ObjList<DirectIntList> keySets = new ObjList<>();
+    // The open segment's own affected keys, kept apart from the closed segments' lists
     // because the residual is not a segment: it has no start, no end and no entry, and the
     // repair that reads it is the resume rather than a segment replay.
-    private final CharSequenceHashSet residualKeys = new CharSequenceHashSet();
+    private final DirectIntList residualKeys = new DirectIntList(0, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
     // Exact timestamps of rows newly inserted into the open segment while collecting its
     // key domain. On an unfiltered, non-deduplicating base each contributes exactly one
     // live-view output row, so this is the arithmetic replacement for scanning every
@@ -110,26 +133,38 @@ public final class LiveViewCheckpointSegmentChangeSet {
     private boolean residualKeyDomainOverflowed;
     private boolean residualRowsSorted;
     // How many distinct keys one segment may collect before the collection stops being
-    // worth its memory. Zero collects none, which is what a view with no keyed repair
-    // available - or a caller that cannot read the key column - asks for.
+    // worth its memory. Zero collects none, which is what a caller that cannot read the key
+    // column asks for. This is not the configured budget's zero: the refresh job maps a
+    // configured budget at or below zero, which means unlimited, to Integer.MAX_VALUE.
     private int maxKeysPerSegment;
     // Containment cache for the row loop: consecutive rows of one commit almost always
     // share a segment, and a hit skips both the floor arithmetic and the lookup.
     private long cachedSegmentEndExclusive;
     private long cachedSegmentStart;
+    // (keySetOrdinal << 32 | baseKey) for every key any list holds, so one probe answers
+    // whether a key is already in its segment's list. One set for every list rather than a
+    // set per list: the lists grow and clear together, and a single block is one
+    // allocation to retain and one to free. Allocated by the first keyed repair.
+    private DirectLongHashSet keyMembership;
     private boolean overflowed;
     private long residualMaxTs;
     private long residualMinTs;
+    // One WAL transaction's symbol integer -> the pinned reader's, so a key a transaction
+    // repeats row after row costs one reverse lookup rather than one per row. Scoped to a
+    // transaction because the WAL writer reuses local symbol ids across them. Opened by the
+    // first keyed repair.
+    private DirectIntIntHashMap resolvedKeys;
 
     /**
      * Folds one qualifying base row into the decomposition. A row at or above
      * {@code activeSegmentStart} joins the residual; anything below it lands in - or opens -
      * the closed segment that holds it.
      *
-     * @param key the row's resolved partition key, or null for the null symbol. Ignored
-     *            when the caller asked for no keys, and read only for a row that lands in a
-     *            closed segment - a residual row is repaired by the ordinary resume, which
-     *            follows no key
+     * @param key the row's partition key as the pinned base reader's symbol integer -
+     *            {@link SymbolTable#VALUE_IS_NULL} for the null symbol and
+     *            {@link SymbolTable#VALUE_NOT_FOUND} for a value that reader does not hold,
+     *            which is what {@link #resolveKey} returns. Ignored unless
+     *            {@link #isCollectingKeys()} holds
      * @return false once the change set gives up, after which the decomposition is
      * abandoned and the caller falls back to the union range. It gives up when the row
      * would open more than {@link #MAX_CLOSED_SEGMENTS} closed segments, and when the plan
@@ -137,7 +172,7 @@ public final class LiveViewCheckpointSegmentChangeSet {
      * end above {@code activeSegmentStart}. Every later row is refused too, since
      * {@link #isOverflowed()} latches
      */
-    public boolean addRow(long ts, @Nullable CharSequence key, @NotNull LiveViewCheckpointAnchorPlan anchorPlan) {
+    public boolean addRow(long ts, int key, @NotNull LiveViewCheckpointAnchorPlan anchorPlan) {
         if (ts >= activeSegmentStart) {
             widenResidual(ts, ts);
             if (collectsResidualKeys) {
@@ -201,6 +236,14 @@ public final class LiveViewCheckpointSegmentChangeSet {
         residualKeyDomainOverflowed = true;
     }
 
+    @Override
+    public void close() {
+        Misc.freeObjListAndClear(keySets);
+        Misc.free(residualKeys);
+        keyMembership = Misc.free(keyMembership);
+        resolvedKeys = Misc.free(resolvedKeys);
+    }
+
     /**
      * @return the number of distinct closed anchor segments the change set touches
      */
@@ -247,16 +290,17 @@ public final class LiveViewCheckpointSegmentChangeSet {
     }
 
     /**
-     * @return the affected keys of the open anchor segment - the resolved logical values
-     * the corrections at or above {@code activeSegmentStart} carried, which a keyed resume
-     * follows through the base's posting index instead of reading every row above its
-     * anchor. Meaningless unless {@link #isResidualKeyDomainComplete()} holds.
+     * @return the affected keys of the open anchor segment - the pinned base reader's
+     * symbol keys the corrections at or above {@code activeSegmentStart} carried, distinct,
+     * which a keyed resume follows through the base's posting index instead of reading
+     * every row above its anchor. Meaningless unless {@link #isResidualKeyDomainComplete()}
+     * holds, and valid until the next {@link #of}.
      * <p>
-     * The set carries no null, which {@link #hasResidualNullKey()} reports separately, for
+     * The list carries no null, which {@link #hasResidualNullKey()} reports separately, for
      * the same reason a closed segment's does: a duplicate null in a keyed scan's key list
      * yields the null key's rows twice.
      */
-    public @NotNull CharSequenceHashSet getResidualKeys() {
+    public @NotNull DirectIntList getResidualKeys() {
         return residualKeys;
     }
 
@@ -270,10 +314,10 @@ public final class LiveViewCheckpointSegmentChangeSet {
 
     /**
      * @return whether the keys collected for the open anchor segment are all of them.
-     * False when the caller collected none, when the collection reached its budget, and
-     * when any commit was folded through {@link #addResidual} without its rows being
-     * walked - in every case the resume has to read every row above its anchor, which
-     * costs what it always did.
+     * False when the caller collected none, when the collection reached its budget, when a
+     * key did not resolve against the pinned reader, and when any commit was folded through
+     * {@link #addResidual} without its rows being walked - in every case the resume has to
+     * read every row above its anchor, which costs what it always did.
      */
     public boolean isResidualKeyDomainComplete() {
         return collectsResidualKeys && !residualKeyDomainOverflowed;
@@ -306,16 +350,17 @@ public final class LiveViewCheckpointSegmentChangeSet {
     }
 
     /**
-     * @return the affected keys of closed segment {@code index} - the resolved logical
-     * values the corrections carried, which a keyed replay would follow through the base's
-     * posting index. Empty when the caller collected none, and meaningless unless
-     * {@link #isSegmentKeyDomainComplete(int)} holds.
+     * @return the affected keys of closed segment {@code index} - the pinned base reader's
+     * symbol keys the corrections carried, distinct, which a keyed replay would follow
+     * through the base's posting index. Empty when the caller collected none, meaningless
+     * unless {@link #isSegmentKeyDomainComplete(int)} holds, and valid until the next
+     * {@link #of}.
      * <p>
-     * The set carries no null, which {@link #hasSegmentNullKey(int)} reports separately -
-     * it is a partition key like any other, and holding it beside the set rather than in
-     * it is what lets a caller walk the set by index without testing for one.
+     * The list carries no null, which {@link #hasSegmentNullKey(int)} reports separately -
+     * it is a partition key like any other, and holding it beside the list rather than in
+     * it is what lets a caller walk the list by index without testing for one.
      */
-    public @NotNull CharSequenceHashSet getSegmentKeys(int index) {
+    public @NotNull DirectIntList getSegmentKeys(int index) {
         return keySets.getQuick((int) segments.getQuick(index * STRIDE + 4));
     }
 
@@ -329,9 +374,10 @@ public final class LiveViewCheckpointSegmentChangeSet {
 
     /**
      * @return whether the keys collected for closed segment {@code index} are all of them.
-     * False once the segment reached its key budget, or when the caller collected no keys
-     * at all - in both cases a repair of that segment has to read every row of it, which
-     * costs the same write and only a larger read.
+     * False once the segment reached its key budget, once one of its keys did not resolve
+     * against the pinned reader, or when the caller collected no keys at all - in every
+     * case a repair of that segment has to read every row of it, which costs the same
+     * write and only a larger read.
      */
     public boolean isSegmentKeyDomainComplete(int index) {
         return maxKeysPerSegment > 0 && segments.getQuick(index * STRIDE + 5) == 0;
@@ -344,6 +390,16 @@ public final class LiveViewCheckpointSegmentChangeSet {
      */
     public long getSegmentStart(int index) {
         return segments.getQuick(index * STRIDE);
+    }
+
+    /**
+     * @return whether the repair {@link #of} last bound this scratch to collects keys at
+     * all. When it does not, {@link #addRow} reads no row's key, closed segment or
+     * residual, so a caller can skip {@link #resolveKey} - and the base symbol lookup it
+     * costs - for every row.
+     */
+    public boolean isCollectingKeys() {
+        return maxKeysPerSegment > 0;
     }
 
     /**
@@ -393,6 +449,21 @@ public final class LiveViewCheckpointSegmentChangeSet {
             keySets.getQuick(i).clear();
         }
         residualKeys.clear();
+        if (keyMembership != null) {
+            keyMembership.clear();
+        } else if (maxKeysPerSegment > 0) {
+            keyMembership = new DirectLongHashSet(16, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+        }
+        if (maxKeysPerSegment > 0 && resolvedKeys == null) {
+            resolvedKeys = new DirectIntIntHashMap(
+                    16,
+                    0.5,
+                    NO_WAL_KEY,
+                    SymbolTable.VALUE_NOT_FOUND,
+                    MemoryTag.NATIVE_LIVE_VIEW_IN_MEM,
+                    false
+            );
+        }
         residualRowTimestamps.clear();
         residualRowsSorted = true;
         hasResidualNullKey = false;
@@ -404,6 +475,49 @@ public final class LiveViewCheckpointSegmentChangeSet {
         // An empty cache must miss on the first row whatever it is.
         cachedSegmentStart = Long.MAX_VALUE;
         cachedSegmentEndExclusive = Long.MIN_VALUE;
+    }
+
+    /**
+     * Starts resolving the keys of one WAL transaction. The WAL writer reuses its local
+     * symbol integers across transactions, so a translation {@link #resolveKey} cached for
+     * the previous one may name a different value in this one.
+     */
+    public void ofTransaction() {
+        if (resolvedKeys != null) {
+            // Back to the initial block rather than a clear of the grown one: a clear costs
+            // the whole capacity, and one wide transaction would otherwise charge it to
+            // every narrow transaction after it.
+            resolvedKeys.restoreInitialCapacity();
+        }
+    }
+
+    /**
+     * Translates one row's WAL symbol integer into the pinned base reader's, which is the
+     * key {@link #addRow} takes. The translation goes through the value, since the two
+     * integers index different symbol spaces, and is cached for the rest of the
+     * transaction {@link #ofTransaction} opened.
+     *
+     * @param walKey      the row's symbol integer in its WAL transaction's own space
+     * @param walSymbols  that transaction's symbol table
+     * @param baseSymbols the pinned base reader's symbol table for the same column
+     * @return the base reader's key, {@link SymbolTable#VALUE_IS_NULL} for the null symbol,
+     * or {@link SymbolTable#VALUE_NOT_FOUND} for a value the base reader does not hold
+     */
+    public int resolveKey(int walKey, @NotNull StaticSymbolTable walSymbols, @NotNull StaticSymbolTable baseSymbols) {
+        if (walKey < 0 || resolvedKeys == null) {
+            // The null symbol, and anything else no WAL value is stored under, which
+            // valueOf answers with null and keyOf maps to VALUE_IS_NULL. A change set
+            // collecting no keys has no cache to consult either.
+            return baseSymbols.keyOf(walSymbols.valueOf(walKey));
+        }
+        resolvedKeys.reopen();
+        final long index = resolvedKeys.keyIndex(walKey);
+        if (index < 0) {
+            return resolvedKeys.valueAt(index);
+        }
+        final int baseKey = baseSymbols.keyOf(walSymbols.valueOf(walKey));
+        resolvedKeys.putAt(index, walKey, baseKey);
+        return baseKey;
     }
 
     /**
@@ -431,25 +545,17 @@ public final class LiveViewCheckpointSegmentChangeSet {
      * Joins one row's key to the open segment's domain, on the same terms
      * {@link #addKey} joins a closed segment's.
      */
-    private void addResidualKey(CharSequence key) {
+    private void addResidualKey(int key) {
         if (!collectsResidualKeys) {
             return;
         }
-        if (key == null) {
+        if (key == SymbolTable.VALUE_IS_NULL) {
             hasResidualNullKey = true;
             return;
         }
-        final int keyIndex = residualKeys.keyIndex(key);
-        if (keyIndex < 0) {
-            return;
-        }
-        if (residualKeys.size() >= maxKeysPerSegment) {
+        if (!addDistinctKey(residualKeys, RESIDUAL_KEY_SET, key)) {
             residualKeyDomainOverflowed = true;
-            return;
         }
-        // addAt copies the sequence, which the WAL's own symbol table hands out as a
-        // flyweight over its mapped pages.
-        residualKeys.addAt(keyIndex, key);
     }
 
     /**
@@ -465,41 +571,57 @@ public final class LiveViewCheckpointSegmentChangeSet {
      * Joins one row's key to the segment at {@code base}, and records the budget overflow
      * that leaves the segment's key domain incomplete.
      */
-    private void addKey(int base, CharSequence key) {
+    private void addKey(int base, int key) {
         if (maxKeysPerSegment < 1) {
             return;
         }
-        if (key == null) {
-            // Recorded beside the segment rather than in the set, so it costs no budget
-            // and no slot - and, more to the point, so a caller walking the set by index
+        if (key == SymbolTable.VALUE_IS_NULL) {
+            // Recorded beside the segment rather than in the list, so it costs no budget
+            // and no slot - and, more to the point, so a caller walking the list by index
             // never has to test its entries for null. A duplicate null in a keyed scan's
             // key list yields the null key's rows twice.
             segments.setQuick(base + 6, 1);
             return;
         }
-        final CharSequenceHashSet keys = keySets.getQuick((int) segments.getQuick(base + 4));
-        final int keyIndex = keys.keyIndex(key);
-        if (keyIndex < 0) {
-            return;
-        }
-        if (keys.size() >= maxKeysPerSegment) {
+        final int keySetIndex = (int) segments.getQuick(base + 4);
+        if (!addDistinctKey(keySets.getQuick(keySetIndex), keySetIndex, key)) {
             segments.setQuick(base + 5, 1);
-            return;
         }
-        // addAt copies the sequence, which the WAL's own symbol table hands out as a
-        // flyweight over its mapped pages.
-        keys.addAt(keyIndex, key);
+    }
+
+    /**
+     * Appends {@code key} to {@code keys} unless the list already holds it.
+     *
+     * @return false when the key leaves the list's domain incomplete: it did not resolve
+     * against the pinned reader, or it is new and the list already holds its budget
+     */
+    private boolean addDistinctKey(DirectIntList keys, int keySetOrdinal, int key) {
+        if (key < 0) {
+            // VALUE_NOT_FOUND. A key missing from a keyed scan is a key whose rows it
+            // would not repair, so it demotes the domain rather than dropping out of it.
+            return false;
+        }
+        final long member = ((long) keySetOrdinal << 32) | key;
+        if (keys.size() >= maxKeysPerSegment) {
+            return keyMembership.contains(member);
+        }
+        if (keyMembership.add(member)) {
+            keys.add(key);
+        }
+        return true;
     }
 
     /**
      * @return the entry's base offset in {@link #segments}
      */
     private int insertAt(int index, long segmentStart, long segmentEndExclusive, long ts) {
-        // The key set is taken off the pool in discovery order and named by index, so an
+        // The key list is taken off the pool in discovery order and named by index, so an
         // entry inserted ahead of another leaves every other segment's keys where they are.
         final int keySetIndex = segments.size() / STRIDE;
         if (keySets.size() <= keySetIndex) {
-            keySets.extendAndSet(keySetIndex, new CharSequenceHashSet());
+            // Zero capacity allocates nothing until the list's first key, so a segment the
+            // caller collects no keys for costs no native block.
+            keySets.extendAndSet(keySetIndex, new DirectIntList(0, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM));
         }
         // Inserted in reverse so each add() lands ahead of the ones before it, leaving
         // (segmentStart, segmentEndExclusive, minTs, maxTs, keySetIndex,

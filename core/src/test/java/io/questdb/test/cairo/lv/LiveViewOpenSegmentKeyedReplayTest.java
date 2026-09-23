@@ -729,6 +729,39 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAKeyBudgetOfZeroStillResumesTheOpenSegmentByKey() throws Exception {
+        // server.conf documents a key budget at or below zero as unlimited. The open
+        // segment's domain is collected under the same budget as a closed segment's, so a
+        // budget of zero must still collect it rather than leave the resume reading every
+        // row above its anchor.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 0);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+
+                commit(row(4, 2, 35, "acct-1"), job);
+
+                assertQuery("""
+                        SELECT o3_open_segment_keyed_resume_count, o3_open_segment_cold_keyed_replay_count
+                        FROM live_views()""")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                o3_open_segment_keyed_resume_count\to3_open_segment_cold_keyed_replay_count
+                                1\t0
+                                """);
+                Assert.assertEquals(0, job.openSegmentKeyedUnpricedCountForTest());
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
     public void testAKeyedResumeSurvivesARestartAndAFurtherCorrection() throws Exception {
         // The ladder a keyed resume leaves has to be restorable: its roots hold the
         // corrected keys' state and every other key's entry exactly as the old root wrote

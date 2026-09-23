@@ -25,8 +25,11 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentLoop;
-import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.DirectIntList;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -41,7 +44,9 @@ import org.junit.Test;
  * session on the way in, session to scratch on the way out), and it has to stay attached
  * to the segment it belongs to while the queue drains from its head.
  * <p>
- * A pure-Java carrier holding no native memory, so no {@code assertMemoryLeak}.
+ * The loop itself holds no native memory, but the change set it copies a domain from
+ * keeps its keys in native lists, so the cases that build one run under
+ * {@code assertMemoryLeak}.
  */
 public class LiveViewCheckpointSegmentLoopTest {
 
@@ -63,7 +68,37 @@ public class LiveViewCheckpointSegmentLoopTest {
     }
 
     @Test
-    public void testAnUnpricedSegmentAheadOfAPricedOneKeepsThePricedOnesKeys() {
+    public void testAnUnpricedSegmentAheadOfAPricedOneKeepsThePricedOnesKeys() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (DirectIntList source = keys(7)) {
+                assertAnUnpricedSegmentAheadOfAPricedOneKeepsThePricedOnesKeys(source);
+            }
+        });
+    }
+
+    @Test
+    public void testTheKeyDomainIsCopiedRatherThanReferenced() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (DirectIntList source = keys(1, 2)) {
+                assertTheKeyDomainIsCopiedRatherThanReferenced(source);
+            }
+        });
+    }
+
+    @Test
+    public void testTheKeyDomainSurvivesBothLegsOfAPark() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    DirectIntList first = keys(1);
+                    DirectIntList second = keys(2, 3);
+                    DirectIntList other = keys(99)
+            ) {
+                assertTheKeyDomainSurvivesBothLegsOfAPark(first, second, other);
+            }
+        });
+    }
+
+    private static void assertAnUnpricedSegmentAheadOfAPricedOneKeepsThePricedOnesKeys(DirectIntList source) {
         // The fixture the production shape produces, and the one that leaves a gap in the
         // pool of key sets: the loop's first segment carries no domain and the one behind
         // it does. Everything that walks the pool - the copy across the park, the clear
@@ -71,7 +106,7 @@ public class LiveViewCheckpointSegmentLoopTest {
         final LiveViewCheckpointSegmentLoop parked = new LiveViewCheckpointSegmentLoop();
         parked.ofChangeSet(0, 1, 2, 100, 200, Numbers.LONG_NULL, Numbers.LONG_NULL, true, 2);
         parked.addSegment(10, 11, 12, null, false);
-        parked.addSegment(20, 21, 22, keys("acct-7"), false);
+        parked.addSegment(20, 21, 22, source, false);
         // The first segment is taken off the queue and parks mid-replay.
         parked.removeFirstSegment();
 
@@ -83,75 +118,76 @@ public class LiveViewCheckpointSegmentLoopTest {
         Assert.assertEquals(20, resumed.getInFlightSegmentStart());
         Assert.assertNotNull(resumed.getInFlightKeys());
         Assert.assertEquals(1, resumed.getInFlightKeys().size());
-        Assert.assertTrue(resumed.getInFlightKeys().contains("acct-7"));
+        Assert.assertEquals(7, resumed.getInFlightKeys().getQuick(0));
     }
 
-    @Test
-    public void testTheKeyDomainIsCopiedRatherThanReferenced() {
+    private static void assertTheKeyDomainIsCopiedRatherThanReferenced(DirectIntList source) {
         // The change set a loop takes its keys from is refilled by the next repair the
         // worker classifies, so a loop holding the set itself would arm against whatever
         // that turn collected. Clearing the source after the add is what a refill looks
         // like from here.
-        final CharSequenceHashSet source = keys("acct-1", "acct-2");
         final LiveViewCheckpointSegmentLoop loop = new LiveViewCheckpointSegmentLoop();
         loop.ofChangeSet(0, 1, 2, 100, 200, Numbers.LONG_NULL, Numbers.LONG_NULL, true, 2);
         loop.addSegment(10, 11, 12, source, true);
 
         source.clear();
-        source.add("acct-9");
+        source.add(9);
         loop.removeFirstSegment();
 
-        final CharSequenceHashSet carried = loop.getInFlightKeys();
+        final IntList carried = loop.getInFlightKeys();
         Assert.assertNotNull(carried);
         Assert.assertEquals(2, carried.size());
-        Assert.assertTrue(carried.contains("acct-1"));
-        Assert.assertTrue(carried.contains("acct-2"));
-        Assert.assertFalse(carried.contains("acct-9"));
+        Assert.assertEquals(1, carried.getQuick(0));
+        Assert.assertEquals(2, carried.getQuick(1));
         Assert.assertTrue(loop.hasInFlightNullKey());
     }
 
-    @Test
-    public void testTheKeyDomainSurvivesBothLegsOfAPark() {
+    private static void assertTheKeyDomainSurvivesBothLegsOfAPark(
+            DirectIntList first,
+            DirectIntList second,
+            DirectIntList other
+    ) {
         // Scratch to session on the way in, session back to scratch on the way out. Both
         // legs are a copyFrom, and the scratch on either end is reused by every repair the
         // worker plans, so a leg that referenced rather than copied would hand the resuming
         // turn a domain something else had since overwritten.
         final LiveViewCheckpointSegmentLoop scratch = new LiveViewCheckpointSegmentLoop();
         scratch.ofChangeSet(0, 1, 2, 100, 200, 30, 40, true, 2);
-        scratch.addSegment(10, 11, 12, keys("acct-1"), false);
-        scratch.addSegment(20, 21, 22, keys("acct-2", "acct-3"), true);
+        scratch.addSegment(10, 11, 12, first, false);
+        scratch.addSegment(20, 21, 22, second, true);
         scratch.removeFirstSegment();
 
         final LiveViewCheckpointSegmentLoop session = new LiveViewCheckpointSegmentLoop();
         session.copyFrom(scratch);
         // The worker plans something else entirely against the same scratch.
         scratch.ofChangeSet(0, 5, 6, 500, 600, Numbers.LONG_NULL, Numbers.LONG_NULL, false, 6);
-        scratch.addSegment(90, 91, 92, keys("other"), false);
+        scratch.addSegment(90, 91, 92, other, false);
         scratch.copyFrom(session);
 
         Assert.assertEquals(10, scratch.getInFlightSegmentStart());
         Assert.assertEquals(1, scratch.size());
         Assert.assertEquals(20, scratch.getSegmentStart(0));
         Assert.assertEquals(30, scratch.getResidualMinTs());
-        final CharSequenceHashSet inFlight = scratch.getInFlightKeys();
+        final IntList inFlight = scratch.getInFlightKeys();
         Assert.assertNotNull(inFlight);
-        Assert.assertTrue(inFlight.contains("acct-1"));
+        Assert.assertEquals(1, inFlight.size());
+        Assert.assertEquals(1, inFlight.getQuick(0));
 
         scratch.segmentRepaired();
         scratch.removeFirstSegment();
-        final CharSequenceHashSet next = scratch.getInFlightKeys();
+        final IntList next = scratch.getInFlightKeys();
         Assert.assertNotNull(next);
         Assert.assertEquals(2, next.size());
-        Assert.assertTrue(next.contains("acct-2"));
-        Assert.assertTrue(next.contains("acct-3"));
+        Assert.assertEquals(2, next.getQuick(0));
+        Assert.assertEquals(3, next.getQuick(1));
         Assert.assertTrue(scratch.hasInFlightNullKey());
     }
 
-    private static CharSequenceHashSet keys(CharSequence... values) {
-        final CharSequenceHashSet set = new CharSequenceHashSet();
-        for (CharSequence value : values) {
-            set.add(value);
+    private static DirectIntList keys(int... values) {
+        final DirectIntList list = new DirectIntList(values.length, MemoryTag.NATIVE_DEFAULT);
+        for (int value : values) {
+            list.add(value);
         }
-        return set;
+        return list;
     }
 }
