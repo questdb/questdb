@@ -40,7 +40,8 @@ import org.junit.Test;
  * whatever the shipped default happened to be, and changing that default moved their coverage without
  * failing anything.
  * <p>
- * This fails if a fourth path is added and forgets the switch, or if one of the three drifts.
+ * This fails if one of the three paths drifts. It cannot detect a fourth path that forgets the switch:
+ * nothing enumerates the ways a test acquires a configuration, so a new one must be added here by hand.
  * <p>
  * Paths 1 and 2 are asserted here. Path 3 is asserted by {@link BootstrapCommitModeTest}, which this class
  * cannot reach: it extends {@code AbstractCairoTest}, while {@code createDummyConfiguration} lives on

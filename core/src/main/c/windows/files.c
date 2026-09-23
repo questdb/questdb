@@ -1020,9 +1020,11 @@ static jint rename0(jlong lpszOld, jlong lpszNew, DWORD flags) {
             wchar_t buf2[len];
             MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszNew, -1, buf2, len);
 
-            /* MoveFileExW without MOVEFILE_REPLACE_EXISTING behaves exactly as MoveFileW: it FAILS with
-             * ERROR_ALREADY_EXISTS when the destination is present. Callers depend on that (see
-             * TableWriter's Files.WINDOWS_ERROR_FILE_EXISTS branch), so the flag must never be added here. */
+            /* Without MOVEFILE_REPLACE_EXISTING, MoveFileExW FAILS with ERROR_ALREADY_EXISTS when the destination
+             * is present, as MoveFileW does. Callers depend on that (see TableWriter's
+             * Files.WINDOWS_ERROR_FILE_EXISTS branch), so the flag must never be added here. Unlike MoveFileW, it
+             * does not copy and delete a file moved to another volume, as MOVEFILE_COPY_ALLOWED is not set: that
+             * move fails with ERROR_NOT_SAME_DEVICE, reported as FILES_RENAME_ERR_EXDEV. */
             if (MoveFileExW(buf1, buf2, flags)) {
                 return FILES_RENAME_ERR_OK;
             }

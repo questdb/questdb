@@ -2931,8 +2931,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         if (key == PropertyKey.CAIRO_COMMIT_MODE) {
-            // The database-wide default is a durability contract. A typo must not silently select NOSYNC,
-            // especially now that ADAPTIVE is the shipped default.
+            // The database-wide mode is a durability contract. A typo such as "syncc" must not silently fall
+            // back to NOSYNC.
             throw new ServerConfigurationException("invalid configuration value [key="
                     + key.getPropertyPath() + ", value=" + commitMode
                     + ", expected=nosync|async|sync|adaptive]");

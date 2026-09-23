@@ -367,7 +367,7 @@ public class WalEventCursor {
     private int acceptUnverified(long recordStart, long recordTxn, int length) {
         if (!isUnverifiedReadLogged) {
             isUnverifiedReadLogged = true;
-            LOG.info().$("WAL event record has no intact checksum entry, reading it unverified [sidecar=").$(sidecarPath)
+            LOG.advisory().$("WAL event record has no intact checksum entry, reading it unverified [sidecar=").$(sidecarPath)
                     .$(", txn=").$(recordTxn)
                     .$(", offset=").$(recordStart)
                     .$(", len=").$(length)

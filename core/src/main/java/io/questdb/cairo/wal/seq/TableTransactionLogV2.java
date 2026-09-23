@@ -543,23 +543,16 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             return true;
         }
 
-        // Verify the per-record CRC in the reserved trailing slot, if present.
-        // calculateCvAreaChecksum never returns 0, so stored==0 means "no CRC written" — but that has TWO
-        // possible causes the CRC alone cannot tell apart:
-        //   (1) a genuine LEGACY/V1-compat record written before the per-record CRC existed. Its body is fully
-        //       populated (walId, structureVersion, ...), so it is read unverified for backward compatibility.
-        //   (2) an ABSENT record: a slot never written back to the device (all-zero) that the cursor reached
-        //       because the header MAX_TXN was made device-durable AHEAD of this record's body. Under adaptive
-        //       W>0 the ordered flush (data->events->sequencer, then the header) normally prevents this, so it
-        //       is only reachable on a device that reorders those flushes across the crash — narrow, but not
-        //       provably impossible. Returning here would silently inject a garbage all-zero txn.
-        // Cheap, clearly-safe disambiguation: NO legitimate record — legacy or current — ever carries
-        // walId == 0 (real writers use walId >= 1; STRUCTURAL_CHANGE_WAL_ID = -1; DROP_TABLE_WAL_ID = -2;
-        // MIN_WAL_ID = -2), and the cursor only ever reads txns below the committed MAX_TXN, all of which have
-        // a real walId. So stored==0 AND walId==0 is definitionally an absent/torn record: route it into the
-        // SAME loud torn-record error the recovery/apply path already handles (it stops at the last good
-        // record) rather than reading garbage. A legitimate legacy record keeps its historical unverified read.
-        // A non-zero stored slot that does not match the body checksum means a torn/partially-written record.
+        // Verify the per-record CRC in the reserved trailing slot, if present. calculateCvAreaChecksum never
+        // returns 0, so a stored 0 means "no CRC written". That has three causes the slot cannot tell apart, and
+        // all three read the record unverified:
+        //   (1) a record written by a binary that predates the per-record CRC. Its body is valid.
+        //   (2) an absent record: an all-zero slot the cursor reached because the header's MAX_TXN became
+        //       durable ahead of the record body. No real record carries walId 0 (writers use walId >= 1,
+        //       STRUCTURAL_CHANGE_WAL_ID = -1, DROP_TABLE_WAL_ID = -2), and ApplyWal2TableJob rejects walId 0,
+        //       so nothing is applied from it.
+        //   (3) a torn write that zeroed only this slot. The checksum cannot catch it.
+        // A non-zero stored CRC that does not match the body means a torn or partially written record.
         private void verifyRecordChecksum() {
             // The rules live in TxnLogRecordVerifier so V1 -- whose CRC sits in the additive
             // _txnlog.c sidecar rather than a reserved slot -- reaches the same verdict from the

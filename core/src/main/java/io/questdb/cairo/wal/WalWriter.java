@@ -1816,14 +1816,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private void openNewSegment() {
-        // Deferred 2 (group commit): flush any pending device flush of the CURRENT segment BEFORE we close
-        // and replace its column/events files. flushPendingDurable() atomically flushes, clears pending, and
-        // DEREGISTERS this writer from the background flush queue under the writer monitor — so once it
-        // returns, no background flusher will iterate the column list we are about to mutate (a flusher that
-        // grabs the monitor afterwards finds pendingDurableSeqTxn == -1 and no-ops without touching any fd).
-        // This closes the use-after-close race between the background flusher's fdatasync of the segment's
-        // column/events fds and this segment roll's close/reopen of them. A no-op when nothing is pending
-        // (W=0, or already flushed), so the constructor's first openNewSegment and the W=0 path are untouched.
+        // Group commit: flush any pending sequencer flush BEFORE this segment roll. flushPendingDurable()
+        // flushes, clears pending, and DEREGISTERS this writer from the background flush queue under the writer
+        // monitor, so once it returns a flusher that grabs the monitor finds pendingDurableSeqTxn == -1 and
+        // no-ops. The flush covers only the sequencer txn log: the segment's column and event files were
+        // fdatasynced before their commits were sequenced. A no-op when nothing is pending (W=0, or already
+        // flushed), so the constructor's first openNewSegment and the W=0 path are untouched.
         flushPendingDurable();
         boolean refreshed = refreshSymbolWatermarks();
         final int newSegmentId = segmentId + 1;

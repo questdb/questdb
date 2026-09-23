@@ -872,7 +872,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         distressed = true;
                         engine.handleDataSyncFailure(e);
                     }
-                    LOG.error().$("could not fsync after column added, non-critical [path=").$(path)
+                    LOG.error().$("could not open or fsync table dir after column added, non-critical [path=").$(path)
                             .$(", msg=").$safe(e.getFlyweightMessage())
                             .$(", errno=").$(e.getErrno())
                             .I$();

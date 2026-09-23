@@ -24,7 +24,14 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.Chars;
+
 public final class CommitMode {
+    /**
+     * Returned by {@link #fromString(CharSequence)} for a token that is not a recognized mode name, so the
+     * caller can reject it with a precise error. Never a valid mode.
+     */
+    public static final int UNKNOWN = -2;
     /**
      * "No enrolment recorded" sentinel for the ENROLMENT record in {@code _meta}
      * ({@link io.questdb.cairo.TableUtils#META_OFFSET_ENROLLED_COMMIT_MODE}), which is the only place a
@@ -44,11 +51,16 @@ public final class CommitMode {
     public static final int SYNC = 1;
     public static final int NOSYNC = 2;
     /**
-     * ADAPTIVE: every WAL commit is made durable (fdatasync of segment column data →
-     * WAL-e events file → sequencer record, in that order) before the commit returns.
-     * Unlike SYNC (which relies on msync alone), ADAPTIVE additionally calls fdatasync
-     * after each msync so that a crash-replay can recover every acked transaction.
-     * The table-apply (TableWriter) path is unchanged; laziness there is a separate task.
+     * ADAPTIVE: a durable WAL and a lazily applied table.
+     * <p>
+     * A WAL commit fdatasyncs its private segment files (column data, then the {@code _event} file) before
+     * the txn is sequenced. The shared sequencer record is fdatasynced at once when the group-commit window
+     * W ({@code cairo.adaptive.commit.group.window}, 50 ms by default) is 0, and otherwise within W, batched
+     * with other commits. A crash therefore loses only acknowledged commits younger than W: RPO <= W. The
+     * durable-ack frontier advances only after the sequencer flush.
+     * <p>
+     * The table-apply path is lazy: {@link #appliesColumnSync} excludes ADAPTIVE, and the durable epoch plus
+     * recovery roll-forward from the WAL make the lazily applied state crash-safe.
      */
     public static final int ADAPTIVE = 3;
 
@@ -140,16 +152,16 @@ public final class CommitMode {
         if (mode == null) {
             return UNKNOWN;
         }
-        if (io.questdb.std.Chars.equalsIgnoreCase(mode, "nosync")) {
+        if (Chars.equalsIgnoreCase(mode, "nosync")) {
             return NOSYNC;
         }
-        if (io.questdb.std.Chars.equalsIgnoreCase(mode, "sync")) {
+        if (Chars.equalsIgnoreCase(mode, "sync")) {
             return SYNC;
         }
-        if (io.questdb.std.Chars.equalsIgnoreCase(mode, "async")) {
+        if (Chars.equalsIgnoreCase(mode, "async")) {
             return ASYNC;
         }
-        if (io.questdb.std.Chars.equalsIgnoreCase(mode, "adaptive")) {
+        if (Chars.equalsIgnoreCase(mode, "adaptive")) {
             return ADAPTIVE;
         }
         return UNKNOWN;
@@ -160,25 +172,13 @@ public final class CommitMode {
      * by the startup durability log lines and the configuration error messages.
      */
     public static String toString(int commitMode) {
-        switch (commitMode) {
-            case SYNC:
-                return "sync";
-            case ASYNC:
-                return "async";
-            case NOSYNC:
-                return "nosync";
-            case ADAPTIVE:
-                return "adaptive";
-            case UNSET:
-                return "unset";
-            default:
-                return "unknown";
-        }
+        return switch (commitMode) {
+            case SYNC -> "sync";
+            case ASYNC -> "async";
+            case NOSYNC -> "nosync";
+            case ADAPTIVE -> "adaptive";
+            case UNSET -> "unset";
+            default -> "unknown";
+        };
     }
-
-    /**
-     * Returned by {@link #fromString(CharSequence)} for a token that is not a recognized mode name, so the
-     * caller can reject it with a precise error. Never a valid mode.
-     */
-    public static final int UNKNOWN = -2;
 }

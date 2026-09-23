@@ -162,7 +162,7 @@ public class WalEventReader implements Closeable {
                 if (magic == 0 && versionAndEntrySize == 0) {
                     // A lost page, not a malformed file: under NOSYNC/ASYNC a power cut can lose _event.c's
                     // first page while _event survives. Read the segment unverified, as with no sidecar.
-                    LOG.info().$("WAL event checksum sidecar header is zero, reading the segment unverified [path=")
+                    LOG.advisory().$("WAL event checksum sidecar header is zero, reading the segment unverified [path=")
                             .$(path).I$();
                     checksumRequired = false;
                     eventChecksumMem.close();
