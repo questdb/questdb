@@ -222,7 +222,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
             }
         } catch (Throwable th) {
             Unsafe.free(address, size, MemoryTag.NATIVE_JOIN_MAP, memoryTracker);
-            // The decoded frames and the symbol views go with the reader; clear() closes it anyway.
+            // The decoded frames go with the reader; clear() closes it anyway.
             Misc.free(copyReader);
             throw th;
         }
@@ -814,6 +814,13 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
         public void reopen() {
             // Matches land on build rows in no particular order, so the pool caches for scattered access.
             reopen(ParquetDecodeHint.SCATTERED);
+            // Symbol tables come from the build input, so this slot takes its own here, on the
+            // owner, rather than on first use from a worker.
+            for (int i = 0; i < payloadColumns.length; i++) {
+                if (payloadSymbols[i]) {
+                    record.getSymbolTable(payloadColumns[i]);
+                }
+            }
         }
 
         // Positions the reader at the build row with this id, where its columns live.
@@ -827,6 +834,8 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
             row = Rows.toLocalRowID(rowId);
         }
 
+        // Rebinds the reader to the current execution without taking symbol tables: the copy pass
+        // copies a SYMBOL's key and never resolves it.
         private void reopen(ParquetDecodeHint hint) {
             copyRow = 0;
             frameIndex = -1;
@@ -835,13 +844,6 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
             pool.setMemoryTracker(memoryTracker);
             pool.of(addressCache, hint);
             record.of(frameCursor);
-            // Symbol tables come from the build input, so this slot takes its own here, on the
-            // owner, rather than on first use from a worker.
-            for (int i = 0; i < payloadColumns.length; i++) {
-                if (payloadSymbols[i]) {
-                    record.getSymbolTable(payloadColumns[i]);
-                }
-            }
         }
 
         // The address of payload column col in the current copied row.
