@@ -69,6 +69,7 @@ public class Metrics implements Target, Mutable {
     private final WorkerMetrics workerMetrics;
     private boolean enabled;
     private boolean scrapeEnabled;
+    private volatile Runnable snapshotUpdater;
 
     public Metrics(boolean enabled, MetricsRegistry metricsRegistry) {
         this(enabled, enabled, metricsRegistry);
@@ -95,6 +96,7 @@ public class Metrics implements Target, Mutable {
 
     @Override
     public void clear() {
+        snapshotUpdater = null;
         gcMetrics.clear();
         jsonQueryMetrics.clear();
         pgMetrics.clear();
@@ -111,6 +113,7 @@ public class Metrics implements Target, Mutable {
     }
 
     public void disable() {
+        snapshotUpdater = null;
         enabled = false;
         scrapeEnabled = false;
     }
@@ -165,6 +168,10 @@ public class Metrics implements Target, Mutable {
 
     @Override
     public void snapshot(MetricSnapshotVisitor visitor) {
+        final Runnable updater = snapshotUpdater;
+        if (updater != null) {
+            updater.run();
+        }
         metricsRegistry.snapshot(visitor);
         if (enabled) {
             gcMetrics.snapshot(visitor);
@@ -198,7 +205,8 @@ public class Metrics implements Target, Mutable {
         metricsRegistry.newVirtualGauge("memory_jvm_max", jvmMaxMemRef);
     }
 
-    void addScrapable(Target target) {
+    void addScrapable(Target target, Runnable snapshotUpdater) {
         metricsRegistry.addTarget(target);
+        this.snapshotUpdater = snapshotUpdater;
     }
 }

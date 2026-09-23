@@ -24,6 +24,9 @@
 
 package io.questdb.test.metrics;
 
+import io.questdb.DefaultServerConfiguration;
+import io.questdb.Metrics;
+import io.questdb.WorkerPoolManager;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
@@ -36,6 +39,8 @@ import io.questdb.metrics.MetricType;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.metrics.MetricsPersistenceJob;
 import io.questdb.metrics.Target;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
@@ -60,24 +65,10 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
     public void testCreatesAndSamplesMetricsTable() throws Exception {
         assertMemoryLeak(() -> {
             engine.getMetrics().healthMetrics().incrementUnhandledErrors();
-            final MetricsConfiguration configuration = new MetricsConfiguration() {
-                @Override
-                public boolean isEnabled() {
-                    return true;
-                }
-
-                @Override
-                public boolean isPersistEnabled() {
-                    return true;
-                }
-
-                @Override
-                public boolean isPersistParquetEnabled() {
-                    return false;
-                }
-            };
-
-            try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration)) {
+            try (MetricsPersistenceJob job = new MetricsPersistenceJob(
+                    engine,
+                    configuration(MetricsConfiguration.DEFAULT_PERSIST_EXCLUDE)
+            )) {
                 Assert.assertTrue(job.isEnabled());
                 job.runSerially();
             }
@@ -142,35 +133,11 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
                     }
                 }
             };
-            final MetricsConfiguration configuration = new MetricsConfiguration() {
-                @Override
-                public long getPersistIntervalMicros() {
-                    return 1;
-                }
-
-                @Override
-                public long getPersistVirtualIntervalMicros() {
-                    return 60_000_000;
-                }
-
-                @Override
-                public boolean isEnabled() {
-                    return true;
-                }
-
-                @Override
-                public boolean isPersistEnabled() {
-                    return true;
-                }
-
-                @Override
-                public boolean isPersistParquetEnabled() {
-                    return false;
-                }
-            };
-
             engine.getMetrics().getRegistry().addTarget(target);
-            try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration)) {
+            try (MetricsPersistenceJob job = new MetricsPersistenceJob(
+                    engine,
+                    configuration(MetricsConfiguration.DEFAULT_PERSIST_EXCLUDE, false, 1)
+            )) {
                 try {
                     job.runSerially();
                     job.runSerially();
@@ -345,6 +312,73 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPersistsFreshWorkerMetricsInEveryRow() throws Exception {
+        assertMemoryLeak(() -> {
+            final Metrics metrics = engine.getMetrics();
+            final AtomicInteger metricUpdates = new AtomicInteger();
+            final WorkerPoolConfiguration poolConfiguration = () -> 1;
+            final WorkerPoolManager workerPoolManager = new WorkerPoolManager(new DefaultServerConfiguration(root) {
+                @Override
+                public WorkerPool createWorkerPool(WorkerPoolConfiguration configuration) {
+                    return new WorkerPool(configuration) {
+                        @Override
+                        public void updateWorkerMetrics() {
+                            final int update = metricUpdates.incrementAndGet();
+                            metrics.workerMetrics().update(1000 - update, 1000 + update);
+                        }
+                    };
+                }
+
+                @Override
+                public Metrics getMetrics() {
+                    return metrics;
+                }
+
+                @Override
+                public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
+                    return poolConfiguration;
+                }
+
+                @Override
+                public WorkerPoolConfiguration getSharedWorkerPoolQueryConfiguration() {
+                    return poolConfiguration;
+                }
+
+                @Override
+                public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
+                    return poolConfiguration;
+                }
+            }) {
+                @Override
+                protected void configureWorkerPools(WorkerPool sharedPoolQuery, WorkerPool sharedPoolWrite) {
+                }
+            };
+
+            metrics.workerMetrics().clear();
+            try {
+                setCurrentMicros(1);
+                try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration(null, false, 0))) {
+                    job.runSerially();
+                    setCurrentMicros(2);
+                    job.runSerially();
+                }
+            } finally {
+                setCurrentMicros(-1);
+                workerPoolManager.halt();
+                metrics.clear();
+            }
+
+            assertQuery("SELECT workers_job_start_micros_min, workers_job_start_micros_max FROM \"sys.metrics\"")
+                    .expectSize()
+                    .returns("""
+                            workers_job_start_micros_min\tworkers_job_start_micros_max
+                            994\t1006
+                            991\t1009
+                            """);
+        });
+    }
+
+    @Test
     public void testPrecreatesConfiguredMetricColumns() throws Exception {
         assertMemoryLeak(() -> {
             final MetricsConfiguration configuration = new MetricsConfiguration() {
@@ -469,6 +503,51 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBacksOffAfterRepeatedCairoExceptions() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger snapshots = new AtomicInteger();
+            final Target target = new Target() {
+                @Override
+                public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
+                }
+
+                @Override
+                public void snapshot(MetricSnapshotVisitor visitor) {
+                    snapshots.incrementAndGet();
+                    throw CairoException.critical(28).put("persistent metrics persistence failure");
+                }
+            };
+
+            engine.getMetrics().getRegistry().addTarget(target);
+            setCurrentMicros(0);
+            try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration(null, false, 7))) {
+                job.runSerially();
+                Assert.assertEquals(1, snapshots.get());
+
+                job.runSerially();
+                Assert.assertEquals("first retry must be immediate", 2, snapshots.get());
+
+                long now = 0;
+                final long[] retryDelays = {1, 2, 4, 8, 16, 32, 60, 60};
+                for (int i = 0; i < retryDelays.length; i++) {
+                    final long delayMicros = retryDelays[i] * 1_000_000;
+                    setCurrentMicros(now + delayMicros - 1);
+                    job.runSerially();
+                    Assert.assertEquals("retry ran before backoff elapsed", i + 2, snapshots.get());
+
+                    now += delayMicros;
+                    setCurrentMicros(now);
+                    job.runSerially();
+                    Assert.assertEquals("retry did not run when backoff elapsed", i + 3, snapshots.get());
+                }
+            } finally {
+                setCurrentMicros(-1);
+                engine.getMetrics().getRegistry().removeTarget(target);
+            }
+        });
+    }
+
+    @Test
     public void testRetriesAfterTransientCairoException() throws Exception {
         assertMemoryLeak(() -> {
             final AtomicInteger snapshots = new AtomicInteger();
@@ -517,11 +596,6 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
     private static MetricsConfiguration configuration(String exclude, boolean parquetEnabled, long intervalMicros) {
         return new MetricsConfiguration() {
             @Override
-            public boolean isEnabled() {
-                return true;
-            }
-
-            @Override
             public CharSequence getPersistExclude() {
                 return exclude;
             }
@@ -529,6 +603,11 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
             @Override
             public long getPersistIntervalMicros() {
                 return intervalMicros;
+            }
+
+            @Override
+            public boolean isEnabled() {
+                return true;
             }
 
             @Override

@@ -59,6 +59,8 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
     public static final String TABLE_NAME = "sys.metrics";
     public static final String WRITER_LOCK_REASON = "metrics persistence";
     private static final Log LOG = LogFactory.getLog(MetricsPersistenceJob.class);
+    private static final long RETRY_BACKOFF_MAX_MICROS = Micros.MINUTE_MICROS;
+    private static final long RETRY_BACKOFF_START_MICROS = Micros.SECOND_MICROS;
     private final MicrosecondClock clock;
     private final ObjList<MetricColumn> columns = new ObjList<>();
     private final MetricsConfiguration configuration;
@@ -97,6 +99,11 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
     private final SCSequence operationSequence = new SCSequence();
     private final double parquetBloomFilterFpp;
     private final MetricSnapshotVisitor sampleVisitor = new MetricSnapshotVisitor() {
+        @Override
+        public boolean isReapDroppedTableMetricsEnabled() {
+            return !metrics.isScrapeEnabled();
+        }
+
         @Override
         public boolean isVirtualMetricsEnabled() {
             return isVirtualMetricsEnabled;
@@ -154,6 +161,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
     private long[] longValues;
     private long nextSampleMicros = Long.MIN_VALUE;
     private long nextVirtualSampleMicros = Long.MIN_VALUE;
+    private long retryBackoffMicros;
     private TableWriter writer;
 
     public MetricsPersistenceJob(CairoEngine engine, MetricsConfiguration configuration) {
@@ -201,10 +209,12 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
             }
             if (now <= lastTimestamp) {
                 nextSampleMicros = lastTimestamp + configuration.getPersistIntervalMicros();
+                retryBackoffMicros = 0;
                 return false;
             }
             sample(now);
             nextSampleMicros = now + configuration.getPersistIntervalMicros();
+            retryBackoffMicros = 0;
         } catch (CairoException th) {
             retry(th, now);
         } catch (Throwable th) {
@@ -218,24 +228,6 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
             return null;
         }
         return Pattern.compile(Chars.toString(expression));
-    }
-
-    private int addColumn(CharSequence name, MetricType type) {
-        return addColumn(name, type, null, null);
-    }
-
-    private int addColumn(CharSequence name, MetricType type, CharSequence labelValue0) {
-        return addColumn(name, type, labelValue0, null);
-    }
-
-    private int addColumn(
-            CharSequence name,
-            MetricType type,
-            CharSequence labelValue0,
-            CharSequence labelValue1
-    ) {
-        buildColumnName(name, labelValue0, labelValue1);
-        return addBuiltColumn(type, true);
     }
 
     private int addBuiltColumn(MetricType type, boolean discovered) {
@@ -264,14 +256,22 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
         return columnIndex;
     }
 
-    private int addPrecreatedColumn(
+    private int addColumn(CharSequence name, MetricType type) {
+        return addColumn(name, type, null, null);
+    }
+
+    private int addColumn(CharSequence name, MetricType type, CharSequence labelValue0) {
+        return addColumn(name, type, labelValue0, null);
+    }
+
+    private int addColumn(
             CharSequence name,
             MetricType type,
             CharSequence labelValue0,
             CharSequence labelValue1
     ) {
         buildColumnName(name, labelValue0, labelValue1);
-        return addBuiltColumn(type, false);
+        return addBuiltColumn(type, true);
     }
 
     private void addMissingColumns(TableWriter tableWriter, SecurityContext securityContext) {
@@ -286,6 +286,16 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
                 );
             }
         }
+    }
+
+    private int addPrecreatedColumn(
+            CharSequence name,
+            MetricType type,
+            CharSequence labelValue0,
+            CharSequence labelValue1
+    ) {
+        buildColumnName(name, labelValue0, labelValue1);
+        return addBuiltColumn(type, false);
     }
 
     private void appendSanitized(CharSequence value) {
@@ -541,8 +551,11 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
         lastDay = Long.MIN_VALUE;
         lastTimestamp = Long.MIN_VALUE;
         longValues = null;
-        nextSampleMicros = now + configuration.getPersistIntervalMicros();
+        nextSampleMicros = now + retryBackoffMicros;
         nextVirtualSampleMicros = Long.MIN_VALUE;
+        retryBackoffMicros = retryBackoffMicros == 0
+                ? RETRY_BACKOFF_START_MICROS
+                : Math.min(RETRY_BACKOFF_MAX_MICROS, 2 * retryBackoffMicros);
         LOG.error().$("metrics persistence failed, will retry [error=").$((Throwable) th).$(']').$();
     }
 

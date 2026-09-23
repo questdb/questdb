@@ -77,7 +77,8 @@ public abstract class WorkerPoolManager implements Target {
             sharedPoolWrite = writePool;
 
             configureWorkerPools(queryPool != null ? queryPool : networkPool, writePool);
-            config.getMetrics().addScrapable(this);
+            final Metrics metrics = config.getMetrics();
+            metrics.addScrapable(this, metrics.isEnabled() ? this::updateWorkerMetrics : null);
         } catch (Throwable th) {
             rollbackConstruction(networkPool, queryPool, writePool, th);
             throw th;
@@ -223,7 +224,6 @@ public abstract class WorkerPoolManager implements Target {
 
     @Override
     public void snapshot(MetricSnapshotVisitor visitor) {
-        updateWorkerMetrics();
     }
 
     public void start(Log sharedPoolLog) {

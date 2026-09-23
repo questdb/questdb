@@ -58,6 +58,9 @@ import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlParser;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
@@ -84,6 +87,7 @@ import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.GenericLexer;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
@@ -946,6 +950,20 @@ public class PropServerConfiguration implements ServerConfiguration {
             throw ServerConfigurationException.forInvalidKey(
                     PropertyKey.METRICS_PERSIST_VIRTUAL_INTERVAL.getPropertyPath(),
                     Long.toString(metricsPersistVirtualIntervalMicros / 1_000)
+            );
+        }
+        final GenericLexer metricsPersistTtlLexer = new GenericLexer(4);
+        metricsPersistTtlLexer.of(metricsPersistTtl);
+        try {
+            final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(metricsPersistTtlLexer);
+            PartitionBy.validateTtlGranularity(PartitionBy.DAY, ttlHoursOrMonths, 0);
+            if (SqlUtil.fetchNext(metricsPersistTtlLexer) != null) {
+                throw SqlException.$(metricsPersistTtlLexer.lastTokenPosition(), "unexpected token");
+            }
+        } catch (SqlException e) {
+            throw ServerConfigurationException.forInvalidKey(
+                    PropertyKey.METRICS_PERSIST_TTL.getPropertyPath(),
+                    metricsPersistTtl
             );
         }
         this.metrics = metricsEnabled || metricsPersistEnabled

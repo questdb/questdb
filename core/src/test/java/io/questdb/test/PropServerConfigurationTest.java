@@ -2071,6 +2071,29 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testMetricsPersistenceTtlRejectsInvalidEnvironmentValue() throws Exception {
+        final Map<String, String> env = new HashMap<>();
+        env.put(PropertyKey.METRICS_PERSIST_TTL.getEnvVarName(), "7 DAYZ");
+        try {
+            newPropServerConfiguration(root, new Properties(), env, new BuildInformationHolder());
+            Assert.fail("expected ServerConfigurationException");
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), PropertyKey.METRICS_PERSIST_TTL.getPropertyPath());
+        }
+    }
+
+    @Test
+    public void testMetricsPersistenceTtlRejectsInvalidValues() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.METRICS_PERSIST_TTL.getPropertyPath(), "7 DAYZ");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_TTL);
+        properties.setProperty(PropertyKey.METRICS_PERSIST_TTL.getPropertyPath(), "1 HOUR");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_TTL);
+        properties.setProperty(PropertyKey.METRICS_PERSIST_TTL.getPropertyPath(), "1 DAY extra");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_TTL);
+    }
+
+    @Test
     public void testMemoryUsageLogIntervalAcceptsMax() throws Exception {
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "86_400_000");

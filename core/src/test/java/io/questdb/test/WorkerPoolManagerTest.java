@@ -39,7 +39,11 @@ import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.MetricSnapshotVisitor;
+import io.questdb.metrics.MetricType;
 import io.questdb.metrics.MetricsConfiguration;
+import io.questdb.metrics.MetricsRegistryImpl;
+import io.questdb.metrics.Target;
 import io.questdb.metrics.WorkerMetrics;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
@@ -64,6 +68,7 @@ import java.lang.invoke.MethodType;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
@@ -204,6 +209,22 @@ public class WorkerPoolManagerTest {
     }
 
     @Test
+    public void testClearDropsWorkerMetricsSnapshotUpdater() {
+        final Metrics metrics = new Metrics(true, new MetricsRegistryImpl());
+        final AtomicInteger metricUpdates = new AtomicInteger();
+        createMetricsWorkerPoolManager(metrics, metricUpdates);
+
+        metrics.snapshot(new MetricSnapshotVisitor() {
+        });
+        Assert.assertEquals(3, metricUpdates.get());
+
+        metrics.clear();
+        metrics.snapshot(new MetricSnapshotVisitor() {
+        });
+        Assert.assertEquals(3, metricUpdates.get());
+    }
+
+    @Test
     public void testConstructor() {
         final int workerCount = 2;
         final AtomicInteger counter = new AtomicInteger(0);
@@ -211,6 +232,37 @@ public class WorkerPoolManagerTest {
         Assert.assertEquals(1, counter.get());
         Assert.assertNotNull(workerPoolManager.getSharedPoolNetwork());
         Assert.assertEquals(workerCount, workerPoolManager.getSharedQueryWorkerCount());
+    }
+
+    @Test
+    public void testConstructorFailureDoesNotRetainMetricsUpdater() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicBoolean failAdd = new AtomicBoolean();
+            final RuntimeException failure = new RuntimeException("add target");
+            final MetricsRegistryImpl registry = new MetricsRegistryImpl() {
+                @Override
+                public void addTarget(Target target) {
+                    if (failAdd.get()) {
+                        throw failure;
+                    }
+                    super.addTarget(target);
+                }
+            };
+            final Metrics metrics = new Metrics(true, registry);
+            final AtomicInteger metricUpdates = new AtomicInteger();
+            failAdd.set(true);
+
+            try {
+                createMetricsWorkerPoolManager(metrics, metricUpdates);
+                Assert.fail();
+            } catch (RuntimeException e) {
+                Assert.assertSame(failure, e);
+            }
+
+            metrics.snapshot(new MetricSnapshotVisitor() {
+            });
+            Assert.assertEquals(0, metricUpdates.get());
+        });
     }
 
     @Test
@@ -240,6 +292,20 @@ public class WorkerPoolManagerTest {
                 Assert.assertSame(cleanupFailure, e.getSuppressed()[0]);
             }
         });
+    }
+
+    @Test
+    public void testDisabledMetricsDoesNotRetainSnapshotUpdater() {
+        final Metrics metrics = new Metrics(false, new MetricsRegistryImpl());
+        final AtomicInteger metricUpdates = new AtomicInteger();
+        createMetricsWorkerPoolManager(metrics, metricUpdates);
+
+        metrics.snapshot(new MetricSnapshotVisitor() {
+        });
+        metrics.clear();
+        metrics.snapshot(new MetricSnapshotVisitor() {
+        });
+        Assert.assertEquals(0, metricUpdates.get());
     }
 
     @Test
@@ -541,6 +607,34 @@ public class WorkerPoolManagerTest {
     }
 
     @Test
+    public void testSnapshotRefreshesWorkerMetricsBeforeVisitingGauges() {
+        final Metrics metrics = new Metrics(true, new MetricsRegistryImpl());
+        final AtomicInteger metricUpdates = new AtomicInteger();
+        createMetricsWorkerPoolManager(metrics, metricUpdates);
+
+        final AtomicLong max = new AtomicLong();
+        final AtomicLong min = new AtomicLong();
+        final MetricSnapshotVisitor visitor = new MetricSnapshotVisitor() {
+            @Override
+            public void visitLong(CharSequence name, MetricType type, long value) {
+                if ("workers_job_start_micros_max".contentEquals(name)) {
+                    max.set(value);
+                } else if ("workers_job_start_micros_min".contentEquals(name)) {
+                    min.set(value);
+                }
+            }
+        };
+
+        metrics.snapshot(visitor);
+        Assert.assertEquals(997, min.get());
+        Assert.assertEquals(1003, max.get());
+
+        metrics.snapshot(visitor);
+        Assert.assertEquals(994, min.get());
+        Assert.assertEquals(1006, max.get());
+    }
+
+    @Test
     public void testStartHaltAreOneOff() {
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(1);
         workerPoolManager.start(null);
@@ -566,9 +660,39 @@ public class WorkerPoolManagerTest {
         Assert.assertEquals(2, closeOrder.get());
     }
 
+    private static WorkerPoolManager createMetricsWorkerPoolManager(Metrics metrics, AtomicInteger metricUpdates) {
+        return new WorkerPoolManager(createServerConfig(1, metrics, metricUpdates)) {
+            @Override
+            protected void configureWorkerPools(WorkerPool sharedPoolQuery, WorkerPool sharedPoolWrite) {
+            }
+        };
+    }
+
     private static ServerConfiguration createServerConfig(int workerCount) {
+        return createServerConfig(workerCount, Metrics.ENABLED, null);
+    }
+
+    private static ServerConfiguration createServerConfig(
+            int workerCount,
+            Metrics metrics,
+            AtomicInteger metricUpdates
+    ) {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         return new ServerConfiguration() {
+            @Override
+            public WorkerPool createWorkerPool(WorkerPoolConfiguration configuration) {
+                if (metricUpdates == null) {
+                    return ServerConfiguration.super.createWorkerPool(configuration);
+                }
+                return new WorkerPool(configuration) {
+                    @Override
+                    public void updateWorkerMetrics() {
+                        final int update = metricUpdates.incrementAndGet();
+                        metrics.workerMetrics().update(1000 - update, 1000 + update);
+                    }
+                };
+            }
+
             @Override
             public CairoConfiguration getCairoConfiguration() {
                 return null;
@@ -621,7 +745,7 @@ public class WorkerPoolManagerTest {
 
             @Override
             public Metrics getMetrics() {
-                return Metrics.ENABLED;
+                return metrics;
             }
 
             @Override

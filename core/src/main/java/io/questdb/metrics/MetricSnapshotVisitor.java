@@ -30,6 +30,10 @@ package io.questdb.metrics;
  */
 public interface MetricSnapshotVisitor {
 
+    default boolean isReapDroppedTableMetricsEnabled() {
+        return false;
+    }
+
     default boolean isVirtualMetricsEnabled() {
         return true;
     }
