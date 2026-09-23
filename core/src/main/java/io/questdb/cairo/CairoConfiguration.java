@@ -954,6 +954,20 @@ public interface CairoConfiguration {
     double getSqlParallelFilterPreTouchThreshold();
 
     /**
+     * Bytes above which a fused hash join GROUP BY keeps reading build payload columns at their
+     * build rows instead of copying them: the build's row count times the copied row size. Zero
+     * never copies.
+     */
+    long getSqlParallelHashJoinGroupByPayloadCopyMaxSize();
+
+    /**
+     * Probe to build row ratio from which a fused hash join GROUP BY copies its build payload
+     * columns after the build: the probe input's frame rows, before any row filter, divided by
+     * the build's rows. Zero copies every build that fits the size bound.
+     */
+    double getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio();
+
+    /**
      * Row heap bytes above which a RIGHT join keeps the ordinary plan instead of the fused hash join
      * GROUP BY: the table rows of the forced build times the heap row size.
      */

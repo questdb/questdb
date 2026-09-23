@@ -109,7 +109,7 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
         final long offset = next - 8;
         final long row = heapAddress + offset;
         if (payload != null) {
-            payload.position(HashJoinRowHeap.getRowId(row));
+            payload.position(HashJoinRowHeap.getRowIdAddress(row), HashJoinRowHeap.getOrdinal(offset));
         }
         next = Unsafe.getLong(row);
         return handleBase + offset;
@@ -154,7 +154,7 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
     /** Positions the payload reader at the row at this byte offset of the heap. */
     protected final void positionAt(long offset) {
         if (payload != null) {
-            payload.position(HashJoinRowHeap.getRowId(heapAddress + offset));
+            payload.position(HashJoinRowHeap.getRowIdAddress(heapAddress + offset), HashJoinRowHeap.getOrdinal(offset));
         }
     }
 }

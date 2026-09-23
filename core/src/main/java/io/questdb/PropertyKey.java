@@ -131,6 +131,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_THRESHOLD("cairo.sql.parallel.groupby.topk.threshold"),
     CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_QUEUE_CAPACITY("cairo.sql.parallel.groupby.topk.queue.capacity"),
     CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED("cairo.sql.parallel.hash.join.groupby.enabled"),
+    CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE("cairo.sql.parallel.hash.join.groupby.payload.copy.max.size"),
+    CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO("cairo.sql.parallel.hash.join.groupby.payload.copy.min.probe.ratio"),
     CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE("cairo.sql.parallel.hash.join.groupby.right.join.max.build.size"),
     CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD("cairo.sql.parallel.work.stealing.threshold"),
     CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT("cairo.sql.parallel.work.stealing.spin.timeout"),

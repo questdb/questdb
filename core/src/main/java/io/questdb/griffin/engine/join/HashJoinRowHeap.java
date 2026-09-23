@@ -40,9 +40,10 @@ import java.io.Closeable;
  * compressed offset of a chain head and share the row layout below.
  * <p>
  * A row is an eight-byte previous-match link (a byte offset plus eight, zero for a chain end)
- * followed by the build row's id, which a probe hands to its {@link HashJoinPayloadSource.Reader}
- * to read the payload columns where they live, as the light hash join does. A build that needs no
- * payload column stores the link alone. The heap is bounded by
+ * followed by the build row's id, at which a probe's {@link HashJoinPayloadSource.Reader} reads the
+ * payload columns where they live, as the light hash join does. A reader over a copy of those
+ * columns reads the copy's row instead, which the row's ordinal, its offset over the row size,
+ * names. A build that needs no payload column stores the link alone. The heap is bounded by
  * {@link CompressedOffsets#MAX_ALIGNED8_HEAP_SIZE} before allocation or encoding, so every row
  * offset round trips through {@link CompressedOffsets#compressBiased8(long)}. Duplicate iteration
  * follows the links in reverse input order, as the light join's LongChain does.
@@ -54,6 +55,7 @@ import java.io.Closeable;
 final class HashJoinRowHeap implements Closeable {
     private static final int LINK_SIZE = Long.BYTES;
     private static final int ROW_ID_ROW_SIZE = LINK_SIZE + Long.BYTES;
+    private static final int ROW_ID_ROW_SHIFT = Integer.numberOfTrailingZeros(ROW_ID_ROW_SIZE);
     private final boolean hasRowId;
     private final long initialCapacity;
     private final HashJoinBuffer rows = new HashJoinBuffer(CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE);
@@ -165,8 +167,29 @@ final class HashJoinRowHeap implements Closeable {
         rows.ensure(rowBytes + rowCount * rowSize, initialCapacity);
     }
 
+    /**
+     * How many rows the heap appended before the row at this byte offset. Only a heap with row
+     * ids counts rows this way, which every heap a payload reader positions over is.
+     */
+    static long getOrdinal(long offset) {
+        return offset >>> ROW_ID_ROW_SHIFT;
+    }
+
+    /**
+     * The build row id of the heap's ordinal-th row, the rows starting at {@code rowsAddress}; only a
+     * heap with row ids stores one.
+     */
+    static long getRowIdAt(long rowsAddress, long ordinal) {
+        return getRowId(rowsAddress + (ordinal << ROW_ID_ROW_SHIFT));
+    }
+
     /** The build row id of the row at this address; only a heap with row ids stores one. */
     static long getRowId(long rowAddress) {
-        return Unsafe.getLong(rowAddress + LINK_SIZE);
+        return Unsafe.getLong(getRowIdAddress(rowAddress));
+    }
+
+    /** Where the row at this address stores its build row id; only a heap with row ids stores one. */
+    static long getRowIdAddress(long rowAddress) {
+        return rowAddress + LINK_SIZE;
     }
 }

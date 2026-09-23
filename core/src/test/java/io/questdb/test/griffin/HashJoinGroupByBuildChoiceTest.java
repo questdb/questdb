@@ -131,6 +131,7 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
                                           inputSwapped: false
                                           condition: r.plant_id=p.plant_id
                                           buildStrategy: shared
+                                          buildPayload: copied when the probe is larger
                                           aggregation: scalar
                                           values: [count(*),sum(r.energy_kwh),sum(p.installed_kwp)]
                                             Probe
@@ -149,6 +150,7 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
                                           inputSwapped: true
                                           condition: p.plant_id=r.plant_id
                                           buildStrategy: shared
+                                          buildPayload: copied when the probe is larger
                                           aggregation: scalar
                                           values: [count(*),sum(r.energy_kwh),sum(p.installed_kwp)]
                                             Probe

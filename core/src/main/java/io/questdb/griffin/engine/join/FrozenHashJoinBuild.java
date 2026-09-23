@@ -49,6 +49,13 @@ public interface FrozenHashJoinBuild {
 
     long getRowCount();
 
+    /**
+     * The id of the build row that the build appended ordinal-th, counting from zero. Rows keep
+     * the order the build appended them in, which is the build input's order, so a pass over
+     * every ordinal reads the input forward. Only a build with payload columns stores ids.
+     */
+    long getRowId(long ordinal);
+
     /** Allocated native bytes, including unused capacity. */
     long getSizeInBytes();
 

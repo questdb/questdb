@@ -46,8 +46,14 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
     private static final String[] JOINS = {
             " from r join p on r.id=p.id",
@@ -58,6 +64,22 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
     };
     private static final String AGGREGATES = "count(*) n, count(r.id) ri, count(p.id) pi, "
             + "count(r.s) rs, count(p.s) ps, sum(r.d) rd, sum(p.d) pd, avg(r.d) ra, avg(p.d) pa";
+
+    private final HashJoinPayloadLayout payloadLayout;
+
+    public HashJoinGroupByQualificationTest(HashJoinPayloadLayout payloadLayout) {
+        this.payloadLayout = payloadLayout;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> parameters() {
+        return HashJoinPayloadLayout.parameters();
+    }
+
+    @Before
+    public void setUpPayloadLayout() {
+        payloadLayout.apply(node1.getConfigurationOverrides());
+    }
 
     @Test
     public void testHighCardinalitySymbolPredicatesAndReuse() throws Exception {

@@ -36,7 +36,12 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Collection;
 
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.assertAgainstBaseline;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.assertDifferential;
@@ -53,6 +58,7 @@ import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.fused;
  * pins the planner's reconciliation and the generated key sinks; this class pins what a query
  * returns once the code generator routes such a key to the operator.
  */
+@RunWith(Parameterized.class)
 public class HashJoinGroupByGeneralKeysTest extends AbstractCairoTest {
     // Every pair the ordinary hash join reconciles, in both operand orders where the two sides
     // encode differently. INT and a lone SYMBOL pair take the INT layout; the rest stage a key.
@@ -70,6 +76,22 @@ public class HashJoinGroupByGeneralKeysTest extends AbstractCairoTest {
             // A column both sides leave entirely NULL, so every key is NULL.
             "ka.nul=kb.nul",
     };
+
+    private final HashJoinPayloadLayout payloadLayout;
+
+    public HashJoinGroupByGeneralKeysTest(HashJoinPayloadLayout payloadLayout) {
+        this.payloadLayout = payloadLayout;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> parameters() {
+        return HashJoinPayloadLayout.parameters();
+    }
+
+    @Before
+    public void setUpPayloadLayout() {
+        payloadLayout.apply(node1.getConfigurationOverrides());
+    }
 
     @Test
     public void testBuildMemoryLimitAndProbeCancellationOnAStagedKey() throws Exception {

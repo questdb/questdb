@@ -402,6 +402,12 @@ public final class MapHashJoinBuild implements Closeable {
         }
 
         @Override
+        public long getRowId(long ordinal) {
+            assert heap.hasRowId() && ordinal >= 0 && ordinal < rowsCount && generation == heap.getGeneration();
+            return HashJoinRowHeap.getRowIdAt(rowsAddress, ordinal);
+        }
+
+        @Override
         public long getSizeInBytes() {
             return size;
         }

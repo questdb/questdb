@@ -27,7 +27,12 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Collection;
 
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.assertDifferential;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.context;
@@ -45,6 +50,7 @@ import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.context;
  * {@code IntHashJoinBuildTest} pins the row heap's own layout and getters; this class pins what a
  * query returns once the planner routes such a column to the operator.
  */
+@RunWith(Parameterized.class)
 public class HashJoinGroupByColumnTypesTest extends AbstractCairoTest {
     // Fixed-size types the row heap copies, so both inputs may carry them. Each width of GEOHASH
     // and of DECIMAL is a type of its own, and each takes its own arm of the layout switch.
@@ -54,6 +60,22 @@ public class HashJoinGroupByColumnTypesTest extends AbstractCairoTest {
     };
     // Variable-size types, which the row heap cannot copy, so only the probe may carry them.
     private static final String[] PROBE_ONLY_COLUMNS = {"vc", "str"};
+
+    private final HashJoinPayloadLayout payloadLayout;
+
+    public HashJoinGroupByColumnTypesTest(HashJoinPayloadLayout payloadLayout) {
+        this.payloadLayout = payloadLayout;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> parameters() {
+        return HashJoinPayloadLayout.parameters();
+    }
+
+    @Before
+    public void setUpPayloadLayout() {
+        payloadLayout.apply(node1.getConfigurationOverrides());
+    }
 
     @Test
     public void testBuildColumnsOfFixedSizeTypesOnNativeAndParquetFrames() throws Exception {

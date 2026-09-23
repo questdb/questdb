@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.fuzz;
 
 import io.questdb.std.Rnd;
+import io.questdb.test.griffin.HashJoinPayloadLayout;
 
 /**
  * Lightweight knobs driving table and query budgets. Query count can be
@@ -39,6 +40,7 @@ public final class FuzzConfig {
     public static final String FAULTS_PROP = "questdb.fuzz.faults";
     public static final String FAULT_PARALLEL_PROP = "questdb.fuzz.fault.parallel";
     public static final String FAULT_PCT_PROP = "questdb.fuzz.fault.pct";
+    public static final String HASH_JOIN_PAYLOAD_PROP = "questdb.fuzz.hashjoin.payload";
     public static final String HASH_JOIN_PROP = "questdb.fuzz.hashjoin";
     public static final String HORIZON_JOIN_PROP = "questdb.fuzz.horizonjoin";
     public static final String LATEST_ON_PROP = "questdb.fuzz.lateston";
@@ -82,6 +84,8 @@ public final class FuzzConfig {
     private final boolean isWindowJoinEnabled;
     private final String dumpPath;
     private final int faultProbabilityPct;
+    // Null leaves the fused hash join GROUP BY's payload copy rule to the defaults.
+    private final HashJoinPayloadLayout hashJoinPayloadLayout;
     private final int maxColumnsPerTable;
     private final int minColumnsPerTable;
     private final int numQueries;
@@ -143,6 +147,11 @@ public final class FuzzConfig {
         // -Dquestdb.fuzz.hashjoin=false to drop them, for example while investigating a failure,
         // and give the band back to GROUP BY.
         this.isHashJoinEnabled = Boolean.parseBoolean(System.getProperty(HASH_JOIN_PROP, "true"));
+        // The fuzz tables share one row count, so the default rule copies a build's payload only
+        // when a filter shrinks the build. Pass -Dquestdb.fuzz.hashjoin.payload=row_ids or =copied
+        // to force every fused query onto one layout; the fused on/off axis then checks that one.
+        final String payloadLayout = System.getProperty(HASH_JOIN_PAYLOAD_PROP);
+        this.hashJoinPayloadLayout = payloadLayout != null ? HashJoinPayloadLayout.valueOf(payloadLayout.toUpperCase()) : null;
         // LATEST ON shapes (latest row per PARTITION BY key) carve a band out of
         // the SIMPLE range (see QueryGenerator). On by default, like window. Pass
         // -Dquestdb.fuzz.lateston=false to drop them and give the band back to
@@ -156,6 +165,10 @@ public final class FuzzConfig {
 
     public int getFaultProbabilityPct() {
         return faultProbabilityPct;
+    }
+
+    public HashJoinPayloadLayout getHashJoinPayloadLayout() {
+        return hashJoinPayloadLayout;
     }
 
     public int getMaxColumnsPerTable() {

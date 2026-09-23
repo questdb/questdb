@@ -35,6 +35,11 @@ import io.questdb.std.QuietCloseable;
  * through {@code recordAt()}. Payload column {@code i} is the i-th column of the build's payload
  * metadata, and a reader answers for exactly those columns, symbol tables included.
  * <p>
+ * A source may also copy the payload columns of every build row once the build is frozen, in
+ * build order, so that a probe whose matches read each build row many times reads one compact
+ * row per match instead of one page per column; see {@code HashJoinBuildFrames}. The build's
+ * layout does not change: its rows keep their ids either way.
+ * <p>
  * The source belongs to the build's owner and lives across executions; the owner binds it to an
  * execution's build input before the build freezes, and keeps that input open until the build
  * closes. A reader belongs to one probe, so to one execution slot: it keeps per-slot positioning
@@ -51,8 +56,14 @@ public interface HashJoinPayloadSource {
      */
     interface Reader extends Record, SymbolTableSource, QuietCloseable {
 
-        /** Positions the reader at the build row with this id. Probes call it once per match. */
-        void position(long rowId);
+        /**
+         * Positions the reader at a build row. Probes call it once per match. {@code rowIdAddress}
+         * is where the build stores the row's id, and {@code ordinal} counts the rows the build
+         * appended before it. A reader that reads the row's columns where they live loads the id;
+         * a reader over a copy of those columns in build order reads the ordinal-th copied row and
+         * leaves the id unread.
+         */
+        void position(long rowIdAddress, long ordinal);
 
         /**
          * Binds the reader to the source's current execution. This takes symbol tables from the

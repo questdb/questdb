@@ -316,6 +316,8 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelGroupByEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelHashJoinGroupByEnabled());
         Assert.assertEquals(32 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByRightJoinMaxBuildSize());
+        Assert.assertEquals(128 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByPayloadCopyMaxSize());
+        Assert.assertEquals(2.0, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio(), 0.000001);
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelReadParquetEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParquetRowGroupPruningEnabled());
         Assert.assertEquals(256L * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParquetCacheMemorySize());
@@ -2094,6 +2096,27 @@ public class PropServerConfigurationTest {
         env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED", "false");
         Assert.assertFalse(newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
                 .getCairoConfiguration().isSqlParallelHashJoinGroupByEnabled());
+    }
+
+    @Test
+    public void testParallelHashJoinGroupByPayloadCopy() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.max.size", "8M");
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.min.probe.ratio", "0.5");
+        CairoConfiguration configuration = newPropServerConfiguration(properties).getCairoConfiguration();
+        Assert.assertEquals(8 * Numbers.SIZE_1MB, configuration.getSqlParallelHashJoinGroupByPayloadCopyMaxSize());
+        Assert.assertEquals(0.5, configuration.getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio(), 0.000001);
+        Map<String, String> env = new HashMap<>();
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE", "0");
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO", "0");
+        configuration = newPropServerConfiguration(root, properties, env, new BuildInformationHolder()).getCairoConfiguration();
+        Assert.assertEquals(0, configuration.getSqlParallelHashJoinGroupByPayloadCopyMaxSize());
+        Assert.assertEquals(0, configuration.getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio(), 0.000001);
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.max.size", "-1");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE);
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.max.size", "8M");
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.min.probe.ratio", "-0.5");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO);
     }
 
     @Test

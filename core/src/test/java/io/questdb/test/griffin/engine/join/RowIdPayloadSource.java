@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.engine.join.HashJoinPayloadSource;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
@@ -126,9 +127,9 @@ final class RowIdPayloadSource implements HashJoinPayloadSource {
         }
 
         @Override
-        public void position(long rowId) {
+        public void position(long rowIdAddress, long ordinal) {
             Assert.assertTrue("reader positioned while closed", isOpen);
-            this.rowId = rowId;
+            this.rowId = Unsafe.getLong(rowIdAddress);
         }
 
         @Override

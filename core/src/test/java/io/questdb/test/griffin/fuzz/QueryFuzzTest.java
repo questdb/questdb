@@ -150,6 +150,11 @@ import java.nio.file.Paths;
  *         their sides, so only this axis sees a fused plan that returns wrong
  *         rows. The run asserts that the fused plan actually ran on a minimum
  *         share of the comparisons whose query compiled.</li>
+ *     <li>{@code -Dquestdb.fuzz.hashjoin.payload=row_ids|copied} &mdash; force
+ *         every fused hash join GROUP BY to read its build's payload columns
+ *         where they live, or from the copy its build makes (default: neither,
+ *         the operator's own rule, which the fuzz tables' equal row counts
+ *         reach only through a filtered build).</li>
  *     <li>{@code -Dquestdb.fuzz.s0=L -Dquestdb.fuzz.s1=L} - replay a
  *         specific seed pair, as printed in the run's "random seeds: ..."
  *         line. Use to reproduce a failure deterministically.</li>
@@ -788,7 +793,11 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(", windowJoin=").$(config.isWindowJoinEnabled())
                 .$(", hashJoin=").$(config.isHashJoinEnabled())
                 .$(", diffFused=").$(config.isDiffFusedEnabled())
+                .$(", hashJoinPayload=").$(config.getHashJoinPayloadLayout() != null ? config.getHashJoinPayloadLayout().name() : "rule")
                 .$();
+        if (config.getHashJoinPayloadLayout() != null) {
+            config.getHashJoinPayloadLayout().apply(node1.getConfigurationOverrides());
+        }
 
         FuzzTableFactory factory = new FuzzTableFactory(config);
         ObjList<FuzzTable> tables = new ObjList<>();

@@ -24,10 +24,13 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
@@ -44,7 +47,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.LimitedMemoryTracker;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -52,7 +57,8 @@ import org.junit.Test;
 
 /**
  * The build's payload source over its input's page frames: probes read payload columns at the
- * row ids the build keeps, each through a reader of its own.
+ * row ids the build keeps, each through a reader of its own, or a copy of those columns that the
+ * owner makes once the build froze.
  */
 public class HashJoinBuildFramesTest extends AbstractCairoTest {
 
@@ -114,6 +120,195 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
                         Assert.assertFalse(probe.hasNext());
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testCopiedPayloadReadsAsTheFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            // Every type the copy holds, over six daily partitions: two of them Parquet, a NULL row
+            // every seventh row, and half the columns added after the first two days, so that their
+            // early rows sit below column tops.
+            execute("CREATE TABLE every (k INT, b BOOLEAN, by BYTE, sh SHORT, ch CHAR, i INT, l LONG, d DATE, "
+                    + "ns TIMESTAMP_NS, f FLOAT, dbl DOUBLE, s SYMBOL, ip IPV4, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO every
+                    SELECT x::INT,
+                        CASE WHEN x % 7 = 0 THEN null ELSE x % 2 = 0 END,
+                        CASE WHEN x % 7 = 0 THEN null ELSE (x % 100)::BYTE END,
+                        CASE WHEN x % 7 = 0 THEN null ELSE (x * 3)::SHORT END,
+                        CASE WHEN x % 7 = 0 THEN null ELSE rnd_char() END,
+                        CASE WHEN x % 7 = 0 THEN null ELSE (x * 11)::INT END,
+                        CASE WHEN x % 7 = 0 THEN null ELSE x * 1_000_003 END,
+                        CASE WHEN x % 7 = 0 THEN null ELSE (x * 86_400_000)::DATE END,
+                        CASE WHEN x % 7 = 0 THEN null ELSE (x * 1_000_000_007)::TIMESTAMP_NS END,
+                        CASE WHEN x % 7 = 0 THEN null ELSE x / 4.0 END::FLOAT,
+                        CASE WHEN x % 7 = 0 THEN null ELSE x / 8.0 END,
+                        CASE WHEN x % 7 = 0 THEN null ELSE 's' || (x % 5) END::SYMBOL,
+                        CASE WHEN x % 7 = 0 THEN null ELSE ('10.0.0.' || (x % 250 + 1))::IPV4 END,
+                        timestamp_sequence('2020-01-01', 7_200_000_000L)
+                    FROM long_sequence(24)
+                    """);
+            execute("ALTER TABLE every ADD COLUMN u UUID");
+            execute("ALTER TABLE every ADD COLUMN l256 LONG256");
+            execute("ALTER TABLE every ADD COLUMN g1 GEOHASH(1c)");
+            execute("ALTER TABLE every ADD COLUMN g3 GEOHASH(3c)");
+            execute("ALTER TABLE every ADD COLUMN g6 GEOHASH(6c)");
+            execute("ALTER TABLE every ADD COLUMN g12 GEOHASH(12c)");
+            execute("ALTER TABLE every ADD COLUMN dec8 DECIMAL(2,1)");
+            execute("ALTER TABLE every ADD COLUMN dec16 DECIMAL(4,1)");
+            execute("ALTER TABLE every ADD COLUMN dec32 DECIMAL(9,2)");
+            execute("ALTER TABLE every ADD COLUMN dec64 DECIMAL(18,2)");
+            execute("ALTER TABLE every ADD COLUMN dec128 DECIMAL(38,2)");
+            execute("ALTER TABLE every ADD COLUMN dec256 DECIMAL(50,2)");
+            execute("ALTER TABLE every ADD COLUMN s2 SYMBOL");
+            execute("""
+                    INSERT INTO every
+                    SELECT (24 + x)::INT, x % 2 = 0, x::BYTE, x::SHORT, 'Z', x::INT, x, x::DATE, x::TIMESTAMP_NS,
+                        x::FLOAT, x::DOUBLE, 's' || (x % 5), ('10.0.1.' || x)::IPV4,
+                        timestamp_sequence('2020-01-03', 7_200_000_000L),
+                        CASE WHEN x % 7 = 0 THEN null ELSE rnd_uuid4() END,
+                        CASE WHEN x % 7 = 0 THEN null ELSE rnd_long256() END,
+                        CASE WHEN x % 7 = 0 THEN null ELSE rnd_geohash(5) END,
+                        CASE WHEN x % 7 = 0 THEN null ELSE rnd_geohash(15) END,
+                        CASE WHEN x % 7 = 0 THEN null ELSE rnd_geohash(30) END,
+                        CASE WHEN x % 7 = 0 THEN null ELSE rnd_geohash(60) END,
+                        CASE WHEN x % 7 = 0 THEN null ELSE (x % 9)::DECIMAL(2,1) END,
+                        CASE WHEN x % 7 = 0 THEN null ELSE (x * 7)::DECIMAL(4,1) END,
+                        CASE WHEN x % 7 = 0 THEN null ELSE (x * 1_234)::DECIMAL(9,2) END,
+                        CASE WHEN x % 7 = 0 THEN null ELSE (x * 1_234_567_890L)::DECIMAL(18,2) END,
+                        CASE WHEN x % 7 = 0 THEN null ELSE (x * 123_456_789_012_345_678L)::DECIMAL(38,2) END,
+                        CASE WHEN x % 7 = 0 THEN null ELSE (x * -123_456_789_012_345_678L)::DECIMAL(50,2) END,
+                        CASE WHEN x % 7 = 0 THEN null ELSE 't' || (x % 3) END
+                    FROM long_sequence(48)
+                    """);
+            execute("ALTER TABLE every CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-02'");
+            execute("ALTER TABLE every CONVERT PARTITION TO PARQUET WHERE ts IN '2020-01-04'");
+            sqlExecutionContext.changePageFrameSizes(5, 5);
+            final MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(0);
+                 RecordCursorFactory factory = select("every")) {
+                sqlExecutionContext.setMemoryTracker(tracker);
+                final RecordMetadata metadata = factory.getMetadata();
+                // Every column but the key and the designated timestamp, in reverse table order, so
+                // that a copy that ignored the payload mapping would read the wrong column.
+                IntList mapping = new IntList();
+                for (int i = metadata.getColumnCount() - 1; i > 0; i--) {
+                    if (i != metadata.getTimestampIndex()) {
+                        mapping.add(i);
+                    }
+                }
+                final StringSink expected = new StringSink();
+                final StringSink actual = new StringSink();
+                try (HashJoinBuildFrames frames = new HashJoinBuildFrames(configuration, mapping, metadata);
+                     IntHashJoinBuild build = new IntHashJoinBuild(true, 2, 16)) {
+                    // BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP_NS, FLOAT, DOUBLE,
+                    // SYMBOL, IPV4, UUID, LONG256, four GEOHASH widths, six DECIMAL widths and a
+                    // second SYMBOL, each aligned to its size up to eight bytes.
+                    Assert.assertEquals(200, frames.getCopyRowSize());
+                    FrozenHashJoinBuild.IntKeyed frozen = FrameBuilds.buildInt(configuration, build, frames, factory, 0, sqlExecutionContext);
+                    Assert.assertEquals(72, frozen.getRowCount());
+                    try (FrozenHashJoinBuild.IntProbe before = frozen.newProbe()) {
+                        for (int key = 1; key <= 72; key++) {
+                            printRow(before, key, metadata, mapping, expected);
+                        }
+                        final long used = tracker.getUsed();
+                        frames.copyPayload(frozen, sqlExecutionContext.getCircuitBreaker());
+                        // The copy is charged to the execution, and the pass releases what it decoded.
+                        Assert.assertEquals(used + 72 * 200, tracker.getUsed());
+                        // A reader that existed before the copy reads the copy from its next match on,
+                        // and so does one that the copy precedes.
+                        try (FrozenHashJoinBuild.IntProbe after = frozen.newProbe()) {
+                            for (FrozenHashJoinBuild.IntProbe probe : new FrozenHashJoinBuild.IntProbe[]{before, after}) {
+                                actual.clear();
+                                for (int key = 1; key <= 72; key++) {
+                                    printRow(probe, key, metadata, mapping, actual);
+                                }
+                                TestUtils.assertEquals(expected, actual);
+                            }
+                        }
+                    }
+                    build.close();
+                    frames.clear();
+                    Assert.assertEquals(0, tracker.getUsed());
+                }
+            } finally {
+                sqlExecutionContext.setMemoryTracker(previous);
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
+    public void testCopyFailuresReleaseTheCopy() throws Exception {
+        assertMemoryLeak(() -> {
+            // 70_000 rows, so that the pass checks the breaker twice, over four partitions, two of
+            // them Parquet, which the pass decodes as it goes.
+            execute("CREATE TABLE big (k INT, v LONG, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO big
+                    SELECT x::INT, x, 's' || (x % 3), timestamp_sequence('2020-01-01', 4_000_000L)
+                    FROM long_sequence(70_000)
+                    """);
+            execute("ALTER TABLE big CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-03'");
+            final MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(0);
+                 RecordCursorFactory factory = select("big");
+                 HashJoinBuildFrames frames = new HashJoinBuildFrames(configuration, ints(1, 2), factory.getMetadata());
+                 IntHashJoinBuild build = new IntHashJoinBuild(true, 2, 16)) {
+                sqlExecutionContext.setMemoryTracker(tracker);
+                // A LONG and a SYMBOL: twelve bytes, aligned to sixteen.
+                Assert.assertEquals(16, frames.getCopyRowSize());
+                FrozenHashJoinBuild.IntKeyed frozen = FrameBuilds.buildInt(configuration, build, frames, factory, 0, sqlExecutionContext);
+                final long buildBytes = tracker.getUsed();
+
+                // A memory limit one byte short of the copy fails the allocation.
+                tracker.setLimit(buildBytes + 70_000 * 16 - 1);
+                Assert.assertThrows(CairoException.class, () -> frames.copyPayload(frozen, sqlExecutionContext.getCircuitBreaker()));
+                Assert.assertEquals(buildBytes, tracker.getUsed());
+
+                // Cancellation before the copy, and inside the pass with Parquet buffers decoded.
+                tracker.setLimit(0);
+                for (int trip = 0; trip < 3; trip++) {
+                    final int tripAt = trip;
+                    final CountingSqlExecutionCircuitBreaker cancelled = new CountingSqlExecutionCircuitBreaker(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER) {
+                        private int checks;
+
+                        @Override
+                        public void statefulThrowExceptionIfTrippedNoThrottle() {
+                            if (tripAt == 0) {
+                                throw CairoException.queryCancelled(1);
+                            }
+                        }
+
+                        @Override
+                        public void statefulThrowExceptionIfTrippedTimeThrottled() {
+                            if (++checks == tripAt) {
+                                throw CairoException.queryCancelled(1);
+                            }
+                        }
+                    };
+                    Assert.assertThrows(CairoException.class, () -> frames.copyPayload(frozen, cancelled));
+                    Assert.assertEquals(buildBytes, tracker.getUsed());
+                }
+
+                // The build survives both failures, and a copy after them reads every row.
+                frames.copyPayload(frozen, sqlExecutionContext.getCircuitBreaker());
+                Assert.assertEquals(buildBytes + 70_000 * 16, tracker.getUsed());
+                try (FrozenHashJoinBuild.IntProbe probe = frozen.newProbe()) {
+                    for (int key = 1; key <= 70_000; key += 997) {
+                        probe.find(key);
+                        probe.next();
+                        Assert.assertEquals(key, probe.getRecord().getLong(0));
+                        TestUtils.assertEquals("s" + (key % 3), probe.getRecord().getSymA(1));
+                    }
+                }
+                build.close();
+                frames.clear();
+                Assert.assertEquals(0, tracker.getUsed());
+            } finally {
+                sqlExecutionContext.setMemoryTracker(previous);
             }
         });
     }
@@ -358,6 +553,62 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
             list.add(value);
         }
         return list;
+    }
+
+    // Prints every getter that the payload column's type answers, for the build row with this key.
+    private static void printRow(FrozenHashJoinBuild.IntProbe probe, int key, RecordMetadata metadata, IntList mapping, StringSink sink) {
+        probe.find(key);
+        Assert.assertTrue(probe.hasNext());
+        probe.next();
+        Assert.assertFalse(probe.hasNext());
+        final Record record = probe.getRecord();
+        final Decimal128 decimal128 = new Decimal128();
+        final Decimal256 decimal256 = new Decimal256();
+        sink.put(key);
+        for (int col = 0, n = mapping.size(); col < n; col++) {
+            sink.put('|');
+            switch (ColumnType.tagOf(metadata.getColumnType(mapping.getQuick(col)))) {
+                case ColumnType.BOOLEAN -> sink.put(record.getBool(col));
+                case ColumnType.BYTE -> sink.put(record.getByte(col));
+                case ColumnType.SHORT -> sink.put(record.getShort(col));
+                case ColumnType.CHAR -> sink.put((int) record.getChar(col));
+                case ColumnType.INT -> sink.put(record.getInt(col));
+                case ColumnType.LONG -> sink.put(record.getLong(col));
+                case ColumnType.DATE -> sink.put(record.getDate(col));
+                case ColumnType.TIMESTAMP -> sink.put(record.getTimestamp(col));
+                case ColumnType.FLOAT -> sink.put(record.getFloat(col));
+                case ColumnType.DOUBLE -> sink.put(record.getDouble(col));
+                case ColumnType.SYMBOL -> sink.put(record.getInt(col)).put(':').put(record.getSymA(col)).put(':').put(record.getSymB(col));
+                case ColumnType.IPv4 -> sink.put(record.getIPv4(col));
+                case ColumnType.UUID -> sink.put(record.getLong128Lo(col)).put(':').put(record.getLong128Hi(col));
+                case ColumnType.LONG256 -> {
+                    record.getLong256(col, sink);
+                    final Long256 a = record.getLong256A(col);
+                    final Long256 b = record.getLong256B(col);
+                    Assert.assertNotSame(a, b);
+                    sink.put(':').put(a.getLong0()).put(':').put(b.getLong3());
+                }
+                case ColumnType.GEOBYTE -> sink.put(record.getGeoByte(col));
+                case ColumnType.GEOSHORT -> sink.put(record.getGeoShort(col));
+                case ColumnType.GEOINT -> sink.put(record.getGeoInt(col));
+                case ColumnType.GEOLONG -> sink.put(record.getGeoLong(col));
+                case ColumnType.DECIMAL8 -> sink.put(record.getDecimal8(col));
+                case ColumnType.DECIMAL16 -> sink.put(record.getDecimal16(col));
+                case ColumnType.DECIMAL32 -> sink.put(record.getDecimal32(col));
+                case ColumnType.DECIMAL64 -> sink.put(record.getDecimal64(col));
+                case ColumnType.DECIMAL128 -> {
+                    record.getDecimal128(col, decimal128);
+                    sink.put(decimal128.getHigh()).put(':').put(decimal128.getLow());
+                }
+                case ColumnType.DECIMAL256 -> {
+                    record.getDecimal256(col, decimal256);
+                    sink.put(decimal256.getHh()).put(':').put(decimal256.getHl()).put(':')
+                            .put(decimal256.getLh()).put(':').put(decimal256.getLl());
+                }
+                default -> Assert.fail("unexpected payload type in column " + col);
+            }
+        }
+        sink.put('\n');
     }
 
     private static long probeFirst(FrozenHashJoinBuild.IntProbe probe, int key) {

@@ -1270,6 +1270,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlParallelHashJoinGroupByPayloadCopyMaxSize() {
+        return getDelegate().getSqlParallelHashJoinGroupByPayloadCopyMaxSize();
+    }
+
+    @Override
+    public double getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio() {
+        return getDelegate().getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio();
+    }
+
+    @Override
     public long getSqlParallelHashJoinGroupByRightJoinMaxBuildSize() {
         return getDelegate().getSqlParallelHashJoinGroupByRightJoinMaxBuildSize();
     }

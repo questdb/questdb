@@ -7290,6 +7290,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   inputSwapped: false
                                   condition: taba.id=tabb.id
                                   buildStrategy: shared
+                                  buildPayload: copied when the probe is larger
                                   aggregation: scalar
                                   values: [sum(taba.x),sum(tabb.x),count(taba.x),count(tabb.x)]
                                     Probe
@@ -7313,6 +7314,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   inputSwapped: false
                                   condition: taba.id=tabb.id
                                   buildStrategy: shared
+                                  buildPayload: copied when the probe is larger
                                   aggregation: scalar
                                   values: [sum(tabb.x),sum(taba.x),count(taba.x),count(tabb.x)]
                                     Probe
@@ -7616,6 +7618,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   inputSwapped: false
                                   condition: taba.id=tabb.id
                                   buildStrategy: shared
+                                  buildPayload: copied when the probe is larger
                                   aggregation: scalar
                                   values: [sum(taba.x),sum(tabb.x)]
                                     Probe
@@ -7639,6 +7642,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   inputSwapped: false
                                   condition: taba.id=tabb.id
                                   buildStrategy: shared
+                                  buildPayload: copied when the probe is larger
                                   aggregation: scalar
                                   values: [sum(taba.x),sum(tabb.x)]
                                     Probe
@@ -7806,6 +7810,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   inputSwapped: false
                                   condition: taba.id=tabb.id
                                   buildStrategy: shared
+                                  buildPayload: copied when the probe is larger
                                   aggregation: scalar
                                   values: [sum(taba.x),sum(tabb.x),count(taba.x),count(tabb.x)]
                                     Probe
@@ -7829,6 +7834,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   inputSwapped: false
                                   condition: taba.id=tabb.id
                                   buildStrategy: shared
+                                  buildPayload: copied when the probe is larger
                                   aggregation: scalar
                                   values: [sum(taba.x),sum(tabb.x),count(taba.x),count(tabb.x)]
                                     Probe
@@ -7887,6 +7893,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   inputSwapped: false
                                   condition: h1.id=h2.id
                                   buildStrategy: shared
+                                  buildPayload: copied when the probe is larger
                                   aggregation: scalar
                                   values: [sum(h1.ResolutionWidth),count(h1.ResolutionWidth),sum(h2.ResolutionWidth),count(*)]
                                     Probe
@@ -13536,7 +13543,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     /**
      * The plan of a scalar {@code count()} over an equi-join of two {@code tab} scans that the
      * fused hash join GROUP BY takes. {@code filterAttr} is the operator's own predicate
-     * attribute, or null when the query has none.
+     * attribute, or null when the query has none. Only a post-join filter reads a build column,
+     * which makes the build carry a payload that the operator may copy.
      */
     private static String fusedCountPlan(boolean isSwapped, String filterAttr, boolean isJitFilter) {
         return (isJitFilter ? "Async JIT Hash Join Group By workers: 1\n" : "Async Hash Join Group By workers: 1\n")
@@ -13545,6 +13553,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 + "  inputSwapped: " + isSwapped + "\n"
                 + "  condition: " + (isSwapped ? "T2.created=T1.created" : "T1.created=T2.created") + "\n"
                 + "  buildStrategy: shared\n"
+                + (filterAttr != null && filterAttr.startsWith("postJoinFilter") ? "  buildPayload: copied when the probe is larger\n" : "")
                 + "  aggregation: scalar\n"
                 + "  values: [count(*)]\n"
                 + (filterAttr == null ? "" : "  " + filterAttr + "\n")

@@ -89,6 +89,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private final Function buildOnFilter;
     // The owner's view of the build frame being appended.
     private final PageFrameMemoryRecord buildRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+    // The payload copy's byte bound and probe to build row ratio; see maybeCopyPayload().
+    private final long copyMaxSize;
+    private final double copyMinProbeRatio;
     private final AsyncFilterContext filterContext;
     private final HashJoinGroupByFunctions functions;
     private final boolean isKeyCapacityPresized;
@@ -112,6 +115,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private IntHashJoinBuild intBuild;
     private MapHashJoinBuild mapBuild;
     private boolean isBuildUnique;
+    private boolean isPayloadCopied;
     private boolean functionsInitialized;
     private boolean filtersInitialized;
     private long pairsPerCheck;
@@ -146,6 +150,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             symbolKeyCaches.add(new SymbolKeyTranslator());
         }
         CairoConfiguration configuration = engine.getConfiguration();
+        this.copyMaxSize = configuration.getSqlParallelHashJoinGroupByPayloadCopyMaxSize();
+        this.copyMinProbeRatio = configuration.getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio();
         perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
         try {
             // Sinks read the borrowed input metadatas when they are instantiated, so every sink
@@ -241,6 +247,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         }
         frozen = null;
         isBuildUnique = false;
+        isPayloadCopied = false;
         failure = Misc.freeBestEffort(failure, intBuild);
         failure = Misc.freeBestEffort(failure, mapBuild);
         // The slots released their symbol tables above, so the shared caches go next.
@@ -280,6 +287,15 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
 
     public HashJoinGroupByFunctions getFunctions() {
         return functions;
+    }
+
+    /**
+     * True when the open cursor's probes read a copy of the build's payload columns rather than the
+     * columns where they live; see {@link #maybeCopyPayload(long, SqlExecutionCircuitBreaker)}.
+     */
+    @TestOnly
+    public boolean isPayloadCopied() {
+        return isPayloadCopied;
     }
 
     @Override
@@ -579,6 +595,39 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
 
     void release(int slot) {
         perWorkerLocks.releaseSlot(slot);
+    }
+
+    /** True when some execution may copy the build's payload columns, as EXPLAIN reports. */
+    boolean canCopyPayload() {
+        return buildFrames.getCopyRowSize() > 0 && copyMaxSize >= buildFrames.getCopyRowSize();
+    }
+
+    /**
+     * True when this build copies its payload columns for a probe of this many rows: a payload that
+     * the copy can hold, a copy within the byte bound, and a probe that holds at least the configured
+     * ratio of the build's rows, so that each build row serves more than one match on average. The
+     * probe's count is its frame rows, before any row filter, so a selective probe filter can copy a
+     * build it need not; the byte bound caps what that costs.
+     */
+    static boolean isPayloadCopyWorthIt(long buildRows, int copyRowSize, long probeRows, long copyMaxSize, double copyMinProbeRatio) {
+        return copyRowSize > 0
+                && buildRows > 0
+                && buildRows <= copyMaxSize / copyRowSize
+                && probeRows >= copyMinProbeRatio * buildRows;
+    }
+
+    /**
+     * Copies the build's payload columns when the probe is large enough to read each build row more
+     * than once; see {@link #isPayloadCopyWorthIt}. The owner calls it once the probe's frames are
+     * known and before it dispatches the probes, which then read the copy. On failure the caller
+     * closes the cursor, whose clear() releases the copy.
+     */
+    void maybeCopyPayload(long probeRows, SqlExecutionCircuitBreaker circuitBreaker) {
+        assert frozen != null && !isPayloadCopied;
+        if (isPayloadCopyWorthIt(frozen.getRowCount(), buildFrames.getCopyRowSize(), probeRows, copyMaxSize, copyMinProbeRatio)) {
+            buildFrames.copyPayload(frozen, circuitBreaker);
+            isPayloadCopied = true;
+        }
     }
 
     boolean shouldProbe() {

@@ -45,7 +45,12 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Collection;
 
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.assertAgainstBaseline;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.assertDifferential;
@@ -54,6 +59,7 @@ import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.fused;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.plan;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
 
+@RunWith(Parameterized.class)
 public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
     // The optimiser pushes the interval below dateadd() as and_offset, which the fused analysis cannot
     // parse, so the analysis falls back to the ordinary plan. The placeholder takes a join.
@@ -66,6 +72,22 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
     private static final String[] KEYS = {"r.id=p.id", "r.s=p.s"};
     private static final String PROJECTED_R = "(select s2, d, id, s, l, i, t, f from a) r";
     private static final String PROJECTED_P = "(select f, i, s, t, id, l, d, s2 from b) p";
+
+    private final HashJoinPayloadLayout payloadLayout;
+
+    public HashJoinGroupBySemanticTest(HashJoinPayloadLayout payloadLayout) {
+        this.payloadLayout = payloadLayout;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> parameters() {
+        return HashJoinPayloadLayout.parameters();
+    }
+
+    @Before
+    public void setUpPayloadLayout() {
+        payloadLayout.apply(node1.getConfigurationOverrides());
+    }
 
     @Test
     public void testColumnRolesAndEveryAggregateType() throws Exception {
