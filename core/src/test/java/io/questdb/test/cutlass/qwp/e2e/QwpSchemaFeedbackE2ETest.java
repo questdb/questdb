@@ -124,6 +124,42 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testLegacyFramesReportEachSchemaVersionOnce() throws Exception {
+        execute("create table feedback_once (n long, ts timestamp) timestamp(ts) partition by day wal");
+        runInContext(port -> {
+            try (WebSocketClient client = connect(port);
+                 QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                 QwpTableBuffer table = longTable("feedback_once", 1)) {
+                // A schema-negotiated connection sending legacy frames once got the
+                // table's full schema re-encoded into every ACK.
+                assertLegacyFeedback(client, encoder, table, 0, 1);
+                assertLegacyFeedback(client, encoder, table, 1, 0);
+                assertLegacyFeedback(client, encoder, table, 2, 0);
+
+                // A column added through a legacy frame is a new version: report it once.
+                QwpTableBuffer widened = new QwpTableBuffer("feedback_once");
+                try {
+                    widened.getOrCreateColumn("n", QwpConstants.TYPE_LONG, true).addLong(2);
+                    widened.getOrCreateColumn("extra", QwpConstants.TYPE_LONG, true).addLong(3);
+                    widened.nextRow();
+                    WebSocketResponse ack = assertLegacyFeedback(client, encoder, widened, 3, 1);
+                    Assert.assertEquals("extra", ack.getSchemaUpdate(0).getColumnName(2));
+                } finally {
+                    widened.close();
+                }
+                assertLegacyFeedback(client, encoder, table, 4, 0);
+            }
+            // A new connection starts without reported versions.
+            try (WebSocketClient client = connect(port);
+                 QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                 QwpTableBuffer table = longTable("feedback_once", 1)) {
+                assertLegacyFeedback(client, encoder, table, 0, 1);
+                assertLegacyFeedback(client, encoder, table, 1, 0);
+            }
+        });
+    }
+
+    @Test
     public void testOversizedColumnCountPreservesMixedFeedback() throws Exception {
         // The designated timestamp adds one more column than the protocol limit.
         assertOversizedSnapshotPreservesMixedFeedback(QwpConstants.MAX_COLUMNS_PER_TABLE, 1_048_576);
@@ -217,6 +253,26 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
                 client.close();
             }
         }
+    }
+
+    private static WebSocketResponse assertLegacyFeedback(
+            WebSocketClient client,
+            QwpWebSocketEncoder encoder,
+            QwpTableBuffer table,
+            long expectedSequence,
+            int expectedUpdates
+    ) {
+        int length = encoder.encode(table);
+        client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
+        WebSocketResponse ack = receive(client);
+        Assert.assertTrue(ack.isSuccess());
+        Assert.assertEquals(expectedSequence, ack.getSequence());
+        Assert.assertFalse(ack.isSchemaInvalidation());
+        Assert.assertEquals("seq=" + expectedSequence, expectedUpdates, ack.getSchemaUpdateCount());
+        if (expectedUpdates > 0) {
+            assertContainsUpdate(ack, "feedback_once");
+        }
+        return ack;
     }
 
     private static void assertContainsUpdate(WebSocketResponse response, String tableName) {

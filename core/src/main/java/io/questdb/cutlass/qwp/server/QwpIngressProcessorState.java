@@ -1645,12 +1645,22 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         }
         String tableName = tud.getTableToken().getTableName();
         try {
-            if (schemaFramed
-                    && tableBlock.hasKnownSchemaIdentity()
-                    && tableBlock.getSchemaTableId() == tud.getTableToken().getTableId()
-                    && tableBlock.getSchemaMetadataVersion() == tud.getWriter().getMetadataVersion()) {
+            long version = tud.getWriter().getMetadataVersion();
+            if (schemaFramed) {
+                if (tableBlock.hasKnownSchemaIdentity()
+                        && tableBlock.getSchemaTableId() == tud.getTableToken().getTableId()
+                        && tableBlock.getSchemaMetadataVersion() == version) {
+                    tud.setReportedSchemaVersion(version);
+                    return;
+                }
+                // A stale identity proves the client missed an update, so report
+                // it on every such block until the client catches up.
+            } else if (tud.getReportedSchemaVersion() == version) {
+                // Feedback only spares the client a DESCRIBE, so a legacy block
+                // needs it once per schema version on this connection.
                 return;
             }
+            tud.setReportedSchemaVersion(version);
         } catch (CairoException e) {
             LOG.info().$("could not compare QWP schema identity; scheduling cache invalidation [table=")
                     .$safe(tableName).$(", error=").$safe(e.getFlyweightMessage()).I$();

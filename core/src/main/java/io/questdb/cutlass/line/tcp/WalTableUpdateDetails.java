@@ -64,6 +64,15 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
      * per cache, so it needs no synchronisation.
      */
     private long lastStructureCheckSeqTxn = Long.MIN_VALUE;
+    /**
+     * Writer metadata version this connection last reported in QWP schema
+     * feedback, or {@link Long#MIN_VALUE} before the first report. Lives and
+     * dies with this per-connection TUD, so a reconnect reports again.
+     * <p>
+     * Read and written from the QWP ingest path only, which is single-threaded
+     * per cache, so it needs no synchronisation.
+     */
+    private long reportedSchemaVersion = Long.MIN_VALUE;
 
     public WalTableUpdateDetails(
             CairoEngine engine,
@@ -97,6 +106,10 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
         return lastStructureCheckSeqTxn;
     }
 
+    public long getReportedSchemaVersion() {
+        return reportedSchemaVersion;
+    }
+
     @Override
     public ThreadLocalDetails getThreadLocalDetails(int workerId) {
         return super.getThreadLocalDetails(0);
@@ -108,5 +121,9 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
 
     public void setLastStructureCheckSeqTxn(long seqTxn) {
         lastStructureCheckSeqTxn = seqTxn;
+    }
+
+    public void setReportedSchemaVersion(long version) {
+        reportedSchemaVersion = version;
     }
 }
