@@ -186,6 +186,11 @@ public class HttpMinServerConfigurationWrapper implements HttpServerConfiguratio
     }
 
     @Override
+    public byte getSecurityContextInterfaceId() {
+        return getDelegate().getSecurityContextInterfaceId();
+    }
+
+    @Override
     public SelectFacade getSelectFacade() {
         return getDelegate().getSelectFacade();
     }
