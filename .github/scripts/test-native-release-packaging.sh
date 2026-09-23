@@ -27,8 +27,13 @@ readonly jar_verifier="${script_dir}/verify-rust-native-jar.sh"
 readonly runtime_verifier="${script_dir}/verify-rust-native-runtime-archive.sh"
 temp_dir="$(mktemp -d)"
 readonly temp_dir
+central_endpoint_pid=""
 
 cleanup() {
+    if [[ -n "${central_endpoint_pid}" ]]; then
+        kill "${central_endpoint_pid}" 2>/dev/null || true
+        wait "${central_endpoint_pid}" 2>/dev/null || true
+    fi
     rm -rf "${temp_dir}"
 }
 trap cleanup EXIT
@@ -266,6 +271,8 @@ for required in (
     "Reject an aggregate build without -DskipNative",
     "Verify aggregate-to-normal transition",
     "Reject a forged Central aggregate marker",
+    "test-native-release-packaging.sh",
+    "RUN_MAVEN_LIFECYCLE_TESTS=1",
     "rust-native-libs",
     "third-party-licenses",
     "LINUX_RELEASE_ATTEMPT:",
@@ -316,5 +323,332 @@ if packer["variables"].get("force_deregister") != "false" or packer["variables"]
 if builder.get("force_deregister") != "{{user `force_deregister`}}" or builder.get("force_delete_snapshot") != "{{user `force_delete_snapshot`}}":
     raise SystemExit("Packer builder does not use the non-destructive release force flags")
 PY
+
+run_release_lifecycle_probes() {
+    local lifecycle_root
+    local release_root
+    local endpoint_log
+    local endpoint_port_file
+    local endpoint_port
+    local gpg_home
+    local settings_xml
+    local central_output
+    local central_log
+    local verified_jar
+    local bundle
+    local effective_pom
+    local probe_root
+    local probe_remote
+    local probe_receives
+
+    if ! java -version 2>&1 | grep -Eq 'version "(2[5-9]|[3-9][0-9])\.'; then
+        fail "RUN_MAVEN_LIFECYCLE_TESTS=1 requires JDK 25 or newer"
+    fi
+
+    lifecycle_root="${temp_dir}/lifecycle-root"
+    rsync -a --delete \
+        --exclude .git \
+        --exclude target \
+        --exclude docs/superpowers \
+        "${repo_dir}/" "${lifecycle_root}/"
+
+    cp -a "${valid_raw}" "${lifecycle_root}/raw-native-inputs"
+    "${lifecycle_root}/.github/scripts/stage-rust-native-artifacts.sh" \
+        "${lifecycle_root}/raw-native-inputs" \
+        "${lifecycle_root}/core/target/native-libs" > "${temp_dir}/lifecycle-stage.out"
+
+    mkdir -p "${lifecycle_root}/core/target/classes/io/questdb/bin/linux-x86-64" \
+        "${lifecycle_root}/core/src/main/resources/io/questdb/bin/darwin-x86-64"
+    printf 'stale-output\n' > "${lifecycle_root}/core/target/classes/io/questdb/bin/linux-x86-64/libquestdbr.so"
+    printf 'stale-intel\n' > "${lifecycle_root}/core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdbr.dylib"
+
+    (
+        cd "${lifecycle_root}"
+        mvn -B -pl core -am package \
+            -DskipTests -Dmaven.test.skip=true -DskipNative \
+            -P local-client,include-rust-native-artifacts
+    ) > "${temp_dir}/aggregate-package.log" 2>&1
+
+    local aggregate_rust_count
+    aggregate_rust_count="$(find "${lifecycle_root}/core/target/classes/io/questdb/bin" -type f \( -name 'libquestdbr.so' -o -name 'libquestdbr.dylib' -o -name 'questdbr.dll' \) | wc -l | tr -d ' ')"
+    [[ "${aggregate_rust_count}" == 4 ]] || fail "aggregate package did not contain exactly four Rust libraries"
+    [[ ! -e "${lifecycle_root}/core/target/classes/io/questdb/bin/darwin-x86-64/libquestdbr.dylib" ]] || fail "aggregate package retained stale Intel macOS output"
+    verified_jar="$(find "${lifecycle_root}/core/target" -maxdepth 1 -type f -name 'questdb-*.jar' ! -name '*-tests.jar' -print -quit)"
+    [[ -n "${verified_jar}" ]] || fail "aggregate package did not produce a core jar"
+    "${lifecycle_root}/.github/scripts/verify-rust-native-jar.sh" \
+        "${verified_jar}" "${lifecycle_root}/core/target/native-libs" > "${temp_dir}/aggregate-jar.manifest"
+
+    mkdir -p "${temp_dir}/cargo-sentinel"
+    cat > "${temp_dir}/cargo-sentinel/cargo" <<'EOF'
+#!/usr/bin/env bash
+: > "${CARGO_SENTINEL_CALLED:?}"
+exit 99
+EOF
+    chmod +x "${temp_dir}/cargo-sentinel/cargo"
+    export CARGO_SENTINEL_CALLED="${temp_dir}/cargo-sentinel.called"
+    assert_failure aggregate-without-skip bash -c "cd '${lifecycle_root}' && PATH='${temp_dir}/cargo-sentinel':\"\$PATH\" mvn -B -pl core -am compile -P local-client,include-rust-native-artifacts"
+    [[ ! -e "${CARGO_SENTINEL_CALLED}" ]] || fail "aggregate validation invoked Cargo without -DskipNative"
+    unset CARGO_SENTINEL_CALLED
+
+    (
+        cd "${lifecycle_root}"
+        mvn -B -pl core -am compile -DskipTests -Dmaven.test.skip=true -P local-client
+    ) > "${temp_dir}/normal-compile.log" 2>&1
+    local normal_rust_count
+    normal_rust_count="$(find "${lifecycle_root}/core/target/classes/io/questdb/bin" -type f \( -name 'libquestdbr.so' -o -name 'libquestdbr.dylib' -o -name 'questdbr.dll' \) | wc -l | tr -d ' ')"
+    [[ "${normal_rust_count}" == 1 ]] || fail "normal compile did not transition to exactly one host Rust library"
+
+    assert_failure forged-central-marker bash -c "cd '${lifecycle_root}' && mvn -B -pl core -am validate -DskipNative -Dis.rust.native.artifacts.aggregated=true -P maven-central-release"
+    grep -F 'Profile "include-rust-native-artifacts" is not activated.' "${temp_dir}/forged-central-marker.out" > /dev/null \
+        || fail "forged Central marker did not fail through RequireActiveProfile"
+
+    release_root="${temp_dir}/central-release-root"
+    cp -a "${lifecycle_root}" "${release_root}"
+    python3 - "${release_root}/pom.xml" "${release_root}/core/pom.xml" <<'PY'
+from pathlib import Path
+import sys
+
+for path in map(Path, sys.argv[1:]):
+    text = path.read_text()
+    text = text.replace('10.0.2-SNAPSHOT', '10.0.2')
+    text = text.replace('1.3.10-SNAPSHOT', '1.3.8')
+    if 'SNAPSHOT' in text:
+        raise SystemExit(f'fixture left a SNAPSHOT value in {path}')
+    path.write_text(text)
+PY
+
+    gpg_home="${temp_dir}/gnupg"
+    mkdir -m 700 "${gpg_home}"
+    gpg --batch --homedir "${gpg_home}" --pinentry-mode loopback --passphrase '' \
+        --quick-generate-key 'Native release fixture <fixture@example.invalid>' rsa2048 sign 0 > "${temp_dir}/gpg-key.log" 2>&1
+    settings_xml="${temp_dir}/settings.xml"
+    cat > "${settings_xml}" <<'EOF'
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+  <servers>
+    <server>
+      <id>central</id>
+      <username>fixture-user</username>
+      <password>fixture-password</password>
+    </server>
+  </servers>
+</settings>
+EOF
+
+    endpoint_log="${temp_dir}/central-requests.log"
+    endpoint_port_file="${temp_dir}/central-port"
+    python3 - "${endpoint_log}" "${endpoint_port_file}" <<'PY' &
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+import sys
+
+request_log = Path(sys.argv[1])
+port_file = Path(sys.argv[2])
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        request_log.write_text(request_log.read_text() + f'GET {self.path}\n' if request_log.exists() else f'GET {self.path}\n')
+        self.send_response(503)
+        self.end_headers()
+    def do_POST(self):
+        request_log.write_text(request_log.read_text() + f'POST {self.path}\n' if request_log.exists() else f'POST {self.path}\n')
+        self.send_response(503)
+        self.end_headers()
+    def log_message(self, *_):
+        pass
+
+server = HTTPServer(('127.0.0.1', 0), Handler)
+port_file.write_text(str(server.server_port))
+server.serve_forever()
+PY
+    central_endpoint_pid=$!
+    for _ in $(seq 1 20); do
+        [[ -s "${endpoint_port_file}" ]] && break
+        sleep 1
+    done
+    endpoint_port="$(cat "${endpoint_port_file}")"
+    central_output="${temp_dir}/central-output"
+    central_log="${temp_dir}/central-deploy.log"
+    (
+        cd "${release_root}"
+        GNUPGHOME="${gpg_home}" mvn -B -s "${settings_xml}" -pl core -am deploy \
+            -DskipTests -Dmaven.test.skip=true -DskipNative -DskipPublishing=true \
+            -Dcentral.base.url="http://127.0.0.1:${endpoint_port}" \
+            -DoutputDirectory="${central_output}" \
+            -P build-web-console,include-rust-native-artifacts,maven-central-release
+    ) > "${central_log}" 2>&1
+    kill "${central_endpoint_pid}"
+    wait "${central_endpoint_pid}" 2>/dev/null || true
+    central_endpoint_pid=""
+    [[ ! -s "${endpoint_log}" ]] || fail "safe Central fixture sent a request to its fail-closed endpoint"
+    grep -Eiq 'skip.*publish|publish.*skip' "${central_log}" || fail "Central plugin did not report skipPublishing"
+    bundle="$(find "${central_output}" -type f -name 'central-bundle.zip' -print -quit)"
+    [[ -n "${bundle}" ]] || fail "Central plugin did not produce its local bundle"
+    python3 - "${bundle}" "${release_root}/core/target/questdb-10.0.2.jar" "${release_root}/core/target/native-libs" <<'PY'
+import hashlib
+import io
+import pathlib
+import sys
+import xml.etree.ElementTree as ET
+import zipfile
+
+bundle_path, main_jar, staged_root = map(pathlib.Path, sys.argv[1:])
+version = '10.0.2'
+base = f'org/questdb/questdb/{version}/'
+artifacts = {
+    f'questdb-{version}.pom',
+    f'questdb-{version}.jar',
+    f'questdb-{version}-sources.jar',
+    f'questdb-{version}-javadoc.jar',
+    f'questdb-{version}-web-console.zip',
+}
+sidecars = ('.asc', '.md5', '.sha1', '.sha256', '.sha512')
+with zipfile.ZipFile(bundle_path) as bundle:
+    files = [name for name in bundle.namelist() if not name.endswith('/')]
+    if not files or any(not name.startswith(base) for name in files):
+        raise SystemExit('Central bundle contains an unplanned coordinate')
+    bases = set()
+    for name in files:
+        filename = name.removeprefix(base)
+        artifact = next((item for item in artifacts if filename == item or filename.startswith(item + '.')), None)
+        if artifact is None:
+            raise SystemExit(f'Central bundle contains an unexpected artifact or sidecar: {name}')
+        suffix = filename[len(artifact):]
+        if suffix and suffix not in sidecars:
+            raise SystemExit(f'Central bundle contains an unexpected sidecar: {name}')
+        bases.add(artifact)
+    if bases != artifacts:
+        raise SystemExit(f'Central bundle allowlist mismatch: {bases}')
+    if any('-tests.jar' in name for name in files):
+        raise SystemExit('Central bundle contains a tests jar')
+    pom = ET.fromstring(bundle.read(base + f'questdb-{version}.pom'))
+    if any('SNAPSHOT' in (node.text or '') for node in pom.iter()):
+        raise SystemExit('Central bundled POM contains a SNAPSHOT dependency')
+    bundled_jar = bundle.read(base + f'questdb-{version}.jar')
+    if bundled_jar != main_jar.read_bytes():
+        raise SystemExit('Central bundled core jar differs from the verified core jar')
+    expected = {
+        'io/questdb/bin/linux-x86-64/libquestdbr.so',
+        'io/questdb/bin/linux-aarch64/libquestdbr.so',
+        'io/questdb/bin/darwin-aarch64/libquestdbr.dylib',
+        'io/questdb/bin/windows-x86-64/questdbr.dll',
+    }
+    with zipfile.ZipFile(io.BytesIO(bundled_jar)) as jar:
+        actual = [entry.filename for entry in jar.infolist() if entry.filename in expected]
+        if set(actual) != expected or len(actual) != len(expected):
+            raise SystemExit('Central bundled core jar does not contain exactly four Rust entries')
+        for entry in actual:
+            digest = hashlib.sha256(jar.read(entry)).hexdigest()
+            source = hashlib.sha256((staged_root / entry).read_bytes()).hexdigest()
+            if digest != source:
+                raise SystemExit(f'Central bundled native checksum mismatch: {entry}')
+print('Central bundle allowlist, POM, jar identity, and native checks passed')
+PY
+    local verifier_line central_line
+    verifier_line="$(grep -n 'io/questdb/bin/windows-x86-64/questdbr.dll' "${central_log}" | head -1 | cut -d: -f1)"
+    central_line="$(grep -n 'central-publishing-maven-plugin' "${central_log}" | tail -1 | cut -d: -f1)"
+    [[ -n "${verifier_line}" && -n "${central_line}" && "${verifier_line}" -lt "${central_line}" ]] \
+        || fail "aggregate jar verification did not precede Central deployment"
+
+    effective_pom="${temp_dir}/release-effective-pom.xml"
+    (
+        cd "${lifecycle_root}"
+        mvn -B -N help:effective-pom -Doutput="${effective_pom}"
+    ) > "${temp_dir}/release-effective-pom.log" 2>&1
+    python3 - "${effective_pom}" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+root = ET.parse(sys.argv[1]).getroot()
+ns = {'m': 'http://maven.apache.org/POM/4.0.0'}
+for plugin in root.findall('.//m:plugin', ns):
+    if plugin.findtext('m:artifactId', namespaces=ns) == 'maven-release-plugin':
+        config = plugin.find('m:configuration', ns)
+        text = ET.tostring(config, encoding='unicode')
+        if 'maven-central-release' in text or 'build-web-console' not in text:
+            raise SystemExit('release:perform profile configuration is unsafe')
+        if any(element in text for element in ('<preparationGoals>', '<pushChanges>', '<resume>')):
+            raise SystemExit('fixture requires release-plugin clean verify, pushChanges=true, and resume=true defaults')
+        print('effective release plugin keeps Central inactive; preparation defaults remain clean verify, pushChanges=true, resume=true')
+        break
+else:
+    raise SystemExit('maven-release-plugin missing from effective POM')
+PY
+
+    probe_root="${temp_dir}/release-prepare-probe"
+    rsync -a --delete \
+        --exclude .git \
+        --exclude target \
+        --exclude docs/superpowers \
+        "${repo_dir}/" "${probe_root}/"
+    probe_remote="${temp_dir}/release-prepare-remote.git"
+    probe_receives="${temp_dir}/release-prepare-receives.log"
+    git init --bare "${probe_remote}" > /dev/null
+    cat > "${probe_remote}/hooks/pre-receive" <<EOF
+#!/usr/bin/env bash
+cat >> '${probe_receives}'
+EOF
+    chmod +x "${probe_remote}/hooks/pre-receive"
+    (
+        cd "${probe_root}"
+        git init -b master > /dev/null
+        git config user.name 'Native release fixture'
+        git config user.email fixture@example.invalid
+        git add .
+        git commit -m 'fixture base' > /dev/null
+        git remote add origin "${probe_remote}"
+        git push origin master > /dev/null
+    )
+    : > "${probe_receives}"
+    python3 - "${probe_root}/core/pom.xml" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+text = path.read_text().replace('1.3.10-SNAPSHOT', '1.3.999-SNAPSHOT')
+path.write_text(text)
+PY
+    (
+        cd "${probe_root}"
+        git add core/pom.xml
+        git commit -m 'inject external snapshot client' > /dev/null
+    )
+    : > "${probe_receives}"
+    assert_failure release-prepare-snapshot bash -c "cd '${probe_root}' && mvn -B -pl core -am release:prepare -DpreparationGoals=validate -DautoVersionSubmodules=true"
+    grep -qi 'snapshot' "${temp_dir}/release-prepare-snapshot.out" || fail "release:prepare did not reject the external snapshot client"
+    [[ -z "$(git -C "${probe_root}" status --porcelain)" ]] || fail "snapshot release:prepare changed the local repository"
+    [[ -z "$(git -C "${probe_root}" tag -l)" ]] || fail "snapshot release:prepare created a local tag"
+    [[ ! -s "${probe_receives}" ]] || fail "snapshot release:prepare pushed to the audited remote"
+
+    python3 - "${probe_root}/pom.xml" "${probe_root}/core/pom.xml" "${probe_remote}" <<'PY'
+from pathlib import Path
+import sys
+
+root, core, remote = map(Path, sys.argv[1:])
+root_text = root.read_text()
+root_text = root_text.replace('scm:git:https://github.com/questdb/questdb.git', f'scm:git:file://{remote}')
+root_text = root_text.replace('https://github.com/questdb/questdb', f'file://{remote}')
+root.write_text(root_text)
+core_text = core.read_text().replace('1.3.999-SNAPSHOT', '1.3.8')
+core.write_text(core_text)
+PY
+    (
+        cd "${probe_root}"
+        git add pom.xml core/pom.xml
+        git commit -m 'make release-plugin probe releasable' > /dev/null
+        mvn -B release:prepare -DpreparationGoals=validate -DautoVersionSubmodules=true > "${temp_dir}/release-prepare-safe.log" 2>&1
+        mvn -B release:perform -Dgoals=validate -DlocalCheckout=true > "${temp_dir}/release-perform-safe.log" 2>&1
+    )
+    grep -F 'BUILD SUCCESS' "${temp_dir}/release-perform-safe.log" > /dev/null \
+        || fail "safe release:perform probe did not complete"
+    if grep -Eq 'require-aggregated-rust-native-artifacts|Profile "include-rust-native-artifacts" is not activated' "${temp_dir}/release-perform-safe.log"; then
+        fail "release:perform activated maven-central-release"
+    fi
+    [[ -n "$(git --git-dir "${probe_remote}" tag -l)" ]] || fail "safe release:prepare did not create a remote tag"
+
+    printf 'Maven lifecycle, safe Central deploy, and release-plugin probes passed\n'
+}
+
+if [[ "${RUN_MAVEN_LIFECYCLE_TESTS:-0}" == "1" ]]; then
+    run_release_lifecycle_probes
+fi
 
 printf 'native release packaging script checks passed\n'

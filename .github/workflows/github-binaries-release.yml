@@ -28,6 +28,34 @@ jobs:
           fi
           echo "Tag '${GITHUB_REF_NAME}' is a valid release tag"
 
+  native-release-lifecycle:
+    needs: validate-tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+      - name: Install GraalVM Community 25.0.2
+        run: |
+          set -eux
+          GRAAL_VERSION=25.0.2
+          TAG="jdk-${GRAAL_VERSION}"
+          FILENAME="graalvm-community-jdk-${GRAAL_VERSION}_linux-x64_bin.tar.gz"
+          BASE_URL="https://github.com/graalvm/graalvm-ce-builds/releases/download/${TAG}"
+          curl -L -o "${FILENAME}" "${BASE_URL}/${FILENAME}"
+          curl -L -o "${FILENAME}.sha256" "${BASE_URL}/${FILENAME}.sha256"
+          HASH="$(cut -d ' ' -f1 "${FILENAME}.sha256")"
+          echo "${HASH}  ${FILENAME}" | sha256sum -c -
+          INSTALL_DIR="${HOME}/graalvm-community-jdk-${GRAAL_VERSION}"
+          mkdir -p "${INSTALL_DIR}"
+          tar -xzf "${FILENAME}" -C "${INSTALL_DIR}" --strip-components=1
+          echo "JAVA_HOME=${INSTALL_DIR}" >> "$GITHUB_ENV"
+          echo "GRAALVM_HOME=${INSTALL_DIR}" >> "$GITHUB_ENV"
+          echo "${INSTALL_DIR}/bin" >> "$GITHUB_PATH"
+      - name: Exercise native release Maven lifecycle
+        run: RUN_MAVEN_LIFECYCLE_TESTS=1 .github/scripts/test-native-release-packaging.sh
+
   build-rust-linux-x64:
     needs: validate-tag
     runs-on: ubuntu-latest
@@ -147,6 +175,7 @@ jobs:
 
   package-linux:
     needs:
+      - native-release-lifecycle
       - build-rust-linux-x64
       - build-rust-linux-arm64
       - build-rust-macos-arm64
