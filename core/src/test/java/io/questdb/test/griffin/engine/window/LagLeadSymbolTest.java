@@ -387,11 +387,13 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
 
     @Test
     public void testLagLeadSymbolEqualsSameTableValue() throws Exception {
-        // lag()/lead() resolve their key through the argument's symbol table. When the other side
-        // of = reads the same table, both reads must land on distinct A/B flyweights, or the second
-        // read overwrites the first and every row compares equal. The static-table path compares
-        // int keys and never hits this, so use sources whose table is not static: a UNION, a
-        // NOCACHE column read through ::string, and a ::symbol cast over a STRING column.
+        // BaseSymbolWindowFunction.init() gives lag()/lead() a private view of the argument's
+        // dictionary. A non-cached dictionary keeps one A/B flyweight pair per view, so resolving
+        // through the argument's own view would let the other side of = overwrite the window
+        // value, and every row would compare equal. Comparing int keys never resolves a value, so
+        // use sources that force the comparison onto resolved values: a UNION, a NOCACHE column
+        // read through ::string, and a ::symbol cast over a STRING column (a CastToSymbolTable,
+        // which the window reads through the argument).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, a SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE t2 (ts TIMESTAMP, a SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
@@ -648,10 +650,10 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
     @Test
     public void testLagLeadSymbolNullEquality() throws Exception {
         // Neither source column stores a NULL, yet lag()/lead() mint a NULL for the missing
-        // neighbor. The window column wraps its argument's dictionary in a view that reports
-        // containsNullValue() == true, so NULL = NULL holds in line with the STRING comparison.
-        // EqSymFunctionFactoryTest.testNullFromOuterJoinMatchesNull covers a NULL that reaches
-        // the comparison from a dictionary that does not report it.
+        // neighbor. EqSymFunctionFactory matches a NULL key to a NULL key without consulting
+        // containsNullValue(), so NULL = NULL holds in line with the STRING comparison.
+        // EqSymFunctionFactoryTest.testNullFromOuterJoinMatchesNull covers the same rule for a
+        // NULL minted by an outer join.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (id INT, grp SYMBOL, left_sym SYMBOL, right_sym SYMBOL)");
             execute("""
