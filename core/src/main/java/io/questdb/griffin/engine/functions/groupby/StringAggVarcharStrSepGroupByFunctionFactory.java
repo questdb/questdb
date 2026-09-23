@@ -30,12 +30,14 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 
-public class StringAggGroupByFunctionFactory implements FunctionFactory {
+public class StringAggVarcharStrSepGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "string_agg(Sa)";
+        return "string_agg(Øø)";
     }
 
     @Override
@@ -51,11 +53,10 @@ public class StringAggGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new StringAggGroupByFunction(
+        final Utf8Sequence delimiter = args.getQuick(1).getVarcharA(null);
+        return new StringAggVarcharGroupByFunction(
                 args.getQuick(0),
-                argPositions.getQuick(0),
-                String.valueOf(args.getQuick(1).getChar(null)),
-                configuration.getStrFunctionMaxBufferLength()
+                delimiter == null ? null : Utf8String.newInstance(delimiter)
         );
     }
 }
