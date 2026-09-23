@@ -158,6 +158,13 @@ public class LineHttpTudCache implements QuietCloseable {
             // We only need to check for rename if there are no uncommitted rows
             // it's too taxing to check for renames for every row
             if (!tud.isFirstRow() || !tud.isTableRenamed()) {
+                // The cache lives as long as the TCP connection, but every HTTP request on that
+                // connection authenticates separately, so the identity that created this entry is
+                // not necessarily the identity writing now. Rebind it, otherwise the commit would
+                // be authorized as whoever happened to write to this table first on this
+                // connection and a later, less privileged request would inherit their INSERT
+                // permission.
+                tud.updateSecurityContext(securityContext);
                 return tud;
             } else {
                 // Table was renamed, we need to evict this TUD from cache

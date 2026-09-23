@@ -206,6 +206,15 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
         endAddr = startAddr + count * entrySize;
     }
 
+    // Valid after finishPut(). Index the retained sorted entries without moving the sequential
+    // traversal cursor; the LIGHT selector needs only its selected ordinals, not a full replay.
+    long getRowIdAt(long ordinal) {
+        if (ordinal < 0 || ordinal >= count) {
+            throw CairoException.nonCritical().put("row-selecting traversal index out of bounds");
+        }
+        return Unsafe.getLong(startAddr + ordinal * entrySize);
+    }
+
     private CairoException windowSortOverflow() {
         return LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes)
                 .put(" memory exceeded in window encoded sort (raise ")

@@ -417,6 +417,10 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     int getShowKind();
 
+    ExpressionNode getSubsample();
+
+    int getSubsamplePosition();
+
     int getTableId();
 
     CharSequence getTableName();
@@ -548,6 +552,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void moveOrderByFrom(IQueryModel model);
 
+    void moveSubsampleFrom(IQueryModel baseModel);
+
     void moveSampleByFrom(IQueryModel model);
 
     IntList nextOrderedJoinModels();
@@ -675,6 +681,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setShowCreateDatabaseInclude(int includeMask);
 
     void setShowKind(int showKind);
+
+    void setSubsample(ExpressionNode subsample, int position);
 
     void setSkipped(boolean skipped);
 
