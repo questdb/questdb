@@ -75,7 +75,7 @@
                 <configuration>
                     <tagNameFormat>@{project.version}</tagNameFormat>
                     <arguments>-Dmaven.test.skipTests=true -Dmaven.test.skip=true</arguments>
-                    <releaseProfiles>build-web-console,maven-central-release</releaseProfiles>
+                    <releaseProfiles>build-web-console</releaseProfiles>
                     <scmCommentPrefix>[maven-release-plugin]</scmCommentPrefix>
                     <scmReleaseCommitComment>[maven-release-plugin] prepare release @{releaseLabel}
                     </scmReleaseCommitComment>

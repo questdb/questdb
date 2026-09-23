@@ -5,16 +5,16 @@ on:
     tags:
       - '[0-9]*.[0-9]*.[0-9]*'
   workflow_dispatch:
+    inputs:
+      execution_mode:
+        description: Package immutable source without publishing GitHub assets or AMIs
+        required: true
+        default: package-only
+        type: choice
+        options:
+          - package-only
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Validate the release tag up-front so a malformed tag fails in seconds
-  # rather than after the 4 Rust builds and both packaging jobs have run. The
-  # trigger glob is loose (it lets through e.g. pre-release suffixes), so this
-  # is the real gate. Numeric x.y.z and x.y.z.w (or more components) are
-  # accepted, matching ci/docker-release-pipeline.yml. Skipped on
-  # workflow_dispatch, whose ref is a branch, not a tag.
-  # ---------------------------------------------------------------------------
   validate-tag:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -28,13 +28,14 @@ jobs:
           fi
           echo "Tag '${GITHUB_REF_NAME}' is a valid release tag"
 
-  # ---------------------------------------------------------------------------
-  # Build Rust libraries for all supported platforms (4 parallel jobs)
-  # ---------------------------------------------------------------------------
   build-rust-linux-x64:
     needs: validate-tag
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
+      producer-attempt: ${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -53,15 +54,22 @@ jobs:
               cargo build --release
               rustc --version --verbose
             '
-      - uses: actions/upload-artifact@v6
+      - id: upload
+        uses: actions/upload-artifact@v6
         with:
           name: rust-linux-x64
           path: core/rust/qdbr/target/release/libquestdbr.so
+          if-no-files-found: error
+          overwrite: true
 
   build-rust-linux-arm64:
     needs: validate-tag
     runs-on: ubuntu-22.04-arm
     timeout-minutes: 30
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
+      producer-attempt: ${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -80,15 +88,22 @@ jobs:
               cargo build --release
               rustc --version --verbose
             '
-      - uses: actions/upload-artifact@v6
+      - id: upload
+        uses: actions/upload-artifact@v6
         with:
           name: rust-linux-arm64
           path: core/rust/qdbr/target/release/libquestdbr.so
+          if-no-files-found: error
+          overwrite: true
 
   build-rust-macos-arm64:
     needs: validate-tag
     runs-on: macos-14
     timeout-minutes: 30
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
+      producer-attempt: ${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -98,15 +113,22 @@ jobs:
           export MACOSX_DEPLOYMENT_TARGET=13.0
           cd core/rust/qdbr
           cargo build --release
-      - uses: actions/upload-artifact@v6
+      - id: upload
+        uses: actions/upload-artifact@v6
         with:
           name: rust-macos-arm64
           path: core/rust/qdbr/target/release/libquestdbr.dylib
+          if-no-files-found: error
+          overwrite: true
 
   build-rust-windows:
     needs: validate-tag
     runs-on: windows-latest
     timeout-minutes: 30
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
+      producer-attempt: ${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -115,15 +137,14 @@ jobs:
         run: |
           cd core/rust/qdbr
           cargo build --release
-      - uses: actions/upload-artifact@v6
+      - id: upload
+        uses: actions/upload-artifact@v6
         with:
           name: rust-windows
           path: core/rust/qdbr/target/release/questdbr.dll
+          if-no-files-found: error
+          overwrite: true
 
-  # ---------------------------------------------------------------------------
-  # Package QuestDB (Linux) — produces no-jre + rt-linux-x86-64
-  # The no-jre JAR contains Rust binaries for all supported platforms.
-  # ---------------------------------------------------------------------------
   package-linux:
     needs:
       - build-rust-linux-x64
@@ -132,11 +153,34 @@ jobs:
       - build-rust-windows
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    outputs:
+      raw-linux-x64-artifact-id: ${{ needs.build-rust-linux-x64.outputs.artifact-id }}
+      raw-linux-x64-artifact-digest: ${{ needs.build-rust-linux-x64.outputs.artifact-digest }}
+      raw-linux-x64-producer-attempt: ${{ needs.build-rust-linux-x64.outputs.producer-attempt }}
+      raw-linux-arm64-artifact-id: ${{ needs.build-rust-linux-arm64.outputs.artifact-id }}
+      raw-linux-arm64-artifact-digest: ${{ needs.build-rust-linux-arm64.outputs.artifact-digest }}
+      raw-linux-arm64-producer-attempt: ${{ needs.build-rust-linux-arm64.outputs.producer-attempt }}
+      raw-macos-arm64-artifact-id: ${{ needs.build-rust-macos-arm64.outputs.artifact-id }}
+      raw-macos-arm64-artifact-digest: ${{ needs.build-rust-macos-arm64.outputs.artifact-digest }}
+      raw-macos-arm64-producer-attempt: ${{ needs.build-rust-macos-arm64.outputs.producer-attempt }}
+      raw-windows-artifact-id: ${{ needs.build-rust-windows.outputs.artifact-id }}
+      raw-windows-artifact-digest: ${{ needs.build-rust-windows.outputs.artifact-digest }}
+      raw-windows-producer-attempt: ${{ needs.build-rust-windows.outputs.producer-attempt }}
+      native-artifact-id: ${{ steps.upload-native.outputs.artifact-id }}
+      native-artifact-digest: ${{ steps.upload-native.outputs.artifact-digest }}
+      native-producer-attempt: ${{ github.run_attempt }}
+      licenses-artifact-id: ${{ steps.upload-licenses.outputs.artifact-id }}
+      licenses-artifact-digest: ${{ steps.upload-licenses.outputs.artifact-digest }}
+      licenses-producer-attempt: ${{ github.run_attempt }}
+      release-artifact-id: ${{ steps.upload-release.outputs.artifact-id }}
+      release-artifact-digest: ${{ steps.upload-release.outputs.artifact-digest }}
+      evidence-artifact-id: ${{ steps.upload-evidence.outputs.artifact-id }}
+      evidence-artifact-digest: ${{ steps.upload-evidence.outputs.artifact-digest }}
+      producer-attempt: ${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: true
-
       - name: Install GraalVM Community 25.0.2
         run: |
           set -eux
@@ -144,97 +188,152 @@ jobs:
           TAG="jdk-${GRAAL_VERSION}"
           FILENAME="graalvm-community-jdk-${GRAAL_VERSION}_linux-x64_bin.tar.gz"
           BASE_URL="https://github.com/graalvm/graalvm-ce-builds/releases/download/${TAG}"
-
           curl -L -o "${FILENAME}" "${BASE_URL}/${FILENAME}"
           curl -L -o "${FILENAME}.sha256" "${BASE_URL}/${FILENAME}.sha256"
-
           HASH="$(cut -d ' ' -f1 "${FILENAME}.sha256")"
           echo "${HASH}  ${FILENAME}" | sha256sum -c -
-
           INSTALL_DIR="${HOME}/graalvm-community-jdk-${GRAAL_VERSION}"
           mkdir -p "${INSTALL_DIR}"
           tar -xzf "${FILENAME}" -C "${INSTALL_DIR}" --strip-components=1
-
           echo "JAVA_HOME=${INSTALL_DIR}" >> "$GITHUB_ENV"
           echo "GRAALVM_HOME=${INSTALL_DIR}" >> "$GITHUB_ENV"
           echo "${INSTALL_DIR}/bin" >> "$GITHUB_PATH"
-
-      # Download all Rust libraries into the classpath so they end up in the JAR
       - uses: actions/download-artifact@v7
         with:
-          name: rust-linux-x64
-          path: core/target/classes/io/questdb/bin/linux-x86-64/
+          artifact-ids: ${{ needs.build-rust-linux-x64.outputs.artifact-id }}
+          path: core/target/downloaded-rust-artifacts/rust-linux-x64
       - uses: actions/download-artifact@v7
         with:
-          name: rust-linux-arm64
-          path: core/target/classes/io/questdb/bin/linux-aarch64/
+          artifact-ids: ${{ needs.build-rust-linux-arm64.outputs.artifact-id }}
+          path: core/target/downloaded-rust-artifacts/rust-linux-arm64
       - uses: actions/download-artifact@v7
         with:
-          name: rust-macos-arm64
-          path: core/target/classes/io/questdb/bin/darwin-aarch64/
+          artifact-ids: ${{ needs.build-rust-macos-arm64.outputs.artifact-id }}
+          path: core/target/downloaded-rust-artifacts/rust-macos-arm64
       - uses: actions/download-artifact@v7
         with:
-          name: rust-windows
-          path: core/target/classes/io/questdb/bin/windows-x86-64/
-
-      - name: Verify Rust libraries
+          artifact-ids: ${{ needs.build-rust-windows.outputs.artifact-id }}
+          path: core/target/downloaded-rust-artifacts/rust-windows
+      - name: Stage exact Rust libraries
+        run: .github/scripts/stage-rust-native-artifacts.sh
+      - name: Reject an aggregate build without -DskipNative
         run: |
-          echo "=== All Rust libraries ==="
-          find core/target/classes/io/questdb/bin/ -type f -exec ls -la {} \;
-
-      # Refresh the bundled Rust third-party license attributions (shipped in
-      # the no-jre / rt-linux legal/ dir and questdb.jar's META-INF) before
-      # packaging, so they match the crates linked into libquestdbr.
+          set -euo pipefail
+          mkdir -p fake-bin
+          cat > fake-bin/cargo <<'EOF'
+          #!/usr/bin/env bash
+          echo cargo-invoked >> "${GITHUB_WORKSPACE}/cargo-invoked.log"
+          exit 99
+          EOF
+          chmod +x fake-bin/cargo
+          set +e
+          PATH="${PWD}/fake-bin:${PATH}" mvn -B -pl core -am compile -P include-rust-native-artifacts,local-client > aggregate-without-skipnative.log 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            cat aggregate-without-skipnative.log >&2
+            exit 1
+          fi
+          grep -F 'include-rust-native-artifacts requires -DskipNative' aggregate-without-skipnative.log
+          test ! -e cargo-invoked.log
+      - name: Reject a forged Central aggregate marker
+        run: |
+          set -euo pipefail
+          set +e
+          mvn -B -pl core -DskipNative -Dis.rust.native.artifacts.aggregated=true -P maven-central-release validate > forged-central-marker.log 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            cat forged-central-marker.log >&2
+            exit 1
+          fi
+          grep -F 'Profile "include-rust-native-artifacts" is not activated.' forged-central-marker.log
       - name: Regenerate THIRD_PARTY_LICENSES.txt
         run: bash ci/generate_third_party_licenses.sh
         env:
           CARGO_DENY_VERSION: "0.19.8"
-
-      # Share the freshly generated attributions with package-windows so the
-      # Windows archive ships this same file rather than the committed fallback,
-      # which may have drifted. Both archives then carry byte-identical legal/.
-      - uses: actions/upload-artifact@v6
+      - id: upload-native
+        uses: actions/upload-artifact@v6
+        with:
+          name: rust-native-libs
+          path: core/target/native-libs
+          if-no-files-found: error
+          overwrite: true
+      - id: upload-licenses
+        uses: actions/upload-artifact@v6
         with:
           name: third-party-licenses
           path: THIRD_PARTY_LICENSES.txt
-
-      # When core pins a -SNAPSHOT questdb-client, build it from the submodule
-      # into the local Maven repo so the core build below can resolve it. A
-      # released client is on Maven Central and this is a no-op. Needed because
-      # questdb-client is a test-scoped dep and -DskipTests skips only test
-      # *execution*, not the test-compile classpath resolution.
-      - name: Build local SNAPSHOT client (if pinned)
+          if-no-files-found: error
+          overwrite: true
+      - name: Build QuestDB from the root reactor
         run: |
-          CLIENT_VERSION=$(sed -n 's/.*<questdb.client.version>\(.*\)<\/questdb.client.version>.*/\1/p' core/pom.xml | head -1)
-          echo "questdb.client.version=$CLIENT_VERSION"
-          if echo "$CLIENT_VERSION" | grep -q '\-SNAPSHOT$'; then
-            echo "SNAPSHOT client detected, building it from the submodule"
-            mvn clean install -DskipTests -f java-questdb-client/pom.xml
+          set -eux
+          profiles=build-web-console,build-binaries,include-rust-native-artifacts
+          client_version="$(sed -n 's/.*<questdb.client.version>\(.*\)<\/questdb.client.version>.*/\1/p' core/pom.xml | head -1)"
+          if [[ "${client_version}" == *-SNAPSHOT ]]; then
+            profiles="${profiles},local-client"
           fi
-
-      - name: Build QuestDB
-        working-directory: core
-        run: mvn package -DskipTests -DskipNative -Dhttp.keepAlive=false -P build-web-console,build-binaries
-
-      - uses: actions/upload-artifact@v6
+          mvn -B -pl core -am package -DskipTests -DskipNative -Dhttp.keepAlive=false -P "${profiles}"
+      - name: Verify core jar and Linux runtime archive
+        run: |
+          set -eux
+          core_jar="$(find core/target -maxdepth 1 -type f -name 'questdb-*.jar' ! -name '*-tests.jar' | head -1)"
+          runtime_archive="$(find core/target -maxdepth 1 -type f -name 'questdb-*-rt-linux-x86-64.tar.gz' | head -1)"
+          test -n "${core_jar}"
+          test -n "${runtime_archive}"
+          .github/scripts/verify-rust-native-jar.sh "${core_jar}" core/target/native-libs | tee core/target/rust-native-jar-linux.manifest
+          .github/scripts/verify-rust-native-runtime-archive.sh "${runtime_archive}" linux-x86-64 core/target/native-libs | tee core/target/rust-native-runtime-linux.manifest
+      - id: upload-evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: rust-native-evidence-linux
+          path: |
+            core/target/rust-native-jar-linux.manifest
+            core/target/rust-native-runtime-linux.manifest
+          if-no-files-found: error
+          overwrite: true
+      - id: upload-release
+        uses: actions/upload-artifact@v6
         with:
           name: release-linux
-          path: core/target/questdb-*.gz
+          path: core/target/questdb-*.tar.gz
+          if-no-files-found: error
+          overwrite: true
+      - name: Verify aggregate-to-normal transition
+        run: |
+          set -euo pipefail
+          profiles=local-client
+          client_version="$(sed -n 's/.*<questdb.client.version>\(.*\)<\/questdb.client.version>.*/\1/p' core/pom.xml | head -1)"
+          if [[ "${client_version}" != *-SNAPSHOT ]]; then
+            profiles=""
+          fi
+          if [[ -n "${profiles}" ]]; then
+            mvn -B -pl core -am compile -DskipTests -P "${profiles}"
+          else
+            mvn -B -pl core -am compile -DskipTests
+          fi
+          mapfile -t rust_libraries < <(find core/target/classes/io/questdb/bin -type f \( -name libquestdbr.so -o -name libquestdbr.dylib -o -name questdbr.dll \) | LC_ALL=C sort)
+          test "${#rust_libraries[@]}" -eq 1
+          test "${rust_libraries[0]}" = "core/target/classes/io/questdb/bin/linux-x86-64/libquestdbr.so"
 
-  # ---------------------------------------------------------------------------
-  # Package QuestDB (Windows) — produces rt-windows-x86-64
-  # ---------------------------------------------------------------------------
   package-windows:
     needs:
-      - build-rust-windows
       - package-linux
     runs-on: windows-latest
     timeout-minutes: 60
+    outputs:
+      release-artifact-id: ${{ steps.upload-release.outputs.artifact-id }}
+      release-artifact-digest: ${{ steps.upload-release.outputs.artifact-digest }}
+      evidence-artifact-id: ${{ steps.upload-evidence.outputs.artifact-id }}
+      evidence-artifact-digest: ${{ steps.upload-evidence.outputs.artifact-digest }}
+      producer-attempt: ${{ github.run_attempt }}
+      provenance-artifact-id: ${{ steps.upload-provenance.outputs.artifact-id }}
+      provenance-artifact-digest: ${{ steps.upload-provenance.outputs.artifact-digest }}
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: true
-
       - name: Install GraalVM Community 25.0.2
         shell: powershell
         run: |
@@ -245,66 +344,162 @@ jobs:
           $baseUrl = "https://github.com/graalvm/graalvm-ce-builds/releases/download/$tag"
           $zipPath = Join-Path $env:USERPROFILE $fileName
           $shaPath = "$zipPath.sha256"
-
           Invoke-WebRequest "$baseUrl/$fileName" -OutFile $zipPath
           Invoke-WebRequest "$baseUrl/$fileName.sha256" -OutFile $shaPath
-
           $expected = (Get-Content $shaPath).Split(" ")[0].ToLower()
           $actual = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower()
           if ($expected -ne $actual) {
             throw "SHA256 mismatch for $fileName. Expected $expected but got $actual"
           }
-
           $dest = Join-Path $env:USERPROFILE "graalvm-ce-25"
           Expand-Archive $zipPath -DestinationPath $dest
           $dir = Get-ChildItem $dest | Where-Object { $_.PSIsContainer } | Select-Object -First 1
           $graalHome = $dir.FullName
-
           echo "JAVA_HOME=$graalHome" >> $env:GITHUB_ENV
           echo "GRAALVM_HOME=$graalHome" >> $env:GITHUB_ENV
           echo "$graalHome\bin" >> $env:GITHUB_PATH
-
       - uses: actions/download-artifact@v7
         with:
-          name: rust-windows
-          path: core/target/classes/io/questdb/bin/windows-x86-64/
-
-      # Overwrite the committed fallback with the THIRD_PARTY_LICENSES.txt that
-      # package-linux regenerated, so the Windows archive's legal attributions
-      # match libquestdbr's actual crates and are identical to the Linux/no-jre
-      # archives.
+          artifact-ids: ${{ needs.package-linux.outputs.native-artifact-id }}
+          path: core/target/native-libs
       - uses: actions/download-artifact@v7
         with:
-          name: third-party-licenses
+          artifact-ids: ${{ needs.package-linux.outputs.licenses-artifact-id }}
           path: .
-
-      # See the linux job: build a -SNAPSHOT questdb-client from the submodule so
-      # the core build can resolve it. Released clients come from Maven Central.
-      # shell: bash because windows-latest defaults to PowerShell.
-      - name: Build local SNAPSHOT client (if pinned)
+      - name: Build QuestDB from the root reactor
         shell: bash
         run: |
-          CLIENT_VERSION=$(sed -n 's/.*<questdb.client.version>\(.*\)<\/questdb.client.version>.*/\1/p' core/pom.xml | head -1)
-          echo "questdb.client.version=$CLIENT_VERSION"
-          if echo "$CLIENT_VERSION" | grep -q '\-SNAPSHOT$'; then
-            echo "SNAPSHOT client detected, building it from the submodule"
-            mvn clean install -DskipTests -f java-questdb-client/pom.xml
+          set -eux
+          profiles=build-web-console,build-binaries,include-rust-native-artifacts
+          client_version="$(sed -n 's/.*<questdb.client.version>\(.*\)<\/questdb.client.version>.*/\1/p' core/pom.xml | head -1)"
+          if [[ "${client_version}" == *-SNAPSHOT ]]; then
+            profiles="${profiles},local-client"
           fi
-
-      - name: Build QuestDB
-        working-directory: core
-        run: mvn package -DskipTests -DskipNative "-Dhttp.keepAlive=false" -P build-web-console,build-binaries
-
-      - uses: actions/upload-artifact@v6
+          mvn -B -pl core -am package -DskipTests -DskipNative "-Dhttp.keepAlive=false" -P "${profiles}"
+      - name: Verify core jar and Windows runtime archive
+        shell: bash
+        run: |
+          set -eux
+          core_jar="$(find core/target -maxdepth 1 -type f -name 'questdb-*.jar' ! -name '*-tests.jar' | head -1)"
+          runtime_archive="$(find core/target -maxdepth 1 -type f -name 'questdb-*-rt-windows-x86-64.tar.gz' | head -1)"
+          test -n "${core_jar}"
+          test -n "${runtime_archive}"
+          .github/scripts/verify-rust-native-jar.sh "${core_jar}" core/target/native-libs | tee core/target/rust-native-jar-windows.manifest
+          .github/scripts/verify-rust-native-runtime-archive.sh "${runtime_archive}" windows-x86-64 core/target/native-libs | tee core/target/rust-native-runtime-windows.manifest
+      - id: upload-evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: rust-native-evidence-windows
+          path: |
+            core/target/rust-native-jar-windows.manifest
+            core/target/rust-native-runtime-windows.manifest
+          if-no-files-found: error
+          overwrite: true
+      - id: upload-release
+        uses: actions/upload-artifact@v6
         with:
           name: release-windows
-          path: core/target/questdb-*-rt-*.gz
+          path: core/target/questdb-*-rt-windows-x86-64.tar.gz
+          if-no-files-found: error
+          overwrite: true
+      - name: Write package provenance
+        shell: bash
+        env:
+          RAW_LINUX_X64_ID: ${{ needs.package-linux.outputs.raw-linux-x64-artifact-id }}
+          RAW_LINUX_X64_DIGEST: ${{ needs.package-linux.outputs.raw-linux-x64-artifact-digest }}
+          RAW_LINUX_X64_ATTEMPT: ${{ needs.package-linux.outputs.raw-linux-x64-producer-attempt }}
+          RAW_LINUX_ARM64_ID: ${{ needs.package-linux.outputs.raw-linux-arm64-artifact-id }}
+          RAW_LINUX_ARM64_DIGEST: ${{ needs.package-linux.outputs.raw-linux-arm64-artifact-digest }}
+          RAW_LINUX_ARM64_ATTEMPT: ${{ needs.package-linux.outputs.raw-linux-arm64-producer-attempt }}
+          RAW_MACOS_ARM64_ID: ${{ needs.package-linux.outputs.raw-macos-arm64-artifact-id }}
+          RAW_MACOS_ARM64_DIGEST: ${{ needs.package-linux.outputs.raw-macos-arm64-artifact-digest }}
+          RAW_MACOS_ARM64_ATTEMPT: ${{ needs.package-linux.outputs.raw-macos-arm64-producer-attempt }}
+          RAW_WINDOWS_ID: ${{ needs.package-linux.outputs.raw-windows-artifact-id }}
+          RAW_WINDOWS_DIGEST: ${{ needs.package-linux.outputs.raw-windows-artifact-digest }}
+          RAW_WINDOWS_ATTEMPT: ${{ needs.package-linux.outputs.raw-windows-producer-attempt }}
+          NATIVE_ID: ${{ needs.package-linux.outputs.native-artifact-id }}
+          NATIVE_DIGEST: ${{ needs.package-linux.outputs.native-artifact-digest }}
+          NATIVE_ATTEMPT: ${{ needs.package-linux.outputs.native-producer-attempt }}
+          LICENSE_ID: ${{ needs.package-linux.outputs.licenses-artifact-id }}
+          LICENSE_DIGEST: ${{ needs.package-linux.outputs.licenses-artifact-digest }}
+          LICENSE_ATTEMPT: ${{ needs.package-linux.outputs.licenses-producer-attempt }}
+          LINUX_RELEASE_ID: ${{ needs.package-linux.outputs.release-artifact-id }}
+          LINUX_RELEASE_DIGEST: ${{ needs.package-linux.outputs.release-artifact-digest }}
+          LINUX_EVIDENCE_ID: ${{ needs.package-linux.outputs.evidence-artifact-id }}
+          LINUX_EVIDENCE_DIGEST: ${{ needs.package-linux.outputs.evidence-artifact-digest }}
+          LINUX_ATTEMPT: ${{ needs.package-linux.outputs.producer-attempt }}
+          WINDOWS_RELEASE_ID: ${{ steps.upload-release.outputs.artifact-id }}
+          WINDOWS_RELEASE_DIGEST: ${{ steps.upload-release.outputs.artifact-digest }}
+          WINDOWS_EVIDENCE_ID: ${{ steps.upload-evidence.outputs.artifact-id }}
+          WINDOWS_EVIDENCE_DIGEST: ${{ steps.upload-evidence.outputs.artifact-digest }}
+          WINDOWS_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
 
-  # ---------------------------------------------------------------------------
-  # Upload to GitHub Releases + deploy AMI
-  # ---------------------------------------------------------------------------
-  release:
-    if: startsWith(github.ref, 'refs/tags/')
+          artifacts = [
+              ("rust-linux-x64", "RAW_LINUX_X64", "build-rust-linux-x64"),
+              ("rust-linux-arm64", "RAW_LINUX_ARM64", "build-rust-linux-arm64"),
+              ("rust-macos-arm64", "RAW_MACOS_ARM64", "build-rust-macos-arm64"),
+              ("rust-windows", "RAW_WINDOWS", "build-rust-windows"),
+              ("rust-native-libs", "NATIVE", "package-linux"),
+              ("third-party-licenses", "LICENSE", "package-linux"),
+              ("release-linux", "LINUX_RELEASE", "package-linux"),
+              ("rust-native-evidence-linux", "LINUX_EVIDENCE", "package-linux"),
+              ("release-windows", "WINDOWS_RELEASE", "package-windows"),
+              ("rust-native-evidence-windows", "WINDOWS_EVIDENCE", "package-windows"),
+          ]
+          entries = []
+          for name, prefix, producer in artifacts:
+              entries.append({
+                  "name": name,
+                  "id": os.environ[prefix + "_ID"],
+                  "digest": os.environ[prefix + "_DIGEST"],
+                  "producer_job": producer,
+                  "producer_attempt": os.environ[prefix + "_ATTEMPT"],
+              })
+          native_manifest = Path("core/target/rust-native-jar-windows.manifest")
+          license_file = Path("THIRD_PARTY_LICENSES.txt")
+          payload = {
+              "run_id": os.environ["RUN_ID"],
+              "event": os.environ["EVENT_NAME"],
+              "ref": os.environ["REF"],
+              "head_sha": os.environ["HEAD_SHA"],
+              "producer_attempt": os.environ["WINDOWS_ATTEMPT"],
+              "actions": {
+                  "checkout": "actions/checkout@v5",
+                  "download_artifact": "actions/download-artifact@v7",
+                  "upload_artifact": "actions/upload-artifact@v6",
+              },
+              "containers": {
+                  "linux_x64": "quay.io/pypa/manylinux2014_x86_64",
+                  "linux_arm64": "quay.io/pypa/manylinux_2_28_aarch64",
+              },
+              "artifacts": entries,
+              "native_manifest_sha256": hashlib.sha256(native_manifest.read_bytes()).hexdigest(),
+              "license_manifest_sha256": hashlib.sha256(license_file.read_bytes()).hexdigest(),
+          }
+          Path("core/target/native-release-provenance.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n"
+          )
+          PY
+      - id: upload-provenance
+        uses: actions/upload-artifact@v6
+        with:
+          name: native-release-provenance
+          path: core/target/native-release-provenance.json
+          if-no-files-found: error
+          overwrite: true
+
+  publish-github:
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     needs:
       - package-linux
       - package-windows
@@ -312,43 +507,72 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
-        with:
-          submodules: false
-
       - uses: actions/download-artifact@v7
         with:
-          name: release-linux
-          path: artifacts/
+          artifact-ids: ${{ needs.package-linux.outputs.release-artifact-id }}
+          path: artifacts/linux
       - uses: actions/download-artifact@v7
         with:
-          name: release-windows
-          path: artifacts/
-
-      - name: List release artifacts
-        run: ls -la artifacts/
-
-      - name: Upload to GitHub Release
+          artifact-ids: ${{ needs.package-windows.outputs.release-artifact-id }}
+          path: artifacts/windows
+      - name: Upload or verify every GitHub release asset
         run: |
-          set -e
+          set -euo pipefail
           tag_name="${GITHUB_REF_NAME}"
-          echo "Uploading to release ${tag_name}..."
-          gh release upload "${tag_name}" artifacts/*.gz
+          for archive in artifacts/linux/*.tar.gz artifacts/windows/*.tar.gz; do
+            asset_name="$(basename "${archive}")"
+            expected_sha256="$(sha256sum "${archive}" | awk '{print $1}')"
+            if gh release view "${tag_name}" --json assets --jq '.assets[].name' | grep -Fxq "${asset_name}"; then
+              mkdir -p existing
+              gh release download "${tag_name}" --pattern "${asset_name}" --dir existing --clobber
+              actual_sha256="$(sha256sum "existing/${asset_name}" | awk '{print $1}')"
+              if [[ "${actual_sha256}" != "${expected_sha256}" ]]; then
+                echo "release asset checksum mismatch: ${asset_name}" >&2
+                exit 1
+              fi
+              echo "reusing checksum-equal release asset: ${asset_name}"
+            else
+              gh release upload "${tag_name}" "${archive}#${asset_name}"
+            fi
+          done
           gh release edit "${tag_name}" --draft=false --latest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  publish-ami:
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && needs.publish-github.result == 'success' }}
+    needs:
+      - publish-github
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: false
       - name: Install Packer
         run: |
           curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
           sudo apt-get update && sudo apt-get install -y packer jq
-
-      - name: Deploy AMI
+      - name: Refuse to replace an existing release AMI
+        run: |
+          set -euo pipefail
+          release_name="questdb-${GITHUB_REF_NAME}-al2023-x86_64-ebs"
+          AMI_REGIONS="$(aws ec2 describe-regions --query 'Regions[].RegionName' --output text | tr '\t' ',')"
+          echo "AMI_REGIONS=${AMI_REGIONS}" >> "${GITHUB_ENV}"
+          for region in ${AMI_REGIONS//,/ }; do
+            count="$(aws ec2 describe-images --region "${region}" --owners self --filters "Name=name,Values=${release_name}" --query 'length(Images)' --output text)"
+            if [[ "${count}" != 0 ]]; then
+              echo "release AMI already exists in ${region}: ${release_name}" >&2
+              exit 1
+            fi
+          done
+      - name: Deploy AMI without destructive replacement
         run: |
           cd pkg/ami/marketplace
           make install_aws_plugin
-          make build_release
+          make build_release FORCE_DEREGISTER=false FORCE_DELETE_SNAPSHOT=false
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
