@@ -148,6 +148,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         this.symbolTranslatingRecord = null;
         Throwable failure = closeJoinOwnersBestEffort();
         failure = Misc.freeBestEffort(failure, symbolTranslatingRecord);
+        failure = Misc.freeBestEffort(failure, symbolShortCircuit);
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -181,13 +182,16 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             masterSinkTarget.close();
             slaveSinkTarget.close();
             Misc.free(symbolTranslatingRecord);
+            symbolShortCircuit.close();
         }
 
         @Override
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            // Reopen the sinks before super.of() adopts the cursors so an open-time breach frees each exactly once.
+            // Reopen the sinks and the short circuit's cache before super.of() adopts the cursors
+            // so an open-time breach frees each exactly once.
             masterSinkTarget.reopen();
             slaveSinkTarget.reopen();
+            symbolShortCircuit.reopen();
             super.of(masterCursor, slaveCursor, circuitBreaker);
             masterKeyRecord = masterRecord;
             if (symbolTranslatingRecord != null) {
@@ -206,6 +210,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.setMemoryTracker(tracker);
             }
+            symbolShortCircuit.setMemoryTracker(tracker);
         }
 
         @Override

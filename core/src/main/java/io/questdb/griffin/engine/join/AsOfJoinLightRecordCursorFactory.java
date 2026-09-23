@@ -210,6 +210,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 isOpen = false;
                 joinKeyToRowId.close();
                 Misc.free(symbolTranslatingRecord);
+                Misc.free(symbolJoinKeyMapping);
                 super.close();
             }
         }
@@ -322,6 +323,10 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 isOpen = true;
                 joinKeyToRowId.setMemoryTracker(executionContext.getMemoryTracker());
                 joinKeyToRowId.reopen();
+                if (symbolJoinKeyMapping != null) {
+                    symbolJoinKeyMapping.setMemoryTracker(executionContext.getMemoryTracker());
+                    symbolJoinKeyMapping.reopen();
+                }
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
             if (symbolJoinKeyMapping != null) {

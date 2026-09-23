@@ -30,11 +30,43 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameCursor;
-import io.questdb.std.IntIntHashMap;
+import io.questdb.std.DirectIntIntHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
-public final class SymbolToSymbolJoinKeyMapping implements SymbolJoinKeyMapping, SymbolShortCircuit {
+/**
+ * Maps master symbol keys to slave symbol keys and caches the translations.
+ * <p>
+ * The cache lives in native memory, so that a large cache built by one execution
+ * does not linger on the heap while the owning factory sits in the query cache.
+ * The cache stays closed, and takes no memory, until {@link #reopen()} opens it.
+ * The owning cursor calls {@link #reopen()} before it adopts the master and slave
+ * cursors, {@link #of} after, and {@link #close()} when it closes.
+ * <p>
+ * The cache holds at most {@link CairoConfiguration#getSqlAsOfJoinShortCircuitCacheCapacity()}
+ * entries. Once the cache is full, master symbol keys missing from it get translated
+ * via their string values on every lookup.
+ */
+public final class SymbolToSymbolJoinKeyMapping implements SymbolJoinKeyMapping {
+    private static final int CACHE_INITIAL_CAPACITY = 16;
+    private static final double CACHE_LOAD_FACTOR = 0.5;
+    // Master symbol keys are non-negative, and getSlaveKey() handles VALUE_IS_NULL
+    // before the cache lookup, so VALUE_IS_NULL never appears as a real key.
+    private static final int NO_ENTRY_KEY = SymbolTable.VALUE_IS_NULL;
+    // The cache holds only non-negative slave keys, so -1 is free.
+    private static final int NO_ENTRY_VALUE = -1;
     private final CairoConfiguration config;
-    private final IntIntHashMap masterKeyToSlaveKey = new IntIntHashMap(16, 0.5);
+    // Closed until reopen() opens it; close() releases its native memory.
+    private final DirectIntIntHashMap masterKeyToSlaveKey = new DirectIntIntHashMap(
+            CACHE_INITIAL_CAPACITY,
+            CACHE_LOAD_FACTOR,
+            NO_ENTRY_KEY,
+            NO_ENTRY_VALUE,
+            MemoryTag.NATIVE_JOIN_MAP,
+            false
+    );
     private final int masterSymbolIndex;
     private final int slaveSymbolIndex;
     private int maxCacheSize = 0;
@@ -46,37 +78,43 @@ public final class SymbolToSymbolJoinKeyMapping implements SymbolJoinKeyMapping,
         this.slaveSymbolIndex = slaveSymbolIndex;
     }
 
+    /**
+     * Releases the native cache. The instance stays reusable: the next
+     * {@link #reopen()} call opens the cache again.
+     */
+    @Override
+    public void close() {
+        masterKeyToSlaveKey.close();
+        slaveSymbolTable = null;
+    }
+
+    @TestOnly
+    public int getCacheSize() {
+        return masterKeyToSlaveKey.size();
+    }
+
     @Override
     public int getSlaveKey(Record masterRecord) {
         assert slaveSymbolTable != null : "slaveSymbolTable must be set before calling getSlaveKey";
+        assert masterKeyToSlaveKey.isOpen() : "cache must be open before calling getSlaveKey";
 
-        int masterKey = masterRecord.getInt(masterSymbolIndex);
-        int slaveKey = masterKeyToSlaveKey.get(masterKey);
-        if (slaveKey != -1) {
-            return slaveKey;
-        }
-
+        final int masterKey = masterRecord.getInt(masterSymbolIndex);
         if (masterKey == SymbolTable.VALUE_IS_NULL) {
-            if (slaveSymbolTable.containsNullValue()) {
-                slaveKey = SymbolTable.VALUE_IS_NULL;
-                // add to cache unconditionally even when at the max size, null is important to cache
-                masterKeyToSlaveKey.put(masterKey, slaveKey);
-                return slaveKey;
-            }
-            return StaticSymbolTable.VALUE_NOT_FOUND;
+            // containsNullValue() reads a flag, so a cache lookup would not make it any cheaper
+            return slaveSymbolTable.containsNullValue() ? SymbolTable.VALUE_IS_NULL : StaticSymbolTable.VALUE_NOT_FOUND;
         }
 
-        CharSequence strSym = masterRecord.getSymA(masterSymbolIndex);
-        slaveKey = slaveSymbolTable.keyOf(strSym);
-        if (slaveKey == StaticSymbolTable.VALUE_NOT_FOUND) {
-            // We could consider adding a cache also for keys known to be not found.
-            // Not implemented for now.
-            return slaveKey;
+        final long index = masterKeyToSlaveKey.keyIndex(masterKey);
+        if (index < 0) {
+            return masterKeyToSlaveKey.valueAt(index);
         }
 
-        // we reserve space in the cache for null, so < instead of <=
-        if (masterKeyToSlaveKey.size() < maxCacheSize) {
-            masterKeyToSlaveKey.put(masterKey, slaveKey);
+        final CharSequence strSym = masterRecord.getSymA(masterSymbolIndex);
+        final int slaveKey = slaveSymbolTable.keyOf(strSym);
+        // We could consider adding a cache also for keys known to be not found.
+        // Not implemented for now.
+        if (slaveKey != StaticSymbolTable.VALUE_NOT_FOUND && masterKeyToSlaveKey.size() < maxCacheSize) {
+            masterKeyToSlaveKey.putAt(index, masterKey, slaveKey);
         }
         return slaveKey;
     }
@@ -89,14 +127,29 @@ public final class SymbolToSymbolJoinKeyMapping implements SymbolJoinKeyMapping,
     @Override
     public void of(TimeFrameCursor slaveCursor) {
         this.slaveSymbolTable = slaveCursor.getSymbolTable(slaveSymbolIndex);
-        this.masterKeyToSlaveKey.clear();
-        this.maxCacheSize = config.getSqlAsOfJoinShortCircuitCacheCapacity();
+        resetCache();
     }
 
     @Override
     public void of(RecordCursor slaveCursor) {
         this.slaveSymbolTable = SymbolJoinKeyMapping.toStaticSymbolTable(slaveCursor.getSymbolTable(slaveSymbolIndex));
-        this.masterKeyToSlaveKey.clear();
-        this.maxCacheSize = config.getSqlAsOfJoinShortCircuitCacheCapacity();
+        resetCache();
+    }
+
+    @Override
+    public void reopen() {
+        masterKeyToSlaveKey.reopen();
+    }
+
+    @Override
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        masterKeyToSlaveKey.setMemoryTracker(tracker);
+    }
+
+    private void resetCache() {
+        maxCacheSize = config.getSqlAsOfJoinShortCircuitCacheCapacity();
+        // restoreInitialCapacity() opens a closed cache, and shrinks and clears an open one,
+        // so each execution starts small, even if the owning cursor skipped close()
+        masterKeyToSlaveKey.restoreInitialCapacity();
     }
 }
