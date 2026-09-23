@@ -233,6 +233,26 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinFastSymbolTranslationCacheCapacityKeepsQueryUnderLimit() throws Exception {
+        // Same shape as testAsOfJoinFastSymbolTranslationCacheFailsOnLargeInput, but the cache capacity
+        // limits each translation cache to 1,000 entries (16 KiB), so 40K distinct master symbols no longer
+        // breach the 512 KiB limit. The only slave row matches the last master row, whose symbols lie beyond
+        // the cached ones, so count(s.k1) = 1 checks the uncached translation via the symbol strings.
+        setProperty(PropertyKey.CAIRO_SQL_JOIN_SYMBOL_TRANSLATION_CACHE_CAPACITY, 1_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT (x + 39_999)::SYMBOL k1, (x + 39_999)::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(1)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            final String sql = "SELECT count(), count(s.k1) FROM m ASOF JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)";
+            assertUsesFactory(sql, AsOfJoinFastRecordCursorFactory.class);
+            assertQuery(sql).noLeakCheck().noRandomAccess().expectSize().returns("""
+                    count\tcount1
+                    40000\t1
+                    """);
+        });
+    }
+
+    @Test
     public void testAsOfJoinFastSymbolTranslationCacheFailsOnLargeInput() throws Exception {
         // A multi-key SYMBOL ASOF join over a time-frame slave routes to AsOfJoinFastRecordCursorFactory with
         // a SymbolTranslatingRecord (a single SYMBOL key takes the SymbolKeyMappingRecordCopier path instead),

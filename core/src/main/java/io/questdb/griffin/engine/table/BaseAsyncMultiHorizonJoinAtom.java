@@ -258,6 +258,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
                 HorizonJoinSlaveState state = slaveStates.getQuick(s);
                 if (state.getMasterSymbolKeyColumnIndices() != null) {
                     ownerSymbolTranslatingRecords.add(new SymbolTranslatingRecord(
+                            configuration,
                             state.getMasterColumnCount(),
                             state.getMasterSymbolKeyColumnIndices(),
                             state.getSlaveSymbolKeyColumnIndices()
@@ -272,6 +273,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
                     HorizonJoinSlaveState state = slaveStates.getQuick(s);
                     if (state.getMasterSymbolKeyColumnIndices() != null) {
                         perWorkerSymbolTranslatingRecords.add(new SymbolTranslatingRecord(
+                                configuration,
                                 state.getMasterColumnCount(),
                                 state.getMasterSymbolKeyColumnIndices(),
                                 state.getSlaveSymbolKeyColumnIndices()

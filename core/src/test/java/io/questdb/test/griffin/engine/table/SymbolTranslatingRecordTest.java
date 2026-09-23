@@ -38,19 +38,51 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 /**
  * Verifies that {@link SymbolTranslatingRecord} keeps its translation caches in native
  * memory only while a cursor is open: the owning cursor releases them on close, while the
  * factory stays alive (as it does in the query cache), and reopens them on the next execution.
  * <p>
+ * The capped run limits each cache to fewer entries than a cache at initial capacity takes
+ * before its first rehash, so the caches must stay small, while the uncached translations
+ * must still produce the same results.
+ * <p>
  * The caches are the only execution-time user of {@link MemoryTag#NATIVE_JOIN_MAP}, so the
  * tag's counter measures them precisely.
  */
+@RunWith(Parameterized.class)
 public class SymbolTranslatingRecordTest extends AbstractCairoTest {
+    // A cache at initial capacity rehashes on its 16th entry.
+    private static final int CAPPED_CACHE_CAPACITY = 10;
     private static final int MASTER_SYMBOL_COUNT = 2_000;
     private static final int SLAVE_SYMBOL_COUNT = 1_000;
+    private final boolean isCacheCapped;
+
+    public SymbolTranslatingRecordTest(boolean isCacheCapped) {
+        this.isCacheCapped = isCacheCapped;
+    }
+
+    @Parameterized.Parameters(name = "capped={0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{{false}, {true}});
+    }
+
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
+        if (isCacheCapped) {
+            setProperty(PropertyKey.CAIRO_SQL_JOIN_SYMBOL_TRANSLATION_CACHE_CAPACITY, CAPPED_CACHE_CAPACITY);
+        }
+    }
 
     @Test
     public void testAsyncHorizonJoinReleasesCachesOnCursorClose() throws Exception {
@@ -198,7 +230,31 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
         });
     }
 
-    private static void assertCachesReleased(
+    private static void createTables(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws Exception {
+        // ASOF and LT joins take the SymbolTranslatingRecord path only for multi-column keys,
+        // hence the constant sym2 column. The slave table inserts its symbols in reverse order, so that each master symbol key
+        // maps to a different slave key, and holds only half of the master symbols.
+        engine.execute(
+                """
+                        CREATE TABLE slave AS (
+                            SELECT ('s' || (%d - x))::SYMBOL sym, 'k'::SYMBOL sym2, (%d - x)::DOUBLE price, (x * 1_000_000)::TIMESTAMP ts
+                            FROM long_sequence(%d)
+                        ) TIMESTAMP(ts) PARTITION BY DAY
+                        """.formatted(SLAVE_SYMBOL_COUNT, SLAVE_SYMBOL_COUNT, SLAVE_SYMBOL_COUNT),
+                sqlExecutionContext
+        );
+        engine.execute(
+                """
+                        CREATE TABLE master AS (
+                            SELECT ('s' || (x - 1))::SYMBOL sym, 'k'::SYMBOL sym2, (x * 10_000)::DOUBLE val, (2_000_000_000 + x * 1_000_000)::TIMESTAMP ts
+                            FROM long_sequence(%d)
+                        ) TIMESTAMP(ts) PARTITION BY DAY
+                        """.formatted(MASTER_SYMBOL_COUNT),
+                sqlExecutionContext
+        );
+    }
+
+    private void assertCachesReleased(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String query,
@@ -211,16 +267,21 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     println(factory, cursor);
                     TestUtils.assertEquals(expected, sink);
-                    // the translation caches grow past their initial capacity while the cursor is open
                     final long used = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP) - baseline;
-                    Assert.assertTrue(query + ", used: " + used, used > 1024);
+                    if (isCacheCapped) {
+                        // each cache stays at its initial 256 bytes, since it never reaches the rehash threshold
+                        Assert.assertTrue(query + ", used: " + used, used > 0 && used <= 4 * 1024);
+                    } else {
+                        // the sym cache takes at least 1,000 translations, which grow it to 16 KiB or more
+                        Assert.assertTrue(query + ", used: " + used, used >= 16 * 1024);
+                    }
                 }
                 Assert.assertEquals(query, baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP));
             }
         }
     }
 
-    private static void assertHorizonJoins(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception {
+    private void assertHorizonJoins(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception {
         assertCachesReleased(
                 compiler,
                 sqlExecutionContext,
@@ -264,30 +325,6 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                         count\tsum\tcount1
                         1000\t499500.0\t1000
                         """
-        );
-    }
-
-    private static void createTables(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws Exception {
-        // ASOF and LT joins take the SymbolTranslatingRecord path only for multi-column keys,
-        // hence the constant sym2 column. The slave table inserts its symbols in reverse order, so that each master symbol key
-        // maps to a different slave key, and holds only half of the master symbols.
-        engine.execute(
-                """
-                        CREATE TABLE slave AS (
-                            SELECT ('s' || (%d - x))::SYMBOL sym, 'k'::SYMBOL sym2, (%d - x)::DOUBLE price, (x * 1_000_000)::TIMESTAMP ts
-                            FROM long_sequence(%d)
-                        ) TIMESTAMP(ts) PARTITION BY DAY
-                        """.formatted(SLAVE_SYMBOL_COUNT, SLAVE_SYMBOL_COUNT, SLAVE_SYMBOL_COUNT),
-                sqlExecutionContext
-        );
-        engine.execute(
-                """
-                        CREATE TABLE master AS (
-                            SELECT ('s' || (x - 1))::SYMBOL sym, 'k'::SYMBOL sym2, (x * 10_000)::DOUBLE val, (2_000_000_000 + x * 1_000_000)::TIMESTAMP ts
-                            FROM long_sequence(%d)
-                        ) TIMESTAMP(ts) PARTITION BY DAY
-                        """.formatted(MASTER_SYMBOL_COUNT),
-                sqlExecutionContext
         );
     }
 }

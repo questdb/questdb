@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.DelegatingRecord;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
@@ -59,6 +60,10 @@ import java.util.Arrays;
  * {@link #initSources} before the first {@link #getInt(int)} call of each
  * execution.
  * <p>
+ * Each cache holds at most {@link CairoConfiguration#getSqlJoinSymbolTranslationCacheCapacity()}
+ * entries. Once a cache is full, master symbol keys missing from it get translated via their
+ * string values on every lookup.
+ * <p>
  * Each instance is thread-unsafe and must be used by a single worker.
  */
 public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCloseable, Mutable {
@@ -74,6 +79,7 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
     // Maps column index to cache/symbol table array index; -1 for non-symbol columns.
     // Sized to the total number of master columns, so no bounds check is needed.
     private final int[] columnToKeyIndex;
+    private final CairoConfiguration configuration;
     // Master column indices for symbol key columns, used for symbol table source lookups.
     private final int[] masterColumnIndices;
     private final SymbolTable[] masterSymbolTableCache;
@@ -82,9 +88,12 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
     private final StaticSymbolTable[] slaveSymbolTableCache;
     private boolean hadNonExistentKey;
     private SymbolTableSource masterSource;
+    // Max number of entries per cache; initSources() re-reads it from the configuration.
+    private int maxCacheSize;
     private SymbolTableSource slaveSource;
 
-    public SymbolTranslatingRecord(int maxColumnCount, int joinKeyCount) {
+    public SymbolTranslatingRecord(CairoConfiguration configuration, int maxColumnCount, int joinKeyCount) {
+        this.configuration = configuration;
         this.caches = newCaches(joinKeyCount);
         this.masterSymbolTableCache = new SymbolTable[joinKeyCount];
         this.slaveSymbolTableCache = new StaticSymbolTable[joinKeyCount];
@@ -95,11 +104,18 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
     }
 
     /**
+     * @param configuration                configuration that provides the max cache size
      * @param masterColumnCount            total number of columns in the master record metadata
      * @param masterSymbolKeyColumnIndices master column indices for symbol key columns used in join
      * @param slaveSymbolKeyColumnIndices  slave column indices for symbol key columns used in join
      */
-    public SymbolTranslatingRecord(int masterColumnCount, int[] masterSymbolKeyColumnIndices, int[] slaveSymbolKeyColumnIndices) {
+    public SymbolTranslatingRecord(
+            CairoConfiguration configuration,
+            int masterColumnCount,
+            int[] masterSymbolKeyColumnIndices,
+            int[] slaveSymbolKeyColumnIndices
+    ) {
+        this.configuration = configuration;
         final int joinColumnCount = masterSymbolKeyColumnIndices.length;
         this.caches = newCaches(joinColumnCount);
         this.masterSymbolTableCache = new SymbolTable[joinColumnCount];
@@ -265,11 +281,14 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
         // Cache miss: resolve via string using lazily-obtained symbol tables
         final CharSequence symValue = getMasterSymbolTable(idx).valueOf(masterSymKey);
         final int slaveKey = getSlaveSymbolTable(idx).keyOf(symValue);
-        cache.putAt(index, masterSymKey, slaveKey);
+        if (cache.size() < maxCacheSize) {
+            cache.putAt(index, masterSymKey, slaveKey);
+        }
         return slaveKey;
     }
 
     private void reopenCaches() {
+        maxCacheSize = configuration.getSqlJoinSymbolTranslationCacheCapacity();
         // restoreInitialCapacity() opens a closed cache, and shrinks and clears an open one,
         // so a re-initialization within one execution (e.g. hash join swap) starts small too.
         for (int i = 0, n = caches.size(); i < n; i++) {

@@ -933,6 +933,15 @@ public interface CairoConfiguration {
      */
     int getSqlJoinMetadataPageSize();
 
+    /**
+     * Max number of entries in each master-to-slave symbol key translation cache that
+     * joins on SYMBOL keys build when the two sides have different symbol tables. Symbol
+     * keys beyond the limit get translated via their string values on every lookup.
+     *
+     * @return max number of cached symbol key translations per join key column
+     */
+    int getSqlJoinSymbolTranslationCacheCapacity();
+
     long getSqlLatestByRowCount();
 
     int getSqlLexerPoolCapacity();

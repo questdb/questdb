@@ -105,7 +105,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             this.filter = filter;
             this.filterSymbolTableSource = new JoinSymbolTableSource(columnSplit);
             this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
-                    ? new SymbolTranslatingRecord(slaveFactory.getMetadata().getColumnCount(), slaveSymbolKeyColumnIndices, masterSymbolKeyColumnIndices)
+                    ? new SymbolTranslatingRecord(configuration, slaveFactory.getMetadata().getColumnCount(), slaveSymbolKeyColumnIndices, masterSymbolKeyColumnIndices)
                     : null;
         } catch (Throwable th) {
             close();

@@ -95,6 +95,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
         this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
                 ? new SymbolTranslatingRecord(
+                configuration,
                 Math.max(masterFactory.getMetadata().getColumnCount(), slaveFactory.getMetadata().getColumnCount()),
                 masterSymbolKeyColumnIndices.length
         )

@@ -87,7 +87,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             this.masterKeySink = masterKeySink;
             this.slaveKeySink = slaveKeySink;
             this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
-                    ? new SymbolTranslatingRecord(slaveFactory.getMetadata().getColumnCount(), slaveSymbolKeyColumnIndices, masterSymbolKeyColumnIndices)
+                    ? new SymbolTranslatingRecord(configuration, slaveFactory.getMetadata().getColumnCount(), slaveSymbolKeyColumnIndices, masterSymbolKeyColumnIndices)
                     : null;
             cursor = new HashJoinRecordCursor(columnSplit, joinKeyMap, slaveChain);
         } catch (Throwable th) {

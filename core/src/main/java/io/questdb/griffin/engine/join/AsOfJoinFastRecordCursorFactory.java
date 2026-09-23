@@ -90,7 +90,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         this.symbolShortCircuit = symbolShortCircuit;
         this.toleranceInterval = toleranceInterval;
         this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
-                ? new SymbolTranslatingRecord(masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
+                ? new SymbolTranslatingRecord(configuration, masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
                 : null;
     }
 

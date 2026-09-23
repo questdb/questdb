@@ -224,10 +224,10 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
 
             // Per-worker symbol translating records for integer-based symbol key comparison
             if (masterSymbolKeyColumnIndices != null) {
-                this.ownerSymbolTranslatingRecord = new SymbolTranslatingRecord(masterColumnCount, masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices);
+                this.ownerSymbolTranslatingRecord = new SymbolTranslatingRecord(configuration, masterColumnCount, masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices);
                 this.perWorkerSymbolTranslatingRecords = new ObjList<>(workerCount);
                 for (int i = 0; i < workerCount; i++) {
-                    perWorkerSymbolTranslatingRecords.add(new SymbolTranslatingRecord(masterColumnCount, masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices));
+                    perWorkerSymbolTranslatingRecords.add(new SymbolTranslatingRecord(configuration, masterColumnCount, masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices));
                 }
             } else {
                 this.ownerSymbolTranslatingRecord = null;

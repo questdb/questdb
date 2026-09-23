@@ -332,7 +332,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                         asOfJoinMaps.add(null);
                     }
                     if (ss.getMasterSymbolKeyColumnIndices() != null) {
-                        symbolTranslatingRecords.add(new SymbolTranslatingRecord(ss.getMasterColumnCount(), ss.getMasterSymbolKeyColumnIndices(), ss.getSlaveSymbolKeyColumnIndices()));
+                        symbolTranslatingRecords.add(new SymbolTranslatingRecord(configuration, ss.getMasterColumnCount(), ss.getMasterSymbolKeyColumnIndices(), ss.getSlaveSymbolKeyColumnIndices()));
                     } else {
                         symbolTranslatingRecords.add(null);
                     }

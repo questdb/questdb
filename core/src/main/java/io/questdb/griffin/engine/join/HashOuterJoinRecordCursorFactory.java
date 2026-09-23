@@ -91,7 +91,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
             this.joinType = joinType;
             if (masterSymbolKeyColumnIndices != null) {
                 assert slaveSymbolKeyColumnIndices != null;
-                this.symbolTranslatingRecord = new SymbolTranslatingRecord(slaveFactory.getMetadata().getColumnCount(), slaveSymbolKeyColumnIndices, masterSymbolKeyColumnIndices);
+                this.symbolTranslatingRecord = new SymbolTranslatingRecord(configuration, slaveFactory.getMetadata().getColumnCount(), slaveSymbolKeyColumnIndices, masterSymbolKeyColumnIndices);
             } else {
                 this.symbolTranslatingRecord = null;
             }

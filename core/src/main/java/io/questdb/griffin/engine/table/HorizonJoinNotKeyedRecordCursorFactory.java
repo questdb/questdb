@@ -274,7 +274,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
             }
 
             if (masterSymbolKeyColumnIndices != null) {
-                this.symbolTranslatingRecord = new SymbolTranslatingRecord(masterColumnCount, masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices);
+                this.symbolTranslatingRecord = new SymbolTranslatingRecord(configuration, masterColumnCount, masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices);
             } else {
                 this.symbolTranslatingRecord = null;
             }

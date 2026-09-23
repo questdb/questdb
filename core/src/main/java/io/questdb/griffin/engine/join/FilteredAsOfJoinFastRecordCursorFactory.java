@@ -126,7 +126,7 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
         }
         this.toleranceInterval = toleranceInterval;
         this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
-                ? new SymbolTranslatingRecord(masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
+                ? new SymbolTranslatingRecord(configuration, masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
                 : null;
     }
 

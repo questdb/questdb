@@ -76,7 +76,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
-                ? new SymbolTranslatingRecord(masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
+                ? new SymbolTranslatingRecord(configuration, masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
                 : null;
         Map joinKeyMap = null;
         try {

@@ -553,6 +553,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlJoinContextPoolCapacity;
     private final int sqlJoinMetadataMaxResizes;
     private final int sqlJoinMetadataPageSize;
+    private final int sqlJoinSymbolTranslationCacheCapacity;
     private final long sqlLatestByRowCount;
     private final int sqlLexerPoolCapacity;
     private final int sqlMapMaxPages;
@@ -1712,6 +1713,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlAsOfJoinLookahead = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_LOOKAHEAD, 64);
             this.sqlAsOfJoinShortCircuitCacheCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY, 10_000_000);
             this.sqlAsOfJoinEvacuationThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD, 10_000_000);
+            this.sqlJoinSymbolTranslationCacheCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_JOIN_SYMBOL_TRANSLATION_CACHE_CAPACITY, 1_000_000);
             // divisor-only RecordChain page: clamp at 1 (no fixed block to enforce; 1 byte is safe).
             this.sqlSortValuePageSize = Math.max(1, getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 16777216));
             this.sqlSortValueMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES,
@@ -5205,6 +5207,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlJoinMetadataPageSize() {
             return sqlJoinMetadataPageSize;
+        }
+
+        @Override
+        public int getSqlJoinSymbolTranslationCacheCapacity() {
+            return sqlJoinSymbolTranslationCacheCapacity;
         }
 
         @Override

@@ -76,7 +76,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
         this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null ?
-                new SymbolTranslatingRecord(Math.max(masterFactory.getMetadata().getColumnCount(), slaveFactory.getMetadata().getColumnCount()),
+                new SymbolTranslatingRecord(configuration, Math.max(masterFactory.getMetadata().getColumnCount(), slaveFactory.getMetadata().getColumnCount()),
                         masterSymbolKeyColumnIndices.length) : null;
         try {
             this.masterSink = masterSink;
