@@ -83,6 +83,17 @@ public class SplitPartVarcharFunctionFactory implements FunctionFactory {
             return;
         }
 
+        if (delimiter.size() == 0) {
+            // an empty delimiter cannot split the string, so the whole string is treated as a
+            // single field (matching PostgreSQL and Snowflake). Only field 1 (counting from the
+            // start) or -1 (counting from the end) exists; any other position is out of range.
+            // Previously this dropped the input and returned an empty string.
+            if (index == 1 || index == -1) {
+                sink.put(utf8Str);
+            }
+            return;
+        }
+
         int size = utf8Str.size();
         int len = Utf8s.length(utf8Str);
 
