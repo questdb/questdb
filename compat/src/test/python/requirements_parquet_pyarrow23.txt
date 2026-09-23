@@ -1,2 +1,2 @@
-pyarrow==23.0.0
+pyarrow==23.0.1
 requests>=2.28.0
