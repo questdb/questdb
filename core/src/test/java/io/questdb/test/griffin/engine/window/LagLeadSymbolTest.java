@@ -120,6 +120,195 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLagLeadOverDynamicSymbolCast() throws Exception {
+        // Casts to SYMBOL from VARCHAR and from numeric or temporal types mint dictionary keys
+        // while the scan runs, so a copy of the dictionary taken at init() is empty. lag()/lead() must resolve keys against the
+        // live dictionary.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG, i INT, d DOUBLE, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1, 10, 1.5, 'a'),
+                    ('2024-01-01T00:00:01.000000Z', 2, 20, 2.5, 'b'),
+                    ('2024-01-01T00:00:02.000000Z', 3, 30, 3.5, NULL),
+                    ('2024-01-01T00:00:03.000000Z', 4, 40, 4.5, 'b'),
+                    ('2024-01-01T00:00:04.000000Z', 5, 50, 5.5, 'c')
+                    """);
+
+            final String expectedUnpartitioned = """
+                    x\tlag_x\tlead_x\tlag_v\tlead_v
+                    1\t\t2\t\tb
+                    2\t1\t3\ta\t
+                    3\t2\t4\tb\tb
+                    4\t3\t5\t\tc
+                    5\t4\t\tb\t
+                    """;
+            assertQuery("""
+                    SELECT x,
+                        LAG(x::SYMBOL) OVER () lag_x,
+                        LEAD(x::SYMBOL) OVER () lead_x,
+                        LAG(v::SYMBOL) OVER () lag_v,
+                        LEAD(v::SYMBOL) OVER () lead_v
+                    FROM t
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedUnpartitioned);
+            assertQuery("""
+                    SELECT x,
+                        LAG(x::SYMBOL) OVER (ORDER BY ts) lag_x,
+                        LEAD(x::SYMBOL) OVER (ORDER BY ts) lead_x,
+                        LAG(v::SYMBOL) OVER (ORDER BY ts) lag_v,
+                        LEAD(v::SYMBOL) OVER (ORDER BY ts) lead_v
+                    FROM t
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedUnpartitioned);
+
+            final String expectedPartitioned = """
+                    x\tlag_x\tlead_x\tlag_v\tlead_v
+                    1\t\t3\t\t
+                    2\t\t4\t\tb
+                    3\t1\t5\ta\tc
+                    4\t2\t\tb\t
+                    5\t3\t\t\t
+                    """;
+            assertQuery("""
+                    SELECT x,
+                        LAG(x::SYMBOL) OVER (PARTITION BY x % 2) lag_x,
+                        LEAD(x::SYMBOL) OVER (PARTITION BY x % 2) lead_x,
+                        LAG(v::SYMBOL) OVER (PARTITION BY x % 2) lag_v,
+                        LEAD(v::SYMBOL) OVER (PARTITION BY x % 2) lead_v
+                    FROM t
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedPartitioned);
+            assertQuery("""
+                    SELECT x,
+                        LAG(x::SYMBOL) OVER (PARTITION BY x % 2 ORDER BY ts) lag_x,
+                        LEAD(x::SYMBOL) OVER (PARTITION BY x % 2 ORDER BY ts) lead_x,
+                        LAG(v::SYMBOL) OVER (PARTITION BY x % 2 ORDER BY ts) lag_v,
+                        LEAD(v::SYMBOL) OVER (PARTITION BY x % 2 ORDER BY ts) lead_v
+                    FROM t
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedPartitioned);
+
+            // the cast lives in a subquery, so the window reads a SYMBOL column whose dictionary
+            // still grows during the scan
+            assertQuery("SELECT k, LAG(k) OVER () prev FROM (SELECT x::SYMBOL k FROM t)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            k\tprev
+                            1\t
+                            2\t1
+                            3\t2
+                            4\t3
+                            5\t4
+                            """);
+
+            // streaming partitioned window over the INT and DOUBLE casts, which hand out
+            // their snapshot from separate newSymbolTable() implementations
+            assertQuery("""
+                    SELECT x,
+                        LAG(i::SYMBOL) OVER (PARTITION BY x % 2) lag_i,
+                        LAG(d::SYMBOL) OVER (PARTITION BY x % 2) lag_d
+                    FROM t
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            x\tlag_i\tlag_d
+                            1\t\t
+                            2\t\t
+                            3\t10\t1.5
+                            4\t20\t2.5
+                            5\t30\t3.5
+                            """);
+            assertQuery("SELECT x, LAG(ts::SYMBOL) OVER () lag_ts FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            x\tlag_ts
+                            1\t
+                            2\t1704067200000000
+                            3\t1704067201000000
+                            4\t1704067202000000
+                            5\t1704067203000000
+                            """);
+
+            // IGNORE NULLS skips the NULL that v::SYMBOL mints for the third row
+            assertQuery("""
+                    SELECT x,
+                        LAG(v::SYMBOL) IGNORE NULLS OVER () lag_v,
+                        LAG(v::SYMBOL) IGNORE NULLS OVER (PARTITION BY x % 2) lag_v_part
+                    FROM t
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            x\tlag_v\tlag_v_part
+                            1\t\t
+                            2\ta\t
+                            3\tb\ta
+                            4\tb\tb
+                            5\tb\ta
+                            """);
+
+            // downstream consumers resolve the window column through the table that the window
+            // cursor forwards from newSymbolTable(), or through the window function itself
+            assertQuery("SELECT x, LAG(p) OVER () pp FROM (SELECT x, LAG(x::SYMBOL) OVER () p FROM t)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            x\tpp
+                            1\t
+                            2\t
+                            3\t1
+                            4\t2
+                            5\t3
+                            """);
+            assertQuery("SELECT x, LEAD(p) OVER () np FROM (SELECT x, LEAD(x::SYMBOL) OVER () p FROM t)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tnp
+                            1\t3
+                            2\t4
+                            3\t5
+                            4\t
+                            5\t
+                            """);
+            assertQuery("SELECT p, count() FROM (SELECT LAG(v::SYMBOL) OVER () p FROM t) ORDER BY p")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            p\tcount
+                            \t2
+                            a\t1
+                            b\t2
+                            """);
+            assertQuery("SELECT x FROM (SELECT x, LAG(v::SYMBOL) OVER () p FROM t) WHERE p = 'b'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            x
+                            3
+                            5
+                            """);
+        });
+    }
+
+    @Test
     public void testLagLeadOverSymbolIgnoreNulls() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE symbols (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

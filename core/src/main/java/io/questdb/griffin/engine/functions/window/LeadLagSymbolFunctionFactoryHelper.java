@@ -42,6 +42,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.cast.CastToSymbolTable;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -65,7 +66,10 @@ class LeadLagSymbolFunctionFactoryHelper {
         // Resolves keys through a view this function owns rather than through the argument. A
         // non-cached dictionary keeps a single A/B pair of flyweights per view, so resolving
         // through the argument's view would alias this column with the source column and with
-        // every other function that reads the same dictionary in the same expression.
+        // every other function that reads the same dictionary in the same expression. Stays null
+        // when the argument hands out a CastToSymbolTable: that is a snapshot taken before the
+        // scan mints any keys, so it cannot resolve them, and the cast behind it resolves keys to
+        // immutable Strings, so reading through the argument aliases nothing.
         private SymbolTable symbolTable;
         protected final SymbolFunction arg;
         protected final Function defaultValue;
@@ -134,6 +138,9 @@ class LeadLagSymbolFunctionFactoryHelper {
             }
             symbolTable = Misc.freeIfCloseable(symbolTable);
             symbolTable = arg.newSymbolTable();
+            if (symbolTable instanceof CastToSymbolTable) {
+                symbolTable = null;
+            }
         }
 
         @Override
