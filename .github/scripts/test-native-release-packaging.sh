@@ -639,12 +639,15 @@ root_text = root.read_text()
 root_text = root_text.replace('scm:git:https://github.com/questdb/questdb.git', f'scm:git:file://{remote}')
 root_text = root_text.replace('https://github.com/questdb/questdb', f'file://{remote}')
 root.write_text(root_text)
-core_text = core.read_text().replace('1.3.999-SNAPSHOT', '1.3.8')
-core.write_text(core_text)
+for path in root.parent.rglob('pom.xml'):
+    text = path.read_text()
+    text = text.replace('1.3.999-SNAPSHOT', '1.3.8')
+    text = text.replace('1.3.10-SNAPSHOT', '1.3.8')
+    path.write_text(text)
 PY
     if ! (
         cd "${probe_root}"
-        git add pom.xml core/pom.xml
+        git add -u
         git commit -m 'make release-plugin probe releasable' > /dev/null
         mvn -B release:prepare -DpreparationGoals=validate -DautoVersionSubmodules=true > "${temp_dir}/release-prepare-safe.log" 2>&1
         mvn -B release:perform -Dgoals=validate -DlocalCheckout=true > "${temp_dir}/release-perform-safe.log" 2>&1
