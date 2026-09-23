@@ -230,12 +230,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             openNewSegment();
             configureSymbolTable();
         } catch (Throwable e) {
+            CairoError fatal = null;
             if (CairoException.isDataSyncFailure(e)) {
                 distressed = true;
                 dropPendingDurable();
-                sequencer.handleDataSyncFailure(e);
+                // Poison now, throw after doClose(): fail-stop must not strand the WAL lock, fds and memory.
+                fatal = sequencer.poisonOnDataSyncFailure(e);
             }
             doClose(false);
+            if (fatal != null) {
+                throw fatal;
+            }
             throw e;
         }
     }

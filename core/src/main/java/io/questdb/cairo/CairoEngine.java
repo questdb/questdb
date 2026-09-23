@@ -3825,6 +3825,16 @@ public class CairoEngine implements Closeable, WriterSource {
      * is rejected by {@link #throwIfDurabilityFailed()}.
      */
     public void handleDataSyncFailure(Throwable failure) {
+        throw poisonOnDataSyncFailure(failure);
+    }
+
+    /**
+     * {@link #handleDataSyncFailure(Throwable)} for a cleanup path. It poisons the engine and invokes the callback
+     * exactly as that method does, but RETURNS the CairoError instead of throwing it, so the caller can finish
+     * releasing resources and throw it last. Fail-stop is in force from this call on: every later write acquire is
+     * rejected whether or not the caller has thrown yet.
+     */
+    public CairoError poisonOnDataSyncFailure(Throwable failure) {
         CairoException syncFailure = null;
         Throwable cursor = failure;
         while (cursor != null) {
@@ -3835,7 +3845,7 @@ public class CairoEngine implements Closeable, WriterSource {
             cursor = cursor.getCause();
         }
         if (syncFailure == null) {
-            throw new CairoError(failure);
+            return new CairoError(failure);
         }
 
         final DurabilityFailure detail = new DurabilityFailure(
@@ -3847,7 +3857,7 @@ public class CairoEngine implements Closeable, WriterSource {
             LOG.critical().$("fatal durability barrier failure [").$(detail.toString()).$(']').$();
             durabilityFailureHandler.onFailure(detail);
         }
-        throw new CairoError(syncFailure);
+        return new CairoError(syncFailure);
     }
 
     public void throwIfDurabilityFailed() {

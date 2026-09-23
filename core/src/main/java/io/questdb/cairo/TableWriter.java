@@ -7453,10 +7453,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // doClose(), while this guard stops the half-built walk from being attempted at all -- cheaper,
         // and not dependent on every future failure mode inside advanceDurableEpoch() being throw-shaped
         // rather than, say, a partial write.
-        // A FAILED FSYNC in the epoch below is fatal and must stay fatal, but it must not be raised until
-        // this method has finished releasing resources. Captured here, rethrown at the very end of
-        // doClose(). See the catch block for why both halves are required.
-        CairoError fatalEpochFailure = null;
+        // A FAILED FSYNC in the epoch or the seal-purge spill below is fatal and must stay fatal, but it must
+        // not be raised until this method has finished releasing resources. Captured here, first failure
+        // wins, rethrown at the very end of doClose(). See the epoch catch block for why both halves are
+        // required.
+        CairoError deferredFatal = null;
         if (fullyConstructed
                 && !distressed
                 && configuration.isAdaptiveEpochFlushOnClose()
@@ -7484,7 +7485,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // the poison and the operator callback have already happened (fail-stop is in force
                     // from this instant, and getDurableAckRegistry now reports nothing durable), we finish
                     // the cleanup, then rethrow so the caller still sees the fatal error.
-                    fatalEpochFailure = fatal;
+                    deferredFatal = fatal;
                 }
             }
         }
@@ -7500,7 +7501,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (Throwable th) {
             if (CairoException.isDataSyncFailure(th)) {
                 distressed = true;
-                engine.handleDataSyncFailure(th);
+                // Poison now, throw after the frees below, as the epoch block above does.
+                final CairoError fatal = engine.poisonOnDataSyncFailure(th);
+                if (deferredFatal == null) {
+                    deferredFatal = fatal;
+                }
             }
             LOG.critical()
                     .$("posting seal-purge close cleanup failed [table=").$(tableToken)
@@ -7562,10 +7567,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.debug().$("closed [table=").$(tableToken).I$();
         }
         // Every resource is now released. Re-raise the deferred fatal data-sync failure so a failed fsync
-        // in the close epoch stays fail-stop for the caller (the engine was already poisoned at the point
-        // of failure). Last statement in the method: nothing after it could be skipped.
-        if (fatalEpochFailure != null) {
-            throw fatalEpochFailure;
+        // in the close epoch or the seal-purge spill stays fail-stop for the caller (the engine was already
+        // poisoned at the point of failure). Last statement in the method: nothing after it could be skipped.
+        if (deferredFatal != null) {
+            throw deferredFatal;
         }
     }
 
@@ -12631,7 +12636,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 } catch (CairoException ex) {
                     if (ex.isDataSyncFailure()) {
                         distressed = true;
-                        engine.handleDataSyncFailure(ex);
+                        // Poison now, throw after the decoder close and munmap below. The fatal error takes
+                        // precedence over an earlier cleanup error, which it carries as suppressed.
+                        final CairoError fatal = engine.poisonOnDataSyncFailure(ex);
+                        if (cleanupError != null) {
+                            fatal.addSuppressed(cleanupError);
+                        }
+                        cleanupError = fatal;
                     }
                     LOG.error().$("could not fsync native partition dir [path=").$(other).$(", errno=").$(ex.getErrno()).I$();
                 } catch (Throwable th) {

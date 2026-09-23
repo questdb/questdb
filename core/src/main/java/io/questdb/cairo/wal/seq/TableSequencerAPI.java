@@ -26,6 +26,7 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableStructure;
@@ -412,6 +413,10 @@ public class TableSequencerAPI implements QuietCloseable {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             sequencer.unlockWrite();
         }
+    }
+
+    public CairoError poisonOnDataSyncFailure(Throwable failure) {
+        return engine.poisonOnDataSyncFailure(failure);
     }
 
     public boolean prepareToConvertToNonWal(final TableToken tableToken) {
