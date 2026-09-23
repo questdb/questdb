@@ -24,8 +24,10 @@
 
 package io.questdb.test.cairo.crash;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.str.Path;
@@ -56,6 +58,11 @@ public class ChecksumArtifactsCrashTest extends AbstractCrashConsistencyTest {
 
     @Test
     public void testTxnCapabilityCrashSweepNeverCondemnsAnIntactTxn() throws Exception {
+        // The artifacts under test are written in every mode, but NOSYNC issues no durability op to crash at.
+        // Under a nosync sweep, sweep SYNC, the closest grade that syncs; every other sweep keeps its own mode.
+        if (engine.getConfiguration().getCommitMode() == CommitMode.NOSYNC) {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        }
         final int ops = countOps("txnprobe");
         Assert.assertTrue("expected a real durability-op sequence to sweep, got " + ops, ops >= 8);
 

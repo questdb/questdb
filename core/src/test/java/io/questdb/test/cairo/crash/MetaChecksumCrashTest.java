@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.crash;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -56,6 +57,9 @@ public class MetaChecksumCrashTest extends AbstractCrashConsistencyTest {
 
     @Test
     public void testCrashSweepAcrossEnrolmentNeverRejectsHealthyMeta() throws Exception {
+        // Enrolment exists only under adaptive, and NOSYNC would leave no durability op to crash at. Pin
+        // adaptive, so the test sweeps the same thing under every -Dquestdb.test.commit.mode.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         // Enrolment writes the adaptive commit mode into _meta through a raw fd and then refreshes the
         // checksum before its fsync. Sweep every durability op so the window between those two writes
         // is actually landed on, rather than hoping one chosen point hits it.
