@@ -30,6 +30,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
@@ -124,14 +125,26 @@ final class QwpSchemaControl {
             return -1;
         }
 
-        long packed = writeSchemaPayload(
-                engine,
-                securityContext,
-                nameSink,
-                requestId,
-                response + QwpConstants.HEADER_SIZE,
-                responseLimit - QwpConstants.HEADER_SIZE
-        );
+        long packed;
+        for (int retries = 0; ; retries++) {
+            try {
+                packed = writeSchemaPayload(
+                        engine,
+                        securityContext,
+                        nameSink,
+                        requestId,
+                        response + QwpConstants.HEADER_SIZE,
+                        responseLimit - QwpConstants.HEADER_SIZE
+                );
+                break;
+            } catch (TableReferenceOutOfDateException e) {
+                if (retries >= engine.getConfiguration().getMaxSqlRecompileAttempts()) {
+                    packed = writeResult(response + QwpConstants.HEADER_SIZE, requestId, RESULT_UNAVAILABLE);
+                    break;
+                }
+                // Resolve and authorize the replacement token before acquiring its metadata.
+            }
+        }
         int replyPayloadLength = Numbers.decodeLowInt(packed);
         writeFrameHeader(response, replyPayloadLength);
         return QwpConstants.HEADER_SIZE + replyPayloadLength;
@@ -181,7 +194,12 @@ final class QwpSchemaControl {
             p += nameBytes;
             long schemaLengthAddress = p;
             p += Integer.BYTES;
-            long packed = writeSchemaPayload(engine, securityContext, tableName, 0, p, (int) (hi - p));
+            long packed;
+            try {
+                packed = writeSchemaPayload(engine, securityContext, tableName, 0, p, (int) (hi - p));
+            } catch (TableReferenceOutOfDateException e) {
+                return -1;
+            }
             int result = Numbers.decodeHighInt(packed);
             if (result == RESULT_DENIED || result == RESULT_UNAVAILABLE || result == RESULT_TOO_LARGE) {
                 return -1;
