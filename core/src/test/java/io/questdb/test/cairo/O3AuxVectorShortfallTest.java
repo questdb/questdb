@@ -116,6 +116,8 @@ public class O3AuxVectorShortfallTest extends AbstractCairoTest {
             }
 
             // The diagnostic itself: what was short, by how much, and for which column and partition.
+            // The logging thread may not have delivered the record yet; wait for it.
+            capture.drain();
             capture.assertLogged("aux vector is shorter than the partition row count");
             capture.assertLogged("columnType=VARCHAR");
             capture.assertLogged("auxFileLen=16");
