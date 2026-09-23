@@ -124,40 +124,33 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testOversizedSnapshotInvalidatesThenNextSmallFeedbackSucceeds() throws Exception {
-        StringBuilder ddl = new StringBuilder("create table feedback_wide (");
-        for (int i = 0; i < 20; i++) {
-            if (i > 0) {
-                ddl.append(',');
-            }
-            ddl.append("column_name_").append(i).append("_abcdefghijklmnop long");
-        }
-        ddl.append(",ts timestamp) timestamp(ts) partition by day wal");
-        execute(ddl);
-        execute("create table feedback_small (n long, ts timestamp) timestamp(ts) partition by day wal");
+    public void testOversizedColumnCountPreservesMixedFeedback() throws Exception {
+        // The designated timestamp adds one more column than the protocol limit.
+        assertOversizedSnapshotPreservesMixedFeedback(QwpConstants.MAX_COLUMNS_PER_TABLE, 1_048_576);
+    }
+
+    @Test
+    public void testOversizedSnapshotPreservesMixedFeedback() throws Exception {
+        assertOversizedSnapshotPreservesMixedFeedback(20, 512);
+    }
+
+    @Test
+    public void testOversizedSnapshotReturnsNamedResultOnNack() throws Exception {
+        createWideTable("feedback_non_wal_wide", 20, false);
         runInContext(port -> {
-            try (WebSocketClient client = connect(port); QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-                try (QwpTableBuffer wide = new QwpTableBuffer("feedback_wide")) {
-                    wide.getOrCreateColumn("column_name_0_abcdefghijklmnop", QwpConstants.TYPE_LONG, true).addLong(1);
-                    wide.nextRow();
-                    sendSchema(client, encoder, wide);
-                    WebSocketResponse invalidation = receive(client);
-                    Assert.assertTrue(invalidation.isSuccess());
-                    Assert.assertTrue(invalidation.isSchemaInvalidation());
-                }
-                try (QwpTableBuffer small = longTable("feedback_small", 2)) {
-                    sendSchema(client, encoder, small);
-                    WebSocketResponse update = receive(client);
-                    Assert.assertTrue(update.isSuccess());
-                    Assert.assertTrue(update.hasSchemaUpdates());
-                    Assert.assertFalse(update.isSchemaInvalidation());
-                    Assert.assertEquals("feedback_small", update.getSchemaUpdateTableName(0));
-                }
+            try (WebSocketClient client = connect(port);
+                 QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                 QwpTableBuffer table = longTable("feedback_non_wal_wide", 1)) {
+                sendSchema(client, encoder, table);
+                WebSocketResponse response = receive(client);
+                Assert.assertFalse(response.isSuccess());
+                Assert.assertEquals(0, response.getSequence());
+                Assert.assertFalse(response.isSchemaInvalidation());
+                Assert.assertEquals(1, response.getSchemaUpdateCount());
+                assertContainsUpdate(response, "feedback_non_wal_wide", QwpSchemaProtocol.RESULT_TOO_LARGE);
             }
-            drainWalQueue();
-            assertQuery("select column_name_0_abcdefghijklmnop from feedback_wide").noLeakCheck().expectSize().returns("column_name_0_abcdefghijklmnop\n1\n");
-            assertQuery("select n from feedback_small").noLeakCheck().expectSize().returns("n\n2\n");
         }, 65_536, 65_536, 65_536, 512, null);
+        assertQuery("SELECT count() FROM feedback_non_wal_wide").expectSize().noRandomAccess().returns("count\n0\n");
     }
 
     @Test
@@ -227,9 +220,13 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
     }
 
     private static void assertContainsUpdate(WebSocketResponse response, String tableName) {
+        assertContainsUpdate(response, tableName, QwpSchemaProtocol.RESULT_KNOWN);
+    }
+
+    private static void assertContainsUpdate(WebSocketResponse response, String tableName, int result) {
         for (int i = 0; i < response.getSchemaUpdateCount(); i++) {
             if (tableName.equals(response.getSchemaUpdateTableName(i))) {
-                Assert.assertEquals(QwpSchemaProtocol.RESULT_KNOWN, response.getSchemaUpdate(i).getResult());
+                Assert.assertEquals(result, response.getSchemaUpdate(i).getResult());
                 return;
             }
         }
@@ -306,5 +303,49 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
             sink.append(c);
         }
         return sink.toString();
+    }
+
+    private void assertOversizedSnapshotPreservesMixedFeedback(int columnCount, int sendBufferSize) throws Exception {
+        createWideTable("feedback_wide", columnCount, true);
+        execute("CREATE TABLE feedback_small (n LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        runInContext(port -> {
+            try (WebSocketClient client = connect(port);
+                 QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                 QwpTableBuffer wide = longTable("feedback_wide", 1);
+                 QwpTableBuffer small = longTable("feedback_small", 2)) {
+                for (int i = 0; i < 3; i++) {
+                    encoder.beginSchemaMessage(2, new GlobalSymbolDictionary(), -1, -1);
+                    encoder.addSchemaTable(i % 2 == 0 ? wide : small, -1, -1);
+                    encoder.addSchemaTable(i % 2 == 0 ? small : wide, -1, -1);
+                    int length = encoder.finishMessage();
+                    client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
+                    WebSocketResponse response = receive(client);
+                    Assert.assertTrue(response.isSuccess());
+                    Assert.assertEquals(i, response.getSequence());
+                    Assert.assertFalse(response.isSchemaInvalidation());
+                    Assert.assertEquals(2, response.getSchemaUpdateCount());
+                    assertContainsUpdate(response, "feedback_wide", QwpSchemaProtocol.RESULT_TOO_LARGE);
+                    assertContainsUpdate(response, "feedback_small");
+                }
+                sendSchema(client, encoder, small);
+                WebSocketResponse response = receive(client);
+                Assert.assertTrue(response.isSuccess());
+                Assert.assertEquals(3, response.getSequence());
+                Assert.assertEquals(1, response.getSchemaUpdateCount());
+                assertContainsUpdate(response, "feedback_small");
+            }
+            drainWalQueue();
+            assertQuery("SELECT n FROM feedback_wide").noLeakCheck().expectSize().returns("n\n1\n1\n1\n");
+            assertQuery("SELECT n FROM feedback_small").noLeakCheck().expectSize().returns("n\n2\n2\n2\n2\n");
+        }, 65_536, 65_536, 65_536, sendBufferSize, null);
+    }
+
+    private void createWideTable(String tableName, int columnCount, boolean isWal) throws Exception {
+        StringBuilder ddl = new StringBuilder("CREATE TABLE ").append(tableName).append(" (n LONG");
+        for (int i = 1; i < columnCount; i++) {
+            ddl.append(",column_name_").append(i).append("_abcdefghijklmnop LONG");
+        }
+        ddl.append(",ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY ").append(isWal ? "WAL" : "BYPASS WAL");
+        execute(ddl);
     }
 }

@@ -201,7 +201,7 @@ final class QwpSchemaControl {
                 return -1;
             }
             int result = Numbers.decodeHighInt(packed);
-            if (result == RESULT_DENIED || result == RESULT_UNAVAILABLE || result == RESULT_TOO_LARGE) {
+            if (result == RESULT_DENIED || result == RESULT_UNAVAILABLE) {
                 return -1;
             }
             int schemaLength = Numbers.decodeLowInt(packed);
