@@ -312,6 +312,16 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         sync0();
     }
 
+    /**
+     * Adaptive group-commit (Deferred 2): true when this table is ADAPTIVE AND a group window {@code W > 0}
+     * is configured, so the per-commit sequencer fdatasync is DEFERRED to the batched flush. A pure function
+     * of the table's effective mode + config (no per-commit racing state), so concurrent WAL writers of the
+     * same table all agree.
+     */
+    private boolean isDeviceFlushDeferred() {
+        return configuration.getCommitMode() == CommitMode.ADAPTIVE && configuration.getAdaptiveCommitGroupWindowUs() > 0;
+    }
+
     private void openTxnMem(Path path) {
         rootPath.of(path);
         int rootLen = rootPath.size();
@@ -330,6 +340,11 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             try {
                 rootPath.concat(TXNLOG_PARTS_DIR).slash().put(part);
                 long partSize = partTransactionCount * RECORD_SIZE;
+                if (txnPartMem.isOpen() && isDeviceFlushDeferred()) {
+                    // The batched fdatasyncTxnLog() reaches only the open part, so this one would never be
+                    // flushed. Its records may be pending, including ones a since-closed instance wrote.
+                    ff.fdatasync(txnPartMem.getFd());
+                }
                 txnPartMem.close(false);
                 txnPartMem.of(ff, rootPath.$(), partSize, partSize, MemoryTag.MMAP_TX_LOG);
                 txnPartMem.jumpTo((txn % partTransactionCount) * RECORD_SIZE);
@@ -364,7 +379,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             // the window; the record is still in the page cache + ordered, so the batched fdatasync captures
             // it. localDurableSeqTxn advances only after that batch flush, so a durable-ack'd txn is always
             // device-durable. Other modes (and ADAPTIVE W=0) keep their exact existing sync grade.
-            final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE && deferDeviceFlush();
+            final boolean deferDeviceFlush = isDeviceFlushDeferred();
             final boolean async = commitMode == CommitMode.ASYNC || deferDeviceFlush;
             if (txnPartMem.isOpen()) {
                 txnPartMem.sync(async);
@@ -393,16 +408,6 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         if (txnMem.isOpen()) {
             ff.fdatasync(txnMem.getFd());
         }
-    }
-
-    /**
-     * Adaptive group-commit (Deferred 2): true when this table is ADAPTIVE AND a group window {@code W > 0}
-     * is configured, so the per-commit sequencer fdatasync is DEFERRED to the batched flush. A pure function
-     * of the table's effective mode + config (no per-commit racing state), so concurrent WAL writers of the
-     * same table all agree.
-     */
-    private boolean deferDeviceFlush() {
-        return configuration.getAdaptiveCommitGroupWindowUs() > 0;
     }
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {

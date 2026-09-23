@@ -697,6 +697,65 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testDeferredFlushCoversRotatedSequencerParts() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
+
+        final WalFdatasyncFacade ff = new WalFdatasyncFacade();
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(1_000_000L);
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("x");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+
+            // One batch whose txns span sequencer parts 0, 1 and 2; releasing the writer flushes it.
+            try (WalWriter w = engine.getWalWriter(tt)) {
+                for (int i = 1; i <= 40; i++) {
+                    setCurrentMicros(1_000_000L + i * 1000L);
+                    commitRow(w, i * 60_000_000L, i);
+                }
+            }
+
+            Assert.assertEquals(40, tracker.getLocalDurableSeqTxn());
+            for (int part = 0; part < 3; part++) {
+                Assert.assertTrue("part " + part + " holds durable txns but was never fdatasynced", ff.seqPartFdatasyncs(part) > 0);
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredFlushCoversSequencerPartWrittenByReleasedInstance() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
+
+        final WalFdatasyncFacade ff = new WalFdatasyncFacade();
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(1_000_000L);
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("x");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+
+            try (WalWriter w = engine.getWalWriter(tt)) {
+                for (int i = 1; i <= 16; i++) {
+                    setCurrentMicros(1_000_000L + i * 1000L);
+                    commitRow(w, i * 60_000_000L, i);
+                }
+                Assert.assertTrue(tracker.getLocalDurableSeqTxn() < 16);
+                // Part 0 is full and unflushed. The pool closes its sequencer, and the next commit reopens
+                // the log and rotates away from a part only the closed instance wrote to.
+                Assert.assertTrue(engine.getTableSequencerAPI().releaseInactive());
+                setCurrentMicros(1_017_000L);
+                commitRow(w, 17 * 60_000_000L, 17);
+            }
+
+            Assert.assertEquals(17, tracker.getLocalDurableSeqTxn());
+            Assert.assertTrue("part 0 holds durable txns but was never fdatasynced", ff.seqPartFdatasyncs(0) > 0);
+        });
+    }
+
     /**
      * (g) ORDERING across a STRUCTURAL change: a structural ALTER device-flushes the sequencer txn log
      * ({@code endMetadataChangeEntry -> fullSync}, an MS_SYNC). Under W&gt;0 the prior DATA commits' column
@@ -1220,6 +1279,17 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
             int c = 0;
             for (int i = 0, n = fdatasyncPaths.size(); i < n; i++) {
                 if (isSequencerFile(fdatasyncPaths.get(i))) {
+                    c++;
+                }
+            }
+            return c;
+        }
+
+        public int seqPartFdatasyncs(long partId) {
+            int c = 0;
+            for (int i = 0, n = fdatasyncPaths.size(); i < n; i++) {
+                final String p = fdatasyncPaths.get(i);
+                if (p.endsWith(WalUtils.TXNLOG_PARTS_DIR + '/' + partId) || p.endsWith(WalUtils.TXNLOG_PARTS_DIR + '\\' + partId)) {
                     c++;
                 }
             }
