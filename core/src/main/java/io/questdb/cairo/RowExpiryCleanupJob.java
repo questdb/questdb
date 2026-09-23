@@ -1071,24 +1071,40 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         if (cache == null || cache.generations.size() == 0) {
             return;
         }
+        final CharSequenceLongHashMap generations = cache.generations;
+        if (partitionFloors.size() == 0) {
+            cachedPartitionCount -= generations.size();
+            generations.clear();
+            return;
+        }
         scalarPartitionFloorSet.clear();
         for (int i = 0, n = partitionFloors.size(); i < n; i++) {
             scalarPartitionFloorSet.add(partitionFloors.getQuick(i));
         }
-        final CharSequenceLongHashMap generations = cache.generations;
         final ObjList<CharSequence> floorKeys = generations.keys();
-        for (int i = floorKeys.size() - 1; i >= 0; i--) {
+        CharSequenceLongHashMap retainedGenerations = null;
+        for (int i = 0, n = floorKeys.size(); i < n; i++) {
             final CharSequence floorKey = floorKeys.getQuick(i);
             // Keys are written by StringSink.put(long), which appends the decimal floor.
             final long floorTs = Numbers.parseLongQuiet(floorKey);
             if (floorTs != Numbers.LONG_NULL && scalarPartitionFloorSet.contains(floorTs)) {
-                continue;
+                if (retainedGenerations != null) {
+                    retainedGenerations.put(floorKey, generations.get(floorKey));
+                }
+            } else if (retainedGenerations == null) {
+                // removeAt searches the map's key list, so repeated removals are quadratic.
+                // Rebuild only on the first missing floor; the preceding keys all survive.
+                // An unchanged snapshot keeps the existing map without allocating a replacement.
+                retainedGenerations = new CharSequenceLongHashMap(n, 0.5, NO_LAST_RUN);
+                for (int j = 0; j < i; j++) {
+                    final CharSequence retainedKey = floorKeys.getQuick(j);
+                    retainedGenerations.put(retainedKey, generations.get(retainedKey));
+                }
             }
-            final int index = generations.keyIndex(floorKey);
-            if (index < 0) {
-                generations.removeAt(index);
-                cachedPartitionCount--;
-            }
+        }
+        if (retainedGenerations != null) {
+            cachedPartitionCount -= generations.size() - retainedGenerations.size();
+            cache.generations = retainedGenerations;
         }
     }
 
@@ -1188,7 +1204,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
      * SKIP generations for one view directory, valid only for {@link #predicate}.
      */
     private static final class ScalarPartitionCache {
-        final CharSequenceLongHashMap generations = new CharSequenceLongHashMap(4, 0.5, NO_LAST_RUN);
+        CharSequenceLongHashMap generations = new CharSequenceLongHashMap(4, 0.5, NO_LAST_RUN);
         String predicate;
 
         private ScalarPartitionCache(String predicate) {

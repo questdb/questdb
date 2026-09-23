@@ -2857,6 +2857,53 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testScalarCleanupReleasesCacheWhenTtlLeavesOnlyActivePartition() throws Exception {
+        assertMemoryLeak(() -> {
+            // Jan 5 at noon: TTL 1 DAY drops Jan 1 and Jan 2 but protects the active Jan 4 partition.
+            setCurrentMicros(1_704_456_000_000_000L);
+            execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                        (1.0, '2024-01-01T00:00:00.000000Z'),
+                        (2.0, '2024-01-02T00:00:00.000000Z'),
+                        (3.0, '2024-01-04T00:00:00.000000Z')
+                    """);
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv_ttl AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 0");
+            execute("CREATE MATERIALIZED VIEW mv_kept AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 0");
+            drainWalAndMatViewQueues();
+
+            final TableToken ttl = engine.verifyTableName("mv_ttl");
+            final TableToken kept = engine.verifyTableName("mv_kept");
+            final String ttlPredicate = expiryPredicate("mv_ttl");
+            final String keptPredicate = expiryPredicate("mv_kept");
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                // mv_ttl fills two slots; mv_kept can cache only one of its two non-active partitions.
+                job.setMaxCachedPartitions(3);
+                Assert.assertFalse(job.cleanupTable(ttl, ttlPredicate));
+                Assert.assertFalse(job.cleanupTable(kept, keptPredicate));
+                Assert.assertEquals(4, job.getScalarPartitionScanCount());
+
+                execute("ALTER MATERIALIZED VIEW mv_ttl SET TTL 1 DAY");
+                drainWalAndMatViewQueues();
+                assertQuery("SELECT count() p FROM table_partitions('mv_ttl')")
+                        .noRandomAccess().expectSize().noLeakCheck().returns("p\n1\n");
+
+                Assert.assertFalse(job.cleanupTable(ttl, ttlPredicate));
+                Assert.assertEquals(4, job.getScalarPartitionScanCount());
+                Assert.assertFalse(job.cleanupTable(kept, keptPredicate));
+                Assert.assertEquals("the other view keeps its cached verdict and fills one freed slot",
+                        5, job.getScalarPartitionScanCount());
+                Assert.assertFalse(job.cleanupTable(kept, keptPredicate));
+                Assert.assertEquals("the newly cached partition must not be counted again",
+                        5, job.getScalarPartitionScanCount());
+            }
+            assertQuery("SELECT count() FROM mv_ttl").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            assertQuery("SELECT count() FROM mv_kept").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
+        });
+    }
+
+    @Test
     public void testScalarCleanupReleasesTtlEvictedPartitionsWhenFull() throws Exception {
         assertMemoryLeak(() -> {
             // Wall-clock TTL measures age from this clock. 2024-01-04T12:00 keeps the Jan 3 and Jan 4
