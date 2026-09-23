@@ -248,6 +248,8 @@ for required in ("requireActiveProfile", "include-rust-native-artifacts", "centr
 release_profiles = root_pom.findtext(".//m:plugin[m:artifactId='maven-release-plugin']/m:configuration/m:releaseProfiles", namespaces=namespace)
 if release_profiles is None or "maven-central-release" in release_profiles:
     raise SystemExit("release:perform must not activate maven-central-release")
+if "release-preparation-safety" not in release_profiles:
+    raise SystemExit("release lifecycle must reject external SNAPSHOT dependencies before tagging")
 PY
 
 python3 - "${repo_dir}/.github/workflows/github-binaries-release.yml" "${repo_dir}/pkg/ami/marketplace/packer.json" <<'PY'
@@ -568,8 +570,8 @@ for plugin in root.findall('.//m:plugin', ns):
     if config is None:
         continue
     text = ET.tostring(config, encoding='unicode')
-    if 'maven-central-release' in text or 'build-web-console' not in text:
-        raise SystemExit('release:perform profile configuration is unsafe')
+    if 'maven-central-release' in text or 'build-web-console' not in text or 'release-preparation-safety' not in text:
+        raise SystemExit('release-plugin profile configuration is unsafe')
     if any(element in text for element in ('<preparationGoals>', '<pushChanges>', '<resume>')):
         raise SystemExit('fixture requires release-plugin clean verify, pushChanges=true, and resume=true defaults')
     print('effective release plugin keeps Central inactive; preparation defaults remain clean verify, pushChanges=true, resume=true')
