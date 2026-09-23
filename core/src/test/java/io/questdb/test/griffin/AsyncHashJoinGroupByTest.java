@@ -471,9 +471,53 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMemoryLimitInPayloadCopyAndReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // Five probe rows over a five-row build: the default ratio copies the build's payload.
+            String sql = AGGREGATES + OUTER;
+            try (Fixture f = new Fixture(sql); LimitedMemoryTracker tracker = new LimitedMemoryTracker(100_000_000)) {
+                MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
+                sqlExecutionContext.setMemoryTracker(tracker);
+                try {
+                    CountDownLatch acquired = new CountDownLatch(1);
+                    f.factory.getAtom().getPerWorkerLocks().setTestAcquireLatch(acquired);
+                    try (RecordCursor cursor = f.getRawCursor()) {
+                        // The build is charged by now; the copy, which the first read makes, is not.
+                        tracker.setLimit(tracker.getUsed());
+                        cursor.hasNext();
+                        Assert.fail();
+                    } catch (CairoException expected) {
+                        Assert.assertTrue(expected.isOutOfMemory());
+                    }
+                    // The copy failed on the owner before any probe was dispatched.
+                    Assert.assertEquals(1, acquired.getCount());
+                    Assert.assertEquals(0, tracker.getUsed());
+                    Assert.assertFalse(f.factory.getAtom().isPayloadCopied());
+                    tracker.setLimit(100_000_000);
+                    // The gate still holds the owner until a worker takes a slot, so this execution
+                    // needs reducers; a worker's slot shows that the probe ran after the copy.
+                    try (RecordCursor cursor = f.getRawCursor(); Reducers reducers = new Reducers()) {
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertTrue(f.factory.getAtom().isPayloadCopied());
+                    }
+                    Assert.assertEquals(0, acquired.getCount());
+                    Assert.assertEquals(0, tracker.getUsed());
+                } finally {
+                    sqlExecutionContext.setMemoryTracker(previous);
+                }
+                f.assertResults(sql);
+            }
+        });
+    }
+
+    @Test
     public void testMemoryLimitsDuringBuildAndReduceAndReuse() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            // Row ids, so that the second limit trips in the reducers rather than in the payload copy,
+            // which testMemoryLimitInPayloadCopyAndReuse covers.
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 0);
             String sql = AGGREGATES + OUTER;
             try (Fixture f = new Fixture(sql); LimitedMemoryTracker tracker = new LimitedMemoryTracker(1)) {
                 MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
@@ -1614,6 +1658,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     private void assertMixedParquetNativeReuseAndDecoderFailure(boolean keyed) throws Exception {
         assertMemoryLeak(() -> {
             createTables();
+            // Row ids, so that the limit trips where the reducers decode the Parquet probe frames rather
+            // than in the payload copy.
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 0);
             String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
             try (Fixture f = new Fixture(sql)) {
                 f.assertResults(sql);

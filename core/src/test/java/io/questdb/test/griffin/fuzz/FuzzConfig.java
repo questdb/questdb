@@ -147,9 +147,10 @@ public final class FuzzConfig {
         // -Dquestdb.fuzz.hashjoin=false to drop them, for example while investigating a failure,
         // and give the band back to GROUP BY.
         this.isHashJoinEnabled = Boolean.parseBoolean(System.getProperty(HASH_JOIN_PROP, "true"));
-        // The fuzz tables share one row count, so the default rule copies a build's payload only
-        // when a filter shrinks the build. Pass -Dquestdb.fuzz.hashjoin.payload=row_ids or =copied
-        // to force every fused query onto one layout; the fused on/off axis then checks that one.
+        // The fuzz tables share one row count, so the default rule copies a build's payload unless
+        // a probe interval leaves the probe under half the build. Pass
+        // -Dquestdb.fuzz.hashjoin.payload=row_ids or =copied to force every fused query onto one
+        // layout; the fused on/off axis then checks that one.
         final String payloadLayout = System.getProperty(HASH_JOIN_PAYLOAD_PROP);
         this.hashJoinPayloadLayout = payloadLayout != null ? HashJoinPayloadLayout.valueOf(payloadLayout.toUpperCase()) : null;
         // LATEST ON shapes (latest row per PARTITION BY key) carve a band out of

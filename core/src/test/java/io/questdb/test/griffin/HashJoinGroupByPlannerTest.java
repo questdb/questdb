@@ -775,10 +775,17 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             // bytes a row; a DOUBLE, a LONG and a SYMBOL take 20, aligned to 24.
             final String narrow = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
             final String wide = "SELECT count(*) n, sum(pa.v) v, sum(pa.l) l, count(pa.s) s FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            // The reversed LEFT join builds pb's 2_000 rows and probes pa's 1_000. With an interval it
+            // probes the 250 rows of one of pa's days instead: the ratio counts the interval's rows.
+            final String reversed = "SELECT count(*) n, sum(pb.v) v FROM pa LEFT JOIN pb ON pa.k = pb.k";
+            final String interval = reversed + " WHERE pa.ts IN '2020-01-02'";
             try (SqlExecutionContextImpl context = enabledContext()) {
-                // The defaults copy a build whose probe has at least twice its rows.
+                // The defaults copy a build whose probe has at least half its rows, the reversed join's
+                // exactly half included, and keep row ids for the interval probe, an eighth of the build.
                 assertPayloadCopy(narrow, true, context);
                 assertPayloadCopy(wide, true, context);
+                assertPayloadCopy(reversed, true, context);
+                assertPayloadCopy(interval, false, context);
                 // The probe's count is its frame rows, before the probe filter drops 1_900 of them.
                 assertPayloadCopy(narrow + " WHERE pb.v > 1_900", true, context);
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "2.001");
@@ -819,8 +826,6 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
 
                 // An interval probe counts the rows of its interval: 250 of pa's rows against the
                 // 2_000 rows of pb that the LEFT join builds, not pa's 1_000.
-                final String interval = "SELECT count(*) n, sum(pb.v) v FROM pa LEFT JOIN pb ON pa.k = pb.k"
-                        + " WHERE pa.ts IN '2020-01-02'";
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "0.125");
                 assertPayloadCopy(interval, true, context);
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "0.126");

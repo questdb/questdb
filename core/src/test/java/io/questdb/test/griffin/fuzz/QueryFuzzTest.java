@@ -153,8 +153,9 @@ import java.nio.file.Paths;
  *     <li>{@code -Dquestdb.fuzz.hashjoin.payload=row_ids|copied} &mdash; force
  *         every fused hash join GROUP BY to read its build's payload columns
  *         where they live, or from the copy its build makes (default: neither,
- *         the operator's own rule, which the fuzz tables' equal row counts
- *         reach only through a filtered build).</li>
+ *         the operator's own rule, which copies over the fuzz tables' equal
+ *         row counts unless an interval leaves the probe under half the
+ *         build).</li>
  *     <li>{@code -Dquestdb.fuzz.s0=L -Dquestdb.fuzz.s1=L} - replay a
  *         specific seed pair, as printed in the run's "random seeds: ..."
  *         line. Use to reproduce a failure deterministically.</li>
