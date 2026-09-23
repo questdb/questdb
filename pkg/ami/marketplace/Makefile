@@ -9,7 +9,7 @@ git    ?= git
 aws    ?= aws
 jq     ?= jq
 
-PACKER_AMAZON_PLUGIN_VERSION ?= 1.3.10
+PACKER_AMAZON_PLUGIN_VERSION ?= 1.3.9
 
 install_aws_plugin:
 	$(packer) plugins install github.com/hashicorp/amazon $(PACKER_AMAZON_PLUGIN_VERSION)

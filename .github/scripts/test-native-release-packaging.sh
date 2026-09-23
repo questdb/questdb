@@ -429,6 +429,14 @@ for job_name in ("publish-github", "publish-ami"):
     if not isinstance(condition, str) or "github.event_name == 'push'" not in condition or "startsWith(github.ref, 'refs/tags/')" not in condition:
         raise SystemExit(f"{job_name} does not have the exact tag-push publication guard")
 
+github_steps = jobs["publish-github"].get("steps", [])
+if not isinstance(github_steps, list):
+    raise SystemExit("GitHub publication job has no steps")
+github_checkout_index = next((index for index, step in enumerate(github_steps) if isinstance(step, dict) and step.get("uses") == "actions/checkout@v5"), None)
+github_helper_index = next((index for index, step in enumerate(github_steps) if isinstance(step, dict) and "publish-github-release-assets.sh" in str(step.get("run", ""))), None)
+if github_checkout_index is None or github_helper_index is None or github_checkout_index >= github_helper_index:
+    raise SystemExit("GitHub publication must check out the helper before invoking it")
+
 ami_job = jobs["publish-ami"]
 ami_env = ami_job.get("env")
 if not isinstance(ami_env, dict) or set(("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION")) - set(ami_env):
@@ -467,20 +475,24 @@ if builder.get("force_deregister") != "{{user `force_deregister`}}" or builder.g
     raise SystemExit("Packer builder does not use the non-destructive release force flags")
 
 makefile = makefile_path.read_text()
-if "PACKER_AMAZON_PLUGIN_VERSION ?= 1.3.10" not in makefile or "plugins install github.com/hashicorp/amazon $(PACKER_AMAZON_PLUGIN_VERSION)" not in makefile:
+if "PACKER_AMAZON_PLUGIN_VERSION ?= 1.3.9" not in makefile or "plugins install github.com/hashicorp/amazon $(PACKER_AMAZON_PLUGIN_VERSION)" not in makefile:
     raise SystemExit("Packer Amazon plugin version is not pinned")
 PY
 
 verify_github_publication_recovery() {
     local fixture_root="${temp_dir}/github-publication-fixture"
     local fake_bin="${fixture_root}/bin"
+    local source_root="${fixture_root}/source"
+    local job_workspace="${fixture_root}/job-workspace"
+    local release_artifacts="${fixture_root}/release-artifacts"
     local call_log="${fixture_root}/calls.log"
 
-    mkdir -p "${fixture_root}/linux" "${fixture_root}/windows" "${fixture_root}/assets" "${fake_bin}"
-    printf 'linux archive\n' > "${fixture_root}/linux/questdb-linux.tar.gz"
-    printf 'windows archive\n' > "${fixture_root}/windows/questdb-windows.tar.gz"
-    cp "${fixture_root}/linux/questdb-linux.tar.gz" "${fixture_root}/assets/"
-    cp "${fixture_root}/windows/questdb-windows.tar.gz" "${fixture_root}/assets/"
+    mkdir -p "${release_artifacts}/linux" "${release_artifacts}/windows" "${fixture_root}/assets" "${fake_bin}" "${source_root}/.github/scripts"
+    printf 'linux archive\n' > "${release_artifacts}/linux/questdb-linux.tar.gz"
+    printf 'windows archive\n' > "${release_artifacts}/windows/questdb-windows.tar.gz"
+    cp "${release_artifacts}/linux/questdb-linux.tar.gz" "${fixture_root}/assets/"
+    cp "${release_artifacts}/windows/questdb-windows.tar.gz" "${fixture_root}/assets/"
+    cp "${script_dir}/publish-github-release-assets.sh" "${source_root}/.github/scripts/"
     cat > "${fake_bin}/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -516,18 +528,24 @@ EOF
 
     run_github_fixture() {
         local mode="$1"
-        rm -rf "${fixture_root}/existing"
+
+        rm -rf "${job_workspace}"
+        mkdir -p "${job_workspace}/artifacts/linux" "${job_workspace}/artifacts/windows"
+        cp "${release_artifacts}/linux/questdb-linux.tar.gz" "${job_workspace}/artifacts/linux/"
+        cp "${release_artifacts}/windows/questdb-windows.tar.gz" "${job_workspace}/artifacts/windows/"
         : > "${call_log}"
+        assert_failure github-helper-without-checkout bash -c "cd '${job_workspace}' && .github/scripts/publish-github-release-assets.sh 9.9.9 artifacts/linux artifacts/windows"
+        cp -a "${source_root}/." "${job_workspace}/"
         if [[ "${mode}" == "mismatch" ]]; then
-            assert_failure github-asset-mismatch bash -c "cd '${fixture_root}' && PATH='${fake_bin}:/usr/bin:/bin' GH_FIXTURE_MODE='${mode}' GH_FIXTURE_ARCHIVES='${fixture_root}/assets' GH_FIXTURE_CALL_LOG='${call_log}' '${script_dir}/publish-github-release-assets.sh' 9.9.9 linux windows"
+            assert_failure github-asset-mismatch bash -c "cd '${job_workspace}' && PATH='${fake_bin}:/usr/bin:/bin' GH_FIXTURE_MODE='${mode}' GH_FIXTURE_ARCHIVES='${fixture_root}/assets' GH_FIXTURE_CALL_LOG='${call_log}' .github/scripts/publish-github-release-assets.sh 9.9.9 artifacts/linux artifacts/windows"
         else
             (
-                cd "${fixture_root}"
+                cd "${job_workspace}"
                 PATH="${fake_bin}:/usr/bin:/bin" \
                     GH_FIXTURE_MODE="${mode}" \
                     GH_FIXTURE_ARCHIVES="${fixture_root}/assets" \
                     GH_FIXTURE_CALL_LOG="${call_log}" \
-                    "${script_dir}/publish-github-release-assets.sh" 9.9.9 linux windows
+                    .github/scripts/publish-github-release-assets.sh 9.9.9 artifacts/linux artifacts/windows
             )
         fi
     }
