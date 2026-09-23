@@ -43,6 +43,7 @@ import io.questdb.griffin.engine.join.HashOuterJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
+import io.questdb.std.MemoryTag;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -225,6 +226,43 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
                             rows++;
                         }
                         Assert.assertEquals(50, rows);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinFastSymbolTranslationCacheFailsOnLargeInput() throws Exception {
+        // A multi-key SYMBOL ASOF join over a time-frame slave routes to AsOfJoinFastRecordCursorFactory with
+        // a SymbolTranslatingRecord (a single SYMBOL key takes the SymbolKeyMappingRecordCopier path instead),
+        // which caches one master-to-slave key translation per distinct master symbol and key column. The
+        // one-row slave keeps the backward slave scan and the fixed-size key sinks tiny, while 40K distinct
+        // master symbols would grow each translation cache (NATIVE_JOIN_MAP) to ~1 MiB, so a cache rehash is
+        // the first allocation to breach the 512 KiB limit. Without the tracker binding the caches escape the
+        // limit and the query completes, tripping Assert.fail. Reusing one factory checks that each open
+        // rebinds the tracker before reopening the caches; assertMemoryLeak guards the breach path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(1)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            final String sql = "SELECT m.k1 FROM m ASOF JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)";
+            assertUsesFactory(sql, AsOfJoinFastRecordCursorFactory.class);
+            assertQuery(sql).noLeakCheck().assertsPlanContaining("symbolKeyJoin: true");
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                for (int i = 0; i < 5; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        while (cursor.hasNext()) {
+                            // drain until breach
+                        }
+                        Assert.fail("expected a per-query memory breach at iteration " + i);
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                        // The translation caches are the only execution-time NATIVE_JOIN_MAP allocation.
+                        TestUtils.assertContains(e.getFlyweightMessage(), "memoryTag=" + MemoryTag.NATIVE_JOIN_MAP + ']');
                     }
                 }
             }
