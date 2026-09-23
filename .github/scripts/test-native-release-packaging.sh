@@ -268,6 +268,8 @@ for required in (
     "Reject a forged Central aggregate marker",
     "rust-native-libs",
     "third-party-licenses",
+    "LINUX_RELEASE_ATTEMPT:",
+    "LINUX_EVIDENCE_ATTEMPT:",
     "publish-github:",
     "publish-ami:",
     "github.event_name == 'push'",

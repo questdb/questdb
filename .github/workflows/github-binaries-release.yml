@@ -425,9 +425,10 @@ jobs:
           LICENSE_ATTEMPT: ${{ needs.package-linux.outputs.licenses-producer-attempt }}
           LINUX_RELEASE_ID: ${{ needs.package-linux.outputs.release-artifact-id }}
           LINUX_RELEASE_DIGEST: ${{ needs.package-linux.outputs.release-artifact-digest }}
+          LINUX_RELEASE_ATTEMPT: ${{ needs.package-linux.outputs.producer-attempt }}
           LINUX_EVIDENCE_ID: ${{ needs.package-linux.outputs.evidence-artifact-id }}
           LINUX_EVIDENCE_DIGEST: ${{ needs.package-linux.outputs.evidence-artifact-digest }}
-          LINUX_ATTEMPT: ${{ needs.package-linux.outputs.producer-attempt }}
+          LINUX_EVIDENCE_ATTEMPT: ${{ needs.package-linux.outputs.producer-attempt }}
           WINDOWS_RELEASE_ID: ${{ steps.upload-release.outputs.artifact-id }}
           WINDOWS_RELEASE_DIGEST: ${{ steps.upload-release.outputs.artifact-digest }}
           WINDOWS_EVIDENCE_ID: ${{ steps.upload-evidence.outputs.artifact-id }}
