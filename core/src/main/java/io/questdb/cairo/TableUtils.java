@@ -350,6 +350,8 @@ public final class TableUtils {
     static final int META_FLAG_BIT_POSTING_VARIANT_HI = 1 << 5;
     static final int META_FLAG_BIT_COVERING = 1 << 6;
     static final int META_FLAG_POSTING_VARIANT_MASK = META_FLAG_BIT_POSTING_VARIANT_LO | META_FLAG_BIT_POSTING_VARIANT_HI;
+    // Offset of the _meta.prev index in a TODO_RESTORE_META _todo_ entry, see TableWriter.writeRestoreMetaTodo().
+    static final int TODO_META_INDEX_OFFSET = 48;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);

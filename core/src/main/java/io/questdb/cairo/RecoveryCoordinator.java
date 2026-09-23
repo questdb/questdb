@@ -29,6 +29,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -69,7 +70,8 @@ import io.questdb.std.str.Path;
  *       {@code epoch.seqTxn}).</li>
  *   <li><b>Conservative fallback:</b> a table with NO {@code _snapshot} marker (or whose
  *       {@code .epoch} copies are absent) is left UNTOUCHED -> today's behaviour (full WAL replay /
- *       normal open). Non-adaptive tables and non-WAL tables are never touched.</li>
+ *       normal open). Non-adaptive tables are touched only to finish a metadata swap that a crash
+ *       interrupted, exactly as their writer would on open. Non-WAL tables are never touched.</li>
  * </ul>
  */
 public class RecoveryCoordinator {
@@ -117,6 +119,9 @@ public class RecoveryCoordinator {
                     continue;
                 }
                 try {
+                    // Before anything below reads _meta, finish the _todo_ repair of a metadata swap that a
+                    // crash interrupted. TableWriter performs it on open, which comes after this pass.
+                    repairInterruptedMetaSwap(token, src, dst);
                     // On cold boot this may read _meta. Any inability to determine or restore an adaptive
                     // table's replay floor aborts initialization; sequencer suspension does not fence readers.
                     final boolean metadataBoundEpoch = hasMetadataBoundEpoch(token, dir);
@@ -284,6 +289,81 @@ public class RecoveryCoordinator {
         }
         try (MemoryCMR metaMem = Vm.getCMRInstance(ff, metaPath.$(), size, MemoryTag.MMAP_TABLE_READER)) {
             return TableUtils.getEnrolledCommitMode(metaMem);
+        }
+    }
+
+    /**
+     * The txn of the table's live {@code _txn}, or {@code -1} when it does not load cleanly. The txn does not
+     * depend on the partitioning or the timestamp type, so this needs no metadata: it runs while {@code _meta}
+     * may be missing.
+     */
+    private long readLiveTxn(TableToken token, Path txnPath) {
+        tablePath(txnPath, token).concat(TableUtils.TXN_FILE_NAME);
+        try (TxReader txReader = new TxReader(ff)) {
+            txReader.ofRO(txnPath.$(), ColumnType.TIMESTAMP, PartitionBy.NONE);
+            return txReader.unsafeLoadAll() ? txReader.getTxn() : -1;
+        } catch (CairoException | CairoError e) {
+            return -1;
+        }
+    }
+
+    /**
+     * Finishes the {@code _todo_} repair of a {@code _meta} swap that a crash interrupted, so that this pass
+     * reads the metadata the table will actually open with.
+     * <p>
+     * {@link TableWriter} swaps metadata by renaming {@code _meta} to {@code _meta.prev}, arming {@code _todo_}
+     * with {@link TableUtils#TODO_RESTORE_META}, then renaming {@code _meta.swp} to {@code _meta}. A crash
+     * between the two renames leaves no {@code _meta} at all; a crash after the second, before {@code _txn}
+     * commits, leaves the uncommitted new {@code _meta} in place. The writer repairs both on open by renaming
+     * {@code _meta.prev} back over {@code _meta}, but it opens only after this pass, which would otherwise refuse
+     * to start on the missing file in every commit mode.
+     * <p>
+     * Applies the writer's own rule: the {@code _todo_} txn pair must agree and match the live {@code _txn}.
+     * Anything else is a stale entry, which the writer ignores, and which must never roll {@code _meta} back.
+     * {@code _todo_} stays armed: the writer then finds no {@code _meta.prev} and only clears it.
+     */
+    private void repairInterruptedMetaSwap(TableToken token, Path prevPath, Path metaPath) {
+        tablePath(prevPath, token).concat(TableUtils.TODO_FILE_NAME);
+        final long fd = ff.openRO(prevPath.$());
+        if (fd == -1) {
+            return;
+        }
+        final long todoTxn;
+        final long metaPrevIndex;
+        try {
+            // Layout of TableWriter.writeRestoreMetaTodo(): txn at 0 and again at 24, entry count at 32, entry
+            // code at 40, _meta.prev index at TODO_META_INDEX_OFFSET. A cleared _todo_ stops at the count.
+            if (ff.length(fd) < TableUtils.TODO_META_INDEX_OFFSET + Long.BYTES
+                    || ff.readNonNegativeLong(fd, 32) <= 0
+                    || ff.readNonNegativeLong(fd, 40) != TableUtils.TODO_RESTORE_META) {
+                return;
+            }
+            todoTxn = ff.readNonNegativeLong(fd, 0);
+            metaPrevIndex = ff.readNonNegativeLong(fd, TableUtils.TODO_META_INDEX_OFFSET);
+            if (todoTxn < 0 || ff.readNonNegativeLong(fd, 24) != todoTxn || metaPrevIndex < 0) {
+                return;
+            }
+        } finally {
+            ff.close(fd);
+        }
+        if (todoTxn != readLiveTxn(token, metaPath)) {
+            return;
+        }
+
+        tablePath(prevPath, token).concat(TableUtils.META_PREV_FILE_NAME);
+        if (metaPrevIndex > 0) {
+            prevPath.put('.').put(metaPrevIndex);
+        }
+        if (!ff.exists(prevPath.$())) {
+            return;
+        }
+        tablePath(metaPath, token).concat(TableUtils.META_FILE_NAME);
+        LOG.info().$("repairing interrupted metadata swap [table=").$(token).$(", from=").$(prevPath).I$();
+        ff.removeQuiet(metaPath.$());
+        if (TableUtils.renamePublish(ff, prevPath.$(), metaPath.$(), configuration.getCommitMode()) != Files.FILES_RENAME_OK) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not repair interrupted metadata swap [table=").put(token.getTableName())
+                    .put(", from=").put(prevPath).put(", to=").put(metaPath).put(']');
         }
     }
 

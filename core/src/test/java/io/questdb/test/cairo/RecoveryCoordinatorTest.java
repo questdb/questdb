@@ -29,18 +29,22 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.SymbolCountProvider;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -459,6 +463,124 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * The interrupted swap of {@link #testRecoverRepairsMetaSwapInterruptedBetweenRenames()} on an enrolled
+     * adaptive table: the {@code _todo_} repair runs first, so the durable epoch is restored over a readable
+     * {@code _meta}, and the writer later finds no {@code _meta.prev} to roll back over the restored cut.
+     */
+    @Test
+    public void testRecoverRepairsInterruptedMetaSwapBeforeAdaptiveRestore() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        try {
+            final long epochSeqTxn = buildAdaptiveLazyGapTable("swap_adaptive");
+            final TableToken tt = engine.verifyTableName("swap_adaptive");
+            crashMetaSwap(tt, false);
+            assertMetaSwapFiles(tt, false, true);
+
+            new RecoveryCoordinator(engine).recover();
+
+            assertMetaSwapFiles(tt, true, false);
+            Assert.assertEquals("recovery must restore _txn to the epoch cut", epochSeqTxn, readTxnSeqTxn(tt));
+            drainWalQueue();
+            try (TableReader reader = engine.getReader(tt)) {
+                Assert.assertEquals("WAL replay must rebuild every row past the epoch", 7L, reader.size());
+            }
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+        }
+    }
+
+    /**
+     * A crash between TableWriter's two metadata renames leaves no {@code _meta}, only {@code _meta.prev} and a
+     * {@code _todo_} armed to restore it. The writer restores it when it opens, but recovery runs first and reads
+     * {@code _meta} of every WAL table. It must finish the same repair rather than refuse to start, in nosync
+     * too, where the table has no adaptive state to recover at all.
+     */
+    @Test
+    public void testRecoverRepairsMetaSwapInterruptedBetweenRenames() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        execute("CREATE TABLE swap_gap (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO swap_gap VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+        drainWalQueue();
+        final TableToken tt = engine.verifyTableName("swap_gap");
+        crashMetaSwap(tt, false);
+        assertMetaSwapFiles(tt, false, true);
+
+        // Boot a whole engine over the crashed root, the way ServerMain does.
+        try (CairoEngine rebooted = new CairoEngine(configuration)) {
+            Assert.assertNotNull(rebooted.getTableTokenIfExists("swap_gap"));
+        }
+
+        assertMetaSwapFiles(tt, true, false);
+        Assert.assertEquals("the pre-ALTER schema must be restored", 2, readMetaColumnCount(tt));
+        // The table opens and takes the interrupted ALTER again.
+        execute("ALTER TABLE swap_gap ADD COLUMN c INT");
+        execute("INSERT INTO swap_gap VALUES ('2024-09-01T01:00:00.000000Z', 2, 3)");
+        drainWalQueue();
+        assertQuery("SELECT * FROM swap_gap")
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
+                        ts\tv\tc
+                        2024-09-01T00:00:00.000000Z\t1\tnull
+                        2024-09-01T01:00:00.000000Z\t2\t3
+                        """);
+    }
+
+    /**
+     * A {@code _todo_} restore entry whose txn pair does not match the live {@code _txn} is stale: TableWriter
+     * ignores it, and recovery must never roll {@code _meta} back on its strength.
+     */
+    @Test
+    public void testRecoverIgnoresStaleMetaRestoreTodo() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        execute("CREATE TABLE swap_stale (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO swap_stale VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+        drainWalQueue();
+        final TableToken tt = engine.verifyTableName("swap_stale");
+        crashMetaSwap(tt, true);
+        // Keep the entry internally consistent, but name a txn the table is not at.
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        pokeLong(ff, tt, TableUtils.TODO_FILE_NAME, 0, 1_000_000);
+        pokeLong(ff, tt, TableUtils.TODO_FILE_NAME, 24, 1_000_000);
+
+        new RecoveryCoordinator(engine).recover();
+
+        assertMetaSwapFiles(tt, true, true);
+        Assert.assertEquals("a stale _todo_ must leave _meta alone", 3, readMetaColumnCount(tt));
+    }
+
+    /**
+     * A crash after the second rename, before {@code _txn} commits, leaves the uncommitted ALTER's {@code _meta}
+     * in place. The writer rolls it back when it opens; recovery must read the metadata the table will open
+     * with, so it applies the same rollback first.
+     */
+    @Test
+    public void testRecoverRollsBackMetaSwapInterruptedBeforeTxnCommit() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        execute("CREATE TABLE swap_uncommitted (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO swap_uncommitted VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+        drainWalQueue();
+        final TableToken tt = engine.verifyTableName("swap_uncommitted");
+        crashMetaSwap(tt, true);
+        assertMetaSwapFiles(tt, true, true);
+        Assert.assertEquals("precondition: _meta holds the uncommitted ALTER", 3, readMetaColumnCount(tt));
+
+        new RecoveryCoordinator(engine).recover();
+
+        assertMetaSwapFiles(tt, true, false);
+        Assert.assertEquals("the uncommitted ALTER must be rolled back", 2, readMetaColumnCount(tt));
+        assertQuery("SELECT * FROM swap_uncommitted")
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
+                        ts\tv
+                        2024-09-01T00:00:00.000000Z\t1
+                        """);
+    }
+
     @Test
     public void testRecoverLegacyV1AnchorWhenAvailableTupleMatches() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
@@ -867,8 +989,15 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
      * Positional 8-byte write of a table's {@code _txn} — corrupts a committed record WITHOUT truncating.
      */
     private void pokeLongTxn(FilesFacade ff, TableToken tt, long offset, long value) {
+        pokeLong(ff, tt, TableUtils.TXN_FILE_NAME, offset, value);
+    }
+
+    /**
+     * Positional 8-byte write into a file of the table's directory.
+     */
+    private void pokeLong(FilesFacade ff, TableToken tt, CharSequence fileName, long offset, long value) {
         try (Path p = new Path()) {
-            p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.TXN_FILE_NAME).$();
+            p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(fileName).$();
             final long fd = ff.openRW(p.$(), CairoConfiguration.O_NONE);
             Assert.assertTrue(fd > -1);
             final long buf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -1203,6 +1332,9 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
      * {@code copyData} sees fds, not paths. Matching {@code endsWith} keeps the {@code .epoch.N} sources
      * out of it; those are opened read-only anyway.
      */
+    private static final class SimulatedCrash extends RuntimeException {
+    }
+
     private static final class RestoreTransferFaultFacade extends TestFilesFacadeImpl {
         private final AtomicReference<String> failDirName;
         private final CharSequence fileName;
@@ -1297,6 +1429,71 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 p.put(suffix);
             }
             return ff.exists(p.$());
+        }
+    }
+
+    private void assertMetaSwapFiles(TableToken tt, boolean hasMeta, boolean hasMetaPrev) {
+        Assert.assertEquals("_meta exists", hasMeta, epochArtifactExists(tt, TableUtils.META_FILE_NAME, ""));
+        Assert.assertEquals("_meta.prev exists", hasMetaPrev, epochArtifactExists(tt, TableUtils.META_PREV_FILE_NAME, ""));
+    }
+
+    /**
+     * Kills an {@code ADD COLUMN} inside TableWriter's metadata swap, as a process death would: on the
+     * {@code _meta.swp -> _meta} rename, either before it ({@code isAfterSwapRename == false}: no {@code _meta},
+     * only {@code _meta.prev}) or right after it (the uncommitted new {@code _meta}), with {@code _todo_} armed
+     * either way. No in-process rollback runs. Then drops the table's cached sequencer state, as a cold start
+     * has none.
+     */
+    private void crashMetaSwap(TableToken tt, boolean isAfterSwapRename) throws Exception {
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final FilesFacade ffBefore = AbstractCairoTest.ff;
+        AbstractCairoTest.ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (isArmed.get() && Utf8s.containsAscii(from, TableUtils.META_SWAP_FILE_NAME)) {
+                    if (isAfterSwapRename) {
+                        super.rename(from, to);
+                    }
+                    throw new SimulatedCrash();
+                }
+                return super.rename(from, to);
+            }
+
+            @Override
+            public int renameDurable(LPSZ from, LPSZ to) {
+                if (isArmed.get() && Utf8s.containsAscii(from, TableUtils.META_SWAP_FILE_NAME)) {
+                    if (isAfterSwapRename) {
+                        super.renameDurable(from, to);
+                    }
+                    throw new SimulatedCrash();
+                }
+                return super.renameDurable(from, to);
+            }
+        };
+        try (TableWriter writer = getWriter(tt)) {
+            isArmed.set(true);
+            try {
+                writer.addColumn("c", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+                Assert.fail("the simulated crash must interrupt the metadata swap");
+            } catch (SimulatedCrash expected) {
+                // the process dies here
+            } finally {
+                isArmed.set(false);
+            }
+        } finally {
+            AbstractCairoTest.ff = ffBefore;
+        }
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
+        engine.getTableSequencerAPI().resetForReboot(tt);
+    }
+
+    private int readMetaColumnCount(TableToken tt) {
+        try (TableReaderMetadata metadata = new TableReaderMetadata(engine.getConfiguration(), tt)) {
+            metadata.loadMetadata();
+            return metadata.getColumnCount();
         }
     }
 
