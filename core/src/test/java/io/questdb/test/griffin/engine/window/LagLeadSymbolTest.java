@@ -1013,11 +1013,11 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE symbols (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
 
-            assertQuery("select lag(sym, 1, 'x') over () from symbols")
+            assertQuery("SELECT lag(sym, 1, 'x') OVER () FROM symbols")
                     .noLeakCheck()
                     .fails(19, "non-null default value is not supported for symbol lag");
 
-            assertQuery("select lead(sym, 1, 'x') over () from symbols")
+            assertQuery("SELECT lead(sym, 1, 'x') OVER () FROM symbols")
                     .noLeakCheck()
                     .fails(20, "non-null default value is not supported for symbol lead");
         });
