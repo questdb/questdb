@@ -127,6 +127,18 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByDeferredSymbolConstants() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE latest_symbols (ts TIMESTAMP, v LONG, s SYMBOL, t SYMBOL, filter_sym SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO latest_symbols VALUES (1, 1, 'a', 'x', 'A'), (2, 2, 'a', 'x', 'B')");
+            assertQuery("SELECT v FROM latest_symbols WHERE filter_sym='B' OR filter_sym='D' LATEST ON ts PARTITION BY s,t")
+                    .noLeakCheck().sizeMayVary().withPlanContaining("jit: true")
+                    .mutateWith("INSERT INTO latest_symbols VALUES (3, 3, 'a', 'x', 'D'), (4, 4, 'b', 'y', 'D')")
+                    .returns("v\n2\n", "v\n3\n4\n");
+        });
+    }
+
+    @Test
     public void testBindVariableNullCheckScalar() throws Exception {
         testBindVariableNullCheck(SqlJitMode.JIT_MODE_FORCE_SCALAR);
     }

@@ -63,6 +63,11 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractPageFrameR
     }
 
     @Override
+    public boolean usesCompiledFilter() {
+        return filter instanceof LatestByCompiledFilter;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
@@ -70,6 +75,9 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractPageFrameR
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("LatestByValueFiltered");
+        if (usesCompiledFilter()) {
+            sink.attr("jit").val(true);
+        }
         sink.child(cursor);
         sink.child(partitionFrameCursorFactory);
     }
@@ -96,7 +104,12 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractPageFrameR
             PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        cursor.of(pageFrameCursor, executionContext);
-        return cursor;
+        try {
+            cursor.of(pageFrameCursor, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            Misc.free(cursor, th);
+            throw th;
+        }
     }
 }

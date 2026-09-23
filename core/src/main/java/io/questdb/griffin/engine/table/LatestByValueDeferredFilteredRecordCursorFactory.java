@@ -51,6 +51,11 @@ public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDe
     }
 
     @Override
+    public boolean usesCompiledFilter() {
+        return filter instanceof LatestByCompiledFilter;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
@@ -58,6 +63,9 @@ public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDe
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("LatestByValueDeferredFiltered");
+        if (usesCompiledFilter()) {
+            sink.attr("jit").val(true);
+        }
         super.toPlan(sink);
     }
 

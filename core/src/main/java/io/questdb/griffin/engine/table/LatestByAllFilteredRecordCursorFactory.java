@@ -72,6 +72,11 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
     }
 
     @Override
+    public boolean usesCompiledFilter() {
+        return filter instanceof LatestByCompiledFilter;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
@@ -79,6 +84,9 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("LatestByAllFiltered");
+        if (usesCompiledFilter()) {
+            sink.attr("jit").val(true);
+        }
         sink.child(cursor);
         sink.child(partitionFrameCursorFactory);
     }

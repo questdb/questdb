@@ -292,6 +292,7 @@ import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursor
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
+import io.questdb.griffin.engine.table.BwdTableReaderPageFrameCursor;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexFilteredRowCursorFactory;
@@ -308,6 +309,7 @@ import io.questdb.griffin.engine.table.HorizonJoinSlaveState;
 import io.questdb.griffin.engine.table.LatestByAllFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllSymbolsFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.LatestByCompiledFilter;
 import io.questdb.griffin.engine.table.LatestByDeferredListValuesFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByLightRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByRecordCursorFactory;
@@ -5054,16 +5056,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             jitScratchFailure = th;
                             throw th;
                         } finally {
-                            final boolean hasPrimaryFailure = jitScratchFailure != null;
-                            jitScratchFailure = Misc.clearBestEffort(jitScratchFailure, jitIRSerializer);
-                            try {
-                                jitIRMem.truncate();
-                            } catch (Throwable cleanupFailure) {
-                                jitScratchFailure = Misc.foldCleanupFailure(jitScratchFailure, cleanupFailure);
-                            }
-                            if (!hasPrimaryFailure) {
-                                CairoException.rethrowCleanupFailure(jitScratchFailure);
-                            }
+                            clearJitScratch(jitScratchFailure);
                         }
 
                         limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
@@ -7495,6 +7488,100 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    private void clearJitScratch(Throwable failure) {
+        final boolean hasPrimaryFailure = failure != null;
+        failure = Misc.clearBestEffort(failure, jitIRSerializer);
+        try {
+            jitIRMem.truncate();
+        } catch (Throwable th) {
+            failure = Misc.foldCleanupFailure(failure, th);
+        }
+        if (!hasPrimaryFailure) {
+            CairoException.rethrowCleanupFailure(failure);
+        }
+    }
+
+    private Function compileLatestByFilter(
+            Function filter,
+            ExpressionNode expression,
+            RecordMetadata metadata,
+            PartitionFrameCursorFactory partitionFactory,
+            IntList columnIndexes,
+            IntList columnSizeShifts,
+            IQueryModel model,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (!configuration.isSqlLatestByJitEnabled() || executionContext.getJitMode() == SqlJitMode.JIT_MODE_DISABLED
+                || !JitUtil.isJitSupported() || filter.isConstant() || filter.isRuntimeConstant()
+                || !filter.isStableWithinExecution() || (model.isUpdate() && !executionContext.isWalApplication())) {
+            return filter;
+        }
+        CompiledFilter compiled = null;
+        ObjList<Function> bindVariables = new ObjList<>();
+        try {
+            Throwable failure = null;
+            try {
+                int options;
+                try (BwdTableReaderPageFrameCursor cursor = new BwdTableReaderPageFrameCursor(
+                        columnIndexes, columnSizeShifts, null, 1
+                )) {
+                    cursor.of(executionContext, partitionFactory.getCursor(executionContext, columnIndexes, ORDER_DESC));
+                    jitIRSerializer.of(jitIRMem, executionContext, metadata, cursor, bindVariables);
+                    options = jitIRSerializer.serialize(expression,
+                            executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR, enableJitDebug, enableJitNullChecks);
+                }
+                compiled = new CompiledFilter();
+                compiled.compile(jitIRMem, options);
+            } catch (Throwable th) {
+                failure = th;
+                throw th;
+            } finally {
+                clearJitScratch(failure);
+            }
+            return new LatestByCompiledFilter(configuration, filter, compiled, bindVariables);
+        } catch (SqlException | LimitOverflowException e) {
+            Throwable failure = Misc.freeBestEffort(null, compiled);
+            failure = Misc.freeObjListBestEffort(failure, bindVariables);
+            CairoException.rethrowCleanupFailure(failure);
+            LOG.debug().$("JIT cannot be applied to LATEST ON [ex=").$safe(e.getFlyweightMessage()).I$();
+            return filter;
+        } catch (Throwable th) {
+            Misc.free(compiled, th);
+            Misc.freeObjList(bindVariables, th);
+            throw th;
+        }
+    }
+
+    private ExpressionNode normaliseLatestByKeyOr(ExpressionNode root, RecordMetadata metadata, int keyIndex) {
+        if (root == null || (!isAndKeyword(root.token) && !isOrKeyword(root.token))) {
+            return root;
+        }
+        ExpressionNode copy = ExpressionNode.deepClone(expressionNodePool, root);
+        if (isOrKeyword(copy.token)) {
+            return normaliseLatestByKeyOrLeaf(copy, metadata, keyIndex);
+        }
+        sqlNodeStack2.clear();
+        sqlNodeStack2.push(copy);
+        while (!sqlNodeStack2.isEmpty()) {
+            ExpressionNode node = sqlNodeStack2.pop();
+            if (isAndKeyword(node.token)) {
+                node.lhs = normaliseLatestByKeyOrLeaf(node.lhs, metadata, keyIndex);
+                node.rhs = normaliseLatestByKeyOrLeaf(node.rhs, metadata, keyIndex);
+                sqlNodeStack2.push(node.lhs);
+                sqlNodeStack2.push(node.rhs);
+            }
+        }
+        return copy;
+    }
+
+    private ExpressionNode normaliseLatestByKeyOrLeaf(ExpressionNode node, RecordMetadata metadata, int keyIndex) {
+        ExpressionNode rewritten = SqlUtil.rewriteEqualsOr(node, expressionNodePool, sqlNodeStack);
+        if (rewritten != node && SqlUtil.getColumnIndexQuiet(metadata, rewritten.args.getLast().token) == keyIndex) {
+            return rewritten;
+        }
+        return node;
+    }
+
     @NotNull
     private RecordCursorFactory generateLatestByTableQuery(
             IQueryModel model,
@@ -7554,6 +7641,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final boolean indexed = IndexType.isIndexed(metadata.getColumnIndexType(latestByIndex))
                     && !SqlHints.hasNoIndexHint(model);
 
+            if (filter != null && (latestBy.size() > 1 || !isSymbol(metadata.getColumnType(latestByIndex))
+                    || !indexed || intrinsicModel.keyColumn == null || intrinsicModel.keyExcludedValueFuncs.size() > 0)
+                    && prefixes.size() == 0 && !SqlUtil.containsWithin(intrinsicModel.filter, sqlNodeStack)) {
+                filter = compileLatestByFilter(filter, intrinsicModel.filter, metadata, partitionFrameCursorFactory,
+                        columnIndexes, columnSizeShifts, model, executionContext);
+            }
+
             // 'latest by' clause takes over the filter and the latest by nodes,
             // so that the later generateFilter() and generateLatestBy() are no-op
             model.setWhereClause(null);
@@ -7580,8 +7674,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             configuration,
                             metadata,
                             partitionFrameCursorFactory,
-                            RecordSinkFactory.getInstance(configuration, asm, metadata, listColumnFilterA),
-                            keyTypes,
                             partitionByColumnIndexes,
                             partitionBySymbolCounts,
                             filter,
@@ -12094,6 +12186,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final TableToken tableToken = metadata.getTableToken();
         ExpressionNode withinExtracted;
 
+        if (latestByColumnCount == 1 && !SqlUtil.containsWithin(model.getWhereClause(), sqlNodeStack)) {
+            final int keyIndex = listColumnFilterA.getColumnIndexFactored(0);
+            if (isSymbol(queryMeta.getColumnType(keyIndex))) {
+                model.setWhereClause(normaliseLatestByKeyOr(model.getWhereClause(), queryMeta, keyIndex));
+            }
+        }
+
         if (latestByColumnCount > 0 && configuration.useWithinLatestByOptimisation()) {
             withinExtracted = getWhereClauseParser().extractWithin(
                     model,
@@ -12908,8 +13007,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             getViewPosition(viewExpr),
                             model.isUpdate()
                     ),
-                    RecordSinkFactory.getInstance(configuration, asm, queryMeta, listColumnFilterA),
-                    keyTypes,
                     partitionByColumnIndexes,
                     null,
                     null,

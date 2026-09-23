@@ -53,6 +53,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
     private boolean areRecordsFound;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private int currentRow;
+    private int distinctSymbolCount;
     private IntHashSet excludedSymbolKeys;
     private IntHashSet foundKeys;
     private int foundSize;
@@ -84,12 +85,17 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
 
     @Override
     public void close() {
-        super.close();
-        if (rowIds != null && rowIds.getCapacity() > shrinkToCapacity) {
-            foundKeys = new IntHashSet(shrinkToCapacity);
-            // symbolKeys is unlikely to take too much memory
-            // because every value is associated with a value from `in (...)` WHERE filter and
-            // the list of parsed functions is of bigger size than symbolKeys hash set.
+        try {
+            super.close();
+            if (rowIds.getCapacity() > shrinkToCapacity) {
+                foundKeys = new IntHashSet(shrinkToCapacity);
+            }
+        } finally {
+            try {
+                Misc.free(rowIds);
+            } finally {
+                LatestByCompiledFilter.closeCursor(filter);
+            }
         }
         Misc.free(rowIds);
     }
@@ -128,35 +134,16 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             filter.toTop();
         }
         if (restrictedByIncludedValues) {
-            if (includedSymbolKeys.size() > 0) {
-                // Find only restricted set of symbol keys
-                rowIds.setCapacity(includedSymbolKeys.size());
-            }
-        } else if (restrictedByExcludedValues) {
-            // Find all, but excluded set of symbol keys
-            final StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
-            int distinctSymbols = symbolTable.getSymbolCount();
-            if (symbolTable.containsNullValue()) {
-                distinctSymbols++;
-            } else if (excludedSymbolKeys.contains(SymbolTable.VALUE_IS_NULL)) {
-                // The excluded set contains a null while the symbol table doesn't.
-                // Increment the counter to avoid miscalculation.
-                distinctSymbols++;
-            }
-            distinctSymbols -= excludedSymbolKeys.size();
-            if (distinctSymbols > 0) {
-                rowIds.setCapacity(distinctSymbols);
-            }
+            distinctSymbolCount = includedSymbolKeys.size();
         } else {
-            // Find latest by all distinct symbol values
             StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
-            int distinctSymbols = symbolTable.getSymbolCount();
-            if (symbolTable.containsNullValue()) {
-                distinctSymbols++;
+            distinctSymbolCount = symbolTable.getSymbolCount() + (symbolTable.containsNullValue() ? 1 : 0);
+            if (restrictedByExcludedValues) {
+                distinctSymbolCount -= excludedSymbolKeys.size();
             }
-            if (distinctSymbols > 0) {
-                rowIds.setCapacity(distinctSymbols);
-            }
+        }
+        if (distinctSymbolCount > 0) {
+            rowIds.setCapacity(distinctSymbolCount);
         }
         areRecordsFound = false;
         // prepare for page frame iteration
@@ -175,7 +162,8 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("FilterOnValueList").meta("on").putColumnName(columnIndex);
+        sink.type("Row backward scan").meta("on").putColumnName(columnIndex);
+        sink.optAttr("filter", filter);
     }
 
     @Override
@@ -219,21 +207,40 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
 
             frameAddressCache.add(frameCount, frame);
             frameMemoryPool.navigateTo(frameCount++, recordA);
+            for (long batchHi = partitionHi - partitionLo + 1; batchHi > 0; ) {
+                long batchLo = Math.max(0, batchHi - LatestByCompiledFilter.BATCH_SIZE);
+                final DirectLongList matches = LatestByCompiledFilter.apply(
+                        filter, frameMemoryPool, frameAddressCache, frameIndex, batchLo, batchHi
+                );
+                if (matches == null) {
+                    // Unsupported frames retain the original whole-frame Java scan.
+                    batchLo = 0;
+                }
+                final long rowCount = matches != null ? matches.size() : batchHi;
 
-            for (long row = partitionHi - partitionLo; row >= 0; row--) {
-                recordA.setRowIndex(row);
-                int key = recordA.getInt(columnIndex);
-                if (filter.getBool(recordA) && foundKeys.add(key)) {
-                    rowIds.add(Rows.toRowID(frameIndex, row));
-                    if (++foundSize == distinctCount) {
-                        return;
+                for (long iRow = rowCount - 1; iRow >= 0; iRow--) {
+                    long row = matches != null ? matches.get(iRow) + batchLo : iRow;
+                    recordA.setRowIndex(row);
+                    int key = recordA.getInt(columnIndex);
+                    if ((matches != null || filter.getBool(recordA)) && foundKeys.add(key)) {
+                        rowIds.add(Rows.toRowID(frameIndex, row));
+                        if (++foundSize == distinctCount) {
+                            return;
+                        }
                     }
+                }
+                batchHi = batchLo;
+                if (batchHi > 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 }
             }
         }
     }
 
     private void findRecords() {
+        if (!restrictedByIncludedValues && distinctSymbolCount == 0) {
+            return;
+        }
         // Find all record IDs and save in rowIds in descending order.
         // Then return row by row in ascending timestamp order
         // since most of the time factory is supposed to return in ASC timestamp order.
@@ -262,7 +269,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             }
         } else if (restrictedByExcludedValues) {
             // Find all, but excluded set of symbol keys
-            int distinctSymbols = (int) rowIds.getCapacity();
+            int distinctSymbols = distinctSymbolCount;
             if (filter != null) {
                 findRestrictedExcludedOnlyWithFilter(distinctSymbols);
             } else {
@@ -270,7 +277,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             }
         } else {
             // Find latest by all distinct symbol values
-            int distinctSymbols = (int) rowIds.getCapacity();
+            int distinctSymbols = distinctSymbolCount;
             if (distinctSymbols > 0) {
                 if (filter != null) {
                     findAllWithFilter(distinctSymbols);
@@ -317,15 +324,31 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
 
             frameAddressCache.add(frameCount, frame);
             frameMemoryPool.navigateTo(frameCount++, recordA);
+            for (long batchHi = partitionHi - partitionLo + 1; batchHi > 0; ) {
+                long batchLo = Math.max(0, batchHi - LatestByCompiledFilter.BATCH_SIZE);
+                final DirectLongList matches = LatestByCompiledFilter.apply(
+                        filter, frameMemoryPool, frameAddressCache, frameIndex, batchLo, batchHi
+                );
+                if (matches == null) {
+                    // Unsupported frames retain the original whole-frame Java scan.
+                    batchLo = 0;
+                }
+                final long rowCount = matches != null ? matches.size() : batchHi;
 
-            for (long row = partitionHi - partitionLo; row >= 0; row--) {
-                recordA.setRowIndex(row);
-                int key = recordA.getInt(columnIndex);
-                if (filter.getBool(recordA) && excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
-                    rowIds.add(Rows.toRowID(frameIndex, row));
-                    if (++foundSize == distinctCount) {
-                        return;
+                for (long iRow = rowCount - 1; iRow >= 0; iRow--) {
+                    long row = matches != null ? matches.get(iRow) + batchLo : iRow;
+                    recordA.setRowIndex(row);
+                    int key = recordA.getInt(columnIndex);
+                    if ((matches != null || filter.getBool(recordA)) && excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
+                        rowIds.add(Rows.toRowID(frameIndex, row));
+                        if (++foundSize == distinctCount) {
+                            return;
+                        }
                     }
+                }
+                batchHi = batchLo;
+                if (batchHi > 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 }
             }
         }
@@ -369,15 +392,31 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
 
             frameAddressCache.add(frameCount, frame);
             frameMemoryPool.navigateTo(frameCount++, recordA);
+            for (long batchHi = partitionHi - partitionLo + 1; batchHi > 0; ) {
+                long batchLo = Math.max(0, batchHi - LatestByCompiledFilter.BATCH_SIZE);
+                final DirectLongList matches = LatestByCompiledFilter.apply(
+                        filter, frameMemoryPool, frameAddressCache, frameIndex, batchLo, batchHi
+                );
+                if (matches == null) {
+                    // Unsupported frames retain the original whole-frame Java scan.
+                    batchLo = 0;
+                }
+                final long rowCount = matches != null ? matches.size() : batchHi;
 
-            for (long row = partitionHi - partitionLo; row >= 0; row--) {
-                recordA.setRowIndex(row);
-                int key = recordA.getInt(columnIndex);
-                if (filter.getBool(recordA) && includedSymbolKeys.contains(key) && excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
-                    rowIds.add(Rows.toRowID(frameIndex, row));
-                    if (++foundSize == searchSize) {
-                        return;
+                for (long iRow = rowCount - 1; iRow >= 0; iRow--) {
+                    long row = matches != null ? matches.get(iRow) + batchLo : iRow;
+                    recordA.setRowIndex(row);
+                    int key = recordA.getInt(columnIndex);
+                    if ((matches != null || filter.getBool(recordA)) && includedSymbolKeys.contains(key) && excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
+                        rowIds.add(Rows.toRowID(frameIndex, row));
+                        if (++foundSize == searchSize) {
+                            return;
+                        }
                     }
+                }
+                batchHi = batchLo;
+                if (batchHi > 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 }
             }
         }

@@ -60,9 +60,13 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
 
     @Override
     public void close() {
-        if (isOpen()) {
-            map.close();
-            super.close();
+        try {
+            if (isOpen()) {
+                map.close();
+                super.close();
+            }
+        } finally {
+            LatestByCompiledFilter.closeCursor(filter);
         }
     }
 
@@ -93,15 +97,31 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
 
             frameAddressCache.add(frameCount, frame);
             frameMemoryPool.navigateTo(frameCount++, recordA);
+            for (long batchHi = partitionHi - partitionLo + 1; batchHi > 0; ) {
+                long batchLo = Math.max(0, batchHi - LatestByCompiledFilter.BATCH_SIZE);
+                final DirectLongList matches = LatestByCompiledFilter.apply(
+                        filter, frameMemoryPool, frameAddressCache, frameIndex, batchLo, batchHi
+                );
+                if (matches == null) {
+                    // Unsupported frames retain the original whole-frame Java scan.
+                    batchLo = 0;
+                }
+                final long rowCount = matches != null ? matches.size() : batchHi;
 
-            for (long row = partitionHi - partitionLo; row >= 0; row--) {
-                recordA.setRowIndex(row);
-                if (filter.getBool(recordA)) {
-                    MapKey key = map.withKey();
-                    key.put(recordA, recordSink);
-                    if (key.create()) {
-                        rows.add(Rows.toRowID(frameIndex, row));
+                for (long iRow = rowCount - 1; iRow >= 0; iRow--) {
+                    long row = matches != null ? matches.get(iRow) + batchLo : iRow;
+                    recordA.setRowIndex(row);
+                    if (matches != null || filter.getBool(recordA)) {
+                        MapKey key = map.withKey();
+                        key.put(recordA, recordSink);
+                        if (key.create()) {
+                            rows.add(Rows.toRowID(frameIndex, row));
+                        }
                     }
+                }
+                batchHi = batchLo;
+                if (batchHi > 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 }
             }
         }

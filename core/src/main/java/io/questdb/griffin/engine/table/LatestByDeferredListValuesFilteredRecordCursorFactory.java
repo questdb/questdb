@@ -31,8 +31,6 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -96,6 +94,11 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     }
 
     @Override
+    public boolean usesCompiledFilter() {
+        return filter instanceof LatestByCompiledFilter;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
@@ -106,39 +109,27 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
         sink.optAttr("filter", filter);
         sink.optAttr("includedSymbols", includedSymbolFuncs);
         sink.optAttr("excludedSymbols", excludedSymbolFuncs);
+        if (usesCompiledFilter()) {
+            sink.attr("jit").val(true);
+        }
         sink.child(partitionFrameCursorFactory);
     }
 
     private void lookupDeferredSymbols(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        // If symbol values are restricted by a list in the query by syntax
-        // sym in ('val1', 'val2', 'val3')
-        // or similar we need to resolve string values into int symbol keys to search the table faster.
-        // Resolve values to int keys and save them in cursor.getSymbolKeys() set.
         if (includedSymbolFuncs != null) {
-            IntHashSet symbolKeys = cursor.getIncludedSymbolKeys();
-            symbolKeys.clear();
-            StaticSymbolTable symbolMapReader = pageFrameCursor.getSymbolTable(columnIndex);
-            for (int i = 0, n = includedSymbolFuncs.size(); i < n; i++) {
-                Function symbolFunc = includedSymbolFuncs.getQuick(i);
-                symbolFunc.init(pageFrameCursor, executionContext);
-                int key = symbolMapReader.keyOf(symbolFunc.getStrA(null));
-                if (key != SymbolTable.VALUE_NOT_FOUND
-                        && (key != SymbolTable.VALUE_IS_NULL || symbolMapReader.containsNullValue())) {
-                    symbolKeys.add(key);
-                }
-            }
+            AbstractDeferredTreeSetRecordCursorFactory.resolveSymbolKeys(
+                    includedSymbolFuncs, cursor.getIncludedSymbolKeys(), pageFrameCursor, executionContext, columnIndex, false
+            );
         }
-        // Do the same with not in keys.
         if (excludedSymbolFuncs != null) {
-            IntHashSet symbolKeys = cursor.getExcludedSymbolKeys();
-            symbolKeys.clear();
-            final StaticSymbolTable symbolMapReader = pageFrameCursor.getSymbolTable(columnIndex);
-            for (int i = 0, n = excludedSymbolFuncs.size(); i < n; i++) {
-                Function symbolFunc = excludedSymbolFuncs.getQuick(i);
-                symbolFunc.init(pageFrameCursor, executionContext);
-                int key = symbolMapReader.keyOf(symbolFunc.getStrA(null));
-                if (key != SymbolTable.VALUE_NOT_FOUND) {
-                    symbolKeys.add(key);
+            IntHashSet excludedKeys = cursor.getExcludedSymbolKeys();
+            AbstractDeferredTreeSetRecordCursorFactory.resolveSymbolKeys(
+                    excludedSymbolFuncs, excludedKeys, pageFrameCursor, executionContext, columnIndex, false
+            );
+            if (includedSymbolFuncs != null) {
+                IntHashSet includedKeys = cursor.getIncludedSymbolKeys();
+                for (int i = 0, n = excludedKeys.size(); i < n; i++) {
+                    includedKeys.remove(excludedKeys.get(i));
                 }
             }
         }

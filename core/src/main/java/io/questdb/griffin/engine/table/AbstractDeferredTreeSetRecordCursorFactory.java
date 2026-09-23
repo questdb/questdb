@@ -105,7 +105,7 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
                 Function symbolFunc = keyValueFuncs.get(i);
                 int symbolKey = symbolFunc.isRuntimeConstant()
                         ? SymbolTable.VALUE_NOT_FOUND
-                        : symbolMapReader.keyOf(symbolFunc.getStrA(null));
+                        : resolveSymbolKey(symbolMapReader, symbolFunc.getStrA(null));
                 if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                     if (deferredFuncs == null) {
                         deferredFuncs = new ObjList<>();
@@ -124,6 +124,31 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
         } catch (Throwable th) {
             close();
             throw th;
+        }
+    }
+
+    static int resolveSymbolKey(StaticSymbolTable symbolTable, CharSequence value) {
+        int key = symbolTable.keyOf(value);
+        return key == SymbolTable.VALUE_IS_NULL && !symbolTable.containsNullValue() ? SymbolTable.VALUE_NOT_FOUND : key;
+    }
+
+    static void resolveSymbolKeys(
+            ObjList<Function> functions,
+            IntHashSet keys,
+            PageFrameCursor frameCursor,
+            SqlExecutionContext executionContext,
+            int columnIndex,
+            boolean indexKeys
+    ) throws SqlException {
+        keys.clear();
+        StaticSymbolTable symbolTable = frameCursor.getSymbolTable(columnIndex);
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            Function function = functions.getQuick(i);
+            function.init(frameCursor, executionContext);
+            int key = resolveSymbolKey(symbolTable, function.getStrA(null));
+            if (key != SymbolTable.VALUE_NOT_FOUND) {
+                keys.add(indexKeys ? TableUtils.toIndexKey(key) : key);
+            }
         }
     }
 
@@ -147,17 +172,11 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
             SqlExecutionContext executionContext
     ) throws SqlException {
         if (deferredSymbolFuncs != null) {
-            deferredSymbolKeys.clear();
-            StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
-            for (int i = 0, n = deferredSymbolFuncs.size(); i < n; i++) {
-                Function symbolFunc = deferredSymbolFuncs.get(i);
-                final CharSequence symbol = symbolFunc.getStrA(null);
-                int symbolKey = symbolTable.keyOf(symbol);
-                if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                    int indexKey = TableUtils.toIndexKey(symbolKey);
-                    if (!symbolKeys.contains(indexKey)) {
-                        deferredSymbolKeys.add(indexKey);
-                    }
+            resolveSymbolKeys(deferredSymbolFuncs, deferredSymbolKeys, pageFrameCursor, executionContext, columnIndex, true);
+            for (int i = deferredSymbolKeys.size() - 1; i >= 0; i--) {
+                int key = deferredSymbolKeys.get(i);
+                if (symbolKeys.contains(key)) {
+                    deferredSymbolKeys.remove(key);
                 }
             }
         }

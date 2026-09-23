@@ -25,43 +25,49 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.DirectLongHashSet;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.DirectMultiIntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordListCursor {
     private static final Function NO_OP_FILTER = BooleanConstant.TRUE;
     private final Function filter;
-    private final Map map;
+    private final DirectLongHashSet pairKeys;
+    private final DirectMultiIntHashSet symbolKeys;
     private final IntList partitionByColumnIndexes;
     private final IntList partitionBySymbolCounts;
-    private final RecordSink recordSink;
     private long possibleCombinations;
 
     public LatestByAllSymbolsFilteredRecordCursor(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull Map map,
             @NotNull DirectLongList rows,
-            @NotNull RecordSink recordSink,
             @Nullable Function filter,
             @NotNull IntList partitionByColumnIndexes,
             @Nullable IntList partitionBySymbolCounts
     ) {
         super(configuration, metadata, rows);
-        this.map = map;
-        this.recordSink = recordSink;
+        if (partitionByColumnIndexes.size() == 2) {
+            pairKeys = new DirectLongHashSet(configuration.getSqlSmallMapKeyCapacity(),
+                    configuration.getSqlFastMapLoadFactor(), MemoryTag.NATIVE_UNORDERED_MAP, configuration.getSqlMapMaxResizes(), false);
+            symbolKeys = null;
+        } else {
+            pairKeys = null;
+            symbolKeys = new DirectMultiIntHashSet(partitionByColumnIndexes.size(), configuration.getSqlSmallMapKeyCapacity(),
+                    configuration.getSqlFastMapLoadFactor(), configuration.getSqlMapMaxResizes());
+        }
         this.filter = filter != null ? filter : NO_OP_FILTER;
         this.partitionByColumnIndexes = partitionByColumnIndexes;
         this.partitionBySymbolCounts = partitionBySymbolCounts;
@@ -69,10 +75,14 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
 
     @Override
     public void close() {
-        if (isOpen()) {
-            Misc.free(filter);
-            Misc.free(map);
-            super.close();
+        try {
+            if (isOpen()) {
+                Misc.free(pairKeys);
+                Misc.free(symbolKeys);
+                super.close();
+            }
+        } finally {
+            LatestByCompiledFilter.closeCursor(filter);
         }
     }
 
@@ -82,10 +92,14 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
 
     @Override
     public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        // open before the first allocation so close() frees the map if a later alloc in of() breaches
         isOpen = true;
-        map.setMemoryTracker(executionContext.getMemoryTracker());
-        map.reopen();
+        if (pairKeys != null) {
+            pairKeys.setMemoryTracker(executionContext.getMemoryTracker());
+            pairKeys.reopen();
+        } else {
+            symbolKeys.setMemoryTracker(executionContext.getMemoryTracker());
+            symbolKeys.reopen();
+        }
         super.of(pageFrameCursor, executionContext);
         filter.init(pageFrameCursor, executionContext);
         possibleCombinations = -1;
@@ -146,21 +160,62 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
 
             frameAddressCache.add(frameCount, frame);
             frameMemoryPool.navigateTo(frameCount++, recordA);
+            for (long batchHi = partitionHi - partitionLo + 1; batchHi > 0; ) {
+                long batchLo = Math.max(0, batchHi - LatestByCompiledFilter.BATCH_SIZE);
+                final DirectLongList matches = LatestByCompiledFilter.apply(
+                        filter, frameMemoryPool, frameAddressCache, frameIndex, batchLo, batchHi
+                );
+                if (matches == null) {
+                    // Unsupported frames retain the original whole-frame Java scan.
+                    batchLo = 0;
+                }
+                final long rowCount = matches != null ? matches.size() : batchHi;
 
-            for (long row = partitionHi - partitionLo; row >= 0; row--) {
-                recordA.setRowIndex(row);
-                if (filter.getBool(recordA)) {
-                    MapKey key = map.withKey();
-                    key.put(recordA, recordSink);
-                    if (key.create()) {
-                        rows.add(Rows.toRowID(frameIndex, row));
-                        if (rows.size() == possibleCombinations) {
-                            break OUTER;
+                if (pairKeys != null) {
+                    final int firstColumn = partitionByColumnIndexes.getQuick(0);
+                    final int secondColumn = partitionByColumnIndexes.getQuick(1);
+                    for (long iRow = rowCount - 1; iRow >= 0; iRow--) {
+                        long row = matches != null ? matches.get(iRow) + batchLo : iRow;
+                        recordA.setRowIndex(row);
+                        if (matches != null || filter.getBool(recordA)) {
+                            long key = ((long) recordA.getInt(firstColumn) << 32) | (recordA.getInt(secondColumn) & 0xffff_ffffL);
+                            if (pairKeys.add(key)) {
+                                rows.add(Rows.toRowID(frameIndex, row));
+                                if (rows.size() == possibleCombinations) {
+                                    break OUTER;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    final int columnCount = partitionByColumnIndexes.size();
+                    for (long iRow = rowCount - 1; iRow >= 0; iRow--) {
+                        long row = matches != null ? matches.get(iRow) + batchLo : iRow;
+                        recordA.setRowIndex(row);
+                        if (matches != null || filter.getBool(recordA)) {
+                            final long keyAddress = symbolKeys.getKeyAddress();
+                            for (int i = 0; i < columnCount; i++) {
+                                Unsafe.putInt(keyAddress + (long) i * Integer.BYTES, recordA.getInt(partitionByColumnIndexes.getQuick(i)));
+                            }
+                            if (symbolKeys.add()) {
+                                rows.add(Rows.toRowID(frameIndex, row));
+                                if (rows.size() == possibleCombinations) {
+                                    break OUTER;
+                                }
+                            }
                         }
                     }
                 }
+                batchHi = batchLo;
+                if (batchHi > 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                }
             }
         }
-        map.clear();
+        if (pairKeys != null) {
+            pairKeys.clear();
+        } else {
+            symbolKeys.clear();
+        }
     }
 }

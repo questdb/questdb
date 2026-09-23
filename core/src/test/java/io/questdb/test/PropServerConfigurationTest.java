@@ -334,6 +334,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(SqlJitMode.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
         Assert.assertEquals(8192, configuration.getCairoConfiguration().getSqlJitIRMemoryPageSize());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlLatestByJitEnabled());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlJitIRMemoryMaxPages());
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryPageSize());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryMaxPages());
@@ -2491,6 +2492,15 @@ public class PropServerConfigurationTest {
             TestUtils.assertContains(e.getMessage(), "cairo.sql.sampleby.fill.sort.strategy");
             TestUtils.assertContains(e.getMessage(), "bogus");
         }
+    }
+
+    @Test
+    public void testSqlLatestByJitEnabled() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.latest.by.jit.enabled", "false");
+        Assert.assertFalse(newPropServerConfiguration(properties).getCairoConfiguration().isSqlLatestByJitEnabled());
+        properties.setProperty("cairo.sql.latest.by.jit.enabled", "true");
+        Assert.assertTrue(newPropServerConfiguration(properties).getCairoConfiguration().isSqlLatestByJitEnabled());
     }
 
     @Test

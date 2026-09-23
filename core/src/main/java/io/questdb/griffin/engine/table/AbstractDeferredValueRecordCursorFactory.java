@@ -128,7 +128,12 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
             }
             return EmptyTableRecordCursor.INSTANCE;
         }
-        cursor.of(pageFrameCursor, executionContext);
-        return cursor;
+        try {
+            cursor.of(pageFrameCursor, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            Misc.free(cursor, th);
+            throw th;
+        }
     }
 }

@@ -26,28 +26,22 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
-import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
+    private Function filter;
 
     public LatestByAllSymbolsFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
-            @NotNull RecordSink recordSink,
-            @Transient @NotNull ColumnTypes partitionByColumnTypes,
             @NotNull IntList partitionByColumnIndexes,
             @Nullable IntList partitionBySymbolCounts,
             @Nullable Function filter,
@@ -57,15 +51,11 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
         super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         try {
-            // openOnInit=false: the cursor binds the per-query tracker and reopens the map in of(),
-            // so the first allocation is charged to the per-query counter.
-            Map map = MapFactory.createOrderedMap(configuration, partitionByColumnTypes, null, false);
+            this.filter = filter;
             this.cursor = new LatestByAllSymbolsFilteredRecordCursor(
                     configuration,
                     metadata,
-                    map,
                     rows,
-                    recordSink,
                     filter,
                     partitionByColumnIndexes,
                     partitionBySymbolCounts
@@ -77,6 +67,11 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
     }
 
     @Override
+    public boolean usesCompiledFilter() {
+        return filter instanceof LatestByCompiledFilter;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
@@ -85,6 +80,9 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
     public void toPlan(PlanSink sink) {
         sink.type("LatestByAllSymbolsFiltered");
         sink.optAttr("filter", ((LatestByAllSymbolsFilteredRecordCursor) cursor).getFilter());
+        if (usesCompiledFilter()) {
+            sink.attr("jit").val(true);
+        }
         sink.child(cursor);
         sink.child(partitionFrameCursorFactory);
     }
@@ -100,6 +98,9 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
             failure = th;
         }
         failure = Misc.freeBestEffort(failure, cursor);
+        final Function filter = this.filter;
+        this.filter = null;
+        failure = Misc.freeBestEffort(failure, filter);
         CairoException.rethrowCleanupFailure(failure);
     }
 }

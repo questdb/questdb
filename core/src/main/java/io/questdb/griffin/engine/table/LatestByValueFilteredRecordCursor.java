@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.DirectLongList;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCursor {
@@ -47,6 +48,15 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
     ) {
         super(configuration, metadata, columnIndex, symbolKey);
         this.filter = filter;
+    }
+
+    @Override
+    public void close() {
+        try {
+            super.close();
+        } finally {
+            LatestByCompiledFilter.closeCursor(filter);
+        }
     }
 
     @Override
@@ -109,20 +119,37 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
         OUT:
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            final int frameIndex = frameCount;
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
             frameMemoryPool.navigateTo(frameCount++, recordA);
+            for (long batchHi = partitionHi - partitionLo + 1; batchHi > 0; ) {
+                long batchLo = Math.max(0, batchHi - LatestByCompiledFilter.BATCH_SIZE);
+                final DirectLongList matches = LatestByCompiledFilter.apply(
+                        filter, frameMemoryPool, frameAddressCache, frameIndex, batchLo, batchHi
+                );
+                if (matches == null) {
+                    // Unsupported frames retain the original whole-frame Java scan.
+                    batchLo = 0;
+                }
+                final long rowCount = matches != null ? matches.size() : batchHi;
 
-            for (long row = partitionHi - partitionLo; row >= 0; row--) {
-                recordA.setRowIndex(row);
-                if (filter.getBool(recordA)) {
-                    int key = recordA.getInt(columnIndex);
-                    if (key == symbolKey) {
-                        isRecordFound = true;
-                        break OUT;
+                for (long iRow = rowCount - 1; iRow >= 0; iRow--) {
+                    long row = matches != null ? matches.get(iRow) + batchLo : iRow;
+                    recordA.setRowIndex(row);
+                    if (matches != null || filter.getBool(recordA)) {
+                        int key = recordA.getInt(columnIndex);
+                        if (key == symbolKey) {
+                            isRecordFound = true;
+                            break OUT;
+                        }
                     }
+                }
+                batchHi = batchLo;
+                if (batchHi > 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 }
             }
         }

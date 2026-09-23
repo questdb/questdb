@@ -4713,6 +4713,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                               condition: maps.cluster=_xQdbA3.cluster and maps.alias=_xQdbA3.alias
                                                 LatestByAllSymbolsFiltered
                                                   filter: cluster in [cluster10]
+                                                  jit: true
                                                     Row backward scan
                                                       expectedSymbolsCount: 2147483647
                                                     Interval backward scan on: maps
@@ -4800,6 +4801,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         SelectedRecord
                             LatestByValueDeferredFiltered
+                              jit: true
                               filter: 0<i
                               symbolFilter: s='ABC'
                                 Frame backward scan on: a
@@ -4817,6 +4819,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             SelectedRecord
                                 LatestByValueFiltered
+                                  jit: true
                                     Row backward scan
                                       symbolFilter: s=0
                                       filter: 0<i
@@ -4871,13 +4874,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         """);
     }
 
-    @Test // TODO: should use index
+    @Test
     public void testLatestOn10() throws Exception {
         assertQuery("select s, i, ts from a where s = 'S1' or s = 'S2' latest on ts partition by s")
                 .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
                 .assertsPlan("""
-                        LatestByDeferredListValuesFiltered
-                          filter: (s='S1' or s='S2')
+                        Index backward scan on: s
+                          symbolFilter: s in ['S1','S2']
                             Frame backward scan on: a
                         """);
     }
@@ -4974,6 +4977,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         LatestByAllSymbolsFiltered
                           filter: (s1 in [S1,S2] and s2='S3' and 0<i)
+                          jit: true
                             Row backward scan
                               expectedSymbolsCount: 2
                             Frame backward scan on: a
@@ -4987,6 +4991,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         LatestByAllSymbolsFiltered
                           filter: (s1 in [S1,S2] and s2='S3')
+                          jit: true
                             Row backward scan
                               expectedSymbolsCount: 2
                             Frame backward scan on: a
@@ -5000,6 +5005,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         LatestByAllSymbolsFiltered
                           filter: s1='S1'
+                          jit: true
                             Row backward scan
                               expectedSymbolsCount: 2147483647
                             Interval backward scan on: a
@@ -5029,6 +5035,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         SelectedRecord
                             LatestByAllFiltered
+                              jit: true
                                 Row backward scan
                                   filter: (0<i and i<10)
                                 Frame backward scan on: a

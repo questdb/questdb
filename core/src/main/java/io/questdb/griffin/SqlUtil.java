@@ -77,6 +77,8 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayDeque;
+
 import static io.questdb.std.GenericLexer.unquote;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_FORMAT;
@@ -88,6 +90,74 @@ public class SqlUtil {
     private static final int IMPLICIT_CAST_FORMATS_SIZE;
     private static final FiberLocal<StringSink> IMPLICIT_CAST_VARCHAR_SINK = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<Long256ConstantFactory> LONG256_FACTORY = new FiberLocal<>(Long256ConstantFactory::new);
+
+    public static boolean containsWithin(ExpressionNode node, ArrayDeque<ExpressionNode> stack) {
+        stack.clear();
+        if (node != null) {
+            stack.push(node);
+        }
+        try {
+            while (!stack.isEmpty()) {
+                ExpressionNode next = stack.pop();
+                if (next.token != null && SqlKeywords.isWithinKeyword(next.token)) {
+                    return true;
+                }
+                if (next.lhs != null) {
+                    stack.push(next.lhs);
+                }
+                if (next.rhs != null) {
+                    stack.push(next.rhs);
+                }
+                for (int i = 0, n = next.args.size(); i < n; i++) {
+                    stack.push(next.args.getQuick(i));
+                }
+            }
+            return false;
+        } finally {
+            stack.clear();
+        }
+    }
+
+    public static ExpressionNode rewriteEqualsOr(
+            ExpressionNode node,
+            ObjectPool<ExpressionNode> expressionNodePool,
+            ArrayDeque<ExpressionNode> stack
+    ) {
+        if (node == null || node.token == null || !SqlKeywords.isOrKeyword(node.token)) {
+            return node;
+        }
+        ExpressionNode in = expressionNodePool.next().of(ExpressionNode.FUNCTION, "in", node.precedence, node.position);
+        ExpressionNode column = null;
+        stack.clear();
+        stack.push(node);
+        try {
+            while (!stack.isEmpty()) {
+                ExpressionNode leaf = stack.pop();
+                if (leaf.paramCount == 2 && SqlKeywords.isOrKeyword(leaf.token)) {
+                    stack.push(leaf.lhs);
+                    stack.push(leaf.rhs);
+                    continue;
+                }
+                if (leaf.paramCount != 2 || !Chars.equals(leaf.token, "=") || leaf.lhs == null || leaf.rhs == null) {
+                    return node;
+                }
+                ExpressionNode key = leaf.lhs.type == ExpressionNode.LITERAL ? leaf.lhs : leaf.rhs;
+                ExpressionNode value = key == leaf.lhs ? leaf.rhs : leaf.lhs;
+                if (key.type != ExpressionNode.LITERAL || value.type != ExpressionNode.CONSTANT
+                        || !(SqlKeywords.isNullKeyword(value.token) || Chars.isQuoted(value.token))
+                        || (column != null && !Chars.equalsIgnoreCase(column.token, key.token))) {
+                    return node;
+                }
+                column = key;
+                in.args.add(value);
+            }
+            in.args.add(column);
+            in.paramCount = in.args.size();
+            return in;
+        } finally {
+            stack.clear();
+        }
+    }
 
     public static void addSelectStar(
             IQueryModel model,
