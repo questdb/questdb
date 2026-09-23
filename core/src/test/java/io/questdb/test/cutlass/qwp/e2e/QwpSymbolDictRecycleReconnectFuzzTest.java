@@ -444,7 +444,7 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                 Assert.assertTrue("bouncer must have completed at least its randomized restart target: "
                                 + "restartTarget=" + restartTarget + ", restarts=" + restarts,
                         restarts >= restartTarget);
-                Assert.assertTrue("bouncer must have stopped at its ceiling: restartCeiling="
+                Assert.assertTrue("bouncer must not have exceeded its ceiling: restartCeiling="
                                 + restartCeiling + ", restarts=" + restarts,
                         restarts <= restartCeiling);
                 // Every targeted bounce stopped the server while the client held a connection
