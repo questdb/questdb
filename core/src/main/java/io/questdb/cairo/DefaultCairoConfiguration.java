@@ -899,6 +899,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getPartitionCompactionIoBudget() {
+        return Numbers.SIZE_1GB;
+    }
+
+    @Override
     public int getPartitionCompactionHotCommits() {
         return 10;
     }

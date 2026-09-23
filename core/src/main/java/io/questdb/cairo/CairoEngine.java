@@ -190,6 +190,7 @@ import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
+import java.util.function.LongConsumer;
 
 import static io.questdb.griffin.CompiledQuery.*;
 
@@ -2624,9 +2625,27 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.get(tableToken, lockReason);
     }
 
+    public long getWriterId(TableToken tableToken) {
+        return writerPool.getWriterId(tableToken);
+    }
+
     public TableWriter getWriterOrPublishCommand(TableToken tableToken, @NotNull AsyncWriterCommand asyncWriterCommand) {
         verifyTableToken(tableToken);
         return writerPool.getWriterOrPublishCommand(tableToken, asyncWriterCommand.getCommandName(), asyncWriterCommand);
+    }
+
+    public TableWriter getWriterOrPublishCommand(
+            TableToken tableToken,
+            @NotNull AsyncWriterCommand asyncWriterCommand,
+            @NotNull LongConsumer publishedWriterIdSink
+    ) {
+        verifyTableToken(tableToken);
+        return writerPool.getWriterOrPublishCommand(
+                tableToken,
+                asyncWriterCommand.getCommandName(),
+                asyncWriterCommand,
+                publishedWriterIdSink
+        );
     }
 
     public Map<CharSequence, WriterPool.Entry> getWriterPoolEntries() {

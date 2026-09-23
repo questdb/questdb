@@ -121,30 +121,16 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
-     * Fairness across tables. A table whose swaps all sit queued on a busy writer keeps offering the same
-     * qualifying partitions to every sweep, so it spends the whole per-sweep dispatch budget over and over
-     * without ever draining. The sweep used to restart at table index 0 on every tick and end its table loop
-     * the moment the budget ran out, so every table behind that one was never opened at all - not "compacted
-     * later", but never scanned, for as long as the leader kept saturating the budget.
-     * <p>
-     * That order is stable rather than incidental: {@code CairoEngine.getTableTokens} walks a {@link
-     * io.questdb.std.ConcurrentHashMap} whose bin order is a pure function of the directory-name hashes, and
-     * {@code ObjHashSet.get(i)} reads that walk back out of a dense list in the order it went in. The same
-     * table therefore leads every sweep.
-     * <p>
-     * Three tables, each holding more idle composite partitions than one sweep can dispatch, all three
-     * writers held so nothing drains. Every table has to get its turn within three sweeps. The assertion is
-     * symmetric on purpose - which table the hash order puts first is not something a test can pick.
+     * A configuration-seeded random start keeps a table with a large backlog from deterministically hiding
+     * every table behind it. The one-byte IO budget permits one oversized rebuild per sweep, and busy writers
+     * keep every backlog intact. Over a bounded deterministic sequence of starts, every table gets selected.
      */
     @Test
-    public void testSweepReachesTablesBehindOneThatSaturatesTheDispatchBudget() throws Exception {
+    public void testRandomSweepStartsReachTablesWithSaturatedIoBudget() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
-        // One sweep can hand a single table up to MAX_DISPATCH_PER_SWEEP swaps, and each one goes onto the
-        // held writer's command queue. The default queue is far shallower than that, and a full queue throws
-        // - which ends that table's scan early and hands the rest of the budget back, so the test would
-        // never reach the condition it is about.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IO_BUDGET, "1");
         node1.setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 64);
 
         final ObjList<String> tableNames = new ObjList<>();
@@ -194,7 +180,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                 tokens.add(engine.verifyTableName(tableName));
             }
 
-            // The dispatch budget is 32 per sweep; each table has to be able to soak up all of it on its own.
+            // Each table has enough work to keep consuming a one-dispatch sweep whenever it starts first.
             for (int i = 0; i < tableCount; i++) {
                 try (TableReader reader = engine.getReader(tokens.getQuick(i))) {
                     final TxReader tx = reader.getTxFile();
@@ -206,9 +192,8 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                         }
                     }
                     Assert.assertTrue(
-                            "table " + tableNames.getQuick(i) + " must offer more composite partitions than one"
-                                    + " sweep can dispatch, got " + compositeCount,
-                            compositeCount > 32
+                            "table " + tableNames.getQuick(i) + " must offer a backlog, got " + compositeCount,
+                            compositeCount > 10
                     );
                 }
             }
@@ -232,7 +217,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                 final Throwable[] failure = new Throwable[1];
                 final Thread sweeper = new Thread(() -> {
                     try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, ff, configuration.getMicrosecondClock())) {
-                        for (int sweep = 0; sweep < tableCount; sweep++) {
+                        for (int sweep = 0; sweep < 20; sweep++) {
                             setCurrentMicros(currentMicros + interval + 1);
                             job.run();
                         }
@@ -253,8 +238,8 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
 
             for (int i = 0; i < tableCount; i++) {
                 Assert.assertTrue(
-                        "table " + tableNames.getQuick(i) + " was never dispatched in " + tableCount
-                                + " sweeps; staged copies per table were " + stagedCopies,
+                        "table " + tableNames.getQuick(i) + " was never dispatched in 20 sweeps; staged copies per table were "
+                                + stagedCopies,
                         stagedCopies.getQuick(i).get() > 0
                 );
             }
@@ -1704,6 +1689,169 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
         assertNoRebuildWhileSwapQueued("1us");
     }
 
+    @Test
+    public void testIoBudgetAllowsOneOversizedPartitionPerSweep() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IO_BUDGET, "1");
+
+        final AtomicInteger stagingMkdirs = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                if (Utf8s.containsAscii(path, TableUtils.COMPACTING_DIR_MARKER)) {
+                    stagingMkdirs.incrementAndGet();
+                }
+                return super.mkdirs(path, mode);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            execute("""
+                    CREATE TABLE cx AS (
+                        SELECT x::INT i, timestamp_sequence('2020-01-01', 15 * 1_000_000L) ts
+                        FROM long_sequence(11_520)
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO cx
+                    SELECT x::INT + 90_000 i, timestamp_sequence('2020-01-04', 60 * 1_000_000L) ts
+                    FROM long_sequence(50)
+                    """);
+            drainWalQueue();
+            execute("""
+                    INSERT INTO cx
+                    SELECT x::INT + 70_000 i, timestamp_sequence('2020-01-01T04:00:07', 5 * 1_000_000L) ts
+                    FROM long_sequence(200)
+                    """);
+            drainWalQueue();
+            execute("""
+                    INSERT INTO cx
+                    SELECT x::INT + 80_000 i, timestamp_sequence('2020-01-02T04:00:07', 5 * 1_000_000L) ts
+                    FROM long_sequence(200)
+                    """);
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("cx");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            final long interval = engine.getConfiguration().getPartitionCompactionCheckInterval() * 1000;
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:10:00.000000Z"));
+
+            try (TableWriter writer = engine.getWriter(token, "test");
+                 PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, ff, configuration.getMicrosecondClock())) {
+                setCurrentMicros(currentMicros + interval + 1);
+                job.run();
+                Assert.assertEquals("the first oversized partition must run", 1, stagingMkdirs.get());
+                Assert.assertEquals(1, job.getPendingSwapMemoSize());
+
+                setCurrentMicros(currentMicros + interval + 1);
+                job.run();
+                Assert.assertEquals("the byte budget must defer the second partition", 2, stagingMkdirs.get());
+                Assert.assertEquals(2, job.getPendingSwapMemoSize());
+                writer.tick(true);
+            }
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            assertQuery("SELECT count() c FROM cx").noRandomAccess().expectSize().returns("c\n11970\n");
+        });
+    }
+
+    @Test
+    public void testScanPrunesQueuedSwapWhenTableIsDropped() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            createCompositeDayTable("cx");
+            final TableToken token = engine.verifyTableName("cx");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            final long interval = engine.getConfiguration().getPartitionCompactionCheckInterval() * 1000;
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:10:00.000000Z"));
+
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(
+                    engine,
+                    configuration.getFilesFacade(),
+                    configuration.getMicrosecondClock()
+            )) {
+                try (TableWriter writer = engine.getWriter(token, "test")) {
+                    setCurrentMicros(currentMicros + interval + 1);
+                    job.run();
+                    Assert.assertEquals(1, job.getPendingSwapMemoSize());
+                    writer.destroy();
+                }
+
+                execute("DROP TABLE cx");
+                setCurrentMicros(currentMicros + interval + 1);
+                job.run();
+                Assert.assertEquals("dropping a table must remove its in-flight records", 0, job.getPendingSwapMemoSize());
+            }
+        });
+    }
+
+    @Test
+    public void testScanRebuildsAfterTheWriterThatOwnedAQueuedSwapIsDestroyed() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
+
+        final AtomicInteger stagingMkdirs = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                if (Utf8s.containsAscii(path, TableUtils.COMPACTING_DIR_MARKER)) {
+                    stagingMkdirs.incrementAndGet();
+                }
+                return super.mkdirs(path, mode);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            createCompositeDayTable("cx");
+            final TableToken token = engine.verifyTableName("cx");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            final long interval = engine.getConfiguration().getPartitionCompactionCheckInterval() * 1000;
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:10:00.000000Z"));
+
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(
+                    engine,
+                    ff,
+                    configuration.getMicrosecondClock()
+            )) {
+                try (TableWriter writer = engine.getWriter(token, "test")) {
+                    setCurrentMicros(currentMicros + interval + 1);
+                    job.run();
+                    Assert.assertEquals(1, stagingMkdirs.get());
+                    Assert.assertEquals(1, job.getPendingSwapMemoSize());
+                    // destroy() drops the queued command without ticking it. The pool removes this writer
+                    // instance when close() runs at the end of the block.
+                    writer.destroy();
+                }
+
+                setCurrentMicros(currentMicros + interval + 1);
+                job.run();
+                Assert.assertEquals("a replacement writer must invalidate the old writer's in-flight record",
+                        0, job.getPendingSwapMemoSize());
+                Assert.assertEquals("the abandoned staging copy must be rebuilt", 2, stagingMkdirs.get());
+            }
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            assertQuery("SELECT count() c FROM cx").noRandomAccess().expectSize().returns("c\n6010\n");
+        });
+    }
+
     private void assertNoRebuildWhileSwapQueued(String idleTimeout) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
@@ -1744,22 +1892,28 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
 
             // Holding the writer is what makes getWriterOrPublishCommand queue the swap instead of
             // applying it, which is the whole condition under test.
-            try (TableWriter ignore = engine.getWriter(token, "test");
+            try (TableWriter writer = engine.getWriter(token, "test");
                  PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, ff, configuration.getMicrosecondClock())) {
-                Assert.assertNotNull(ignore);
+                Assert.assertNotNull(writer);
                 setCurrentMicros(currentMicros + interval + 1);
                 job.run();
                 Assert.assertEquals("the first sweep should build the staging copy", 1, stagingMkdirs.get());
 
-                setCurrentMicros(currentMicros + interval + 1);
+                // Cross the old one-hour memo TTL while the same writer and queued command remain live.
+                setCurrentMicros(currentMicros + 61 * Micros.MINUTE_MICROS + interval + 1);
                 job.run();
                 setCurrentMicros(currentMicros + interval + 1);
                 job.run();
                 Assert.assertEquals("later sweeps must not rebuild a copy whose swap is already queued",
                         1, stagingMkdirs.get());
+
+                writer.tick(true);
+                setCurrentMicros(currentMicros + interval + 1);
+                job.run();
+                Assert.assertEquals("the completed swap record must be pruned", 0, job.getPendingSwapMemoSize());
             }
 
-            // The queued swap still lands, and the data is unchanged either way.
+            // The queued swap landed, and the data is unchanged.
             engine.releaseAllWriters();
             engine.releaseAllReaders();
             assertQuery("SELECT count() c FROM cx").noRandomAccess().expectSize().returns("c\n6010\n");

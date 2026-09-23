@@ -453,6 +453,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int partitionCompactionHotCommits;
     private final long partitionCompactionHotTime;
     private final long partitionCompactionIdleTimeout;
+    private final long partitionCompactionIoBudget;
     private final int partitionCompactionMoveTailMinGain;
     private final int partitionCompactionPieceThreshold;
     private final int partitionCompactionPrefixMinPercent;
@@ -1912,6 +1913,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.partitionCompactionDeadRowsRatio = getDouble(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1.0");
             this.partitionCompactionDeadMinSize = getLongSize(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, 50 * Numbers.SIZE_1MB);
             this.partitionCompactionIdleTimeout = getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, 60 * Micros.MINUTE_MICROS);
+            this.partitionCompactionIoBudget = getLongSize(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_IO_BUDGET, Numbers.SIZE_1GB);
             this.partitionCompactionTableDeadThresholdPercent = getIntPercentage(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD_PERCENT, 50);
             // The off-threshold can never sit above the on-threshold: the rule would then turn itself off
             // on the very pass that turned it on, and lowering only table.dead.threshold.percent - which
@@ -4924,6 +4926,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getPartitionCompactionIdleTimeout() {
             return partitionCompactionIdleTimeout;
+        }
+
+        @Override
+        public long getPartitionCompactionIoBudget() {
+            return partitionCompactionIoBudget;
         }
 
         @Override

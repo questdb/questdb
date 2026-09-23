@@ -674,6 +674,8 @@ public interface CairoConfiguration {
 
     long getPartitionCompactionIdleTimeout();
 
+    long getPartitionCompactionIoBudget();
+
     int getPartitionCompactionMoveTailMinGain();
 
     int getPartitionCompactionPieceThreshold();

@@ -230,6 +230,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final int ROW_ACTION_OPEN_PARTITION = 0;
     private static final int ROW_ACTION_SWITCH_PARTITION = 4;
     private static final int TODO_META_INDEX_OFFSET = 48;
+    private static final AtomicLong WRITER_ID_GENERATOR = new AtomicLong();
     final ObjList<MemoryMA> columns;
     private final FragileCode RECOVER_FROM_COLUMN_OPEN_FAILURE = this::recoverOpenColumnFailure;
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
@@ -375,6 +376,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private final Uuid uuid = new Uuid();
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
+    private final long writerId;
     private ObjList<? extends MemoryA> activeColumns;
     private ObjList<Runnable> activeNullSetters;
     private ColumnVersionReader attachColumnVersionReader;
@@ -526,6 +528,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         LOG.info().$("open '").$(tableToken).$('\'').$();
         this.configuration = configuration;
+        this.writerId = WRITER_ID_GENERATOR.incrementAndGet();
         this.parquetDecoder = configuration.newParquetPartitionDecoder();
         this.ddlListener = ddlListener;
         this.mixedIOFlag = configuration.isWriterMixedIOEnabled();
@@ -2982,6 +2985,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public WalTxnDetails getWalTnxDetails() {
         return walTxnDetails;
+    }
+
+    public long getWriterId() {
+        return writerId;
     }
 
     public void goActive() {

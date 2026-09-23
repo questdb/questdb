@@ -37,11 +37,13 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
 import io.questdb.std.Hash;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.LongHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
@@ -50,15 +52,23 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.function.LongConsumer;
 
 /**
  * Periodically scans every WAL table for idle composite (multi-piece) or Parquet-format partitions and dispatches the
  * appropriate compaction entry point. Non-WAL tables are out of scope - see {@code scanTable}.
+ * <p>
+ * A swap this job hands to a busy writer's command queue takes ownership of the staging directory the build filled.
+ * An in-flight record suppresses rebuilding while the writer instance that received the command remains live and the
+ * partition generation stays unchanged.
  */
 public class PartitionCompactionScanJob extends SynchronizedJob implements Closeable {
-    // Caps how many partitions one sweep hands out: the first sweep after an upgrade can find every
-    // qualifying partition of every table at once. The next interval picks up the rest.
-    private static final int MAX_DISPATCH_PER_SWEEP = 32;
+    private static final int IN_FLIGHT_GENERATION_OFFSET = 3;
+    private static final int IN_FLIGHT_NAME_TXN_OFFSET = 2;
+    private static final int IN_FLIGHT_PARTITION_TIMESTAMP_OFFSET = 1;
+    private static final int IN_FLIGHT_STRIDE = 5;
+    private static final int IN_FLIGHT_TABLE_ID_OFFSET = 0;
+    private static final int IN_FLIGHT_WRITER_ID_OFFSET = 4;
     // Bounds the clean-parquet memo. Kept across two generations so a full memo evicts its oldest half
     // rather than being wiped whole - see rememberCleanParquetPartition.
     private static final int MAX_MEMO_SIZE = 100_000;
@@ -69,13 +79,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     // spreads that cost across sweeps; a partition memoized clean is never probed again until it changes.
     private static final int MAX_PROBE_PER_SWEEP = 10_000;
     private static final Log LOG = LogFactory.getLog(PartitionCompactionScanJob.class);
-    // Bounds how long a pending-swap record can sit unclaimed, and with it how long a queued swap keeps
-    // suppressing a re-dispatch. isSwapPending consults the staging directory only while the record is
-    // still on the list; once expirePendingSwaps drops it the fingerprint is simply absent and the check
-    // says "not pending", whatever the staging directory still holds. So the TTL is the backstop for a
-    // swap a writer never picked up: too short and the sweep re-does work already queued, too long and a
-    // stuck swap blocks the partition from being reconsidered.
-    private static final long PENDING_SWAP_MEMO_TTL_MICROS = 60 * Micros.MINUTE_MICROS;
     private final long checkInterval;
     private final Clock clock;
     // Fingerprints of parquet partitions already found to hold no dead space AND no stale schema. Any write
@@ -96,29 +99,36 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private final FrameFactory frameFactory;
     private final PartitionGeometry geometry = new PartitionGeometry();
     private final long idleTimeoutMicros;
+    // Sorted by (tableId, partitionTimestamp), five longs per record.
+    private final LongList inFlightSwaps = new LongList();
+    private final long ioBudget;
+    private final IntHashSet liveTableIds = new IntHashSet();
     private final Path other = new Path();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     private final Path path = new Path();
-    // (fingerprint, queuedAtMicros) pairs for swaps handed to a BUSY writer's queue.
-    private final LongList pendingSwaps = new LongList();
+    private final Rnd rnd;
     private final Utf8StringSink sidecarName = new Utf8StringSink();
     private final FindVisitor sidecarVisitor = this::copyParquetPartitionSidecar;
     private final TableUtils.SymbolTableProviderFromReader symbolTableProvider = new TableUtils.SymbolTableProviderFromReader();
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
+    private final long timeBudgetMicros;
     private final TxReader txReader;
-    private int dispatchBudget;
+    private final LongConsumer writerIdSink = this::capturePublishedWriterId;
+    private boolean isBudgetExhausted;
+    private boolean isIoDispatchStarted;
     private long last = 0;
     // Both default to their constants; tests shrink them to exercise the memo eviction and the probe
     // budget without materializing 100k parquet partitions.
     private int maxProbesPerSweep = MAX_PROBE_PER_SWEEP;
     private int memoCapacity = MAX_MEMO_SIZE;
     private int probeBudget;
+    private long publishedWriterId;
+    private long remainingIoBudget;
     private LongHashSet retiringCleanParquetPartitions = new LongHashSet();
     private int sidecarDstLen;
     private int sidecarSrcLen;
-    // Where the next sweep starts its walk over the table list. A sweep that runs out of budget part way
-    // through leaves this pointing at the first table it did not reach.
-    private int sweepStartTableIndex;
+    private long sweepDeadline;
+    private int sweepDispatchCount;
 
     public PartitionCompactionScanJob(CairoEngine engine, FilesFacade ff, Clock clock) {
         this.engine = engine;
@@ -126,6 +136,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         this.clock = clock;
         this.configuration = engine.getConfiguration();
         this.checkInterval = configuration.getPartitionCompactionCheckInterval() * 1000;
+        this.ioBudget = configuration.getPartitionCompactionIoBudget();
+        this.timeBudgetMicros = configuration.getPartitionCompactionTimeBudgetMs() * Micros.MILLI_MICROS;
+        final Rnd configurationRnd = configuration.getRandom();
+        this.rnd = new Rnd(configurationRnd.getSeed0(), configurationRnd.getSeed1());
         // The same key PartitionCompactionPolicy's AGE rule reads, so this job's idle gate matches the
         // threshold the per-commit path would have applied.
         this.idleTimeoutMicros = configuration.getPartitionCompactionIdleTimeout();
@@ -141,7 +155,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     public void close() {
         cleanParquetPartitions.clear();
         retiringCleanParquetPartitions.clear();
-        pendingSwaps.clear();
+        inFlightSwaps.clear();
         geometry.close();
         other.close();
         parquetMetaReader.clear();
@@ -153,6 +167,11 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     @TestOnly
     public int getCleanParquetPartitionMemoSize() {
         return cleanParquetPartitions.size() + retiringCleanParquetPartitions.size();
+    }
+
+    @TestOnly
+    public int getPendingSwapMemoSize() {
+        return inFlightSwaps.size() / IN_FLIGHT_STRIDE;
     }
 
     @TestOnly
@@ -174,8 +193,13 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         }
         final long t = clock.getTicks();
         if (last + checkInterval < t) {
-            last = t;
-            sweep(t);
+            try {
+                sweep(t);
+            } finally {
+                // Measure the interval from completion. A slow sweep must not make the next one immediately
+                // eligible and turn background reclamation into a continuous workload.
+                last = clock.getTicks();
+            }
         }
         return false;
     }
@@ -273,10 +297,11 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
      * Builds the REWRITE off a {@link TableReader} snapshot ({@link #buildCompactedComposite}), then publishes a {@link
      * CompositePartitionSwapCommand} the way {@link #dispatchParquet} publishes its own.
      */
-    private void dispatchComposite(TableToken tableToken, long partitionTimestamp, long nowMicros) {
+    private void dispatchComposite(TableToken tableToken, long partitionTimestamp) {
         final CompositePartitionSwapCommand command;
-        final long fingerprint;
+        final long srcNameTxn;
         final TimestampDriver timestampDriver;
+        final long writerTxn;
         try (TableReader reader = engine.getReader(tableToken)) {
             final int partitionIndex = reader.getTxFile().getPartitionIndex(partitionTimestamp);
             if (partitionIndex < 0 || !reader.getTxFile().isPartitionComposite(partitionIndex)) {
@@ -284,24 +309,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             }
             timestampDriver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
             reader.getGeometry().resolve(partitionIndex);
-            final long srcNameTxn = reader.getTxFile().getPartitionNameTxn(partitionIndex);
-            final long writerTxn = reader.getGeometry().getWriterTxn(partitionIndex);
-            fingerprint = Hash.hashLong256_64(
-                    tableToken.getTableId(),
-                    partitionTimestamp,
-                    srcNameTxn,
-                    writerTxn
-            );
-            setStagingPath(
-                    other,
-                    tableToken,
-                    reader.getMetadata().getTimestampType(),
-                    reader.getPartitionedBy(),
-                    partitionTimestamp,
-                    srcNameTxn,
-                    writerTxn
-            );
-            if (isSwapPending(fingerprint, other)) {
+            srcNameTxn = reader.getTxFile().getPartitionNameTxn(partitionIndex);
+            writerTxn = reader.getGeometry().getWriterTxn(partitionIndex);
+            if (isSwapPending(tableToken, partitionTimestamp, srcNameTxn, writerTxn)) {
                 // The copy for this exact generation is already staged and its swap already queued.
                 LOG.debug().$("composite partition REWRITE already staged, skipping [table=").$(tableToken)
                         .$(", partition=").$ts(timestampDriver, partitionTimestamp)
@@ -331,13 +341,14 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             return;
         }
         boolean applied;
-        try (TableWriter writer = engine.getWriterOrPublishCommand(tableToken, command)) {
+        publishedWriterId = -1;
+        try (TableWriter writer = engine.getWriterOrPublishCommand(tableToken, command, writerIdSink)) {
             applied = writer != null;
             if (applied) {
                 command.apply(writer, true);
             } else {
-                // Queued onto a busy writer: it applies the swap on its own thread, via tick().
-                pendingSwaps.add(fingerprint, nowMicros);
+                // The pool captured this id before publishing while its close fence held the writer live.
+                rememberPendingSwap(tableToken.getTableId(), partitionTimestamp, srcNameTxn, writerTxn, publishedWriterId);
             }
         }
         LOG.info().$("composite partition REWRITE handed over [table=").$(tableToken)
@@ -525,9 +536,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
      * Compacts the partition off a {@link TableReader} snapshot ({@link #buildCompactedParquet}), then publishes a
      * {@link ParquetPartitionSwapCommand} exactly as {@link #dispatchComposite} does.
      */
-    private void dispatchParquet(TableToken tableToken, long partitionTimestamp, long nowMicros) {
+    private void dispatchParquet(TableToken tableToken, long partitionTimestamp) {
         final ParquetPartitionSwapCommand command;
-        final long fingerprint;
+        final long parquetFileSize;
+        final long srcNameTxn;
         final TimestampDriver timestampDriver;
         try (TableReader reader = engine.getReader(tableToken)) {
             final TxReader txFile = reader.getTxFile();
@@ -536,24 +548,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 return;
             }
             timestampDriver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
-            final long srcNameTxn = txFile.getPartitionNameTxn(partitionIndex);
-            final long parquetFileSize = txFile.getPartitionParquetFileSize(partitionIndex);
-            fingerprint = Hash.hashLong256_64(
-                    tableToken.getTableId(),
-                    partitionTimestamp,
-                    srcNameTxn,
-                    parquetFileSize
-            );
-            setStagingPath(
-                    other,
-                    tableToken,
-                    reader.getMetadata().getTimestampType(),
-                    reader.getPartitionedBy(),
-                    partitionTimestamp,
-                    srcNameTxn,
-                    parquetFileSize
-            );
-            if (isSwapPending(fingerprint, other)) {
+            srcNameTxn = txFile.getPartitionNameTxn(partitionIndex);
+            parquetFileSize = txFile.getPartitionParquetFileSize(partitionIndex);
+            if (isSwapPending(tableToken, partitionTimestamp, srcNameTxn, parquetFileSize)) {
                 LOG.debug().$("parquet partition rebuild already staged, skipping [table=").$(tableToken)
                         .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                         .$(", nameTxn=").$(srcNameTxn)
@@ -568,12 +565,13 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             command = buildCompactedParquet(tableToken, reader, partitionIndex, partitionTimestamp);
         }
         boolean applied;
-        try (TableWriter writer = engine.getWriterOrPublishCommand(tableToken, command)) {
+        publishedWriterId = -1;
+        try (TableWriter writer = engine.getWriterOrPublishCommand(tableToken, command, writerIdSink)) {
             applied = writer != null;
             if (applied) {
                 command.apply(writer, true);
             } else {
-                pendingSwaps.add(fingerprint, nowMicros);
+                rememberPendingSwap(tableToken.getTableId(), partitionTimestamp, srcNameTxn, parquetFileSize, publishedWriterId);
             }
         }
         LOG.info().$("parquet partition rebuild handed over [table=").$(tableToken)
@@ -601,12 +599,52 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         }
     }
 
-    private void expirePendingSwaps(long nowMicros) {
-        for (int i = pendingSwaps.size() - 2; i >= 0; i -= 2) {
-            if (pendingSwaps.getQuick(i + 1) < nowMicros - PENDING_SWAP_MEMO_TTL_MICROS) {
-                pendingSwaps.removeIndexBlock(i, 2);
+    private void capturePublishedWriterId(long writerId) {
+        publishedWriterId = writerId;
+    }
+
+    private int findPendingSwap(int tableId, long partitionTimestamp) {
+        int lo = 0;
+        int hi = inFlightSwaps.size() / IN_FLIGHT_STRIDE - 1;
+        while (lo <= hi) {
+            final int mid = (lo + hi) >>> 1;
+            final int offset = mid * IN_FLIGHT_STRIDE;
+            final long midTableId = inFlightSwaps.getQuick(offset + IN_FLIGHT_TABLE_ID_OFFSET);
+            final long midPartitionTimestamp = inFlightSwaps.getQuick(offset + IN_FLIGHT_PARTITION_TIMESTAMP_OFFSET);
+            if (midTableId < tableId || midTableId == tableId && midPartitionTimestamp < partitionTimestamp) {
+                lo = mid + 1;
+            } else if (midTableId > tableId || midPartitionTimestamp > partitionTimestamp) {
+                hi = mid - 1;
+            } else {
+                return mid;
             }
         }
+        return -lo - 1;
+    }
+
+    private void rememberPendingSwap(
+            int tableId,
+            long partitionTimestamp,
+            long srcNameTxn,
+            long generation,
+            long writerId
+    ) {
+        assert writerId > 0;
+        int recordIndex = findPendingSwap(tableId, partitionTimestamp);
+        if (recordIndex < 0) {
+            recordIndex = -recordIndex - 1;
+            inFlightSwaps.insert(recordIndex * IN_FLIGHT_STRIDE, IN_FLIGHT_STRIDE);
+        }
+        final int offset = recordIndex * IN_FLIGHT_STRIDE;
+        inFlightSwaps.setQuick(offset + IN_FLIGHT_TABLE_ID_OFFSET, tableId);
+        inFlightSwaps.setQuick(offset + IN_FLIGHT_PARTITION_TIMESTAMP_OFFSET, partitionTimestamp);
+        inFlightSwaps.setQuick(offset + IN_FLIGHT_NAME_TXN_OFFSET, srcNameTxn);
+        inFlightSwaps.setQuick(offset + IN_FLIGHT_GENERATION_OFFSET, generation);
+        inFlightSwaps.setQuick(offset + IN_FLIGHT_WRITER_ID_OFFSET, writerId);
+    }
+
+    private void removePendingSwap(int recordIndex) {
+        inFlightSwaps.removeIndexBlock(recordIndex * IN_FLIGHT_STRIDE, IN_FLIGHT_STRIDE);
     }
 
     /**
@@ -621,6 +659,28 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             }
         }
         return false;
+    }
+
+    private static long estimateCompactionIoBytes(TableMetadata metadata, long liveRows) {
+        final long avgRecordSize = Math.max(1, TableUtils.estimateAvgRecordSize(metadata));
+        if (liveRows > Long.MAX_VALUE / avgRecordSize / 2) {
+            return Long.MAX_VALUE;
+        }
+        return liveRows * avgRecordSize * 2;
+    }
+
+    private boolean chargeDispatch(long estimatedIoBytes) {
+        if ((sweepDispatchCount > 0 && clock.getTicks() >= sweepDeadline)
+                || (isIoDispatchStarted && estimatedIoBytes > remainingIoBudget)) {
+            isBudgetExhausted = true;
+            return false;
+        }
+        if (estimatedIoBytes > 0) {
+            isIoDispatchStarted = true;
+            remainingIoBudget = Math.max(0, remainingIoBudget - estimatedIoBytes);
+        }
+        sweepDispatchCount++;
+        return true;
     }
 
     /**
@@ -752,22 +812,90 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * Reports whether a swap for this exact generation is already staged and queued on a busy writer, so this sweep
-     * must leave the partition alone. The record alone does not settle it, {@code stagingDir} does: that directory is
-     * the queued command's own input, so rebuilding into it would have the copy's files renamed and truncated
-     * underneath it mid-append.
+     * Suppresses a rebuild only while the exact writer instance that received the command remains live and the
+     * partition identity still matches. The staging directory itself is not a liveness signal: a terminal path may
+     * leave it behind, while a live command must retain ownership even if the directory temporarily disappears.
      */
-    private boolean isSwapPending(long fingerprint, Path stagingDir) {
-        for (int i = 0, n = pendingSwaps.size(); i < n; i += 2) {
-            if (pendingSwaps.getQuick(i) == fingerprint) {
-                if (ff.exists(stagingDir.$())) {
-                    return true;
-                }
-                pendingSwaps.removeIndexBlock(i, 2);
-                return false;
+    private boolean isSwapPending(
+            TableToken tableToken,
+            long partitionTimestamp,
+            long srcNameTxn,
+            long generation
+    ) {
+        final int recordIndex = findPendingSwap(tableToken.getTableId(), partitionTimestamp);
+        if (recordIndex < 0) {
+            return false;
+        }
+        final int offset = recordIndex * IN_FLIGHT_STRIDE;
+        final boolean isSameGeneration = inFlightSwaps.getQuick(offset + IN_FLIGHT_NAME_TXN_OFFSET) == srcNameTxn
+                && inFlightSwaps.getQuick(offset + IN_FLIGHT_GENERATION_OFFSET) == generation;
+        final boolean isSameWriter = inFlightSwaps.getQuick(offset + IN_FLIGHT_WRITER_ID_OFFSET)
+                == engine.getWriterId(tableToken);
+        if (isSameGeneration && isSameWriter) {
+            return true;
+        }
+        removePendingSwap(recordIndex);
+        return false;
+    }
+
+    private void pruneDroppedTableSwaps() {
+        liveTableIds.clear();
+        for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
+            liveTableIds.add(tableTokenBucket.get(i).getTableId());
+        }
+        for (int recordIndex = inFlightSwaps.size() / IN_FLIGHT_STRIDE - 1; recordIndex >= 0; recordIndex--) {
+            final int offset = recordIndex * IN_FLIGHT_STRIDE;
+            if (!liveTableIds.contains((int) inFlightSwaps.getQuick(offset + IN_FLIGHT_TABLE_ID_OFFSET))) {
+                removePendingSwap(recordIndex);
             }
         }
-        return false;
+    }
+
+    private void prunePendingSwaps(TableToken tableToken, int timestampType, int partitionBy) {
+        int recordIndex = findPendingSwap(tableToken.getTableId(), Long.MIN_VALUE);
+        recordIndex = recordIndex < 0 ? -recordIndex - 1 : recordIndex;
+        final long liveWriterId = engine.getWriterId(tableToken);
+        boolean isGeometryOpen = false;
+        String tableRoot = null;
+        while (recordIndex * IN_FLIGHT_STRIDE < inFlightSwaps.size()) {
+            final int offset = recordIndex * IN_FLIGHT_STRIDE;
+            if (inFlightSwaps.getQuick(offset + IN_FLIGHT_TABLE_ID_OFFSET) != tableToken.getTableId()) {
+                break;
+            }
+            if (liveWriterId < 0 || inFlightSwaps.getQuick(offset + IN_FLIGHT_WRITER_ID_OFFSET) != liveWriterId) {
+                removePendingSwap(recordIndex);
+                continue;
+            }
+
+            final long partitionTimestamp = inFlightSwaps.getQuick(offset + IN_FLIGHT_PARTITION_TIMESTAMP_OFFSET);
+            final int partitionIndex = txReader.getPartitionIndex(partitionTimestamp);
+            if (partitionIndex < 0) {
+                removePendingSwap(recordIndex);
+                continue;
+            }
+            final long srcNameTxn = txReader.getPartitionNameTxn(partitionIndex);
+            final long generation;
+            if (txReader.isPartitionComposite(partitionIndex)) {
+                if (!isGeometryOpen) {
+                    tableRoot = buildTableRoot(tableToken);
+                    geometry.of(ff, txReader, tableRoot, timestampType, partitionBy, MemoryTag.NATIVE_TABLE_READER);
+                    isGeometryOpen = true;
+                }
+                geometry.resolve(partitionIndex);
+                generation = geometry.getWriterTxn(partitionIndex);
+            } else if (txReader.isPartitionParquet(partitionIndex)) {
+                generation = txReader.getPartitionParquetFileSize(partitionIndex);
+            } else {
+                removePendingSwap(recordIndex);
+                continue;
+            }
+            if (inFlightSwaps.getQuick(offset + IN_FLIGHT_NAME_TXN_OFFSET) != srcNameTxn
+                    || inFlightSwaps.getQuick(offset + IN_FLIGHT_GENERATION_OFFSET) != generation) {
+                removePendingSwap(recordIndex);
+                continue;
+            }
+            recordIndex++;
+        }
     }
 
     /**
@@ -798,6 +926,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
 
             txReader.ofRO(path.$(), timestampType, partitionBy);
             TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+            prunePendingSwaps(tableToken, timestampType, partitionBy);
 
             final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
             final long nowInTableUnits = timestampDriver.fromMicros(nowMicros);
@@ -805,7 +934,11 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
 
             String tableRoot = null;
             final int partitionCount = txReader.getPartitionCount();
-            for (int partitionIndex = 0; partitionIndex < partitionCount && dispatchBudget > 0; partitionIndex++) {
+            for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+                if (sweepDispatchCount > 0 && clock.getTicks() >= sweepDeadline) {
+                    isBudgetExhausted = true;
+                    return;
+                }
                 if (txReader.isPartitionReadOnly(partitionIndex) || txReader.isPartitionRemote(partitionIndex)) {
                     // Not this job's partition to rewrite. READ ONLY is an operator ATTACH or an
                     // Enterprise freeze ahead of the cold switch. REMOTE means a durable copy exists
@@ -834,7 +967,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                     continue;
                 }
 
-                final long partitionTimestamp = txReader.getPartitionTimestampByIndex(partitionIndex);
+                final long partitionTimestamp = txReader.getLogicalPartitionTimestamp(
+                        txReader.getPartitionTimestampByIndex(partitionIndex)
+                );
                 if (isComposite) {
                     if (tableRoot == null) {
                         tableRoot = buildTableRoot(tableToken);
@@ -843,23 +978,46 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                     if (geometry.getLastWriteMicros(partitionIndex) > nowMicros - idleTimeoutMicros) {
                         continue;
                     }
-                    dispatchBudget--;
-                    if (PartitionCompactionPolicy.isMakePlainShape(txReader, geometry, partitionIndex)) {
+                    final long srcNameTxn = txReader.getPartitionNameTxn(partitionIndex);
+                    final long writerTxn = geometry.getWriterTxn(partitionIndex);
+                    if (isSwapPending(tableToken, partitionTimestamp, srcNameTxn, writerTxn)) {
+                        continue;
+                    }
+                    final boolean isMakePlain = PartitionCompactionPolicy.isMakePlainShape(txReader, geometry, partitionIndex);
+                    final long estimatedIoBytes = isMakePlain
+                            ? 0
+                            : estimateCompactionIoBytes(metadata, txReader.getPartitionSize(partitionIndex));
+                    if (!chargeDispatch(estimatedIoBytes)) {
+                        return;
+                    }
+                    if (isMakePlain) {
                         // Already one piece at row 0: MAKE-PLAIN and TRIM-FILES reach REWRITE's result in
                         // place, with no copy at all. This is the shape a writer leaves behind when it has
                         // to defer the trim - for a reader or a checkpoint - and then stops ingesting, so
                         // its own per-commit retry never comes round again.
                         dispatchMakePlain(tableToken, partitionTimestamp);
                     } else {
-                        dispatchComposite(tableToken, partitionTimestamp, nowMicros);
+                        dispatchComposite(tableToken, partitionTimestamp);
                     }
                 } else {
                     final long nameTxn = txReader.getPartitionNameTxn(partitionIndex);
-                    if (!isParquetPartitionIdle(tableToken, timestampType, partitionBy, partitionTimestamp, nameTxn, parquetFileSize, metadata, nowMicros)) {
+                    if (isSwapPending(tableToken, partitionTimestamp, nameTxn, parquetFileSize)
+                            || !isParquetPartitionIdle(
+                                    tableToken,
+                                    timestampType,
+                                    partitionBy,
+                                    partitionTimestamp,
+                                    nameTxn,
+                                    parquetFileSize,
+                                    metadata,
+                                    nowMicros
+                            )) {
                         continue;
                     }
-                    dispatchBudget--;
-                    dispatchParquet(tableToken, partitionTimestamp, nowMicros);
+                    if (!chargeDispatch(estimateCompactionIoBytes(metadata, txReader.getPartitionSize(partitionIndex)))) {
+                        return;
+                    }
+                    dispatchParquet(tableToken, partitionTimestamp);
                 }
             }
         }
@@ -884,29 +1042,27 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * One tick: walks the table list from where the last sweep stopped, handing out at most {@link
-     * #MAX_DISPATCH_PER_SWEEP} dispatches in total.
-     * <p>
-     * The walk resumes rather than restarting because {@code getTableTokens} hands back a stable order - it
-     * walks a hash map whose bin order is a pure function of the table directory names, and {@code
-     * ObjHashSet.get} reads that walk back out of a dense list in the order it went in. Restarting at index 0
-     * every tick therefore let one table holding more qualifying partitions than the budget spend all of it,
-     * tick after tick, and the tables behind it were never opened at all - not compacted late, but not
-     * scanned - for as long as that table's backlog lasted. Resuming walks the whole ring instead, so every
-     * table gets its turn while the per-tick bound stays exactly as it was.
+     * One tick starts at a configuration-seeded random table and stops before starting a dispatch that would exceed
+     * either budget. The first dispatch always runs, so one partition larger than the byte budget cannot starve.
      */
     private void sweep(long nowMicros) {
-        dispatchBudget = MAX_DISPATCH_PER_SWEEP;
+        isBudgetExhausted = false;
+        isIoDispatchStarted = false;
         probeBudget = maxProbesPerSweep;
-        expirePendingSwaps(nowMicros);
+        remainingIoBudget = Math.max(0, ioBudget);
+        sweepDispatchCount = 0;
+        sweepDeadline = timeBudgetMicros >= Long.MAX_VALUE - nowMicros
+                ? Long.MAX_VALUE
+                : nowMicros + Math.max(0, timeBudgetMicros);
         tableTokenBucket.clear();
         engine.getTableTokens(tableTokenBucket, false);
+        pruneDroppedTableSwaps();
         final int n = tableTokenBucket.size();
         if (n == 0) {
             return;
         }
-        int i = sweepStartTableIndex < n ? sweepStartTableIndex : 0;
-        for (int visited = 0; visited < n && dispatchBudget > 0; visited++) {
+        int i = rnd.nextPositiveInt() % n;
+        for (int visited = 0; visited < n && !isBudgetExhausted; visited++) {
             final TableToken tableToken = tableTokenBucket.get(i);
             i = i + 1 < n ? i + 1 : 0;
             try {
@@ -918,10 +1074,5 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 txReader.clear();
             }
         }
-        // A sweep that got all the way round leaves this where it started, so a system under no dispatch
-        // pressure keeps the order it has always had. A table created or dropped in between shifts the
-        // indices, which can repeat or skip one table for a single tick - one interval's delay at worst,
-        // and the walk still covers the ring.
-        sweepStartTableIndex = i;
     }
 }

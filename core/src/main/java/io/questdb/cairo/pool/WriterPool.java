@@ -51,6 +51,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.Iterator;
 import java.util.Map;
+import java.util.function.LongConsumer;
 
 /**
  * This class maintains cache of open writers to avoid OS overhead of
@@ -154,7 +155,7 @@ public class WriterPool extends AbstractPool {
      */
     public TableWriter get(TableToken tableToken, @NotNull String lockReason) {
         // writer cannot be null because our async command is null
-        TableWriter w = getWriterEntry(tableToken, lockReason, null);
+        TableWriter w = getWriterEntry(tableToken, lockReason, null, null);
         assert w != null;
         w.goActive();
         return w;
@@ -184,14 +185,34 @@ public class WriterPool extends AbstractPool {
      * @param asyncWriterCommand command to write to TableWriterTask
      * @return null if command is published or TableWriter instance if writer is available
      */
+    public long getWriterId(TableToken tableToken) {
+        final Entry entry = entries.get(tableToken.getDirName());
+        if (entry != null) {
+            final TableWriter writer = (TableWriter) Unsafe.getObjectVolatile(entry, ENTRY_WRITER);
+            if (writer != null) {
+                return writer.getWriterId();
+            }
+        }
+        return -1;
+    }
+
     public TableWriter getWriterOrPublishCommand(
             TableToken tableToken,
             @NotNull String lockReason,
             @NotNull AsyncWriterCommand asyncWriterCommand
     ) {
+        return getWriterOrPublishCommand(tableToken, lockReason, asyncWriterCommand, null);
+    }
+
+    public TableWriter getWriterOrPublishCommand(
+            TableToken tableToken,
+            @NotNull String lockReason,
+            @NotNull AsyncWriterCommand asyncWriterCommand,
+            @Nullable LongConsumer publishedWriterIdSink
+    ) {
         while (true) {
             try {
-                return getWriterEntry(tableToken, lockReason, asyncWriterCommand);
+                return getWriterEntry(tableToken, lockReason, asyncWriterCommand, publishedWriterIdSink);
             } catch (EntryUnavailableException ex) {
                 // means retry in this context
             }
@@ -320,7 +341,13 @@ public class WriterPool extends AbstractPool {
         unlock(tableToken, null, false);
     }
 
-    private void addCommandToWriterQueue(TableToken tableToken, Entry e, AsyncWriterCommand asyncWriterCommand, long thread) {
+    private void addCommandToWriterQueue(
+            TableToken tableToken,
+            Entry e,
+            AsyncWriterCommand asyncWriterCommand,
+            long thread,
+            @Nullable LongConsumer publishedWriterIdSink
+    ) {
         TableWriter writer;
         while ((writer = e.writer) == null && e.owner != UNALLOCATED) {
             // If the entry has been removed from the pool (e.g. distressed close),
@@ -354,6 +381,11 @@ public class WriterPool extends AbstractPool {
                 // A concurrent close pulled the writer out from under us. Do not serialize
                 // into its soon-to-be-freed queue; let the caller retry.
                 throw EntryUnavailableException.instance("please retry");
+            }
+            // Capture the writer instance while the publisher fence guarantees it cannot close. Reading the
+            // pool after publish would race a close/reopen and could associate the command with its successor.
+            if (publishedWriterIdSink != null) {
+                publishedWriterIdSink.accept(writer.getWriterId());
             }
             // Publish it. publishAsyncWriterCommand() marks the command as executing
             // asynchronously (startAsync) once it has validated the WAL invariant.
@@ -524,7 +556,8 @@ public class WriterPool extends AbstractPool {
     private TableWriter getWriterEntry(
             TableToken tableToken,
             @NotNull String lockReason,
-            @Nullable AsyncWriterCommand asyncWriterCommand
+            @Nullable AsyncWriterCommand asyncWriterCommand,
+            @Nullable LongConsumer publishedWriterIdSink
     ) {
         checkClosed();
 
@@ -579,7 +612,7 @@ public class WriterPool extends AbstractPool {
                     }
                 }
                 if (asyncWriterCommand != null) {
-                    addCommandToWriterQueue(tableToken, e, asyncWriterCommand, thread);
+                    addCommandToWriterQueue(tableToken, e, asyncWriterCommand, thread, publishedWriterIdSink);
                     return null;
                 }
 

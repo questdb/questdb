@@ -880,6 +880,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getPartitionCompactionIoBudget() {
+        return getDelegate().getPartitionCompactionIoBudget();
+    }
+
+    @Override
     public int getPartitionCompactionHotCommits() {
         return getDelegate().getPartitionCompactionHotCommits();
     }

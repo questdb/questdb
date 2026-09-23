@@ -26,9 +26,10 @@ their per-commit compaction; only this out-of-band path stands down for them.
 A `SynchronizedJob` gated by `cairo.partition.compaction.check.interval` (default 2 min). A negative interval
 disables the sweep entirely - per-commit compaction is unaffected; zero means sweep on every call.
 
-Each tick hands out at most `MAX_DISPATCH_PER_SWEEP` (32) dispatches and resumes the table walk from where
-the last one stopped (`sweepStartTableIndex`), so a table with more qualifying partitions than the budget
-cannot starve the tables behind it - every table gets its turn while the per-tick bound holds.
+Each tick starts at a configuration-seeded random table. It pre-charges rebuilds against an estimated disk
+IO budget (`2 * liveRows * estimatedRecordSize`) and stops before starting another rebuild when that budget
+or the elapsed-time backstop is spent. The first dispatch always runs, so a partition larger than the budget
+cannot starve. The interval starts when the sweep ends, preventing an overrun from causing back-to-back sweeps.
 
 ## Gates, cheapest first
 
@@ -58,11 +59,19 @@ Three entry points, chosen by the partition's shape:
 
 `engine.getWriterOrPublishCommand` decides how the result lands. An idle writer applies the swap inline on
 the sweep thread. A busy writer instead gets the command queued onto its own `TableWriterTask` queue and
-applies it on its own thread via `tick()`. A queued swap is remembered in `pendingSwaps` with a TTL
-(`PENDING_SWAP_MEMO_TTL_MICROS`, 60 min) so the next sweep does not rebuild work already staged; `isSwapPending`
-also confirms the staging directory still exists before standing down. After an inline swap,
-`notifyWalApplyIfLagging` re-sends the WAL apply notification that was dropped while the writer was out of
-the pool.
+applies it on its own thread via `tick()`. The pool captures that writer's monotonic instance id while its
+publish fence holds the writer live. The sweep records five longs, sorted by table and partition:
+`(tableId, partitionTimestamp, srcNameTxn, generation, writerId)`.
+
+The record suppresses a rebuild only while both the partition generation and the live writer id still match.
+When the job next visits the table, it prunes records whose swap made the partition plain or advanced its
+generation. A closed, distressed, evicted, or replaced writer also invalidates its records, and every sweep
+removes records for dropped tables. Records belonging to existing tables skipped because a sweep spent its
+budget remain untouched. No TTL or staging-directory existence
+check participates: neither can establish command ownership safely.
+
+After an inline swap, `notifyWalApplyIfLagging` re-sends the WAL apply notification that was dropped while the
+writer was out of the pool.
 
 ## Staleness and safety
 
@@ -80,6 +89,8 @@ record it retires.
 |---|---|---|
 | `cairo.partition.compaction.check.interval` | 2 min | sweep cadence; negative disables the sweep |
 | `cairo.partition.compaction.idle.timeout` | 60 min | a partition must be untouched this long to qualify |
+| `cairo.partition.compaction.io.budget` | 1 GiB | estimated read-plus-write bytes a sweep may start; the first dispatch always runs |
+| `cairo.partition.compaction.time.budget` | 1 s | elapsed-time backstop checked between dispatches |
 
 The thresholds that decide *whether a partition is wasteful* (`dead.rows.ratio`, `piece.threshold`,
 `avg.rows.piece.lim`, the `table.dead.*` pressure knobs, and so on) are shared with the per-commit policy
