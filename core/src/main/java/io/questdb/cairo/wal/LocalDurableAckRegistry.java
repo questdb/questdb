@@ -25,6 +25,7 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import org.jetbrains.annotations.NotNull;
@@ -43,9 +44,10 @@ import org.jetbrains.annotations.NotNull;
  * {@link CairoEngine#setDurableAckRegistry(DurableAckRegistry)}, which can compose with or
  * supersede this local tier.
  *
- * <p>{@link #isEnabled()} returns {@code true} so QWP honours the
- * {@code X-QWP-Request-Durable-Ack} opt-in header and emits durable-ack frames for ADAPTIVE
- * tables out of the box.
+ * <p>{@link #isEnabled()} and {@link #isTierAvailable(int)} answer {@code true} only under
+ * ADAPTIVE commit mode, so a server that can never advance the local frontier denies the
+ * {@code X-QWP-Request-Durable-Ack} opt-in at the handshake instead of leaving the client waiting
+ * for frames that will not come.
  */
 public class LocalDurableAckRegistry implements DurableAckRegistry {
 
@@ -53,6 +55,16 @@ public class LocalDurableAckRegistry implements DurableAckRegistry {
 
     public LocalDurableAckRegistry(@NotNull CairoEngine engine) {
         this.engine = engine;
+    }
+
+    /**
+     * Whether this server can serve the {@link DurabilityTier#LOCAL} tier. Mirrors the producer
+     * gate in {@code WalWriter.commit}: the local frontier advances only under ADAPTIVE, so any other
+     * mode reports -1 for every table forever. Shared with Enterprise's upload-backed registry.
+     */
+    public static boolean canServeLocalTier(CairoEngine engine) {
+        return !engine.isDurabilityFailed()
+                && engine.getConfiguration().getCommitMode() == CommitMode.ADAPTIVE;
     }
 
     /**
@@ -100,20 +112,15 @@ public class LocalDurableAckRegistry implements DurableAckRegistry {
     }
 
     /**
-     * Returns {@code true}: the local-fsync tier is always active in the OSS server,
-     * enabling QWP durable-ack frames for ADAPTIVE tables.
+     * LOCAL is the only tier OSS offers, so the registry is enabled exactly when that tier is servable.
      */
     @Override
     public boolean isEnabled() {
-        return !engine.isDurabilityFailed();
+        return canServeLocalTier(engine);
     }
 
-    /**
-     * Only the {@link DurabilityTier#LOCAL} tier is available in OSS — there is no upload
-     * pipeline to offer {@link DurabilityTier#REPLICATED}.
-     */
     @Override
     public boolean isTierAvailable(int tier) {
-        return tier == DurabilityTier.LOCAL;
+        return tier == DurabilityTier.LOCAL && canServeLocalTier(engine);
     }
 }

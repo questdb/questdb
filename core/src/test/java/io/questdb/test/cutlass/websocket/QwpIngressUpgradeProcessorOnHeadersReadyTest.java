@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.websocket;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.wal.DefaultDurableAckRegistry;
 import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
@@ -146,6 +147,7 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         // local-only guarantee it never asked for -- while still echoing the
         // subprotocol, which is what keeps the connection alive to carry the
         // SERVER_INFO verdict.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         assertMemoryLeak(() -> {
             String echo = "\r\nSec-WebSocket-Protocol: questdb.qwp.durable-ack.v1\r\n";
             DurableAckRegistry previous = engine.getDurableAckRegistry();
@@ -586,10 +588,34 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     }
 
     @Test
+    public void testLocalTierDeniedOutsideAdaptive() throws Exception {
+        // The OSS registry serves LOCAL only under ADAPTIVE; on any other mode
+        // the handshake must deny it outright (no confirmation header), not
+        // grant an ack stream the server can never produce.
+        for (String mode : new String[]{"nosync", "sync", "async"}) {
+            node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
+            assertMemoryLeak(() -> {
+                DurableAckRegistry previous = engine.getDurableAckRegistry();
+                engine.setDurableAckRegistry(new LocalDurableAckRegistry(engine));
+                try {
+                    HandshakeResult local = doHandshake("local");
+                    Assert.assertFalse(
+                            mode + ": local must carry no X-QWP-Durable-Ack header, got: " + local.response(),
+                            local.response().contains("X-QWP-Durable-Ack"));
+                    Assert.assertEquals(mode, DurabilityTier.NONE, local.durableAckTier());
+                } finally {
+                    engine.setDurableAckRegistry(previous);
+                }
+            });
+        }
+    }
+
+    @Test
     public void testTierNegotiation() throws Exception {
         // OSS-adaptive registry offers LOCAL only (no upload pipeline for
         // REPLICATED). Install it explicitly so this test does not depend on
         // whichever DurableAckRegistry the harness defaults to.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         assertMemoryLeak(() -> {
             DurableAckRegistry previous = engine.getDurableAckRegistry();
             engine.setDurableAckRegistry(new LocalDurableAckRegistry(engine));

@@ -233,9 +233,10 @@ A grant opens up to two independent ack streams:
 A store-and-forward client trims its local copy on the strongest requested tier's ack;
 with both tiers requested, local acks arrive earlier as progress signals only. Without
 any opt-in, no durable-ack frames flow, so the client cannot safely retry within the
-group-commit window `W` (a retried commit could double-apply). Durable-ack progress
-advances only for tables whose effective commit mode is `adaptive`; on other modes an
-opted-in client receives the handshake but no frames.
+group-commit window `W` (a retried commit could double-apply). The `local` tier is
+served only under `cairo.commit.mode=adaptive`; any other mode denies the opt-in at
+the handshake (no confirmation header) and the client fails the connect with a
+durable-ack mismatch rather than waiting for frames that never arrive.
 
 ---
 

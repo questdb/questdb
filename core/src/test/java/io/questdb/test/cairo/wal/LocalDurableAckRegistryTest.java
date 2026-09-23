@@ -103,10 +103,12 @@ public class LocalDurableAckRegistryTest extends AbstractCairoTest {
     // ---- (2) Unit: LocalDurableAckRegistry returns correct value ----
 
     /**
-     * (2a) CairoEngine.getDurableAckRegistry() is a LocalDurableAckRegistry (isEnabled=true) by default.
+     * (2a) CairoEngine.getDurableAckRegistry() is a LocalDurableAckRegistry, enabled under ADAPTIVE.
      */
     @Test
     public void testDefaultRegistryIsLocalDurableAckRegistry() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+
         assertMemoryLeak(() -> {
             DurableAckRegistry registry = engine.getDurableAckRegistry();
             Assert.assertTrue(
@@ -223,9 +225,8 @@ public class LocalDurableAckRegistryTest extends AbstractCairoTest {
      * </ul>
      * Without the drain below the apply job never runs, the epoch cannot fire whatever its gate says,
      * and this test passes for the wrong reason: verified by deleting the epoch's ADAPTIVE gate, at
-     * which point the undrained test still passed. It is the operator-visible guarantee that is at
-     * stake -- doc §4: an opted-in QWP client gets "the handshake but no frames" on a non-adaptive
-     * table -- so both gates need pinning, not just the commit-path one.
+     * which point the undrained test still passed. This -1 is why {@code canServeLocalTier} denies the
+     * LOCAL tier outside ADAPTIVE (test 10), so both gates need pinning, not just the commit-path one.
      */
     @Test
     public void testNosyncCommitDoesNotAdvanceLocalDurableSeqTxn() throws Exception {
@@ -289,8 +290,7 @@ public class LocalDurableAckRegistryTest extends AbstractCairoTest {
     @Test
     public void testEnterpriseRegistryOverridesDefault() throws Exception {
         assertMemoryLeak(() -> {
-            // OSS default is LocalDurableAckRegistry (isEnabled=true)
-            Assert.assertTrue(engine.getDurableAckRegistry().isEnabled());
+            Assert.assertTrue(engine.getDurableAckRegistry() instanceof LocalDurableAckRegistry);
 
             // Enterprise overrides with its own impl
             DurableAckRegistry fakeEnterprise = new DurableAckRegistry() {
@@ -341,18 +341,39 @@ public class LocalDurableAckRegistryTest extends AbstractCairoTest {
     // ---- (9) DurableAckRegistry tier availability ----
 
     /**
-     * (9) LocalDurableAckRegistry reports the LOCAL tier as available (and only that tier),
-     * so only the LOCAL tier set is grantable.
+     * (9) Under ADAPTIVE, LocalDurableAckRegistry reports the LOCAL tier as available (and only
+     * that tier), so only the LOCAL tier set is grantable.
      */
     @Test
     public void testTierAvailability() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+
         assertMemoryLeak(() -> {
             LocalDurableAckRegistry registry = new LocalDurableAckRegistry(engine);
+            Assert.assertTrue(registry.isEnabled());
             Assert.assertTrue(registry.isTierAvailable(DurabilityTier.LOCAL));
             Assert.assertFalse(registry.isTierAvailable(DurabilityTier.REPLICATED));
             Assert.assertTrue(registry.isTierSetAvailable(DurabilityTier.LOCAL));
             Assert.assertFalse(registry.isTierSetAvailable(DurabilityTier.REPLICATED));
             Assert.assertFalse(registry.isTierSetAvailable(DurabilityTier.LOCAL | DurabilityTier.REPLICATED));
         });
+    }
+
+    /**
+     * (10) Outside ADAPTIVE the local frontier never advances (see test 4), so the registry must
+     * deny the LOCAL tier at the handshake rather than grant an ack stream that never flows.
+     */
+    @Test
+    public void testLocalTierUnavailableOutsideAdaptive() throws Exception {
+        for (String mode : new String[]{"nosync", "sync", "async"}) {
+            node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
+
+            assertMemoryLeak(() -> {
+                LocalDurableAckRegistry registry = new LocalDurableAckRegistry(engine);
+                Assert.assertFalse(mode + ": registry must be disabled", registry.isEnabled());
+                Assert.assertFalse(mode + ": LOCAL must be unavailable", registry.isTierAvailable(DurabilityTier.LOCAL));
+                Assert.assertFalse(mode + ": LOCAL set must be denied", registry.isTierSetAvailable(DurabilityTier.LOCAL));
+            });
+        }
     }
 }

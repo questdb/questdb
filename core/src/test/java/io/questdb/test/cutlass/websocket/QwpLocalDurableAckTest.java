@@ -183,4 +183,42 @@ public class QwpLocalDurableAckTest extends AbstractQwpBootstrapTest {
             }
         });
     }
+
+    @Test
+    public void testLocalTierIsDeniedOutsideAdaptive() throws Exception {
+        // The local frontier never advances outside ADAPTIVE, so a granted
+        // "local" would leave the client waiting forever and failing close()
+        // with "data may be lost" although the rows landed. The server must
+        // deny it at the handshake and the pinned client must fail the connect.
+        for (String mode : new String[]{"nosync", "sync", "async"}) {
+            TestUtils.assertMemoryLeak(() -> {
+                try (final TestServerMain serverMain = startFragmented(
+                        PropertyKey.CAIRO_COMMIT_MODE.getEnvVarName(), mode
+                )) {
+                    int httpPort = serverMain.getHttpServerPort();
+                    // The server root survives across iterations, hence the per-mode name.
+                    String table = "deny_local_" + mode;
+                    serverMain.execute("CREATE TABLE " + table + " (" +
+                            "value LONG, " +
+                            "ts TIMESTAMP" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                    Throwable failure = null;
+                    try (Sender sender = Sender.fromConfig(
+                            "ws::addr=localhost:" + httpPort + ";request_durable_ack=local;")) {
+                        sender.table(table)
+                                .longColumn("value", 1)
+                                .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                        sender.flush();
+                    } catch (Throwable e) {
+                        failure = e;
+                    }
+                    Assert.assertNotNull(
+                            "request_durable_ack=local must be denied under cairo.commit.mode=" + mode,
+                            failure);
+                    TestUtils.assertContains(failure.getMessage(), "durable ack");
+                }
+            });
+        }
+    }
 }

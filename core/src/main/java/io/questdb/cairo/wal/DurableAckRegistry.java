@@ -72,9 +72,9 @@ public interface DurableAckRegistry {
     }
 
     /**
-     * Returns true when durable-ack tracking is wired up on this server (i.e.
-     * primary replication to an object store is enabled). When false, QWP
-     * silently ignores the {@code X-QWP-Request-Durable-Ack} opt-in header.
+     * Returns true when this server can serve at least one durability tier. When false, QWP
+     * denies every {@code X-QWP-Request-Durable-Ack} opt-in at the handshake (no confirmation
+     * header), so the client fails the connect instead of waiting for frames that never arrive.
      */
     boolean isEnabled();
 
@@ -89,9 +89,9 @@ public interface DurableAckRegistry {
     }
 
     /**
-     * Whether this server can offer the given {@link DurabilityTier}. Availability is server-level;
-     * an offered tier may still report -1 for a table that cannot satisfy it (e.g. a NOSYNC table
-     * under the LOCAL tier). Default: no tier available; concrete registries override.
+     * Whether this server can offer the given {@link DurabilityTier}. Availability is server-level
+     * and must be honest: a granted tier is one whose acks will actually flow (e.g. LOCAL requires
+     * ADAPTIVE commit mode). Default: no tier available; concrete registries override.
      */
     default boolean isTierAvailable(int tier) {
         return false;
