@@ -60,8 +60,9 @@ public class StartsWithStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            // opposite A/B slots: both arguments may resolve through the same symbol table
             CharSequence str = strFunc.getStrA(rec);
-            CharSequence prefix = prefixFunc.getStrA(rec);
+            CharSequence prefix = prefixFunc.getStrB(rec);
             if (str == null || prefix == null) {
                 return false;
             }

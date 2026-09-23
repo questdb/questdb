@@ -63,6 +63,7 @@ public class RPadStrFunctionFactory implements FunctionFactory {
     }
 
     public static class RPadStrFunc extends StrFunction implements TernaryFunction {
+        private final StringSink aliasSink = new StringSink();
         private final Function fillTextFunc;
         private final Function lenFunc;
         private final int maxLength;
@@ -97,14 +98,31 @@ public class RPadStrFunctionFactory implements FunctionFactory {
             return fillTextFunc;
         }
 
+        // Both arguments may resolve through one symbol table, e.g. lag(s) and s::string over a
+        // NOCACHE column, and a non-static table hands out a single view per A/B slot. When the
+        // second read lands on the object the first returned, it has overwritten the first
+        // value: copy the second out and read the first again. Each path touches only its own
+        // slot, so a caller holding the other slot's value is not disturbed.
         @Override
         public CharSequence getStrA(final Record rec) {
-            return rPadStr(strFunc.getStrA(rec), lenFunc.getInt(rec), fillTextFunc.getStrA(rec), sinkA);
+            CharSequence str = strFunc.getStrA(rec);
+            CharSequence fillText = fillTextFunc.getStrA(rec);
+            if (str != null && str == fillText) {
+                fillText = copyAlias(fillText);
+                str = strFunc.getStrA(rec);
+            }
+            return rPadStr(str, lenFunc.getInt(rec), fillText, sinkA);
         }
 
         @Override
         public CharSequence getStrB(final Record rec) {
-            return rPadStr(strFunc.getStrB(rec), lenFunc.getInt(rec), fillTextFunc.getStrB(rec), sinkB);
+            CharSequence str = strFunc.getStrB(rec);
+            CharSequence fillText = fillTextFunc.getStrB(rec);
+            if (str != null && str == fillText) {
+                fillText = copyAlias(fillText);
+                str = strFunc.getStrB(rec);
+            }
+            return rPadStr(str, lenFunc.getInt(rec), fillText, sinkB);
         }
 
         @Override
@@ -122,6 +140,12 @@ public class RPadStrFunctionFactory implements FunctionFactory {
         @Override
         public boolean isThreadSafe() {
             return false;
+        }
+
+        private CharSequence copyAlias(CharSequence cs) {
+            aliasSink.clear();
+            aliasSink.put(cs);
+            return aliasSink;
         }
 
         @Nullable

@@ -79,8 +79,11 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends StrFunction implements TernaryFunction {
+        private final StringSink aliasSink = new StringSink();
+        private final boolean isNewSubStrConstant;
         private final int maxLength;
         private final Function newSubStr;
+        private final StringSink newSubStrSink;
         private final Function oldSubStr;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
@@ -91,6 +94,8 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
             this.oldSubStr = oldSubStr;
             this.newSubStr = newSubStr;
             this.maxLength = maxLength;
+            this.isNewSubStrConstant = newSubStr.isConstant();
+            this.newSubStrSink = isNewSubStrConstant ? null : new StringSink();
         }
 
         @Override
@@ -113,22 +118,40 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
             return newSubStr;
         }
 
+        // All three arguments may resolve through one symbol table, e.g. lag(s) and s::string
+        // over a NOCACHE column, and a non-static table hands out a single view per A/B slot.
+        // A non-constant replacement is copied out before the other two reads. When the term
+        // read lands on the object the value read returned, it has overwritten the value: copy
+        // the term out and read the value again. Each path touches only its own slot, so a
+        // caller holding the other slot's value is not disturbed.
         @Override
         public CharSequence getStrA(Record rec) {
-            final CharSequence value = this.value.getStrA(rec);
+            final CharSequence withWhat = copyNewSubStr(newSubStr.getStrA(rec));
+            CharSequence value = this.value.getStrA(rec);
             if (value != null) {
+                CharSequence term = oldSubStr.getStrA(rec);
+                if (value == term) {
+                    term = copyAlias(term);
+                    value = this.value.getStrA(rec);
+                }
                 sinkA.clear();
-                return (CharSequence) replace(value, oldSubStr.getStrA(rec), newSubStr.getStrA(rec), sinkA);
+                return (CharSequence) replace(value, term, withWhat, sinkA);
             }
             return null;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            final CharSequence value = this.value.getStrB(rec);
+            final CharSequence withWhat = copyNewSubStr(newSubStr.getStrB(rec));
+            CharSequence value = this.value.getStrB(rec);
             if (value != null) {
+                CharSequence term = oldSubStr.getStrB(rec);
+                if (value == term) {
+                    term = copyAlias(term);
+                    value = this.value.getStrB(rec);
+                }
                 sinkB.clear();
-                return (CharSequence) replace(value, oldSubStr.getStrB(rec), newSubStr.getStrB(rec), sinkB);
+                return (CharSequence) replace(value, term, withWhat, sinkB);
             }
             return null;
         }
@@ -153,6 +176,21 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         // if result is null then return null; otherwise return sink
+        private CharSequence copyAlias(CharSequence cs) {
+            aliasSink.clear();
+            aliasSink.put(cs);
+            return aliasSink;
+        }
+
+        private CharSequence copyNewSubStr(CharSequence withWhat) {
+            if (isNewSubStrConstant || withWhat == null) {
+                return withWhat;
+            }
+            newSubStrSink.clear();
+            newSubStrSink.put(withWhat);
+            return newSubStrSink;
+        }
+
         private Utf16Sink replace(@NotNull CharSequence value, CharSequence term, CharSequence withWhat, Utf16Sink sink) throws CairoException {
             int valueLen = value.length();
             if (valueLen < 1) {
