@@ -208,7 +208,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
                 Map joinKeyMap,
                 RecordChain slaveChain
         ) {
-            super(columnSplit, joinKeyMap, slaveChain);
+            super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
             record = new FullOuterJoinRecord(columnSplit, masterNullRecord, slaveNullRecord);
         }
 
@@ -303,7 +303,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
                 Map joinKeyMap,
                 RecordChain slaveChain
         ) {
-            super(columnSplit, joinKeyMap, slaveChain);
+            super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
             record = new OuterJoinRecord(columnSplit, nullRecord);
         }
 
@@ -372,7 +372,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
                 Map joinKeyMap,
                 RecordChain slaveChain
         ) {
-            super(columnSplit, joinKeyMap, slaveChain);
+            super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
             record = new RightOuterJoinRecord(columnSplit, nullRecord);
         }
 

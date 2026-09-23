@@ -368,7 +368,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                 Misc.clearObjList(groupByFunctions);
                 Misc.free(groupByAllocator);
                 Misc.freeObjListAndKeepObjects(asOfJoinMaps);
-                Misc.clearObjList(symbolTranslatingRecords);
+                Misc.freeObjListAndKeepObjects(symbolTranslatingRecords);
                 Misc.free(horizonIterator);
                 isOpen = false;
             }
@@ -532,8 +532,10 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             for (int s = 0; s < slaveCount; s++) {
                 timeFrameHelpers.getQuick(s).of(slaveCursors.getQuick(s));
                 slaveSymbolSources.setQuick(s, slaveCursors.getQuick(s));
-                if (symbolTranslatingRecords.getQuick(s) != null) {
-                    symbolTranslatingRecords.getQuick(s).initSources(masterCursor, slaveCursors.getQuick(s));
+                final SymbolTranslatingRecord symbolTranslatingRecord = symbolTranslatingRecords.getQuick(s);
+                if (symbolTranslatingRecord != null) {
+                    symbolTranslatingRecord.setMemoryTracker(executionContext.getMemoryTracker());
+                    symbolTranslatingRecord.initSources(masterCursor, slaveCursors.getQuick(s));
                 }
             }
 

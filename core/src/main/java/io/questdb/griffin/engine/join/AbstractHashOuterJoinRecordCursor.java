@@ -34,6 +34,9 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
+import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCursor {
     protected final Map joinKeyMap;
@@ -43,17 +46,23 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
     protected boolean isOpen;
     protected Record masterRecord;
     protected Record slaveRecord;
+    // Owned by the factory; the cursor releases its native caches on close()
+    // and binds the per-query tracker before the subclass calls initSources().
+    @Nullable
+    private final SymbolTranslatingRecord translatingRecord;
     protected boolean useSlaveCursor;
 
     public AbstractHashOuterJoinRecordCursor(
             int columnSplit,
             Map joinKeyMap,
-            RecordChain slaveChain
+            RecordChain slaveChain,
+            @Nullable SymbolTranslatingRecord translatingRecord
     ) {
         super(columnSplit);
         isOpen = false;
         this.joinKeyMap = joinKeyMap;
         this.slaveChain = slaveChain;
+        this.translatingRecord = translatingRecord;
     }
 
     @Override
@@ -62,6 +71,7 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
             isOpen = false;
             joinKeyMap.close();
             slaveChain.close();
+            Misc.free(translatingRecord);
             super.close();
         }
     }
@@ -165,6 +175,9 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
         // triggers a malloc that lands under this tracker. After the cursor's
         // close(), the chain's backing is freed against the same tracker.
         slaveChain.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
+        if (translatingRecord != null) {
+            translatingRecord.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
+        }
         this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
         masterRecord = masterCursor.getRecord();
         slaveRecord = slaveChain.getRecord();

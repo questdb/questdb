@@ -167,6 +167,7 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
         public void close() {
             Misc.free(slaveSinkTarget);
             Misc.free(masterSinkTarget);
+            Misc.free(symbolTranslatingRecord);
             super.close();
         }
 
@@ -190,6 +191,9 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
             super.setMemoryTracker(tracker);
             masterSinkTarget.setMemoryTracker(tracker);
             slaveSinkTarget.setMemoryTracker(tracker);
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.setMemoryTracker(tracker);
+            }
         }
 
         @Override

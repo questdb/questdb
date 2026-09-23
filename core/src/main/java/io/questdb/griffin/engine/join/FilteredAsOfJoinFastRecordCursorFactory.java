@@ -226,6 +226,7 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
             super.close();
             masterSinkTarget.close();
             slaveSinkTarget.close();
+            Misc.free(symbolTranslatingRecord);
         }
 
         @Override
@@ -353,6 +354,9 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
             masterSinkTarget.setMemoryTracker(tracker);
             slaveSinkTarget.setMemoryTracker(tracker);
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.setMemoryTracker(tracker);
+            }
         }
 
         @Override

@@ -204,6 +204,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                 isOpen = false;
                 joinKeyMap.close();
                 slaveChain.close();
+                Misc.free(symbolTranslatingRecord);
                 super.close();
             }
         }
@@ -291,6 +292,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             slaveChain.setSymbolTableResolver(slaveCursor);
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.of(slaveCursor.getRecord());
+                symbolTranslatingRecord.setMemoryTracker(executionContext.getMemoryTracker());
                 symbolTranslatingRecord.initSources(slaveCursor, masterCursor);
             }
             useSlaveCursor = false;

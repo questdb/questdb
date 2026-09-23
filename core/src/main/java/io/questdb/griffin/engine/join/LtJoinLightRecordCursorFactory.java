@@ -202,6 +202,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
         public void close() {
             if (isOpen) {
                 joinKeyMap.close();
+                Misc.free(symbolTranslatingRecord);
                 super.close();
                 isOpen = false;
             }
@@ -311,6 +312,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
             if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.setMemoryTracker(executionContext.getMemoryTracker());
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
             }
             slaveTimestamp = Long.MIN_VALUE;

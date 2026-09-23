@@ -209,6 +209,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             if (isOpen) {
                 isOpen = false;
                 joinKeyToRowId.close();
+                Misc.free(symbolTranslatingRecord);
                 super.close();
             }
         }
@@ -327,6 +328,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 symbolJoinKeyMapping.of(slaveCursor);
             }
             if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.setMemoryTracker(executionContext.getMemoryTracker());
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
             }
             slaveTimestamp = Long.MIN_VALUE;

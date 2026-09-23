@@ -306,7 +306,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
                 if (asOfJoinMap != null) {
                     asOfJoinMap.close();
                 }
-                Misc.clear(symbolTranslatingRecord);
+                Misc.free(symbolTranslatingRecord);
                 Misc.free(horizonIterator);
                 isOpen = false;
             }
@@ -438,6 +438,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
 
             // Initialize symbol translating record
             if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.setMemoryTracker(executionContext.getMemoryTracker());
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
             }
 

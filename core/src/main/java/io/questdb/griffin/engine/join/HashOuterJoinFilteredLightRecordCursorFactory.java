@@ -271,7 +271,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 Map matchIdsMap,
                 LongChain slaveChain
         ) {
-            super(columnSplit, joinKeyMap, slaveChain);
+            super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
             record = new FullOuterJoinRecord(columnSplit, masterNullRecord, slaveNullRecord);
             this.matchIdsMap = matchIdsMap;
             isOpen = false;
@@ -468,7 +468,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 Map joinKeyMap,
                 LongChain slaveChain
         ) {
-            super(columnSplit, joinKeyMap, slaveChain);
+            super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
             record = new OuterJoinRecord(columnSplit, nullRecord);
             isOpen = false;
         }
@@ -554,7 +554,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 Map matchIdsMap,
                 LongChain slaveChain
         ) {
-            super(columnSplit, joinKeyMap, slaveChain);
+            super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
             record = new RightOuterJoinRecord(columnSplit, nullRecord);
             this.matchIdsMap = matchIdsMap;
             isOpen = false;

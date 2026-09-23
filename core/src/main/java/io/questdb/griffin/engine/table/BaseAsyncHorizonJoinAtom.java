@@ -304,9 +304,9 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
         // Clear filter context (memory pools, etc.)
         filterCtx.clear();
 
-        // Clear symbol translating records
-        Misc.clear(ownerSymbolTranslatingRecord);
-        Misc.clearObjList(perWorkerSymbolTranslatingRecords);
+        // Release symbol translating records' native caches; initTimeFrameCursors() reopens them
+        Misc.free(ownerSymbolTranslatingRecord);
+        Misc.freeObjListAndKeepObjects(perWorkerSymbolTranslatingRecords);
 
         // Clear time frame cursors
         Misc.free(ownerSlaveTimeFrameCursor);
@@ -567,9 +567,12 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
 
         // Initialize symbol translating records with symbol table sources for lazy resolution
         if (ownerSymbolTranslatingRecord != null) {
+            ownerSymbolTranslatingRecord.setMemoryTracker(memoryTracker);
             ownerSymbolTranslatingRecord.initSources(masterSymbolTableSource, slavePageFrameCursor);
             for (int i = 0, n = perWorkerSymbolTranslatingRecords.size(); i < n; i++) {
-                perWorkerSymbolTranslatingRecords.getQuick(i).initSources(masterSymbolTableSource, slavePageFrameCursor);
+                final SymbolTranslatingRecord symbolTranslatingRecord = perWorkerSymbolTranslatingRecords.getQuick(i);
+                symbolTranslatingRecord.setMemoryTracker(memoryTracker);
+                symbolTranslatingRecord.initSources(masterSymbolTableSource, slavePageFrameCursor);
             }
         }
 

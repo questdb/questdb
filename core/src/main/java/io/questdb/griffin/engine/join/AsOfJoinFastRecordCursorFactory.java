@@ -180,6 +180,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             super.close();
             masterSinkTarget.close();
             slaveSinkTarget.close();
+            Misc.free(symbolTranslatingRecord);
         }
 
         @Override
@@ -202,6 +203,9 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
             masterSinkTarget.setMemoryTracker(tracker);
             slaveSinkTarget.setMemoryTracker(tracker);
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.setMemoryTracker(tracker);
+            }
         }
 
         @Override
