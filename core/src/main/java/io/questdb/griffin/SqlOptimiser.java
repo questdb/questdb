@@ -5401,10 +5401,22 @@ public class SqlOptimiser implements Mutable {
     }
 
     private int getQueryColumnType(IQueryModel model, QueryColumn column) {
+        return getQueryColumnType(model, column, false);
+    }
+
+    // With isSetOperationRejected, returns -1 when the column resolves through a set operation.
+    // The walk follows only the first branch; code generation reconciles the final type later.
+    private int getQueryColumnType(IQueryModel model, QueryColumn column, boolean isSetOperationRejected) {
+        if (isSetOperationRejected && model.getUnionModel() != null) {
+            return -1;
+        }
         while (column != null && column.getColumnType() < 0) {
             final ExpressionNode ast = column.getAst();
             model = model.getNestedModel();
             if (ast == null || ast.type != LITERAL || model == null) {
+                return -1;
+            }
+            if (isSetOperationRejected && model.getUnionModel() != null) {
                 return -1;
             }
             column = findOutputColumn(model, ast.token);
@@ -13542,8 +13554,9 @@ public class SqlOptimiser implements Mutable {
         }
         final IQueryModel lhsModel = parent.getJoinModels().getQuick(literalCollectorAIndexes.get(0));
         final IQueryModel rhsModel = parent.getJoinModels().getQuick(literalCollectorBIndexes.get(0));
-        final int lhsType = getQueryColumnType(lhsModel, lhsModel.getAliasToColumnMap().get(literalCollectorANames.getQuick(0)));
-        final int rhsType = getQueryColumnType(rhsModel, rhsModel.getAliasToColumnMap().get(literalCollectorBNames.getQuick(0)));
+        // Set-operation branches may widen to a different output type, so keep their casts.
+        final int lhsType = getQueryColumnType(lhsModel, lhsModel.getAliasToColumnMap().get(literalCollectorANames.getQuick(0)), true);
+        final int rhsType = getQueryColumnType(rhsModel, rhsModel.getAliasToColumnMap().get(literalCollectorBNames.getQuick(0)), true);
         // Hash joins encode STRING/SYMBOL keys as UTF-8 when comparing them with VARCHAR keys.
         // The equality function compares UTF-16 to UTF-8 directly and can produce different matches.
         if (ColumnType.isVarchar(lhsType) != ColumnType.isVarchar(rhsType)) {

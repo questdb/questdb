@@ -316,6 +316,52 @@ public class JoinCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionCastsPreserveReplacementCharacters() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE l (k STRING)");
+            execute("CREATE TABLE r1 (k SYMBOL)");
+            execute("CREATE TABLE r2 (k VARCHAR)");
+            execute("INSERT INTO l VALUES ('\uD800')");
+            execute("INSERT INTO r1 VALUES ('?')");
+            execute("INSERT INTO r2 VALUES ('?')");
+            // The UNION outputs VARCHAR, although its first branch is SYMBOL.
+            assertQuery("""
+                    SELECT count(*)
+                    FROM l
+                    JOIN (SELECT k FROM r1 UNION ALL SELECT k FROM r2) r
+                      ON l.k::string = r.k::string
+                    """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Cross Join")
+                    .returns("count\n0\n");
+        });
+    }
+
+    @Test
+    public void testUnionCastsWithDifferentBranchTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE l (k STRING)");
+            execute("CREATE TABLE r1 (k STRING)");
+            execute("CREATE TABLE r2 (k DECIMAL(10, 2))");
+            execute("INSERT INTO l VALUES ('1.50'), ('2.00')");
+            execute("INSERT INTO r1 VALUES ('2.00')");
+            execute("INSERT INTO r2 VALUES (1.50m)");
+            // The UNION outputs DECIMAL, although its first branch is STRING.
+            assertQuery("""
+                    SELECT count(*)
+                    FROM l
+                    JOIN (SELECT k FROM r1 UNION ALL SELECT k FROM r2) r
+                      ON l.k::string = r.k::string
+                    """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Cross Join")
+                    .returns("count\n2\n");
+        });
+    }
+
+    @Test
     public void testUtf8CastsPreserveReplacementCharacters() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE l (k STRING)");
