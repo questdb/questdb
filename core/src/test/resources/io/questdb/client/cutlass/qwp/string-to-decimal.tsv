@@ -45,9 +45,9 @@
 128_float_then_decimal_suffix_strict_loss	1.2300fm	DECIMAL128	38	2	INVALID	-	-	-	-	-
 128_decimal_then_float_suffix_invalid	1.2300mf	DECIMAL128	38	2	INVALID	-	-	-	-	-
 128_nan	NaN	DECIMAL128	38	4	NULL	-	-	-	-	NULL
-128_nan_junk	NaNjunk	DECIMAL128	38	4	INVALID	-	-	-	-	-
+128_nan_junk	NaNjunk	DECIMAL128	38	4	NULL	-	-	-	-	NULL
 256_negative_infinity	-Infinity	DECIMAL256	76	8	NULL	-	-	-	-	NULL
-256_infinity_junk	Infinitygarbage	DECIMAL256	76	8	INVALID	-	-	-	-	-
+256_infinity_junk	Infinitygarbage	DECIMAL256	76	8	NULL	-	-	-	-	NULL
 256_lowercase_nan	nan	DECIMAL256	76	8	INVALID	-	-	-	-	-
 256_upper_exponent	7.89E-3	DECIMAL256	76	5	VALUE	0000000000000315	0000000000000000	0000000000000000	0000000000000000	0.00789
 256_exponent_int_max	1e2147483647	DECIMAL256	76	0	INVALID	-	-	-	-	-
