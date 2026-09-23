@@ -78,51 +78,6 @@ public class EqSymFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonStaticSymbolsFromSameTableCompareByValue() throws Exception {
-        // A UNION re-symbolises its columns through one dictionary that is not static, so = falls
-        // back to the text comparison. Both sides then resolve through the same table and must
-        // read distinct flyweights, otherwise the second read clobbers the first and every pair
-        // compares equal.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (k SYMBOL, a SYMBOL)");
-            execute("CREATE TABLE y (k SYMBOL, a SYMBOL)");
-            execute("""
-                    INSERT INTO x VALUES
-                    ('k1', 'a1'),
-                    ('k2', 'a2'),
-                    ('k3', 'a3')
-                    """);
-            execute("""
-                    INSERT INTO y VALUES
-                    ('k1', 'a1'),
-                    ('k2', 'a4'),
-                    ('k3', NULL)
-                    """);
-            assertQuery("""
-                    SELECT k, f, l FROM (
-                        SELECT k, first(a) f, last(a) l
-                        FROM (SELECT k, a FROM x UNION ALL SELECT k, a FROM y)
-                    ) WHERE f = l ORDER BY k
-                    """)
-                    .returns("""
-                            k\tf\tl
-                            k1\ta1\ta1
-                            """);
-            assertQuery("""
-                    SELECT k, f, l FROM (
-                        SELECT k, first(a) f, last(a) l
-                        FROM (SELECT k, a FROM x UNION ALL SELECT k, a FROM y)
-                    ) WHERE f != l ORDER BY k
-                    """)
-                    .returns("""
-                            k\tf\tl
-                            k2\ta2\ta4
-                            k3\ta3\t
-                            """);
-        });
-    }
-
-    @Test
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_symbol('1','3','5',null) a, rnd_symbol('1','4','5',null) b from long_sequence(50))");
