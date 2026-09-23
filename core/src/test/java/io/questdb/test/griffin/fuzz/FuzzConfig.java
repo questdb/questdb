@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.fuzz;
 
 import io.questdb.std.Rnd;
+import io.questdb.test.griffin.HashJoinBuildMode;
 import io.questdb.test.griffin.HashJoinPayloadLayout;
 
 /**
@@ -40,6 +41,7 @@ public final class FuzzConfig {
     public static final String FAULTS_PROP = "questdb.fuzz.faults";
     public static final String FAULT_PARALLEL_PROP = "questdb.fuzz.fault.parallel";
     public static final String FAULT_PCT_PROP = "questdb.fuzz.fault.pct";
+    public static final String HASH_JOIN_BUILD_PROP = "questdb.fuzz.hashjoin.build";
     public static final String HASH_JOIN_PAYLOAD_PROP = "questdb.fuzz.hashjoin.payload";
     public static final String HASH_JOIN_PROP = "questdb.fuzz.hashjoin";
     public static final String HORIZON_JOIN_PROP = "questdb.fuzz.horizonjoin";
@@ -84,6 +86,7 @@ public final class FuzzConfig {
     private final boolean isWindowJoinEnabled;
     private final String dumpPath;
     private final int faultProbabilityPct;
+    private final HashJoinBuildMode hashJoinBuildMode;
     // Null leaves the fused hash join GROUP BY's payload copy rule to the defaults.
     private final HashJoinPayloadLayout hashJoinPayloadLayout;
     private final int maxColumnsPerTable;
@@ -153,6 +156,14 @@ public final class FuzzConfig {
         // layout; the fused on/off axis then checks that one.
         final String payloadLayout = System.getProperty(HASH_JOIN_PAYLOAD_PROP);
         this.hashJoinPayloadLayout = payloadLayout != null ? HashJoinPayloadLayout.valueOf(payloadLayout.toUpperCase()) : null;
+        // The fuzz tables are far below the row count from which a fused build runs on the workers,
+        // so a run forces the build mode: -Dquestdb.fuzz.hashjoin.build=serial or =parallel, or,
+        // without the property, a mode that the seed picks without drawing from it, so that a seed
+        // replays the same queries whichever mode it picks.
+        final String buildMode = System.getProperty(HASH_JOIN_BUILD_PROP);
+        this.hashJoinBuildMode = buildMode != null
+                ? HashJoinBuildMode.valueOf(buildMode.toUpperCase())
+                : ((rnd.getSeed0() ^ rnd.getSeed1()) & 1) == 0 ? HashJoinBuildMode.SERIAL : HashJoinBuildMode.PARALLEL;
         // LATEST ON shapes (latest row per PARTITION BY key) carve a band out of
         // the SIMPLE range (see QueryGenerator). On by default, like window. Pass
         // -Dquestdb.fuzz.lateston=false to drop them and give the band back to
@@ -166,6 +177,10 @@ public final class FuzzConfig {
 
     public int getFaultProbabilityPct() {
         return faultProbabilityPct;
+    }
+
+    public HashJoinBuildMode getHashJoinBuildMode() {
+        return hashJoinBuildMode;
     }
 
     public HashJoinPayloadLayout getHashJoinPayloadLayout() {

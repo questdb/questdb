@@ -72,6 +72,7 @@ import io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.IntHashJoinBuild;
 import io.questdb.griffin.engine.table.AsyncFilterContext;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory;
@@ -132,6 +133,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     private static final int WORKERS = 3;
     private final boolean isSymbolKey;
     private int frameRows;
+    // When set, fixtures give the build filter context a slot per worker, so that the build may run
+    // on the workers; see useParallelBuild().
+    private boolean isParallelBuild;
     private int factoryWorkerCount = WORKERS;
     // When set, the fixture hands this stub to the filter context as its JIT handle, so a test
     // can pin which frames the reducer takes the compiled path on.
@@ -976,17 +980,117 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testRejectedSerialBuildCancellationAndReuse() throws Exception {
-        assertRejectedBuildCancellationAndReuse(0);
+        assertRejectedBuildCancellationAndReuse(0, false);
     }
 
     @Test
     public void testRejectedAsyncBuildCancellationAndReuse() throws Exception {
-        assertRejectedBuildCancellationAndReuse(1);
+        assertRejectedBuildCancellationAndReuse(1, false);
     }
 
     @Test
     public void testRejectedJitBuildCancellationAndReuse() throws Exception {
-        assertRejectedBuildCancellationAndReuse(2);
+        assertRejectedBuildCancellationAndReuse(2, false);
+    }
+
+    @Test
+    public void testRejectedParallelBuildCancellationAndReuse() throws Exception {
+        assertRejectedBuildCancellationAndReuse(1, true);
+    }
+
+    @Test
+    public void testRejectedParallelJitBuildCancellationAndReuse() throws Exception {
+        assertRejectedBuildCancellationAndReuse(2, true);
+    }
+
+    @Test
+    public void testParallelBuildMemoryLimitsAtEveryStepAndReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            useParallelBuild();
+            // Every build copies its payload, so that the copy round runs on the workers as well.
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "0");
+            frameRows = 8;
+            createTables();
+            execute("insert into p select " + key("(x % 50)::int") + ", ('s' || (x % 7))::symbol, x * 0.5 from long_sequence(200)");
+            MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(1); Reducers ignored = new Reducers()) {
+                for (boolean keyed : new boolean[]{true, false}) {
+                    String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
+                    try (Fixture f = new Fixture(sql)) {
+                        // Raise the limit until the query fits, failing it on the way at every
+                        // allocation of the rounds, the copy and the probe that a step lands on.
+                        int buildFailures = 0;
+                        for (long limit = 1; ; limit += 256) {
+                            tracker.setLimit(limit);
+                            sqlExecutionContext.setMemoryTracker(tracker);
+                            boolean isBuilt = false;
+                            try (RecordCursor cursor = f.getRawCursor()) {
+                                isBuilt = true;
+                                Assert.assertTrue(f.factory.getAtom().isBuiltInRounds());
+                                Assert.assertTrue(f.factory.getAtom().getBuildPartitionCount() > 1);
+                                while (cursor.hasNext()) {
+                                    Assert.assertTrue(f.factory.getAtom().isPayloadCopied());
+                                }
+                                break;
+                            } catch (CairoException e) {
+                                Assert.assertTrue(e.getFlyweightMessage().toString(), e.isOutOfMemory());
+                                if (!isBuilt) {
+                                    buildFailures++;
+                                }
+                            } finally {
+                                sqlExecutionContext.setMemoryTracker(previous);
+                            }
+                            Assert.assertEquals(0, tracker.getUsed());
+                            Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                        }
+                        Assert.assertTrue("build failures: " + buildFailures, buildFailures > 10);
+                        Assert.assertEquals(0, tracker.getUsed());
+                        f.assertResults(sql);
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setMemoryTracker(previous);
+            }
+        });
+    }
+
+    @Test
+    public void testParallelBuildWorkerFailureAndReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            useParallelBuild();
+            frameRows = 16;
+            createTables();
+            execute("insert into p select " + key("x::int") + ", 'ES', 1.0 from long_sequence(1_000)");
+            try (Reducers ignored = new Reducers()) {
+                for (boolean keyed : new boolean[]{true, false}) {
+                    String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
+                    Hook hook = new Hook();
+                    // The build filter accepts every row and calls the hook, which fails on demand,
+                    // on whichever thread filters the frame.
+                    hook.isBuildFiltered = true;
+                    hook.isBuildAccepted = true;
+                    try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
+                        for (int execution = 0; execution < 2; execution++) {
+                            hook.fail = true;
+                            try (RecordCursor ignored2 = f.getRawCursor()) {
+                                Assert.fail("expected a build filter failure");
+                            } catch (CairoException e) {
+                                TestUtils.assertContains(e.getFlyweightMessage(), "injected probe failure");
+                            }
+                            Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                            Assert.assertNull(f.factory.getAtom().getFrozenBuild());
+                            hook.fail = false;
+                            try (RecordCursor cursor = f.getRawCursor()) {
+                                Assert.assertTrue(f.factory.getAtom().isBuiltInRounds());
+                                Assert.assertEquals(1_005, f.factory.getAtom().getFrozenBuild().getRowCount());
+                                Assert.assertTrue(cursor.hasNext());
+                            }
+                            f.assertResults(sql);
+                        }
+                    }
+                }
+            }
+        });
     }
 
     @Test
@@ -1580,8 +1684,11 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         });
     }
 
-    private void assertRejectedBuildCancellationAndReuse(int filterMode) throws Exception {
+    private void assertRejectedBuildCancellationAndReuse(int filterMode, boolean isParallel) throws Exception {
         assertMemoryLeak(() -> {
+            if (isParallel) {
+                useParallelBuild();
+            }
             frameRows = 4096;
             createTables();
             execute("drop table p");
@@ -1608,7 +1715,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     super.statefulThrowExceptionIfTrippedNoThrottle();
                 }
             };
-            try {
+            // A parallel build filters its frames on the workers, which reducer threads run.
+            try (Reducers ignored = isParallel ? new Reducers() : null) {
                 for (int storage = 0; storage < 3; storage++) {
                     if (storage == 1) {
                         execute("alter table p convert partition to parquet where ts < '2020-01-02'");
@@ -1635,7 +1743,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                 }
                                 // Filters observe cancellation at frame boundaries. Native frames absorb short
                                 // tails; Parquet uses one row group (the first DAY partition has 86,400 rows).
-                                final int maxFrameRows = storage == 0 ? 2 * frameRows : 86_400;
+                                // A parallel build lets every thread that filters a frame finish it.
+                                final int maxFrameRows = (storage == 0 ? 2 * frameRows : 86_400) * (isParallel ? WORKERS + 1 : 1);
                                 Assert.assertTrue("rejected rows must stop at the next frame boundary: " + hook.calls.get(),
                                         hook.calls.get() >= 32 && hook.calls.get() <= maxFrameRows);
                                 Assert.assertNull(sqlExecutionContext.getMemoryTracker());
@@ -1644,6 +1753,12 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                 isTimeout.set(false);
                                 breaker.reset();
                                 f.assertResults(sql);
+                                if (isParallel) {
+                                    try (RecordCursor ignored2 = f.getCursor()) {
+                                        Assert.assertTrue(f.factory.getAtom().isBuiltInRounds());
+                                        Assert.assertEquals(IntHashJoinBuild.MAX_PARTITIONS, f.factory.getAtom().getBuildPartitionCount());
+                                    }
+                                }
                             }
                         }
                     }
@@ -1937,6 +2052,13 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         createTables(keyType());
     }
 
+    // Builds every fixture's key on the workers, over as many hash partitions as its rows allow.
+    private void useParallelBuild() {
+        isParallelBuild = true;
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 1);
+    }
+
     private void createTables(String keyType) throws Exception {
         execute("create table r (plant_id " + keyType + ", reading_ts timestamp, energy_kwh double, irradiance_wm2 double) timestamp(reading_ts) partition by month");
         execute("create table p (plant_id " + keyType + ", country symbol, installed_kwp double)");
@@ -1969,8 +2091,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
      * run, because the build's column tops send every frame to the interpreted one.
      */
     private AsyncFilterContext buildFilterContext(Hook hook) {
+        final int slotCount = isParallelBuild ? WORKERS : 0;
         if (hook == null || !hook.isBuildFiltered) {
-            return new AsyncFilterContext(configuration, null, null, null, null, null, null, 0, 0, 0, 0);
+            return new AsyncFilterContext(configuration, null, null, null, null, null, null, slotCount, 0, 0, 0);
         }
         Function filter = new BooleanFunction() {
             @Override
@@ -1997,9 +2120,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             MemoryCARW bindVarMemory = Vm.getCARWInstance(configuration.getSqlJitBindVarsMemoryPageSize(),
                     configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_JIT);
             return new AsyncFilterContext(configuration, compiledFilter, bindVarMemory, new ObjList<>(), filter,
-                    null, null, 0, 0, 0, 0);
+                    null, null, slotCount, 0, 0, 0);
         }
-        return new AsyncFilterContext(configuration, null, null, null, filter, null, null, 0, 0, 0, 0);
+        return new AsyncFilterContext(configuration, null, null, null, filter, null, null, slotCount, 0, 0, 0);
     }
 
     private RecordCursorFactory childFactory(String sql) throws Exception {
@@ -2327,8 +2450,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     ObjList<Function> bindVarFunctions = filterFactory.getBindVarFunctions();
                     filterFactory.halfClose();
                     buildFactory = filterFactory.getBaseFactory();
+                    // Without per-worker copies, only a thread-safe filter lets the build run on the workers.
                     buildFilterContext = new AsyncFilterContext(configuration, compiledFilter, bindVarMemory,
-                            bindVarFunctions, filter, null, null, 0, 0, 0, 0);
+                            bindVarFunctions, filter, null, null, isParallelBuild ? WORKERS : 0, 0, 0, 0);
                 } else {
                     buildFilterContext = buildFilterContext(hook);
                 }

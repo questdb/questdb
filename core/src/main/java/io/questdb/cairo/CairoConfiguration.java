@@ -954,6 +954,20 @@ public interface CairoConfiguration {
     double getSqlParallelFilterPreTouchThreshold();
 
     /**
+     * Build input rows from which a fused hash join GROUP BY with an INT or SYMBOL key builds on the
+     * workers: the build scan's frame rows, before any row filter. Smaller builds run on the query's
+     * own thread. Zero builds every such join on the workers.
+     */
+    long getSqlParallelHashJoinGroupByBuildParallelMinRows();
+
+    /**
+     * Build rows per hash partition of a fused hash join GROUP BY's parallel build, which sets how
+     * many partitions the build splits its rows into, up to 256. Each partition gets its own key
+     * table, which a worker fills alone.
+     */
+    long getSqlParallelHashJoinGroupByBuildRowsPerPartition();
+
+    /**
      * Bytes above which a fused hash join GROUP BY keeps reading build payload columns at their
      * build rows instead of copying them: the build's row count times the copied row size. Zero
      * never copies.

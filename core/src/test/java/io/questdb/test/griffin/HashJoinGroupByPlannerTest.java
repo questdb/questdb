@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
+import io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
@@ -760,6 +761,86 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBuildRunsOnWorkersFromMinRows() throws Exception {
+        assertMemoryLeak(() -> {
+            // pa spreads 1_000 rows over four days, 250 a day, so that its build has four frames;
+            // pb has 2_000 rows. Both hold the same ten keys in every key column.
+            execute("CREATE TABLE pa (k INT, l LONG, s SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE pb (k INT, l LONG, s SYMBOL, v DOUBLE)");
+            execute("""
+                    INSERT INTO pa SELECT (x % 10)::INT, x % 10, 'S' || (x % 10), x,
+                        timestamp_sequence('2020-01-01', 345_600_000L)
+                    FROM long_sequence(1_000)
+                    """);
+            execute("INSERT INTO pb SELECT (x % 10)::INT, x % 10, 'S' || (x % 10), x FROM long_sequence(2_000)");
+            // The INNER join builds pa, the smaller table; the LEFT joins build pa, the table after them.
+            final String inner = "SELECT count(*) n, sum(pa.v) v FROM pa JOIN pb ON pa.k = pb.k";
+            final String left = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 100);
+                // The build input's 1_000 frame rows reach the bound exactly: the build runs in rounds,
+                // over 16 partitions, the power of two at or above 1_000 / 100.
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 1_000);
+                assertBuildRounds(inner, 1_000, 16, context);
+                // One row past the frames keeps the build on the owner.
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 1_001);
+                assertBuildRounds(inner, 1_000, 0, context);
+
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                for (int jit : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                    context.setJitMode(jit);
+                    // A filtered build counts the rows it keeps before it sizes anything: 900 rows
+                    // take 16 partitions, 500 take 8 and 300 take 4. The frames run the scan's filter,
+                    // a copy of it per worker when it is not thread safe, as the regex is.
+                    assertBuildRounds(inner + " WHERE pa.v > 100", 900, 16, context);
+                    assertBuildRounds(inner + " WHERE pa.s::STRING ~ 'S[1-3]'", 300, 4, context);
+                    // So do an outer join's ON conditions on the build's columns alone.
+                    assertBuildRounds(left + " AND pa.v <= 500", 500, 8, context);
+                    assertBuildRounds(left + " AND pa.s::STRING ~ 'S[1-3]'", 300, 4, context);
+                    // A WHERE clause on a LEFT join's build side filters the joined rows, not the build's.
+                    assertBuildRounds(left + " AND pa.s::STRING ~ 'S[1-3]' WHERE pa.v > 100 OR pa.v IS NULL", 300, 4, context);
+                }
+                // The lone SYMBOL pair builds its build's own symbol keys in rounds too.
+                assertBuildRounds("SELECT count(*) n, sum(pa.v) v FROM pa JOIN pb ON pa.s = pb.s", 1_000, 16, context);
+                // A build of one partition's worth of rows runs in rounds into a single table.
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 1_000);
+                assertBuildRounds(inner, 1_000, 1, context);
+                // A staged key builds its map on the owner at any size.
+                assertBuildRounds("SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.l = pb.l", 1_000, 0, context);
+                assertBuildRounds("SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k AND pa.l = pb.l", 1_000, 0, context);
+
+                // Each frame of a build in rounds copies the payload rows it kept.
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 100);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "0");
+                assertPayloadCopy(inner, true, context);
+                assertPayloadCopy(left + " AND pa.s::STRING ~ 'S[1-3]'", true, context);
+                assertBuildRounds(inner, 1_000, 16, context);
+            }
+        });
+    }
+
+    @Test
+    public void testParallelBuildModeReachesTheOperator() throws Exception {
+        // The differential suites force the parallel build through HashJoinBuildMode. Its properties
+        // must build even their small tables in rounds, over more than one frame and partition, on
+        // the tests' own execution context.
+        HashJoinBuildMode.PARALLEL.apply(node1.getConfigurationOverrides(), sqlExecutionContext);
+        assertMemoryLeak(() -> {
+            createTables();
+            try (RecordCursorFactory factory = select(SCALAR_SELECT + " from r join p on r.plant_id=p.plant_id");
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                final AsyncHashJoinGroupByAtom atom = fused(factory).getAtom();
+                Assert.assertTrue(atom.isBuiltInRounds());
+                Assert.assertTrue("frames: " + atom.getBuildFrameCount(), atom.getBuildFrameCount() > 1);
+                Assert.assertTrue("partitions: " + atom.getBuildPartitionCount(), atom.getBuildPartitionCount() > 1);
+                Assert.assertTrue(cursor.hasNext());
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
     public void testPayloadCopyRule() throws Exception {
         assertMemoryLeak(() -> {
             // pb has twice the rows of pa. pa spreads its 1_000 rows over four days, 250 a day.
@@ -904,6 +985,21 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             Assert.assertEquals(sql, rows, build.getRowCount());
             Assert.assertEquals(sql, keys, build.getKeyCount());
             Assert.assertEquals(sql, sizeInBytes, build.getSizeInBytes());
+        }
+    }
+
+    /**
+     * Checks the results against the ordinary plan, and where the build ran: in rounds over this many
+     * hash partitions, or on the owner for zero.
+     */
+    private void assertBuildRounds(String sql, long buildRows, int partitionCount, SqlExecutionContextImpl context) throws Exception {
+        assertDifferential(sql, context, true);
+        try (RecordCursorFactory factory = engine.select(sql, context);
+             RecordCursor ignored = factory.getCursor(context)) {
+            final AsyncHashJoinGroupByAtom atom = fused(factory).getAtom();
+            Assert.assertEquals(sql, partitionCount > 0, atom.isBuiltInRounds());
+            Assert.assertEquals(sql, Math.max(1, partitionCount), atom.getBuildPartitionCount());
+            Assert.assertEquals(sql, buildRows, atom.getFrozenBuild().getRowCount());
         }
     }
 

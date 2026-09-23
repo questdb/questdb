@@ -5208,10 +5208,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ObjList<Function> bindVarFunctions = null;
         AsyncFilterContext buildFilterContext = null;
         Function buildFilter = null;
+        ObjList<Function> workerBuildFilters = null;
         CompiledFilter buildCompiledFilter = null;
         MemoryCARW buildBindVarMemory = null;
         ObjList<Function> buildBindVarFunctions = null;
         Function buildOnFilter = null;
+        ObjList<Function> workerBuildOnFilters = null;
         ObjList<IQueryModel> inputModels = new ObjList<>();
         ObjList<ExpressionNode> whereClauses = new ObjList<>();
         ObjList<ExpressionNode> backups = new ObjList<>();
@@ -5245,14 +5247,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     return null;
                 }
                 functions = compileHashJoinGroupByFunctions(model, metadata, workerCount, executionContext);
+                // The INT layout may build on the workers, so each worker gets a filter context slot
+                // and, where a filter is not thread safe, a copy of each build filter.
+                final boolean isParallelBuildCapable = !metadata.isKeyStaged();
                 if (metadata.getBuildOnFilter() != null) {
-                    // The owner applies it per build frame, next to the build scan's own filter.
+                    // The build applies it per build frame, next to the build scan's own filter.
                     buildOnFilter = compileBooleanFilter(metadata.getBuildOnFilter(), buildInput.getMetadata(), executionContext);
+                    if (isParallelBuildCapable) {
+                        workerBuildOnFilters = compileWorkerFiltersConditionally(executionContext, buildOnFilter,
+                                workerCount, metadata.getBuildOnFilter(), buildInput.getMetadata());
+                    }
                 }
                 if (!buildInput.supportsPageFrameCursor()) {
-                    // The owner runs the stolen build filter over each frame it walks.
+                    // The build runs the stolen build filter over each frame it walks.
                     RecordCursorFactory filterFactory = buildInput;
                     Function borrowedFilter = filterFactory.getFilter();
+                    if (isParallelBuildCapable) {
+                        workerBuildFilters = compileWorkerFiltersConditionally(executionContext, borrowedFilter,
+                                workerCount, filterFactory.getStealFilterExpr(), filterFactory.getBaseFactory().getMetadata());
+                    }
                     // Until halfClose succeeds the original factory owns every stolen handle.
                     filterFactory.halfClose();
                     build = filterFactory.getBaseFactory();
@@ -5264,8 +5277,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     build = buildInput;
                 }
                 buildFilterContext = new AsyncFilterContext(configuration, buildCompiledFilter, buildBindVarMemory,
-                        buildBindVarFunctions, buildFilter, null, null, 0, 0, 0, 0);
+                        buildBindVarFunctions, buildFilter, null, workerBuildFilters,
+                        isParallelBuildCapable ? workerCount : 0, 0, 0, 0);
                 buildFilter = null;
+                workerBuildFilters = null;
                 buildCompiledFilter = null;
                 buildBindVarMemory = null;
                 buildBindVarFunctions = null;
@@ -5302,16 +5317,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 RecordCursorFactory buildOwned = build;
                 AsyncFilterContext buildFiltersOwned = buildFilterContext;
                 Function buildOnFilterOwned = buildOnFilter;
+                ObjList<Function> workerBuildOnFiltersOwned = workerBuildOnFilters;
                 HashJoinGroupByFunctions functionsOwned = functions;
                 AsyncFilterContext filtersOwned = filterContext;
                 probe = null;
                 build = null;
                 buildFilterContext = null;
                 buildOnFilter = null;
+                workerBuildOnFilters = null;
                 functions = null;
                 filterContext = null;
                 return new AsyncHashJoinGroupByRecordCursorFactory(executionContext.getCairoEngine(),
-                        probeOwned, buildOwned, buildFiltersOwned, buildOnFilterOwned, metadata, functionsOwned, filtersOwned,
+                        probeOwned, buildOwned, buildFiltersOwned, buildOnFilterOwned, workerBuildOnFiltersOwned,
+                        metadata, functionsOwned, filtersOwned,
                         candidate.getPhysicalJoinType() == IQueryModel.JOIN_LEFT_OUTER, workerCount,
                         candidate.getLogicalJoinType(), candidate.isInputSwapped());
             }
@@ -5329,10 +5347,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             failure = Misc.freeObjListBestEffort(failure, bindVarFunctions);
             failure = Misc.freeBestEffort(failure, buildFilterContext);
             failure = Misc.freeBestEffort(failure, buildFilter);
+            failure = Misc.freeObjListBestEffort(failure, workerBuildFilters);
             failure = Misc.freeBestEffort(failure, buildCompiledFilter);
             failure = Misc.freeBestEffort(failure, buildBindVarMemory);
             failure = Misc.freeObjListBestEffort(failure, buildBindVarFunctions);
             failure = Misc.freeBestEffort(failure, buildOnFilter);
+            failure = Misc.freeObjListBestEffort(failure, workerBuildOnFilters);
             failure = Misc.freeBestEffort(failure, functions);
             failure = Misc.freeBestEffort(failure, probe);
             failure = Misc.freeBestEffort(failure, build);

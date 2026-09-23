@@ -48,9 +48,10 @@ import java.io.Closeable;
  * offset round trips through {@link CompressedOffsets#compressBiased8(long)}. Duplicate iteration
  * follows the links in reverse input order, as the light join's LongChain does.
  * <p>
- * The heap is owner-built and frozen for the execution. {@link #freeze()} publishes it and
- * hands out the generation that every probe asserts against, so that a probe of an expired
- * execution faults instead of reading a freed or re-filled row.
+ * The heap is owner-built, or, in a parallel build, sized by the owner and written by the
+ * partition tasks, one partition's rows each; either way it is frozen for the execution.
+ * {@link #freeze()} publishes it and hands out the generation that every probe asserts against,
+ * so that a probe of an expired execution faults instead of reading a freed or re-filled row.
  */
 final class HashJoinRowHeap implements Closeable {
     private static final int LINK_SIZE = Long.BYTES;
@@ -100,6 +101,16 @@ final class HashJoinRowHeap implements Closeable {
         }
         rowBytes = required;
         return offset;
+    }
+
+    /**
+     * Sizes an empty heap for exactly this many rows and counts them as appended, so that a parallel
+     * build can write each row at an offset it computed through {@link #put(long, long, long)}.
+     */
+    void allocateRows(long rowCount) {
+        assert rowBytes == 0;
+        reserve(rowCount);
+        rowBytes = rowCount * rowSize;
     }
 
     /** Releases the rows and expires every probe of this execution. */
@@ -156,6 +167,18 @@ final class HashJoinRowHeap implements Closeable {
     void of(@Nullable MemoryTracker memoryTracker, SqlExecutionCircuitBreaker circuitBreaker) {
         this.circuitBreaker = circuitBreaker;
         rows.of(memoryTracker, circuitBreaker);
+    }
+
+    /**
+     * Writes the row at this byte offset of a heap that {@link #allocateRows(long)} sized: its link,
+     * as {@link #append(long, long)} takes it, and its id, which a heap without row ids ignores.
+     */
+    void put(long offset, long link, long rowId) {
+        final long address = rows.address + offset;
+        Unsafe.putLong(address, link);
+        if (hasRowId) {
+            Unsafe.putLong(address + LINK_SIZE, rowId);
+        }
     }
 
     /** Presizes the heap for a known row count, so that appends of that many rows do not grow it. */

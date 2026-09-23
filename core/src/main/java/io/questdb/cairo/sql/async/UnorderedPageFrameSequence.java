@@ -88,6 +88,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private boolean isReadyToDispatch;
     private boolean isUninterruptible;
     private PageFrameMemoryRecord localRecord;
+    // Set while a round of tasks other than the frames runs; see dispatchRoundAndAwait().
+    private UnorderedPageFrameReducer roundReducer;
     // Per-query native memory tracker captured from the owning SqlExecutionContext
     // at workload start. Null when no per-query limit is configured. Workers read
     // this off the task via task.getFrameSequence().getMemoryTracker() to charge
@@ -185,7 +187,42 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
      * @throws CairoException if a worker encountered an error
      */
     public void dispatchAndAwait() {
-        if (frameCount == 0) {
+        dispatchAndAwait(frameCount);
+    }
+
+    /**
+     * Dispatches {@code taskCount} tasks of a reducer other than the frames' one and waits for
+     * them, the way {@link #dispatchAndAwait()} dispatches the frames. An atom that prepares shared
+     * state on the workers runs such rounds from {@code init()}, or before the frames are
+     * dispatched. The reducer receives the task index where a frame reducer receives the frame
+     * index. Whether this returns or throws, no task of the round is still queued or running, so
+     * the caller may release what the round's tasks used.
+     */
+    public void dispatchRoundAndAwait(UnorderedPageFrameReducer roundReducer, int taskCount) {
+        assert this.roundReducer == null && (queuedCount == 0 || doneLatch.done(queuedCount));
+        this.roundReducer = roundReducer;
+        try {
+            dispatchAndAwait(taskCount);
+        } catch (Throwable th) {
+            // The dispatch loop can throw with tasks still queued; they must not outlive the round.
+            try {
+                cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+                await();
+            } catch (Throwable drainFailure) {
+                th.addSuppressed(drainFailure);
+            }
+            this.roundReducer = null;
+            throw th;
+        }
+        // Every task counted down, so the next round or the frames start from a clean latch.
+        this.roundReducer = null;
+        doneLatch.reset();
+        queuedCount = 0;
+        reduceStartedCounter.set(0);
+    }
+
+    private void dispatchAndAwait(int taskCount) {
+        if (taskCount == 0) {
             return;
         }
 
@@ -204,7 +241,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         try {
             if (!hasPublication) {
                 if (dispatcher.isCurrentFiberOwned()) {
-                    for (int i = 0; i < frameCount && isActive(); i++) {
+                    for (int i = 0; i < taskCount && isActive(); i++) {
                         reduceLocally(i);
                         localCount++;
                     }
@@ -213,7 +250,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                 }
             } else {
                 DISPATCH:
-                for (int i = 0; i < frameCount; i++) {
+                for (int i = 0; i < taskCount; i++) {
                     while (true) {
                         if (!isActive()) {
                             break DISPATCH;
@@ -383,7 +420,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     }
 
     public UnorderedPageFrameReducer getReducer() {
-        return reducer;
+        final UnorderedPageFrameReducer roundReducer = this.roundReducer;
+        return roundReducer != null ? roundReducer : reducer;
     }
 
     public long getStartTime() {
@@ -465,6 +503,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
 
         frameCount = 0;
         queuedCount = 0;
+        roundReducer = null;
         isReadyToDispatch = false;
         // Drop the borrowed tracker reference; the provider owns the native block.
         memoryTracker = null;

@@ -58,6 +58,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
@@ -90,8 +91,10 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  * forward pass over the build rows copies their payload columns, row after row in build order,
  * into a block of fixed-size rows, and every reader then reads the copied row that the match's
  * ordinal names. The pass reads each frame once, so it decodes each Parquet row group once as
- * well. Only fixed-size payload columns copy; a build with any other payload column keeps reading
- * where the columns live.
+ * well. A parallel build keeps each hash partition's rows in one region of the heap, so its rows
+ * are not in build order; its copy runs one task per frame instead, each copying the rows its
+ * frame kept through a copy reader of its thread, see {@link #beginCopy}. Only fixed-size payload
+ * columns copy; a build with any other payload column keeps reading where the columns live.
  */
 public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCloseable {
     // The copy pass checks the breaker once per this many rows; a power of two.
@@ -102,6 +105,8 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
     private final int[] copyOffsets;
     // Bytes of one copied row; zero when the payload cannot be copied.
     private final int copyRowSize;
+    // One reader per thread of a copy, kept across executions; see beginCopy().
+    private final ObjList<Reader> copyReaders = new ObjList<>();
     private final LongList frameRowCounts = new LongList();
     // Page address of payload column c of native frame f at f * payloadColumns.length + c; zero for a
     // column the frame lacks, and for every column of a Parquet frame, which the readers decode.
@@ -115,11 +120,12 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
     // The owner writes it before the probes are dispatched, which publishes it to their workers.
     private long copyAddress;
     private long copyCapacity;
-    // The owner's reader for the copy pass, kept across executions.
-    private Reader copyReader;
     private PageFrameCursor frameCursor;
     @Nullable
     private MemoryTracker memoryTracker;
+    // The copy that copyRows() fills until publishCopy() hands it to the readers; zero otherwise.
+    private long pendingCopyAddress;
+    private long pendingCopySize;
     private long rowCount;
 
     public HashJoinBuildFrames(CairoConfiguration configuration, IntList payloadColumns, RecordMetadata buildMetadata) {
@@ -162,12 +168,45 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
         return copyRowSize;
     }
 
+    /**
+     * Allocates the copy of a frozen build's payload columns and binds as many copy readers, one
+     * per thread that will copy, for {@link #copyRows} to fill the copy on those threads. Readers
+     * of the execution keep reading the columns where they live until {@link #publishCopy()}. Call
+     * it on the owner, after the build froze and before any probe of the execution runs, and only
+     * for a build with rows whose payload can be copied, see {@link #getCopyRowSize()}. The copy is
+     * charged to the execution's memory tracker; {@link #clear()} releases it, which the caller's
+     * failure path runs.
+     */
+    public void beginCopy(FrozenHashJoinBuild build, int readerCount, SqlExecutionCircuitBreaker circuitBreaker) {
+        assert copyRowSize > 0 && copyAddress == 0 && pendingCopyAddress == 0 && frameCursor != null && readerCount > 0;
+        final long rowCount = build.getRowCount();
+        assert rowCount > 0;
+        if (rowCount > (Long.MAX_VALUE - copyRowSize) / copyRowSize) {
+            throw CairoException.nonCritical().put("hash join payload copy overflow");
+        }
+        final long size = rowCount * copyRowSize;
+        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        while (copyReaders.size() < readerCount) {
+            copyReaders.add(new Reader());
+        }
+        pendingCopyAddress = Unsafe.malloc(size, MemoryTag.NATIVE_JOIN_MAP, memoryTracker);
+        pendingCopySize = size;
+        for (int i = 0; i < readerCount; i++) {
+            // A copying thread reads its rows in build order, so a Parquet row group decodes once.
+            copyReaders.getQuick(i).reopen(ParquetDecodeHint.MONOTONIC);
+        }
+    }
+
     /** Closes the execution's frame cursor. Only call once every probe and reader of the execution is closed. */
     public void clear() {
-        Throwable failure = Misc.freeBestEffort(null, copyReader);
+        Throwable failure = Misc.freeObjListAndKeepObjectsBestEffort(null, copyReaders);
         if (copyAddress != 0) {
             copyAddress = Unsafe.free(copyAddress, copyCapacity, MemoryTag.NATIVE_JOIN_MAP, memoryTracker);
             copyCapacity = 0;
+        }
+        if (pendingCopyAddress != 0) {
+            pendingCopyAddress = Unsafe.free(pendingCopyAddress, pendingCopySize, MemoryTag.NATIVE_JOIN_MAP, memoryTracker);
+            pendingCopySize = 0;
         }
         failure = Misc.freeBestEffort(failure, frameCursor);
         frameCursor = null;
@@ -182,54 +221,54 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
     @Override
     public void close() {
         clear();
-        copyReader = null;
+        copyReaders.clear();
     }
 
     /**
      * Copies the payload columns of every row of the frozen build, in build order, and switches
      * every reader of this execution to the copy: a reader that positions after this returns reads
-     * the copied row that the match's ordinal names. Call it on the owner, after the build froze and
-     * before any probe of the execution runs, and only for a build whose payload can be copied, see
-     * {@link #getCopyRowSize()}. The copy is charged to the execution's memory tracker and released
-     * by {@link #clear()}, which the caller's failure path also runs.
+     * the copied row that the match's ordinal names. The owner copies alone here; a parallel copy
+     * runs {@link #beginCopy}, {@link #copyRows} and {@link #publishCopy()} instead. The conditions
+     * of {@link #beginCopy} apply. On failure the copy is released at once, and the build can be
+     * copied again.
      */
     public void copyPayload(FrozenHashJoinBuild build, SqlExecutionCircuitBreaker circuitBreaker) {
-        assert copyRowSize > 0 && copyAddress == 0 && frameCursor != null;
         final long rowCount = build.getRowCount();
         if (rowCount < 1) {
             return;
         }
-        if (rowCount > (Long.MAX_VALUE - copyRowSize) / copyRowSize) {
-            throw CairoException.nonCritical().put("hash join payload copy overflow");
-        }
-        final long size = rowCount * copyRowSize;
-        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-        final long address = Unsafe.malloc(size, MemoryTag.NATIVE_JOIN_MAP, memoryTracker);
         try {
-            if (copyReader == null) {
-                copyReader = new Reader();
-            }
-            // The rows are in build input order, so the pass reads the frames forward and a Parquet
-            // row group decodes once.
-            copyReader.reopen(ParquetDecodeHint.MONOTONIC);
-            long row = address;
-            for (long ordinal = 0; ordinal < rowCount; ordinal++, row += copyRowSize) {
-                if ((ordinal & (COPY_ROWS_PER_CHECK - 1)) == 0) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
-                }
-                copyReader.positionRow(build.getRowId(ordinal));
-                copyRow(copyReader, row);
-            }
+            beginCopy(build, 1, circuitBreaker);
+            copyRows(0, build, 0, rowCount, circuitBreaker);
         } catch (Throwable th) {
-            Unsafe.free(address, size, MemoryTag.NATIVE_JOIN_MAP, memoryTracker);
+            if (pendingCopyAddress != 0) {
+                pendingCopyAddress = Unsafe.free(pendingCopyAddress, pendingCopySize, MemoryTag.NATIVE_JOIN_MAP, memoryTracker);
+                pendingCopySize = 0;
+            }
             // The decoded frames go with the reader; clear() closes it anyway.
-            Misc.free(copyReader);
+            Misc.freeObjListAndKeepObjects(copyReaders);
             throw th;
         }
-        // A decoded Parquet frame of the pass has no later use.
-        copyReader.close();
-        copyAddress = address;
-        copyCapacity = size;
+        publishCopy();
+    }
+
+    /**
+     * Copies the payload columns of the build rows with ordinals from {@code lo} to {@code hi},
+     * exclusive, through the given copy reader, which one thread uses at a time. Any thread may
+     * run it between {@link #beginCopy} and {@link #publishCopy()}; the caller's failure path
+     * releases the copy through {@link #clear()} once every copying thread has stopped.
+     */
+    public void copyRows(int reader, FrozenHashJoinBuild build, long lo, long hi, SqlExecutionCircuitBreaker circuitBreaker) {
+        assert pendingCopyAddress != 0 && lo >= 0 && hi <= build.getRowCount();
+        final Reader copyReader = copyReaders.getQuick(reader);
+        long row = pendingCopyAddress + lo * copyRowSize;
+        for (long ordinal = lo; ordinal < hi; ordinal++, row += copyRowSize) {
+            if ((ordinal & (COPY_ROWS_PER_CHECK - 1)) == 0) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            }
+            copyReader.positionRow(build.getRowId(ordinal));
+            copyRow(copyReader, row);
+        }
     }
 
     public PageFrameAddressCache getAddressCache() {
@@ -257,6 +296,26 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
     @Override
     public HashJoinPayloadSource.Reader newReader() {
         return new Reader();
+    }
+
+    /**
+     * Switches every reader of this execution to the copy that {@link #copyRows} filled, and
+     * releases what the copy readers decoded. Call it on the owner once every copying thread has
+     * stopped, before the probes run.
+     */
+    public void publishCopy() {
+        assert pendingCopyAddress != 0 && copyAddress == 0;
+        // A decoded Parquet frame of the copy has no later use.
+        Misc.freeObjListAndKeepObjects(copyReaders);
+        copyAddress = pendingCopyAddress;
+        copyCapacity = pendingCopySize;
+        pendingCopyAddress = 0;
+        pendingCopySize = 0;
+    }
+
+    /** Releases what a copy reader decoded, once its thread has copied a frame's rows. */
+    public void releaseCopyBuffers(int reader) {
+        copyReaders.getQuick(reader).pool.releaseParquetBuffers();
     }
 
     /**

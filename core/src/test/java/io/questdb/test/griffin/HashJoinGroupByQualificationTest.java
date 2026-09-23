@@ -45,6 +45,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -65,20 +66,28 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
     private static final String AGGREGATES = "count(*) n, count(r.id) ri, count(p.id) pi, "
             + "count(r.s) rs, count(p.s) ps, sum(r.d) rd, sum(p.d) pd, avg(r.d) ra, avg(p.d) pa";
 
+    private final HashJoinBuildMode buildMode;
     private final HashJoinPayloadLayout payloadLayout;
 
-    public HashJoinGroupByQualificationTest(HashJoinPayloadLayout payloadLayout) {
+    public HashJoinGroupByQualificationTest(HashJoinPayloadLayout payloadLayout, HashJoinBuildMode buildMode) {
         this.payloadLayout = payloadLayout;
+        this.buildMode = buildMode;
     }
 
-    @Parameterized.Parameters(name = "{0}")
+    @Parameterized.Parameters(name = "{0}-{1}")
     public static Collection<Object[]> parameters() {
-        return HashJoinPayloadLayout.parameters();
+        return HashJoinBuildMode.parameters();
     }
 
     @Before
-    public void setUpPayloadLayout() {
+    public void setUpPayloadLayoutAndBuildMode() {
         payloadLayout.apply(node1.getConfigurationOverrides());
+        buildMode.apply(node1.getConfigurationOverrides(), sqlExecutionContext);
+    }
+
+    @After
+    public void restorePageFrameSizes() {
+        sqlExecutionContext.restoreToDefaultPageFrameSizes();
     }
 
     @Test

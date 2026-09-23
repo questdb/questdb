@@ -29,12 +29,20 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.join.IntHashJoinBuild;
 import io.questdb.griffin.engine.join.MapHashJoinBuild;
 import io.questdb.griffin.engine.table.HashJoinBuildFrames;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.Rows;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.function.LongPredicate;
 
 /**
  * Builds from a table's page frames as the fused operator's owner does, without a filter, and
@@ -65,6 +73,57 @@ final class FrameBuilds {
             }
         }
         return build.freeze(frames);
+    }
+
+    /**
+     * Builds from the open frames as the fused operator's parallel build does, running every frame
+     * task and then every partition task on this thread: the frames in order, the partitions in
+     * reverse order, so that no partition relies on an earlier one having been built. {@code keep}
+     * picks the rows a frame keeps, by row id, as the build filters would; null keeps every row. On
+     * failure the build is closed, as the operator closes it once the failed round has drained.
+     */
+    static FrozenHashJoinBuild.IntKeyed buildIntPartitioned(
+            CairoConfiguration configuration,
+            IntHashJoinBuild build,
+            HashJoinBuildFrames frames,
+            int keyColumn,
+            long rowsPerPartition,
+            long keyCountHint,
+            @Nullable LongPredicate keep,
+            @Nullable MemoryTracker memoryTracker,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        build.open(memoryTracker, circuitBreaker);
+        try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration);
+             PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+             DirectLongList rows = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT)) {
+            build.beginPartitioning(frames.getFrameCount(), frames.getRowCount(), rowsPerPartition);
+            pool.of(frames.getAddressCache());
+            record.of(frames.getSymbolTableSource());
+            for (int frameIndex = 0; frameIndex < frames.getFrameCount(); frameIndex++) {
+                record.init(pool.navigateTo(frameIndex));
+                final long rowCount = frames.getFrameRowCount(frameIndex);
+                if (keep == null) {
+                    build.partitionFrame(frameIndex, record, keyColumn, rowCount);
+                } else {
+                    rows.clear();
+                    for (long row = 0; row < rowCount; row++) {
+                        if (keep.test(Rows.toRowID(frameIndex, row))) {
+                            rows.add(row);
+                        }
+                    }
+                    build.partitionFrame(frameIndex, record, keyColumn, rows);
+                }
+            }
+            final int partitionCount = build.planPartitions(rowsPerPartition, keyCountHint);
+            for (int partition = partitionCount - 1; partition >= 0; partition--) {
+                build.buildPartition(partition, circuitBreaker);
+            }
+            return build.freezePartitioned(frames);
+        } catch (Throwable th) {
+            build.close();
+            throw th;
+        }
     }
 
     static FrozenHashJoinBuild.RecordKeyed buildMap(

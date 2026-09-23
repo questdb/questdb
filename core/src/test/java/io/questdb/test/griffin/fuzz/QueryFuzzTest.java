@@ -795,10 +795,12 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(", hashJoin=").$(config.isHashJoinEnabled())
                 .$(", diffFused=").$(config.isDiffFusedEnabled())
                 .$(", hashJoinPayload=").$(config.getHashJoinPayloadLayout() != null ? config.getHashJoinPayloadLayout().name() : "rule")
+                .$(", hashJoinBuild=").$(config.getHashJoinBuildMode().name())
                 .$();
         if (config.getHashJoinPayloadLayout() != null) {
             config.getHashJoinPayloadLayout().apply(node1.getConfigurationOverrides());
         }
+        config.getHashJoinBuildMode().applyProperties(node1.getConfigurationOverrides());
 
         FuzzTableFactory factory = new FuzzTableFactory(config);
         ObjList<FuzzTable> tables = new ObjList<>();

@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -61,20 +62,28 @@ public class HashJoinGroupByColumnTypesTest extends AbstractCairoTest {
     // Variable-size types, which the row heap cannot copy, so only the probe may carry them.
     private static final String[] PROBE_ONLY_COLUMNS = {"vc", "str"};
 
+    private final HashJoinBuildMode buildMode;
     private final HashJoinPayloadLayout payloadLayout;
 
-    public HashJoinGroupByColumnTypesTest(HashJoinPayloadLayout payloadLayout) {
+    public HashJoinGroupByColumnTypesTest(HashJoinPayloadLayout payloadLayout, HashJoinBuildMode buildMode) {
         this.payloadLayout = payloadLayout;
+        this.buildMode = buildMode;
     }
 
-    @Parameterized.Parameters(name = "{0}")
+    @Parameterized.Parameters(name = "{0}-{1}")
     public static Collection<Object[]> parameters() {
-        return HashJoinPayloadLayout.parameters();
+        return HashJoinBuildMode.parameters();
     }
 
     @Before
-    public void setUpPayloadLayout() {
+    public void setUpPayloadLayoutAndBuildMode() {
         payloadLayout.apply(node1.getConfigurationOverrides());
+        buildMode.apply(node1.getConfigurationOverrides(), sqlExecutionContext);
+    }
+
+    @After
+    public void restorePageFrameSizes() {
+        sqlExecutionContext.restoreToDefaultPageFrameSizes();
     }
 
     @Test

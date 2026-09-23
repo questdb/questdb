@@ -146,12 +146,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                 build.open(null, NOOP);
                 build.append(keys[0], 0);
                 build.append(keys[1], 1);
-                Field keysField = IntHashJoinBuild.class.getDeclaredField("keys");
-                keysField.setAccessible(true);
-                Object table = keysField.get(build);
-                Field addressField = table.getClass().getDeclaredField("address");
-                addressField.setAccessible(true);
-                long address = addressField.getLong(table);
+                long address = keySlotsAddress(build);
                 long offset = 0x80000000L << 3;
                 Unsafe.putInt(address + 3 * 8 + 4, CompressedOffsets.compressBiased8(offset));
                 Unsafe.putInt(address + 4, CompressedOffsets.compressBiased8(offset + 16));
@@ -187,12 +182,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                         build.append(17, 42);
                     }
                     try (FrozenHashJoinBuild.IntProbe probe = build.freeze(new RowIdPayloadSource()).newProbe()) {
-                        Field keysField = IntHashJoinBuild.class.getDeclaredField("keys");
-                        keysField.setAccessible(true);
-                        Object keys = keysField.get(build);
-                        Field addressField = keys.getClass().getDeclaredField("address");
-                        addressField.setAccessible(true);
-                        long slot = addressField.getLong(keys) + ((int) Hash.hashInt64(17) & 1) * 8L;
+                        long slot = keySlotsAddress(build) + ((int) Hash.hashInt64(17) & 1) * 8L;
                         Field rowsField = probe.getClass().getSuperclass().getDeclaredField("heapAddress");
                         rowsField.setAccessible(true);
                         long realRows = rowsField.getLong(probe);
@@ -681,7 +671,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
             RowIdPayloadSource payloads = new RowIdPayloadSource(symbols, rowId -> 0, 0);
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(64 * 1024 * 1024);
                  IntHashJoinBuild build = new IntHashJoinBuild(true, 2, 16)) {
-                for (String failSite : new String[]{null, "growKeyTable"}) {
+                for (String failSite : new String[]{null, "grow"}) {
                     SiteBreaker breaker = new SiteBreaker(failSite);
                     build.open(tracker, breaker);
                     try {
@@ -1455,6 +1445,19 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
         return result;
     }
 
+    // The address of the serial key table's slots: the build's key table, its slots buffer, its block.
+    private static long keySlotsAddress(IntHashJoinBuild build) throws ReflectiveOperationException {
+        Field keysField = IntHashJoinBuild.class.getDeclaredField("keys");
+        keysField.setAccessible(true);
+        Object table = keysField.get(build);
+        Field slotsField = table.getClass().getDeclaredField("slots");
+        slotsField.setAccessible(true);
+        Object slots = slotsField.get(table);
+        Field addressField = slots.getClass().getDeclaredField("address");
+        addressField.setAccessible(true);
+        return addressField.getLong(slots);
+    }
+
     private static void populate(IntHashJoinBuild build, LimitedMemoryTracker tracker, SqlExecutionCircuitBreaker breaker) {
         build.open(tracker, breaker);
         for (int i = 0; i < 12; i++) {
@@ -1469,8 +1472,8 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
      * on a second consecutive check from the fail site, i.e. inside a single rehash loop.
      */
     private static class SiteBreaker extends CountingSqlExecutionCircuitBreaker {
-        // The build spans three classes of the join package - the build itself, its row heap
-        // and their shared native buffer - so attribution takes the first frame of any of them.
+        // The build spans four classes of the join package - the build itself, its key table, its
+        // row heap and their shared native buffer - so attribution takes the first frame of any of them.
         private static final String BUILD_PACKAGE = "io.questdb.griffin.engine.join.";
         private final String failSite;
         private final StackWalker walker = StackWalker.getInstance();
@@ -1511,7 +1514,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     .orElse(""));
             switch (site) {
                 case "append", "appendRow", "appendFrame", "build" -> rowChecks++;
-                case "growKeyTable" -> keyRehashChecks++;
+                case "grow" -> keyRehashChecks++;
                 default -> {
                 }
             }

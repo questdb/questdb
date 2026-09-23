@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -77,20 +78,28 @@ public class HashJoinGroupByGeneralKeysTest extends AbstractCairoTest {
             "ka.nul=kb.nul",
     };
 
+    private final HashJoinBuildMode buildMode;
     private final HashJoinPayloadLayout payloadLayout;
 
-    public HashJoinGroupByGeneralKeysTest(HashJoinPayloadLayout payloadLayout) {
+    public HashJoinGroupByGeneralKeysTest(HashJoinPayloadLayout payloadLayout, HashJoinBuildMode buildMode) {
         this.payloadLayout = payloadLayout;
+        this.buildMode = buildMode;
     }
 
-    @Parameterized.Parameters(name = "{0}")
+    @Parameterized.Parameters(name = "{0}-{1}")
     public static Collection<Object[]> parameters() {
-        return HashJoinPayloadLayout.parameters();
+        return HashJoinBuildMode.parameters();
     }
 
     @Before
-    public void setUpPayloadLayout() {
+    public void setUpPayloadLayoutAndBuildMode() {
         payloadLayout.apply(node1.getConfigurationOverrides());
+        buildMode.apply(node1.getConfigurationOverrides(), sqlExecutionContext);
+    }
+
+    @After
+    public void restorePageFrameSizes() {
+        sqlExecutionContext.restoreToDefaultPageFrameSizes();
     }
 
     @Test
