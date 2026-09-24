@@ -409,7 +409,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                 case UNSUPPORTED_VERSION -> droppedBadVersionCount++;
                 default -> droppedParseErrorCount++;
             }
-            LOG.error().$("header parse error: ").$(e.getFlyweightMessage()).$();
+            LOG.error().$("header parse error: ").$safe(e.getFlyweightMessage()).$();
             return DATAGRAM_DROPPED;
         }
         long totalLength = HEADER_SIZE + messageHeader.getPayloadLength();
@@ -448,7 +448,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                     // separately from parse errors.
                     droppedStaleTableCount++;
                     LOG.error().$("dropping datagram, table update details unavailable: ")
-                            .$(e.getFlyweightMessage()).$();
+                            .$safe(e.getFlyweightMessage()).$();
                     return datagramState | DATAGRAM_DROPPED;
                 }
                 if (tud == null) {

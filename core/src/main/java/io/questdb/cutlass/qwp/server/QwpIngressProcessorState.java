@@ -1428,14 +1428,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             if (e.getErrorCode() != QwpParseException.ErrorCode.DELTA_DICT_GAP) {
                 streamingDecoder.releaseCachedResources();
             }
-            LOG.error().$('[').$(fd).$("] QWP v1 parse error: ").$(e.getFlyweightMessage()).$();
+            LOG.error().$('[').$(fd).$("] QWP v1 parse error: ").$safe(e.getFlyweightMessage()).$();
             reject(statusForParseError(e.getErrorCode()), e.getFlyweightMessage(), fd);
         } catch (CommitFailedException e) {
-            LOG.error().$('[').$(fd).$("] commit failed: ").$(e.getMessage()).$();
+            LOG.error().$('[').$(fd).$("] commit failed: ").$safe(e.getMessage()).$();
             tudCache.setDistressed();
             rejectCommitError(e.getReason());
         } catch (CairoException e) {
-            LOG.error().$('[').$(fd).$("] cairo error: ").$(e.getFlyweightMessage()).$();
+            LOG.error().$('[').$(fd).$("] cairo error: ").$safe(e.getFlyweightMessage()).$();
             rejectCairoError(e);
         } catch (Throwable e) {
             LOG.critical().$('[').$(fd).$("] unexpected error: ").$(e).$();

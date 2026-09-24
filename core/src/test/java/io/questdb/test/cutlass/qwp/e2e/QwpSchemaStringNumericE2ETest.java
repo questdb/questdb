@@ -109,14 +109,13 @@ public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
                     client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                     response = receiveResponse(client);
                 }
-                boolean logUtf8Failure = vector.input != null && vector.input.indexOf('\u00a0') >= 0;
-                Assert.assertEquals(vector.caseId, logUtf8Failure ? WebSocketResponse.STATUS_INTERNAL_ERROR : WebSocketResponse.STATUS_SCHEMA_MISMATCH, response.getStatus());
-                if (logUtf8Failure) {
-                    Assert.assertTrue(vector.caseId + ": " + response.getErrorMessage(), response.getErrorMessage().contains("Invalid UTF-8"));
-                } else {
-                    Assert.assertTrue(vector.caseId + ": " + response.getErrorMessage(),
-                            response.getErrorMessage().contains("cannot parse") || response.getErrorMessage().contains("out of range"));
-                    Assert.assertTrue(vector.caseId + ": " + response.getErrorMessage(), response.getErrorMessage().contains("column=value"));
+                Assert.assertEquals(vector.caseId, WebSocketResponse.STATUS_SCHEMA_MISMATCH, response.getStatus());
+                Assert.assertTrue(vector.caseId + ": " + response.getErrorMessage(),
+                        response.getErrorMessage().contains("cannot parse") || response.getErrorMessage().contains("out of range"));
+                Assert.assertTrue(vector.caseId + ": " + response.getErrorMessage(), response.getErrorMessage().contains("column=value"));
+                if (vector.input != null && vector.input.indexOf('\u00a0') >= 0) {
+                    // non-ASCII input must reach the client intact, and must not trip the server log
+                    Assert.assertTrue(vector.caseId + ": " + response.getErrorMessage(), response.getErrorMessage().contains("value=" + vector.input));
                 }
                 assertQuery("select count() from " + tableName).noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
             }
