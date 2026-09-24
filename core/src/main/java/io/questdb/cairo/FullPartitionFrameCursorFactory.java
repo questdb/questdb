@@ -52,14 +52,13 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
     public FullPartitionFrameCursorFactory(
             TableToken tableToken,
             long metadataVersion,
-            long truncateVersion,
             RecordMetadata metadata,
             int order,
             String viewName,
             int viewPosition,
             boolean updateQuery
     ) {
-        super(tableToken, metadataVersion, truncateVersion, metadata, viewName, viewPosition, updateQuery);
+        super(tableToken, metadataVersion, metadata, viewName, viewPosition, updateQuery);
         this.baseOrder = order;
         this.closeObserver = TEST_CLOSE_OBSERVER.get();
     }

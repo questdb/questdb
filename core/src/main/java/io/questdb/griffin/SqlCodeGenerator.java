@@ -44,7 +44,6 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.SampleBySortStrategy;
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -63,7 +62,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.cairo.sql.SingleSymbolFilter;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
@@ -317,9 +315,6 @@ import io.questdb.griffin.engine.table.LatestBySubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueDeferredFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueDeferredIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueDeferredIndexedRowCursorFactory;
-import io.questdb.griffin.engine.table.LatestByValueFilteredRecordCursorFactory;
-import io.questdb.griffin.engine.table.LatestByValueIndexedFilteredRecordCursorFactory;
-import io.questdb.griffin.engine.table.LatestByValueIndexedRowCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValuesIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinRecord;
@@ -1141,8 +1136,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * whose value is not known until it is bound. A literal that names a real symbol -- or one
      * that names no symbol at all -- can never be NULL and needs nothing.
      */
-    private static boolean canKeyBeNull(int symbolKey, Function symbolFunc) {
-        return symbolKey == SymbolTable.VALUE_IS_NULL || symbolFunc.isRuntimeConstant();
+    private static boolean canKeyBeNull(Function symbolFunc) {
+        return symbolFunc.isRuntimeConstant() || symbolFunc.getStrA(null) == null;
     }
 
     /**
@@ -1150,10 +1145,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * the NULL key. See {@link #canKeyBeNull}: a literal {@code null} resolves here, a runtime
      * constant does not resolve until it is bound.
      */
-    private static boolean canAnyKeyBeNull(ObjList<Function> keyValueFuncs, SymbolMapReader symbolMapReader) {
+    private static boolean canAnyKeyBeNull(ObjList<Function> keyValueFuncs) {
         for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
-            final Function f = keyValueFuncs.getQuick(i);
-            if (f.isRuntimeConstant() || symbolMapReader.keyOf(f.getStrA(null)) == SymbolTable.VALUE_IS_NULL) {
+            if (canKeyBeNull(keyValueFuncs.getQuick(i))) {
                 return true;
             }
         }
@@ -1172,19 +1166,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * {@link CoveringIndexRecordCursorFactory} re-checks the promise per open and throws if it
      * was broken.
      */
-    private static boolean isBackupNeeded(int symbolKey, Function symbolFunc, IQueryModel model) {
-        return canKeyBeNull(symbolKey, symbolFunc) && !SqlHints.hasForceUseCoveringHint(model);
+    private static boolean isBackupNeeded(Function symbolFunc, IQueryModel model) {
+        return canKeyBeNull(symbolFunc) && !SqlHints.hasForceUseCoveringHint(model);
     }
 
     /**
      * The IN-list twin of {@link #isBackupNeeded}.
      */
-    private static boolean isBackupNeededForList(
-            ObjList<Function> keyValueFuncs,
-            SymbolMapReader symbolMapReader,
-            IQueryModel model
-    ) {
-        return canAnyKeyBeNull(keyValueFuncs, symbolMapReader) && !SqlHints.hasForceUseCoveringHint(model);
+    private static boolean isBackupNeededForList(ObjList<Function> keyValueFuncs, IQueryModel model) {
+        return canAnyKeyBeNull(keyValueFuncs) && !SqlHints.hasForceUseCoveringHint(model);
     }
 
     /**
@@ -1202,7 +1192,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata queryMeta,
             PartitionFrameCursorFactory dfcFactory,
             int keyColumnIndex,
-            int symbolKey,
             Function symbolFunc,
             int indexDirection,
             boolean followsOrderByAdvice,
@@ -1210,9 +1199,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             IntList columnSizeShifts,
             boolean supportsRandomAccess
     ) {
-        final RowCursorFactory rcf = symbolKey == SymbolTable.VALUE_NOT_FOUND
-                ? new DeferredSymbolIndexRowCursorFactory(keyColumnIndex, symbolFunc, indexDirection)
-                : new SymbolIndexRowCursorFactory(keyColumnIndex, symbolKey, indexDirection, null);
+        final RowCursorFactory rcf = new DeferredSymbolIndexRowCursorFactory(keyColumnIndex, symbolFunc, indexDirection);
         return new DeferredSingleSymbolFilterPageFrameRecordCursorFactory(
                 configuration,
                 keyColumnIndex,
@@ -1231,26 +1218,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * The plain {@code LATEST ON} index scan a covering factory falls back to: the same plan its
      * caller builds when {@code /*+ no_covering *}{@code /} is set.
      * <p>
-     * The returned factory OWNS {@code dfcFactory} and {@code filter}. It owns {@code symbolFunc}
-     * only when the key is deferred -- the resolved-key variants take the key as an {@code int}
-     * and never see the function, so the covering factory keeps owning it in that case. That is
-     * what the covering factory's {@code backupOwnsKeyFunctions} flag records.
+     * The returned factory owns {@code dfcFactory}, {@code filter} and {@code symbolFunc}.
      */
     private static RecordCursorFactory buildLatestByIndexScan(
             CairoConfiguration configuration,
             RecordMetadata metadata,
             PartitionFrameCursorFactory dfcFactory,
             int latestByIndex,
-            int symbolKey,
             Function symbolFunc,
             @Nullable Function filter,
             IntList columnIndexes,
             IntList columnSizeShifts
     ) {
         if (filter == null) {
-            final RowCursorFactory rcf = symbolKey == SymbolTable.VALUE_NOT_FOUND
-                    ? new LatestByValueDeferredIndexedRowCursorFactory(latestByIndex, symbolFunc)
-                    : new LatestByValueIndexedRowCursorFactory(latestByIndex, symbolKey);
+            final RowCursorFactory rcf = new LatestByValueDeferredIndexedRowCursorFactory(latestByIndex, symbolFunc);
             return new PageFrameRecordCursorFactory(
                     configuration,
                     metadata,
@@ -1265,24 +1246,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     true
             );
         }
-        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-            return new LatestByValueDeferredIndexedFilteredRecordCursorFactory(
-                    configuration,
-                    metadata,
-                    dfcFactory,
-                    latestByIndex,
-                    symbolFunc,
-                    filter,
-                    columnIndexes,
-                    columnSizeShifts
-            );
-        }
-        return new LatestByValueIndexedFilteredRecordCursorFactory(
+        return new LatestByValueDeferredIndexedFilteredRecordCursorFactory(
                 configuration,
                 metadata,
                 dfcFactory,
                 latestByIndex,
-                symbolKey,
+                symbolFunc,
                 filter,
                 columnIndexes,
                 columnSizeShifts
@@ -2254,6 +2223,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
+    /**
+     * Wraps {@code filter} into a {@link LatestByCompiledFilter} when the JIT can serialize it.
+     * The compiled filter carries the generic JIT's FLOAT semantics: an f32 comparison uses the
+     * native {@code FLOAT_EPSILON}, a shade wider than {@link Numbers#DOUBLE_TOLERANCE}, so a
+     * LATEST ON query disagrees with the Java filter exactly where a plain WHERE already does
+     * (see {@code CompiledFilterRegressionTest#testIntColumnVsFloatToleranceBoundConstantStillDivergesOnF32Width}).
+     * That divergence is pre-existing and deliberately not guarded here: falling back to the
+     * Java filter for FLOAT operands would forfeit the JIT speedup for an edge case that is
+     * reachable only at the tolerance boundary itself.
+     */
     private Function compileLatestByFilter(
             Function filter,
             ExpressionNode expression,
@@ -7580,7 +7559,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             partitionFrameCursorFactory = new IntervalPartitionFrameCursorFactory(
                     tableToken,
                     model.getMetadataVersion(),
-                    reader.getTxFile().getTruncateVersion(),
                     intervalModel,
                     timestampIndex,
                     GenericRecordMetadata.copyOfNew(reader.getMetadata()),
@@ -7593,7 +7571,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             partitionFrameCursorFactory = new FullPartitionFrameCursorFactory(
                     tableToken,
                     model.getMetadataVersion(),
-                    reader.getTxFile().getTruncateVersion(),
                     GenericRecordMetadata.copyOfNew(reader.getMetadata()),
                     ORDER_DESC,
                     getViewName(viewExpr),
@@ -7704,15 +7681,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // 1. resolve each value of the list to "int"
                     // 2. get first row in index for each value (stream)
 
-                    final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(latestByIndex));
                     final RowCursorFactory rcf;
                     if (nKeyValues == 1) {
                         Function symbolValueFunc = intrinsicModel.keyValueFuncs.get(0);
                         try {
-                            final int symbol = symbolValueFunc.isRuntimeConstant()
-                                    ? SymbolTable.VALUE_NOT_FOUND
-                                    : symbolMapReader.keyOf(symbolValueFunc.getStrA(null));
-
                             if (!SqlHints.hasNoCoveringHint(model) && executionContext.isCoveringIndexEnabled()) {
                                 // Check if covering index can serve LATEST ON (with or without filter)
                                 int keyReaderColIdx = columnIndexes.getQuick(latestByIndex);
@@ -7729,17 +7701,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     final PartitionFrameCursorFactory sharedDfc = partitionFrameCursorFactory;
                                     final Function sharedKeyFunc = symbolValueFunc;
                                     final Function sharedFilter = filter;
-                                    // The deferred backup adopts the key function; the resolved-key
-                                    // one takes an int and leaves it to the covering factory.
-                                    final boolean backupOwnsKeyFunc = symbol == SymbolTable.VALUE_NOT_FOUND;
                                     RecordCursorFactory backup = null;
-                                    if (isBackupNeeded(symbol, sharedKeyFunc, model)) {
+                                    if (isBackupNeeded(sharedKeyFunc, model)) {
                                         backup = buildLatestByIndexScan(
                                                 configuration,
                                                 metadata,
                                                 sharedDfc,
                                                 latestByIndex,
-                                                symbol,
                                                 sharedKeyFunc,
                                                 sharedFilter,
                                                 columnIndexes,
@@ -7749,27 +7717,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         // catch and the finally would otherwise free a second time.
                                         partitionFrameCursorFactory = null;
                                         filter = null;
-                                        if (backupOwnsKeyFunc) {
-                                            symbolValueFunc = null;
-                                        }
+                                        symbolValueFunc = null;
                                     }
                                     try {
                                         RecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
                                                 metadata,
                                                 sharedDfc,
                                                 keyReaderColIdx,
-                                                symbol,
                                                 sharedKeyFunc,
                                                 columnIndexes,
                                                 coveringMapping,
-                                                null,
                                                 null,
                                                 true,
                                                 sharedFilter,
                                                 null,
                                                 backup,
-                                                backupOwnsKeyFunc,
-                                                backup == null && canKeyBeNull(symbol, sharedKeyFunc)
+                                                true,
+                                                backup == null && canKeyBeNull(sharedKeyFunc)
                                         );
                                         symbolValueFunc = null;
                                         partitionFrameCursorFactory = null;
@@ -7783,18 +7747,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             }
 
                             if (filter == null) {
-                                if (symbol == SymbolTable.VALUE_NOT_FOUND) {
-                                    rcf = new LatestByValueDeferredIndexedRowCursorFactory(
-                                            latestByIndex,
-                                            symbolValueFunc
-                                    );
-                                    symbolValueFunc = null;
-                                } else {
-                                    rcf = new LatestByValueIndexedRowCursorFactory(
-                                            latestByIndex,
-                                            symbol
-                                    );
-                                }
+                                rcf = new LatestByValueDeferredIndexedRowCursorFactory(
+                                        latestByIndex,
+                                        symbolValueFunc
+                                );
+                                symbolValueFunc = null;
                                 return new PageFrameRecordCursorFactory(
                                         configuration,
                                         metadata,
@@ -7810,30 +7767,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
                             }
 
-                            if (symbol == SymbolTable.VALUE_NOT_FOUND) {
-                                RecordCursorFactory result = new LatestByValueDeferredIndexedFilteredRecordCursorFactory(
-                                        configuration,
-                                        metadata,
-                                        partitionFrameCursorFactory,
-                                        latestByIndex,
-                                        symbolValueFunc,
-                                        filter,
-                                        columnIndexes,
-                                        columnSizeShifts
-                                );
-                                symbolValueFunc = null;
-                                return result;
-                            }
-                            return new LatestByValueIndexedFilteredRecordCursorFactory(
+                            RecordCursorFactory result = new LatestByValueDeferredIndexedFilteredRecordCursorFactory(
                                     configuration,
                                     metadata,
                                     partitionFrameCursorFactory,
                                     latestByIndex,
-                                    symbol,
+                                    symbolValueFunc,
                                     filter,
                                     columnIndexes,
                                     columnSizeShifts
                             );
+                            symbolValueFunc = null;
+                            return result;
                         } finally {
                             Misc.free(symbolValueFunc);
                         }
@@ -7852,7 +7797,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             final PartitionFrameCursorFactory sharedDfc = partitionFrameCursorFactory;
                             final Function sharedFilter = filter;
                             RecordCursorFactory backup = null;
-                            if (isBackupNeededForList(intrinsicModel.keyValueFuncs, symbolMapReader, model)) {
+                            if (isBackupNeededForList(intrinsicModel.keyValueFuncs, model)) {
                                 backup = new LatestByValuesIndexedFilteredRecordCursorFactory(
                                         configuration,
                                         metadata,
@@ -7871,18 +7816,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         metadata,
                                         sharedDfc,
                                         keyReaderColIdx,
-                                        SymbolTable.VALUE_NOT_FOUND,
                                         null,
                                         columnIndexes,
                                         coveringMapping,
                                         intrinsicModel.keyValueFuncs,
-                                        reader,
                                         true,
                                         sharedFilter,
                                         null,
                                         backup,
                                         true,
-                                        backup == null && canAnyKeyBeNull(intrinsicModel.keyValueFuncs, symbolMapReader)
+                                        backup == null && canAnyKeyBeNull(intrinsicModel.keyValueFuncs)
                                 );
                                 partitionFrameCursorFactory = null;
                                 filter = null;
@@ -7930,35 +7873,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // we have a single symbol key
                 Function symbolKeyFunc = intrinsicModel.keyValueFuncs.get(0);
                 try {
-                    final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(latestByIndex));
-                    final int symbolKey = symbolKeyFunc.isRuntimeConstant()
-                            ? SymbolTable.VALUE_NOT_FOUND
-                            : symbolMapReader.keyOf(symbolKeyFunc.getStrA(null));
-                    if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                        RecordCursorFactory result = new LatestByValueDeferredFilteredRecordCursorFactory(
-                                configuration,
-                                metadata,
-                                partitionFrameCursorFactory,
-                                latestByIndex,
-                                symbolKeyFunc,
-                                filter,
-                                columnIndexes,
-                                columnSizeShifts
-                        );
-                        symbolKeyFunc = null;
-                        return result;
-                    }
-
-                    return new LatestByValueFilteredRecordCursorFactory(
+                    final RecordCursorFactory result = new LatestByValueDeferredFilteredRecordCursorFactory(
                             configuration,
                             metadata,
                             partitionFrameCursorFactory,
                             latestByIndex,
-                            symbolKey,
+                            symbolKeyFunc,
                             filter,
                             columnIndexes,
                             columnSizeShifts
                     );
+                    symbolKeyFunc = null;
+                    return result;
                 } finally {
                     Misc.free(symbolKeyFunc);
                 }
@@ -10167,7 +10093,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         dfcFactory = new IntervalPartitionFrameCursorFactory(
                                                 tableToken,
                                                 tableModel.getMetadataVersion(),
-                                                reader.getTxFile().getTruncateVersion(),
                                                 intervalModel,
                                                 tableMeta.getTimestampIndex(),
                                                 dfcMeta,
@@ -10180,7 +10105,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         dfcFactory = new FullPartitionFrameCursorFactory(
                                                 tableToken,
                                                 tableModel.getMetadataVersion(),
-                                                reader.getTxFile().getTruncateVersion(),
                                                 dfcMeta,
                                                 ORDER_ASC,
                                                 getViewName(viewExpr),
@@ -12354,7 +12278,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 dfcFactory = new IntervalPartitionFrameCursorFactory(
                         tableToken,
                         model.getMetadataVersion(),
-                        reader.getTxFile().getTruncateVersion(),
                         intervalModel,
                         metadata.getTimestampIndex(),
                         dfcFactoryMeta,
@@ -12368,7 +12291,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 dfcFactory = new FullPartitionFrameCursorFactory(
                         tableToken,
                         model.getMetadataVersion(),
-                        reader.getTxFile().getTruncateVersion(),
                         dfcFactoryMeta,
                         order,
                         getViewName(viewExpr),
@@ -12480,11 +12402,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             final RowCursorFactory rcf;
                             Function symbolFunc = intrinsicModel.keyValueFuncs.get(0);
                             try {
-                                final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(keyColumnIndex));
-                                final int symbolKey = symbolFunc.isRuntimeConstant()
-                                        ? SymbolTable.VALUE_NOT_FOUND
-                                        : symbolMapReader.keyOf(symbolFunc.getStrA(null));
-
                                 if (!SqlHints.hasNoCoveringHint(model) && !model.isUpdate() && executionContext.isCoveringIndexEnabled()) {
                                     int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
                                     int[] coveringMapping = buildCoveringIndexMapping(
@@ -12502,10 +12419,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         final PartitionFrameCursorFactory sharedDfc = dfcFactory;
                                         final Function sharedKeyFunc = symbolFunc;
                                         RecordCursorFactory backup = null;
-                                        if (isBackupNeeded(symbolKey, sharedKeyFunc, model)) {
+                                        if (isBackupNeeded(sharedKeyFunc, model)) {
                                             backup = buildSingleSymbolIndexScan(
                                                     configuration, queryMeta, sharedDfc, keyColumnIndex,
-                                                    symbolKey, sharedKeyFunc, indexDirection,
+                                                    sharedKeyFunc, indexDirection,
                                                     orderByKeyColumn || orderByTimestamp, columnIndexes,
                                                     columnSizeShifts, supportsRandomAccess);
                                             // The backup owns them now; clear the references the outer
@@ -12519,18 +12436,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     queryMeta,
                                                     sharedDfc,
                                                     keyReaderColIdx,
-                                                    symbolKey,
                                                     sharedKeyFunc,
                                                     columnIndexes,
                                                     coveringMapping,
-                                                    null,
                                                     null,
                                                     false,
                                                     null,
                                                     null,
                                                     backup,
                                                     true,
-                                                    backup == null && canKeyBeNull(symbolKey, sharedKeyFunc)
+                                                    backup == null && canKeyBeNull(sharedKeyFunc)
                                             );
                                         } catch (Throwable th) {
                                             Misc.free(backup);
@@ -12548,38 +12463,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
                                 }
 
-                                if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                                    if (filter == null) {
-                                        rcf = new DeferredSymbolIndexRowCursorFactory(
-                                                keyColumnIndex,
-                                                symbolFunc,
-                                                indexDirection
-                                        );
-                                    } else {
-                                        rcf = new DeferredSymbolIndexFilteredRowCursorFactory(
-                                                keyColumnIndex,
-                                                symbolFunc,
-                                                filter,
-                                                indexDirection
-                                        );
-                                    }
+                                if (filter == null) {
+                                    rcf = new DeferredSymbolIndexRowCursorFactory(
+                                            keyColumnIndex,
+                                            symbolFunc,
+                                            indexDirection
+                                    );
                                 } else {
-                                    if (filter == null) {
-                                        rcf = new SymbolIndexRowCursorFactory(
-                                                keyColumnIndex,
-                                                symbolKey,
-                                                indexDirection,
-                                                null
-                                        );
-                                    } else {
-                                        rcf = new SymbolIndexFilteredRowCursorFactory(
-                                                keyColumnIndex,
-                                                symbolKey,
-                                                filter,
-                                                indexDirection,
-                                                null
-                                        );
-                                    }
+                                    rcf = new DeferredSymbolIndexFilteredRowCursorFactory(
+                                            keyColumnIndex,
+                                            symbolFunc,
+                                            filter,
+                                            indexDirection
+                                    );
                                 }
 
                                 if (filter == null) {
@@ -12600,9 +12496,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     symbolFunc = null;
                                     return result;
                                 }
-                                if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                                    symbolFunc = null;
-                                }
+                                symbolFunc = null;
                                 return new PageFrameRecordCursorFactory(
                                         configuration,
                                         queryMeta,
@@ -12633,14 +12527,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // make this scan ask for the NULL key.
                                 final PartitionFrameCursorFactory sharedDfc = dfcFactory;
                                 RecordCursorFactory backup = null;
-                                if (isBackupNeededForList(intrinsicModel.keyValueFuncs, reader.getSymbolMapReader(keyReaderColIdx), model)) {
+                                if (isBackupNeededForList(intrinsicModel.keyValueFuncs, model)) {
                                     backup = new FilterOnValuesRecordCursorFactory(
                                             configuration,
                                             queryMeta,
                                             sharedDfc,
                                             intrinsicModel.keyValueFuncs,
                                             keyColumnIndex,
-                                            reader,
                                             null, // the filter stays with the wrapper above us
                                             model.getOrderByAdviceMnemonic(),
                                             orderByKeyColumn,
@@ -12660,18 +12553,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             queryMeta,
                                             sharedDfc,
                                             keyReaderColIdx,
-                                            SymbolTable.VALUE_NOT_FOUND,
                                             null,
                                             columnIndexes,
                                             coveringMapping,
                                             intrinsicModel.keyValueFuncs,
-                                            reader,
                                             false,
                                             null,
                                             null,
                                             backup,
                                             true,
-                                            backup == null && canAnyKeyBeNull(intrinsicModel.keyValueFuncs, reader.getSymbolMapReader(keyReaderColIdx))
+                                            backup == null && canAnyKeyBeNull(intrinsicModel.keyValueFuncs)
                                     );
                                 } catch (Throwable th) {
                                     Misc.free(backup);
@@ -12697,7 +12588,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 dfcFactory,
                                 intrinsicModel.keyValueFuncs,
                                 keyColumnIndex,
-                                reader,
                                 filter,
                                 model.getOrderByAdviceMnemonic(),
                                 orderByKeyColumn,
@@ -12889,7 +12779,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             PartitionFrameCursorFactory cursorFactory = new FullPartitionFrameCursorFactory(
                     tableToken,
                     model.getMetadataVersion(),
-                    reader.getTxFile().getTruncateVersion(),
                     dfcFactoryMeta,
                     order,
                     getViewName(viewExpr),
@@ -12928,7 +12817,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         new FullPartitionFrameCursorFactory(
                                 tableToken,
                                 model.getMetadataVersion(),
-                                reader.getTxFile().getTruncateVersion(),
                                 dfcFactoryMeta,
                                 ORDER_DESC,
                                 getViewName(viewExpr),
@@ -12950,7 +12838,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         queryMeta,
                         new FullPartitionFrameCursorFactory(tableToken,
                                 model.getMetadataVersion(),
-                                reader.getTxFile().getTruncateVersion(),
                                 dfcFactoryMeta,
                                 ORDER_DESC,
                                 getViewName(viewExpr),
@@ -12980,7 +12867,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     new FullPartitionFrameCursorFactory(
                             tableToken,
                             model.getMetadataVersion(),
-                            reader.getTxFile().getTruncateVersion(),
                             dfcFactoryMeta,
                             ORDER_DESC,
                             getViewName(viewExpr),
@@ -13001,7 +12887,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 new FullPartitionFrameCursorFactory(
                         tableToken,
                         model.getMetadataVersion(),
-                        reader.getTxFile().getTruncateVersion(),
                         dfcFactoryMeta,
                         ORDER_DESC,
                         getViewName(viewExpr),
@@ -13793,12 +13678,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             queryMeta,
                             sharedFrameFactory,
                             keyReaderColIdx,
-                            SymbolTable.VALUE_NOT_FOUND,
                             null,
                             columnIndexes,
                             coveringMapping,
                             null,
-                            reader,
                             false,
                             null,
                             effectiveKeys,

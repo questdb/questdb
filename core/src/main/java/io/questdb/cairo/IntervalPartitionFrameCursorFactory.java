@@ -43,7 +43,6 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
     public IntervalPartitionFrameCursorFactory(
             TableToken tableToken,
             long metadataVersion,
-            long truncateVersion,
             RuntimeIntrinsicIntervalModel intervalModel,
             int timestampIndex,
             RecordMetadata metadata,
@@ -52,7 +51,7 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
             int viewPosition,
             boolean updateQuery
     ) {
-        super(tableToken, metadataVersion, truncateVersion, metadata, viewName, viewPosition, updateQuery);
+        super(tableToken, metadataVersion, metadata, viewName, viewPosition, updateQuery);
         this.timestampIndex = timestampIndex;
         this.intervalModel = intervalModel;
         this.baseOrder = baseOrder;

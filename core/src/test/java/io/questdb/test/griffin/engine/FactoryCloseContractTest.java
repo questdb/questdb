@@ -70,7 +70,7 @@ import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
-import io.questdb.griffin.engine.table.LatestByValueFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.LatestByValueDeferredFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursor;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
@@ -545,32 +545,32 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLatestByDirectPageFrameDetachesLeafBeforeParentCallback() throws Exception {
+    public void testLatestByDeferredValueDetachesLeafBeforeParentCallback() throws Exception {
         assertMemoryLeak(() -> {
-            final LatestByValueFilteredRecordCursorFactory factory = allocate(
-                    LatestByValueFilteredRecordCursorFactory.class
+            final Class<?> baseClass = Class.forName("io.questdb.griffin.engine.table.AbstractDeferredValueRecordCursorFactory");
+            final LatestByValueDeferredFilteredRecordCursorFactory factory = allocate(
+                    LatestByValueDeferredFilteredRecordCursorFactory.class
             );
             final AtomicInteger parentCloseCount = new AtomicInteger();
             final PartitionFrameCursorFactory partitionFrameCursorFactory = closeTrackingPartitionFactory(() -> {
                 parentCloseCount.incrementAndGet();
-                assertFieldsNull(LatestByValueFilteredRecordCursorFactory.class, factory, "cursor", "filter");
+                assertFieldsNull(baseClass, factory, "cursor", "filter", "symbolFunc");
             });
-            final AtomicInteger cursorCloseCount = new AtomicInteger();
-            final PageFrameRecordCursor cursor = closeTrackingPageFrameRecordCursor(cursorCloseCount);
             final CloseTrackingBooleanFunction filter = new CloseTrackingBooleanFunction(null);
+            final CloseTrackingBooleanFunction symbolFunc = new CloseTrackingBooleanFunction(null);
             setField(
                     Class.forName("io.questdb.griffin.engine.table.AbstractPageFrameRecordCursorFactory"),
                     factory,
                     "partitionFrameCursorFactory",
                     partitionFrameCursorFactory
             );
-            setField(LatestByValueFilteredRecordCursorFactory.class, factory, "cursor", cursor);
-            setField(LatestByValueFilteredRecordCursorFactory.class, factory, "filter", filter);
+            setField(baseClass, factory, "filter", filter);
+            setField(baseClass, factory, "symbolFunc", symbolFunc);
 
             factory.close();
             Assert.assertEquals(1, parentCloseCount.get());
-            Assert.assertEquals(1, cursorCloseCount.get());
             Assert.assertEquals(1, filter.closeCount);
+            Assert.assertEquals(1, symbolFunc.closeCount);
         });
     }
 

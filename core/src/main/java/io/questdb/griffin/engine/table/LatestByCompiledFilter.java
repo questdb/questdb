@@ -77,11 +77,15 @@ public class LatestByCompiledFilter extends BooleanFunction implements UnaryFunc
     ) {
         assert rowHi > rowLo && rowHi - rowLo <= BATCH_SIZE;
         if (filter instanceof LatestByCompiledFilter jit) {
-            PageFrameMemory memory = memoryPool.navigateTo(frameIndex);
-            if (!memory.hasColumnTops() && !memory.hasColumnTypeCasts()) {
-                AsyncFilterUtils.applyCompiledFilter(jit.compiledFilter, jit.bindVarMemory, jit.bindVarFunctions,
-                        memory, addressCache, jit.dataAddresses, jit.auxAddresses, jit.filteredRows, rowLo, rowHi - rowLo);
-                return jit.filteredRows;
+            try {
+                PageFrameMemory memory = memoryPool.navigateTo(frameIndex);
+                if (!memory.hasColumnTops() && !memory.hasColumnTypeCasts()) {
+                    AsyncFilterUtils.applyCompiledFilter(jit.compiledFilter, jit.bindVarMemory, jit.bindVarFunctions,
+                            memory, addressCache, jit.dataAddresses, jit.auxAddresses, jit.filteredRows, rowLo, rowHi - rowLo);
+                    return jit.filteredRows;
+                }
+            } finally {
+                memoryPool.releaseFrameMemory();
             }
         }
         return null;

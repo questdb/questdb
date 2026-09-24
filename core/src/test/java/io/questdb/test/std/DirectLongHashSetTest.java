@@ -25,6 +25,7 @@
 package io.questdb.test.std;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongHashSet;
@@ -324,6 +325,32 @@ public class DirectLongHashSetTest {
                 Assert.assertEquals(32, set.capacity());
                 set.add(16);
                 Assert.assertEquals(64, set.capacity());
+            }
+        });
+    }
+
+    @Test
+    public void testResizeLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectLongHashSet set = new DirectLongHashSet(4, 0.5, MemoryTag.NATIVE_DEFAULT, 1, true)) {
+                final int capacity = set.capacity();
+                long value = 1;
+                while (set.capacity() == capacity) {
+                    Assert.assertTrue(set.add(value++));
+                }
+                Assert.assertEquals(2 * capacity, set.capacity());
+                try {
+                    for (; ; ) {
+                        Assert.assertTrue(set.add(value++));
+                    }
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 1 resizes exceeded in long set");
+                }
+                Assert.assertEquals(2 * capacity, set.capacity());
+                Assert.assertEquals(value - 1, set.size());
+                for (long v = 1; v < value; v++) {
+                    Assert.assertTrue(set.contains(v));
+                }
             }
         });
     }

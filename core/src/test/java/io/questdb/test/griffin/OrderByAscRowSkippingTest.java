@@ -28,7 +28,6 @@ import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
@@ -916,7 +915,7 @@ public class OrderByAscRowSkippingTest extends AbstractCairoTest {
         return new PageFrameRecordCursorFactory(
                 engine.getConfiguration(),
                 metadata,
-                new FullPartitionFrameCursorFactory(metadata.getTableToken(), reader.getMetadataVersion(), TableUtils.ANY_TABLE_VERSION, GenericRecordMetadata.copyOf(metadata), PartitionFrameCursorFactory.ORDER_ASC, null, 0, false),
+                new FullPartitionFrameCursorFactory(metadata.getTableToken(), reader.getMetadataVersion(), GenericRecordMetadata.copyOf(metadata), PartitionFrameCursorFactory.ORDER_ASC, null, 0, false),
                 new PageFrameRowCursorFactory(PartitionFrameCursorFactory.ORDER_ASC),
                 false,
                 null,

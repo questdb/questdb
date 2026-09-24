@@ -131,7 +131,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                         IndexReader.DIR_FORWARD,
                         null
                 );
-                try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false)) {
+                try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false)) {
                     // entity index
                     final IntList columnIndexes = new IntList();
                     final IntList columnSizes = new IntList();
@@ -911,7 +911,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 final IntList columnSizes = new IntList();
                 populateColumnTypes(metadata, columnIndexes, columnSizes);
 
-                try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false)) {
+                try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false)) {
                     PageFrameRowCursorFactory rowCursorFactory = new PageFrameRowCursorFactory(ORDER_ASC); // stub RowCursorFactory
                     try (PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
                             configuration,
@@ -981,7 +981,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 tableToken = reader.getTableToken();
             }
             final RowCursorFactory rowFactory = new PageFrameRowCursorFactory(order);
-            try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, TableUtils.ANY_TABLE_VERSION, metadata, order, null, 0, false)) {
+            try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata, order, null, 0, false)) {
                 // entity index
                 final IntList columnIndexes = new IntList();
                 final IntList columnSizes = new IntList();
@@ -1115,7 +1115,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                         IndexReader.DIR_FORWARD,
                         null
                 );
-                try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false)) {
+                try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false)) {
                     // entity index
                     final IntList columnIndexes = new IntList();
                     final IntList columnSizes = new IntList();
@@ -1231,7 +1231,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         );
         final RowCursorFactory rowFactory = new PageFrameRowCursorFactory(order);
         try (IntervalPartitionFrameCursorFactory frameFactory = new IntervalPartitionFrameCursorFactory(
-                tableToken, TableUtils.ANY_TABLE_VERSION, TableUtils.ANY_TABLE_VERSION, intervalModel, timestampIndex, metadata, order, null, 0, false
+                tableToken, TableUtils.ANY_TABLE_VERSION, intervalModel, timestampIndex, metadata, order, null, 0, false
         )) {
             final IntList columnIndexes = new IntList();
             final IntList columnSizes = new IntList();
@@ -1322,7 +1322,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 final IntList columnSizes = new IntList();
                 populateColumnTypes(metadata, columnIndexes, columnSizes);
 
-                try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tt, TableUtils.ANY_TABLE_VERSION, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false)) {
+                try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tt, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false)) {
                     PageFrameRowCursorFactory rowCursorFactory = new PageFrameRowCursorFactory(ORDER_ASC); // stub RowCursorFactory
                     try (PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
                             configuration,

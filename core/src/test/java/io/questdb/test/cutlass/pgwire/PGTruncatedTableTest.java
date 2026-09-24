@@ -46,10 +46,16 @@ public class PGTruncatedTableTest extends BasePGTest {
                     );
                     PreparedStatement indexed = connection.prepareStatement(
                             "SELECT g, v FROM t WHERE g = 'aa' OR g = 'bb' LATEST ON ts PARTITION BY g"
-                    )
+                    );
+                    PreparedStatement indexedKey = connection.prepareStatement("SELECT g, v FROM t WHERE g = 'aa'");
+                    PreparedStatement indexedList = connection.prepareStatement("SELECT g, v FROM t WHERE g IN ('aa', 'bb')");
+                    PreparedStatement jitFiltered = connection.prepareStatement("SELECT g, v FROM t WHERE status = 'target'")
             ) {
                 assertQueryResult(filtered, "g[VARCHAR],v[BIGINT]\naa,10\n");
                 assertQueryResult(indexed, "g[VARCHAR],v[BIGINT]\naa,10\nbb,20\n");
+                assertQueryResult(indexedKey, "g[VARCHAR],v[BIGINT]\naa,10\n");
+                assertQueryResult(indexedList, "g[VARCHAR],v[BIGINT]\naa,10\nbb,20\n");
+                assertQueryResult(jitFiltered, "g[VARCHAR],v[BIGINT]\naa,10\n");
                 execute("TRUNCATE TABLE t");
                 execute("""
                         INSERT INTO t VALUES
@@ -60,6 +66,9 @@ public class PGTruncatedTableTest extends BasePGTest {
                         """);
                 assertQueryResult(filtered, "g[VARCHAR],v[BIGINT]\naa,50\nbb,60\n");
                 assertQueryResult(indexed, "g[VARCHAR],v[BIGINT]\naa,50\nbb,60\n");
+                assertQueryResult(indexedKey, "g[VARCHAR],v[BIGINT]\naa,50\n");
+                assertQueryResult(indexedList, "g[VARCHAR],v[BIGINT]\naa,50\nbb,60\n");
+                assertQueryResult(jitFiltered, "g[VARCHAR],v[BIGINT]\naa,50\nbb,60\n");
             }
         });
     }

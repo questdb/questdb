@@ -711,7 +711,6 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
         return new FullPartitionFrameCursorFactory(
                 tableToken,
                 TableUtils.ANY_TABLE_VERSION,
-                TableUtils.ANY_TABLE_VERSION,
                 metadata,
                 ORDER_ASC,
                 null,
@@ -755,7 +754,6 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
                 metadata,
                 new IntervalPartitionFrameCursorFactory(
                         tableToken,
-                        TableUtils.ANY_TABLE_VERSION,
                         TableUtils.ANY_TABLE_VERSION,
                         new RuntimeIntervalModel(
                                 ColumnType.getTimestampDriver(metadata.getTimestampType()),

@@ -249,6 +249,50 @@ public class LatestByParquetTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testLatestOnJitOverParquetKeepsOneDecodedFrame() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 0);
+            setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 3 * 1024 * 1024L);
+            execute("""
+                    CREATE TABLE t AS (
+                      SELECT x id, (x % 13)::INT k, (x % 10)::INT v, x::TIMESTAMP ts FROM long_sequence(300_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("INSERT INTO t VALUES (0, 0, 0, '1970-01-02')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'");
+            assertQuery("SELECT count() FROM table_partitions('t') WHERE isParquet")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n1\n");
+            final String query = "SELECT * FROM t WHERE v > 2 AND v < 8 LATEST ON ts PARTITION BY k";
+            final int jitMode = sqlExecutionContext.getJitMode();
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            try {
+                assertPlanContains(query, "jit: true");
+                assertQuery(query).noLeakCheck().timestamp("ts").sizeMayVary().returns("""
+                        id\tk\tv\tts
+                        299965\t3\t5\t1970-01-01T00:00:00.299965Z
+                        299966\t4\t6\t1970-01-01T00:00:00.299966Z
+                        299975\t0\t5\t1970-01-01T00:00:00.299975Z
+                        299976\t1\t6\t1970-01-01T00:00:00.299976Z
+                        299977\t2\t7\t1970-01-01T00:00:00.299977Z
+                        299985\t10\t5\t1970-01-01T00:00:00.299985Z
+                        299986\t11\t6\t1970-01-01T00:00:00.299986Z
+                        299987\t12\t7\t1970-01-01T00:00:00.299987Z
+                        299993\t5\t3\t1970-01-01T00:00:00.299993Z
+                        299994\t6\t4\t1970-01-01T00:00:00.299994Z
+                        299995\t7\t5\t1970-01-01T00:00:00.299995Z
+                        299996\t8\t6\t1970-01-01T00:00:00.299996Z
+                        299997\t9\t7\t1970-01-01T00:00:00.299997Z
+                        """);
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
+            }
+        });
+    }
+
     private void assertParquetPartitionCount(int expected) throws Exception {
         assertQuery("SELECT count() FROM table_partitions('x') WHERE isParquet")
                 .noLeakCheck().noRandomAccess().expectSize()
