@@ -2071,6 +2071,40 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testMetricsPersistenceExcludeAcceptsEmptyValue() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.METRICS_PERSIST_ENABLED.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath(), "");
+
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        TestUtils.assertEquals("", configuration.getMetricsConfiguration().getPersistExclude());
+    }
+
+    @Test
+    public void testMetricsPersistenceExcludeRejectsInvalidEnvironmentValue() throws Exception {
+        final Map<String, String> env = new HashMap<>();
+        env.put(PropertyKey.METRICS_PERSIST_EXCLUDE.getEnvVarName(), "worker_pool_fiber_(");
+        try {
+            newPropServerConfiguration(root, new Properties(), env, new BuildInformationHolder());
+            Assert.fail("expected ServerConfigurationException");
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath());
+        }
+    }
+
+    @Test
+    public void testMetricsPersistenceExcludeRejectsInvalidValues() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath(), "worker_pool_fiber_(");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_EXCLUDE);
+        properties.setProperty(PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath(), "[");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_EXCLUDE);
+        properties.setProperty(PropertyKey.METRICS_PERSIST_ENABLED.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath(), "*foo");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_EXCLUDE);
+    }
+
+    @Test
     public void testMetricsPersistenceTtlRejectsInvalidEnvironmentValue() throws Exception {
         final Map<String, String> env = new HashMap<>();
         env.put(PropertyKey.METRICS_PERSIST_TTL.getEnvVarName(), "7 DAYZ");

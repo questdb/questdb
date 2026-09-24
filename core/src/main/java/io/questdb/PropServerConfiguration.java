@@ -136,6 +136,8 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 
@@ -964,6 +966,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             throw ServerConfigurationException.forInvalidKey(
                     PropertyKey.METRICS_PERSIST_TTL.getPropertyPath(),
                     metricsPersistTtl
+            );
+        }
+        try {
+            Pattern.compile(metricsPersistExclude);
+        } catch (PatternSyntaxException e) {
+            throw ServerConfigurationException.forInvalidKey(
+                    PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath(),
+                    metricsPersistExclude
             );
         }
         this.metrics = metricsEnabled || metricsPersistEnabled
