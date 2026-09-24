@@ -70,15 +70,22 @@ import static io.questdb.tasks.TableWriterTask.getCommandName;
  * <p>
  * A swap this job hands to a busy writer's command queue takes ownership of the staging directory the build filled.
  * An in-flight record suppresses any further work on the WHOLE logical partition while the writer instance that
- * received the command remains live and the logical partition's {@code _txn} state stays unchanged.
+ * received the command remains live and the command's own target - the folder it rewrites, or for a MERGE the run
+ * it replaces - still has the identity the staging directory is named after.
  */
 public class PartitionCompactionScanJob extends SynchronizedJob implements Closeable {
-    private static final int IN_FLIGHT_EXPIRY_OFFSET = 3;
+    private static final int IN_FLIGHT_EXPIRY_OFFSET = 5;
     private static final int IN_FLIGHT_LOGICAL_TIMESTAMP_OFFSET = 1;
-    private static final int IN_FLIGHT_STATE_OFFSET = 2;
-    private static final int IN_FLIGHT_STRIDE = 5;
+    private static final int IN_FLIGHT_STRIDE = 7;
     private static final int IN_FLIGHT_TABLE_ID_OFFSET = 0;
-    private static final int IN_FLIGHT_WRITER_ID_OFFSET = 4;
+    // A single-folder command's target generation (see collectFolders); a MERGE's folder count.
+    private static final int IN_FLIGHT_TARGET_GENERATION_OFFSET = 4;
+    // A single-folder command's target name txn; a MERGE's first folder name txn.
+    private static final int IN_FLIGHT_TARGET_NAME_TXN_OFFSET = 3;
+    // A single-folder command's target folder start, or IN_FLIGHT_WHOLE_RUN_TARGET for a MERGE.
+    private static final int IN_FLIGHT_TARGET_TIMESTAMP_OFFSET = 2;
+    private static final long IN_FLIGHT_WHOLE_RUN_TARGET = Long.MIN_VALUE;
+    private static final int IN_FLIGHT_WRITER_ID_OFFSET = 6;
     private static final Log LOG = LogFactory.getLog(PartitionCompactionScanJob.class);
     // Longs per folder in the scan's own folders list - see collectFolders. One word narrower than
     // CompositePartitionSwapCommand.LONGS_PER_FOLDER: a swap re-checks the folder's column version too, and
@@ -114,7 +121,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private final LongList folders = new LongList();
     private final PartitionGeometry geometry = new PartitionGeometry();
     private final long idleTimeoutMicros;
-    // Sorted by (tableId, logicalPartitionTimestamp), five longs per record.
+    // Sorted by (tableId, logicalPartitionTimestamp), IN_FLIGHT_STRIDE longs per record.
     private final LongList inFlightSwaps = new LongList();
     private final long ioBudget;
     private final IntHashSet liveTableIds = new IntHashSet();
@@ -261,6 +268,22 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             return -1;
         }
         return partitionIndex;
+    }
+
+    /**
+     * A folder's generation: a composite folder's writer txn, a parquet folder's file size, zero for a plain one.
+     * Together with its name txn it names the staging directory a single-folder rebuild fills.
+     */
+    private static long folderGeneration(TxReader txFile, PartitionGeometry partitionGeometry, int partitionIndex) {
+        if (txFile.isPartitionComposite(partitionIndex)) {
+            partitionGeometry.resolve(partitionIndex);
+            return partitionGeometry.getWriterTxn(partitionIndex);
+        }
+        if (txFile.isPartitionParquet(partitionIndex)) {
+            return txFile.getPartitionParquetFileSize(partitionIndex);
+        }
+        // A plain folder has no generation of its own; its name txn and row count are its identity.
+        return 0;
     }
 
     /**
@@ -624,19 +647,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private void collectFolders(TxReader txFile, PartitionGeometry partitionGeometry, int lo, int hi) {
         folders.clear();
         for (int partitionIndex = lo; partitionIndex < hi; partitionIndex++) {
-            final long generation;
-            if (txFile.isPartitionComposite(partitionIndex)) {
-                partitionGeometry.resolve(partitionIndex);
-                generation = partitionGeometry.getWriterTxn(partitionIndex);
-            } else if (txFile.isPartitionParquet(partitionIndex)) {
-                generation = txFile.getPartitionParquetFileSize(partitionIndex);
-            } else {
-                // A plain folder has no generation of its own; its name txn and row count are its identity.
-                generation = 0;
-            }
             folders.add(txFile.getPartitionTimestampByIndex(partitionIndex));
             folders.add(txFile.getPartitionNameTxn(partitionIndex));
-            folders.add(generation);
+            folders.add(folderGeneration(txFile, partitionGeometry, partitionIndex));
             folders.add(txFile.getPartitionSize(partitionIndex));
         }
     }
@@ -725,6 +738,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     ) {
         final CompositePartitionSwapCommand command;
         final TimestampDriver timestampDriver;
+        final long srcNameTxn;
+        final long writerTxn;
         try (TableReader reader = engine.getReader(tableToken)) {
             if (readerLogicalPartitionState(reader, logicalPartitionTimestamp) != expectedState) {
                 return;
@@ -736,8 +751,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             timestampDriver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
             reader.getGeometry().resolve(partitionIndex);
             // Hoisted: every value the chain below prints is read before the ring slot is taken.
-            final long srcNameTxn = reader.getTxFile().getPartitionNameTxn(partitionIndex);
-            final long writerTxn = reader.getGeometry().getWriterTxn(partitionIndex);
+            srcNameTxn = reader.getTxFile().getPartitionNameTxn(partitionIndex);
+            writerTxn = reader.getGeometry().getWriterTxn(partitionIndex);
             final int pieceCount = reader.getGeometry().getPieceCount(partitionIndex);
             final long liveRows = reader.getTxFile().getPartitionSize(partitionIndex);
             final long physicalRows = reader.getGeometry().getE(partitionIndex);
@@ -757,7 +772,16 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                     .I$();
             return;
         }
-        publishCommand(tableToken, logicalPartitionTimestamp, expectedState, command, "composite partition REWRITE", timestampDriver, partitionTimestamp);
+        publishCommand(
+                tableToken,
+                logicalPartitionTimestamp,
+                partitionTimestamp,
+                srcNameTxn,
+                writerTxn,
+                command,
+                "composite partition REWRITE",
+                timestampDriver
+        );
     }
 
     /**
@@ -768,6 +792,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private void dispatchMerge(TableToken tableToken, long logicalPartitionTimestamp, long expectedState) {
         final CompositePartitionSwapCommand command;
         final TimestampDriver timestampDriver;
+        final long firstNameTxn;
+        final int folderCount;
         try (TableReader reader = engine.getReader(tableToken)) {
             final TxReader txFile = reader.getTxFile();
             final int lo = findLogicalPartitionRunStart(txFile, logicalPartitionTimestamp);
@@ -775,6 +801,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 return;
             }
             final int hi = findLogicalPartitionRunEnd(txFile, lo, logicalPartitionTimestamp);
+            firstNameTxn = txFile.getPartitionNameTxn(lo);
+            folderCount = hi - lo;
             collectFolders(txFile, reader.getGeometry(), lo, hi);
             if (logicalPartitionState(folders) != expectedState) {
                 // The logical partition moved between the scan's _txn snapshot and this reader's.
@@ -795,7 +823,18 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                     .I$();
             command = buildMergedLogicalPartition(tableToken, reader, lo, hi, logicalPartitionTimestamp, folders, liveRows);
         }
-        publishCommand(tableToken, logicalPartitionTimestamp, expectedState, command, "logical partition MERGE", timestampDriver, logicalPartitionTimestamp);
+        // The staging directory is named after the run's first name txn and its folder count, so those are what
+        // the in-flight record has to outlive - see prunePendingSwaps.
+        publishCommand(
+                tableToken,
+                logicalPartitionTimestamp,
+                IN_FLIGHT_WHOLE_RUN_TARGET,
+                firstNameTxn,
+                folderCount,
+                command,
+                "logical partition MERGE",
+                timestampDriver
+        );
     }
 
     /**
@@ -813,6 +852,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     ) {
         final CompositePartitionSwapCommand command = new CompositePartitionSwapCommand();
         final TimestampDriver timestampDriver;
+        final long srcNameTxn;
+        final long writerTxn;
         try (TableReader reader = engine.getReader(tableToken)) {
             if (readerLogicalPartitionState(reader, logicalPartitionTimestamp) != expectedState) {
                 return;
@@ -831,8 +872,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 return;
             }
             // Hoisted: every value the chain below prints is read before the ring slot is taken.
-            final long srcNameTxn = reader.getTxFile().getPartitionNameTxn(partitionIndex);
-            final long writerTxn = reader.getGeometry().getWriterTxn(partitionIndex);
+            srcNameTxn = reader.getTxFile().getPartitionNameTxn(partitionIndex);
+            writerTxn = reader.getGeometry().getWriterTxn(partitionIndex);
             final long liveRows = reader.getTxFile().getPartitionSize(partitionIndex);
             final long physicalRows = reader.getGeometry().getE(partitionIndex);
             LOG.info().$("compaction sweep is trimming a composite partition, MAKE-PLAIN [table=").$(tableToken)
@@ -853,7 +894,16 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         }
         // This reader has to be gone before the writer runs: MAKE-PLAIN waits for the readers that still
         // resolve the geometry record it is about to retire, and this one is holding exactly that record.
-        publishCommand(tableToken, logicalPartitionTimestamp, expectedState, command, "composite partition MAKE-PLAIN", timestampDriver, partitionTimestamp);
+        publishCommand(
+                tableToken,
+                logicalPartitionTimestamp,
+                partitionTimestamp,
+                srcNameTxn,
+                writerTxn,
+                command,
+                "composite partition MAKE-PLAIN",
+                timestampDriver
+        );
     }
 
     /**
@@ -863,6 +913,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private void dispatchParquet(TableToken tableToken, long logicalPartitionTimestamp, long partitionTimestamp, long expectedState) {
         final ParquetPartitionSwapCommand command;
         final TimestampDriver timestampDriver;
+        final long srcNameTxn;
+        final long parquetFileSize;
         try (TableReader reader = engine.getReader(tableToken)) {
             if (readerLogicalPartitionState(reader, logicalPartitionTimestamp) != expectedState) {
                 return;
@@ -873,8 +925,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 return;
             }
             timestampDriver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
-            final long srcNameTxn = txFile.getPartitionNameTxn(partitionIndex);
-            final long parquetFileSize = txFile.getPartitionParquetFileSize(partitionIndex);
+            srcNameTxn = txFile.getPartitionNameTxn(partitionIndex);
+            parquetFileSize = txFile.getPartitionParquetFileSize(partitionIndex);
             LOG.info().$("compaction sweep is rebuilding a parquet partition [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                     .$(", nameTxn=").$(srcNameTxn)
@@ -882,7 +934,16 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                     .I$();
             command = buildCompactedParquet(tableToken, reader, partitionIndex, partitionTimestamp);
         }
-        publishCommand(tableToken, logicalPartitionTimestamp, expectedState, command, "parquet partition rebuild", timestampDriver, partitionTimestamp);
+        publishCommand(
+                tableToken,
+                logicalPartitionTimestamp,
+                partitionTimestamp,
+                srcNameTxn,
+                parquetFileSize,
+                command,
+                "parquet partition rebuild",
+                timestampDriver
+        );
     }
 
     /**
@@ -1014,6 +1075,33 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
+     * Whether the target of the in-flight record at {@code offset} still has the identity its staging directory is
+     * named after, in the {@code _txn} snapshot {@link #txReader} holds. A single-folder command (REWRITE,
+     * MAKE-PLAIN, parquet rebuild) targets one folder by its start, name txn and generation. A MERGE targets the
+     * whole run, named by its first folder's name txn and its folder count.
+     */
+    private boolean isInFlightTargetUnchanged(int offset, TableToken tableToken, int timestampType, int partitionBy) {
+        final long targetTimestamp = inFlightSwaps.getQuick(offset + IN_FLIGHT_TARGET_TIMESTAMP_OFFSET);
+        final long targetNameTxn = inFlightSwaps.getQuick(offset + IN_FLIGHT_TARGET_NAME_TXN_OFFSET);
+        final long targetGeneration = inFlightSwaps.getQuick(offset + IN_FLIGHT_TARGET_GENERATION_OFFSET);
+        if (targetTimestamp == IN_FLIGHT_WHOLE_RUN_TARGET) {
+            final long logicalPartitionTimestamp = inFlightSwaps.getQuick(offset + IN_FLIGHT_LOGICAL_TIMESTAMP_OFFSET);
+            final int lo = findLogicalPartitionRunStart(txReader, logicalPartitionTimestamp);
+            return lo > -1
+                    && txReader.getPartitionNameTxn(lo) == targetNameTxn
+                    && findLogicalPartitionRunEnd(txReader, lo, logicalPartitionTimestamp) - lo == targetGeneration;
+        }
+        final int partitionIndex = txReader.getPartitionIndex(targetTimestamp);
+        if (partitionIndex < 0 || txReader.getPartitionNameTxn(partitionIndex) != targetNameTxn) {
+            return false;
+        }
+        if (txReader.isPartitionComposite(partitionIndex)) {
+            openGeometry(tableToken, timestampType, partitionBy);
+        }
+        return folderGeneration(txReader, geometry, partitionIndex) == targetGeneration;
+    }
+
+    /**
      * Reports whether a Parquet partition is a compaction candidate: idle - not written to for {@link
      * #idleTimeoutMicros}, the same window the composite branch applies to {@code lastWriteMicros} - and either
      * holding ANY dead space or carrying a schema the table has moved on from (see {@link #isParquetSchemaStale}),
@@ -1140,8 +1228,12 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
 
     /**
      * Drops this table's in-flight records whose swap is done or gone: the writer instance that took the command
-     * is no longer the table's, or the logical partition's {@code _txn} state has moved on - which is what landing
-     * the swap does, and also what any ingestion into it does.
+     * is no longer the table's, or the command's own target has moved on (see {@link #isInFlightTargetUnchanged})
+     * - which is what landing the swap does.
+     * <p>
+     * A change to any OTHER folder of the logical partition does not drop the record. The staging directory is
+     * named after the target alone, so while the target keeps its identity a rebuild would clear and refill the
+     * very directory the queued command is about to rename into place, and the command re-checks only its target.
      */
     private void prunePendingSwaps(TableToken tableToken, int timestampType, int partitionBy) {
         int recordIndex = findPendingSwap(tableToken.getTableId(), Long.MIN_VALUE);
@@ -1156,15 +1248,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 removePendingSwap(recordIndex);
                 continue;
             }
-            final long logicalPartitionTimestamp = inFlightSwaps.getQuick(offset + IN_FLIGHT_LOGICAL_TIMESTAMP_OFFSET);
-            final int lo = findLogicalPartitionRunStart(txReader, logicalPartitionTimestamp);
-            if (lo < 0) {
-                removePendingSwap(recordIndex);
-                continue;
-            }
-            openGeometry(tableToken, timestampType, partitionBy);
-            collectFolders(txReader, geometry, lo, findLogicalPartitionRunEnd(txReader, lo, logicalPartitionTimestamp));
-            if (inFlightSwaps.getQuick(offset + IN_FLIGHT_STATE_OFFSET) != logicalPartitionState(folders)) {
+            if (!isInFlightTargetUnchanged(offset, tableToken, timestampType, partitionBy)) {
                 removePendingSwap(recordIndex);
                 continue;
             }
@@ -1179,11 +1263,12 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private void publishCommand(
             TableToken tableToken,
             long logicalPartitionTimestamp,
-            long state,
+            long targetTimestamp,
+            long targetNameTxn,
+            long targetGeneration,
             AsyncWriterCommand command,
             String what,
-            TimestampDriver timestampDriver,
-            long partitionTimestamp
+            TimestampDriver timestampDriver
     ) {
         boolean applied;
         publishedWriterId = -1;
@@ -1193,9 +1278,18 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 command.apply(writer, true);
             } else {
                 // The pool captured this id before publishing while its close fence held the writer live.
-                rememberPendingSwap(tableToken.getTableId(), logicalPartitionTimestamp, state, publishedWriterId, clock.getTicks());
+                rememberPendingSwap(
+                        tableToken.getTableId(),
+                        logicalPartitionTimestamp,
+                        targetTimestamp,
+                        targetNameTxn,
+                        targetGeneration,
+                        publishedWriterId,
+                        clock.getTicks()
+                );
             }
         }
+        final long partitionTimestamp = targetTimestamp == IN_FLIGHT_WHOLE_RUN_TARGET ? logicalPartitionTimestamp : targetTimestamp;
         LOG.info().$(what).$(" handed over [table=").$(tableToken)
                 .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                 .$(", appliedInline=").$(applied)
@@ -1240,7 +1334,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private void rememberPendingSwap(
             int tableId,
             long logicalPartitionTimestamp,
-            long state,
+            long targetTimestamp,
+            long targetNameTxn,
+            long targetGeneration,
             long writerId,
             long nowMicros
     ) {
@@ -1253,7 +1349,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         final int offset = recordIndex * IN_FLIGHT_STRIDE;
         inFlightSwaps.setQuick(offset + IN_FLIGHT_TABLE_ID_OFFSET, tableId);
         inFlightSwaps.setQuick(offset + IN_FLIGHT_LOGICAL_TIMESTAMP_OFFSET, logicalPartitionTimestamp);
-        inFlightSwaps.setQuick(offset + IN_FLIGHT_STATE_OFFSET, state);
+        inFlightSwaps.setQuick(offset + IN_FLIGHT_TARGET_TIMESTAMP_OFFSET, targetTimestamp);
+        inFlightSwaps.setQuick(offset + IN_FLIGHT_TARGET_NAME_TXN_OFFSET, targetNameTxn);
+        inFlightSwaps.setQuick(offset + IN_FLIGHT_TARGET_GENERATION_OFFSET, targetGeneration);
         inFlightSwaps.setQuick(offset + IN_FLIGHT_EXPIRY_OFFSET, nowMicros + MAX_IN_FLIGHT_MICROS);
         inFlightSwaps.setQuick(offset + IN_FLIGHT_WRITER_ID_OFFSET, writerId);
     }

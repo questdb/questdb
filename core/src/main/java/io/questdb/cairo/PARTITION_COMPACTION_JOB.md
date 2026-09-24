@@ -94,17 +94,20 @@ snapshot, holding no writer, exactly as a REWRITE does. The writer only runs the
 `engine.getWriterOrPublishCommand` decides how the result lands. An idle writer applies the swap inline on
 the sweep thread. A busy writer instead gets the command queued onto its own `TableWriterTask` queue and
 applies it on its own thread via `tick()`. The pool captures that writer's monotonic instance id while its
-publish fence holds the writer live. The sweep records five longs, sorted by table and LOGICAL partition:
-`(tableId, logicalPartitionTimestamp, state, expiry, writerId)`, where `state` folds the whole run of folders
-- each one's start, name txn, generation and row count - into one word.
+publish fence holds the writer live. The sweep records seven longs, sorted by table and LOGICAL partition:
+`(tableId, logicalPartitionTimestamp, targetTimestamp, targetNameTxn, targetGeneration, expiry, writerId)`.
+The target is what the command's staging directory is named after: for a single-folder command the folder's
+start, name txn and generation; for a MERGE a whole-run marker, the first folder's name txn and the folder count.
 
 The record stands down the sweep on EVERY folder of that logical partition, not just the one the swap was
 built from: rebuilding a sibling would take the writer's queued command down a path that no longer matches
 what it is about to rename. At most one swap per logical partition is therefore outstanding, and folders that
 each deserve their own compaction take their turns one sweep after another.
 
-When the job next visits the table, it prunes records whose logical partition state has moved on - which is
-what landing the swap does, and also what any ingestion into it does. A closed, distressed, evicted, or
+When the job next visits the table, it prunes records whose target has moved on - which is what landing the
+swap does. A write into a DIFFERENT folder of the same logical partition does not prune the record: while the
+target keeps its identity, a rebuild would clear and refill the very staging directory the queued command is
+about to rename, and the command re-checks only its target, so it would publish a half-built copy. A closed, distressed, evicted, or
 replaced writer also invalidates its records, and every sweep removes records for dropped tables. Records
 belonging to existing tables skipped because a sweep spent its budget remain untouched. No staging-directory
 existence check participates: it cannot establish command ownership safely.

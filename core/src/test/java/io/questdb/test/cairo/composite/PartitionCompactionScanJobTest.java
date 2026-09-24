@@ -43,6 +43,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.std.datetime.Clock;
@@ -55,6 +56,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Coverage for {@link PartitionCompactionScanJob}: the interval gate on its own (mirroring
@@ -1569,6 +1571,118 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
             assertQuery("SELECT count() c FROM x").noRandomAccess().expectSize().returns("c\n" + expectedCount + "\n");
+        });
+    }
+
+    @Test
+    public void testScanKeepsAQueuedRewriteWhenASiblingSplitChanges() throws Exception {
+        // A REWRITE of the day's front folder F is queued on a busy writer, which then commits into F's sibling
+        // split G without ticking. The next sweep must not rebuild F into the staging directory the queued
+        // command still owns: that command re-checks only F, so it would rename a half-built copy into place.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+
+        final ObjList<String> dayStagingMkdirs = new ObjList<>();
+        final AtomicReference<TableWriter> tickOnStagingOpen = new AtomicReference<>();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                if (Utf8s.containsAscii(path, "/2020-01-01") && Utf8s.containsAscii(path, TableUtils.COMPACTING_DIR_MARKER)) {
+                    dayStagingMkdirs.add(path.toString());
+                }
+                return super.mkdirs(path, mode);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                // Lands the queued command mid-copy, the way the writer's own thread would, should a rebuild
+                // ever start filling the staging directory that command owns.
+                if (Utf8s.containsAscii(name, TableUtils.COMPACTING_DIR_MARKER) && Utf8s.endsWithAscii(name, "/ts.d")) {
+                    final TableWriter writer = tickOnStagingOpen.getAndSet(null);
+                    if (writer != null) {
+                        writer.tick(false);
+                    }
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            execute("CREATE TABLE x AS (SELECT x::INT i," +
+                    " timestamp_sequence('2020-01-01', 15*1000000L) ts FROM long_sequence(5760))" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT x::INT + 30000 i," +
+                    " timestamp_sequence('2020-01-02', 15*1000000L) ts FROM long_sequence(5760)");
+            execute("INSERT INTO x SELECT x::INT + 90000 i," +
+                    " timestamp_sequence('2020-01-03', 60*1000000L) ts FROM long_sequence(50)");
+            drainWalQueue();
+            // Splits 2020-01-01: F is the front folder, G the sibling split.
+            execute("INSERT INTO x SELECT x::INT + 70000 i," +
+                    " timestamp_sequence('2020-01-01T22:00:07', 5*1000000L) ts FROM long_sequence(200)");
+            drainWalQueue();
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            // Makes 2020-01-02 an older idle composite day, so the writer's own per-commit compaction on the
+            // commit into G picks it rather than F.
+            execute("INSERT INTO x SELECT x::INT + 40000 i," +
+                    " timestamp_sequence('2020-01-02T04:00:07', 5*1000000L) ts FROM long_sequence(200)");
+            drainWalQueue();
+            setCurrentMicros(currentMicros + 10 * Micros.MINUTE_MICROS);
+            // Makes F composite.
+            execute("INSERT INTO x SELECT x::INT + 50000 i," +
+                    " timestamp_sequence('2020-01-01T04:00:07', 5*1000000L) ts FROM long_sequence(200)");
+            drainWalQueue();
+            engine.releaseAllReaders();
+
+            final TableToken token = engine.verifyTableName("x");
+            final long siblingTs;
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertTrue("F must be composite", tx.isPartitionComposite(0));
+                siblingTs = tx.getPartitionTimestampByIndex(1);
+                Assert.assertEquals("G must share F's day",
+                        MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"), tx.getLogicalPartitionTimestamp(siblingTs));
+            }
+            engine.releaseAllReaders();
+            final String fRangeQuery = "SELECT count() c, sum(i) s FROM x WHERE ts < " + siblingTs;
+            final StringSink expectedF = new StringSink();
+            TestUtils.printSql(engine, sqlExecutionContext, fRangeQuery, expectedF);
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:00:00.000000Z"));
+            final long interval = engine.getConfiguration().getPartitionCompactionCheckInterval() * 1000;
+            // Holding the writer makes every swap queue instead of applying inline.
+            try (TableWriter writer = engine.getWriter(token, "test");
+                 PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, ff, configuration.getMicrosecondClock())) {
+                setCurrentMicros(currentMicros + interval + 1);
+                job.run();
+                Assert.assertEquals("the first sweep must build F's REWRITE: " + dayStagingMkdirs, 1, dayStagingMkdirs.size());
+
+                // Commits into G through the busy writer, which does not tick its command queue.
+                final TableWriter.Row row = writer.newRow(siblingTs + 900_000);
+                row.putInt(0, 123_456);
+                row.append();
+                writer.commit();
+
+                tickOnStagingOpen.set(writer);
+                setCurrentMicros(currentMicros + interval + 1);
+                job.run();
+                Assert.assertEquals("F must not be rebuilt while its REWRITE is still queued: " + dayStagingMkdirs,
+                        1, dayStagingMkdirs.size());
+                Assert.assertEquals("F's in-flight record must survive a change to its sibling", 1, job.getPendingSwapMemoSize());
+                tickOnStagingOpen.set(null);
+                writer.tick(true);
+            }
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertFalse("the queued REWRITE must have landed on F", reader.getTxFile().isPartitionComposite(0));
+            }
+            assertQuery(fRangeQuery).noRandomAccess().expectSize().returns(expectedF.toString());
         });
     }
 
