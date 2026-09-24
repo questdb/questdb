@@ -24,16 +24,40 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.Numbers;
+import io.questdb.std.Vect;
+
 /**
  * Type driver for INTERVAL.
  * <p>
  * INTERVAL is an in-memory value type that is never persisted; the width is that of
- * its two-long value.
+ * its two-long value, and it is NULL when both longs are LONG_NULL.
  */
 public final class IntervalTypeDriver extends FixedSizeTypeDriver {
     public static final IntervalTypeDriver INSTANCE = new IntervalTypeDriver();
 
     private IntervalTypeDriver() {
         super(ColumnTypeTag.INTERVAL, 4);
+    }
+
+    @Override
+    public long getNullLong(int longIndex) {
+        return Numbers.LONG_NULL;
+    }
+
+    @Override
+    public boolean hasNullSentinel() {
+        return true;
+    }
+
+    @Override
+    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
+        return () -> dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL);
+    }
+
+    @Override
+    public void setNull(long addr, long count) {
+        Vect.setMemoryLong(addr, Numbers.LONG_NULL, count * 2);
     }
 }

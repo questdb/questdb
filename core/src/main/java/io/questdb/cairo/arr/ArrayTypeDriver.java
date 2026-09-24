@@ -547,6 +547,11 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public long getNullLong(int longIndex) {
+        return TableUtils.NULL_LEN;
+    }
+
+    @Override
     public ColumnTypeTag getTag() {
         return ColumnTypeTag.ARRAY;
     }

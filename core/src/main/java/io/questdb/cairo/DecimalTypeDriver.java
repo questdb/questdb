@@ -24,6 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.Decimals;
+import io.questdb.std.Vect;
+
 /**
  * Type driver for the stored decimal family: DECIMAL8 to DECIMAL256 are one type stored at
  * six widths, so they share one class with one instance per tag. Precision and scale are part
@@ -40,5 +44,55 @@ public final class DecimalTypeDriver extends FixedSizeTypeDriver {
 
     private DecimalTypeDriver(ColumnTypeTag tag, int pow2Width) {
         super(tag, pow2Width);
+    }
+
+    @Override
+    public long getNullLong(int longIndex) {
+        return switch (getPow2Width()) {
+            case 0 -> Decimals.DECIMAL8_NULL;
+            case 1 -> Decimals.DECIMAL16_NULL;
+            case 2 -> Decimals.DECIMAL32_NULL;
+            case 3 -> Decimals.DECIMAL64_NULL;
+            case 4 -> longIndex == 0 ? Decimals.DECIMAL128_HI_NULL : Decimals.DECIMAL128_LO_NULL;
+            case 5 -> switch (longIndex) {
+                case 0 -> Decimals.DECIMAL256_HH_NULL;
+                case 1 -> Decimals.DECIMAL256_HL_NULL;
+                case 2 -> Decimals.DECIMAL256_LH_NULL;
+                default -> Decimals.DECIMAL256_LL_NULL;
+            };
+            default -> throw new IllegalStateException("no decimal width " + getPow2Width());
+        };
+    }
+
+    @Override
+    public boolean hasNullSentinel() {
+        return true;
+    }
+
+    @Override
+    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
+        return switch (getPow2Width()) {
+            case 0 -> () -> dataMem.putByte(Decimals.DECIMAL8_NULL);
+            case 1 -> () -> dataMem.putShort(Decimals.DECIMAL16_NULL);
+            case 2 -> () -> dataMem.putInt(Decimals.DECIMAL32_NULL);
+            case 3 -> () -> dataMem.putLong(Decimals.DECIMAL64_NULL);
+            case 4 -> () -> dataMem.putDecimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
+            case 5 -> () -> dataMem.putDecimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
+            default -> throw new IllegalStateException("no decimal width " + getPow2Width());
+        };
+    }
+
+    @Override
+    public void setNull(long addr, long count) {
+        switch (getPow2Width()) {
+            case 0 -> Vect.memset(addr, count, Decimals.DECIMAL8_NULL);
+            case 1 -> Vect.setMemoryShort(addr, Decimals.DECIMAL16_NULL, count);
+            case 2 -> Vect.setMemoryInt(addr, Decimals.DECIMAL32_NULL, count);
+            case 3 -> Vect.setMemoryLong(addr, Decimals.DECIMAL64_NULL, count);
+            case 4 -> Vect.setMemoryLong128(addr, Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, count);
+            case 5 -> Vect.setMemoryLong256(addr, Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                    Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL, count);
+            default -> throw new IllegalStateException("no decimal width " + getPow2Width());
+        }
     }
 }

@@ -25,7 +25,7 @@
 package io.questdb.cairo.frm;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TypeDriver;
 
 /**
  * Used for partition squashing in {@link io.questdb.cairo.TableWriter}.
@@ -169,6 +169,7 @@ public class FrameAlgebra {
 
         int columnType = partitionColumn.getColumnType();
         short columnTypeTag = ColumnType.tagOf(columnType);
+        final TypeDriver typeDriver = ColumnType.getTypeDriver(columnType);
 
         return isColumnReplaceIdentical(
                 columnTypeTag,
@@ -185,10 +186,10 @@ public class FrameAlgebra {
                 commitDataAddr,
                 mergeIndexAddr,
                 mergeIndexRows,
-                TableUtils.getNullLong(columnTypeTag, 0),
-                TableUtils.getNullLong(columnTypeTag, 1),
-                TableUtils.getNullLong(columnTypeTag, 2),
-                TableUtils.getNullLong(columnTypeTag, 3)
+                typeDriver.getNullLong(0),
+                typeDriver.getNullLong(1),
+                typeDriver.getNullLong(2),
+                typeDriver.getNullLong(3)
         );
     }
 

@@ -24,6 +24,9 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.Vect;
+
 /**
  * Type driver for BYTE.
  */
@@ -32,5 +35,25 @@ public final class ByteTypeDriver extends FixedSizeTypeDriver {
 
     private ByteTypeDriver() {
         super(ColumnTypeTag.BYTE, 0);
+    }
+
+    @Override
+    public long getNullLong(int longIndex) {
+        return 0L;
+    }
+
+    @Override
+    public boolean hasNullSentinel() {
+        return false;
+    }
+
+    @Override
+    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
+        return () -> dataMem.putByte((byte) 0);
+    }
+
+    @Override
+    public void setNull(long addr, long count) {
+        Vect.memset(addr, count, 0);
     }
 }

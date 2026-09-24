@@ -24,6 +24,9 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.Vect;
+
 /**
  * Type driver for BOOLEAN.
  */
@@ -32,5 +35,25 @@ public final class BooleanTypeDriver extends FixedSizeTypeDriver {
 
     private BooleanTypeDriver() {
         super(ColumnTypeTag.BOOLEAN, 0);
+    }
+
+    @Override
+    public long getNullLong(int longIndex) {
+        return 0L;
+    }
+
+    @Override
+    public boolean hasNullSentinel() {
+        return false;
+    }
+
+    @Override
+    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
+        return () -> dataMem.putByte((byte) 0);
+    }
+
+    @Override
+    public void setNull(long addr, long count) {
+        Vect.memset(addr, count, 0);
     }
 }

@@ -47,6 +47,7 @@ import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.BoolList;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
@@ -152,6 +153,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     // width. Null until first type-cast read; invalidated when sourceColumnTypes changes.
     protected IntList typeCastArgs;
     protected ObjList<ColumnTypeConverter.Fixed2VarConverter> typeCastConverters;
+    protected BoolList typeCastHasNullSentinel;
     protected IntList typeCastWidth;
 
     public PageFrameMemoryRecord() {
@@ -914,6 +916,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             typeCastConverters = new ObjList<>();
             typeCastArgs = new IntList();
             typeCastWidth = new IntList();
+            typeCastHasNullSentinel = new BoolList();
         }
         final ColumnTypeConverter.Fixed2VarConverter converter =
                 ColumnTypeConverter.getFixedToVarConverter(srcType, dstType);
@@ -926,6 +929,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         }
         typeCastArgs.extendAndSet(columnIndex, args);
         typeCastWidth.extendAndSet(columnIndex, ColumnType.sizeOf(srcType));
+        typeCastHasNullSentinel.extendAndSet(columnIndex, ColumnType.getTypeDriver(srcType).hasNullSentinel());
         return converter;
     }
 
@@ -942,20 +946,20 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (address == 0) {
             return null; // column top
         }
-        // Only no-sentinel sources (BOOLEAN/BYTE/SHORT/CHAR) need the explicit column-top
-        // count: their column-top rows decode to an in-band 0/false the converter cannot tell
-        // from a real value. Sentinel sources store the column top as their null sentinel (and
-        // may also have scattered nulls), so the converter already returns null for them.
-        if (columnTops != null && ColumnType.isNoNullSentinelFixedType(srcType)
-                && rowIndex < columnTops.get(columnOffset + columnIndex)) {
-            return null;
-        }
-        sink.clear();
         ColumnTypeConverter.Fixed2VarConverter converter =
                 typeCastConverters != null ? typeCastConverters.getQuiet(columnIndex) : null;
         if (converter == null) {
             converter = cacheTypeCastConverter(columnIndex, srcType, ColumnType.STRING);
         }
+        // Only no-sentinel sources (BOOLEAN/BYTE/SHORT/CHAR) need the explicit column-top
+        // count: their column-top rows decode to an in-band 0/false the converter cannot tell
+        // from a real value. Sentinel sources store the column top as their null sentinel (and
+        // may also have scattered nulls), so the converter already returns null for them.
+        if (columnTops != null && !typeCastHasNullSentinel.get(columnIndex)
+                && rowIndex < columnTops.get(columnOffset + columnIndex)) {
+            return null;
+        }
+        sink.clear();
         final int args = typeCastArgs.getQuick(columnIndex);
         return converter.convert(
                 address + rowIndex * typeCastWidth.getQuick(columnIndex),
@@ -975,17 +979,17 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (address == 0) {
             return null; // column top
         }
-        // See convertFixedToStr: only no-sentinel sources need the explicit column-top count.
-        if (columnTops != null && ColumnType.isNoNullSentinelFixedType(srcType)
-                && rowIndex < columnTops.get(columnOffset + columnIndex)) {
-            return null;
-        }
-        sink.clear();
         ColumnTypeConverter.Fixed2VarConverter converter =
                 typeCastConverters != null ? typeCastConverters.getQuiet(columnIndex) : null;
         if (converter == null) {
             converter = cacheTypeCastConverter(columnIndex, srcType, ColumnType.VARCHAR);
         }
+        // See convertFixedToStr: only no-sentinel sources need the explicit column-top count.
+        if (columnTops != null && !typeCastHasNullSentinel.get(columnIndex)
+                && rowIndex < columnTops.get(columnOffset + columnIndex)) {
+            return null;
+        }
+        sink.clear();
         final int args = typeCastArgs.getQuick(columnIndex);
         return converter.convert(
                 address + rowIndex * typeCastWidth.getQuick(columnIndex),
@@ -1262,6 +1266,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             typeCastConverters.clear();
             typeCastArgs.clear();
             typeCastWidth.clear();
+            typeCastHasNullSentinel.clear();
         }
     }
 

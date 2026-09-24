@@ -24,6 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.Numbers;
+import io.questdb.std.Vect;
+
 /**
  * Type driver for FLOAT.
  */
@@ -32,5 +36,25 @@ public final class FloatTypeDriver extends FixedSizeTypeDriver {
 
     private FloatTypeDriver() {
         super(ColumnTypeTag.FLOAT, 2);
+    }
+
+    @Override
+    public long getNullLong(int longIndex) {
+        return Numbers.encodeLowHighInts(Float.floatToIntBits(Float.NaN), Float.floatToIntBits(Float.NaN));
+    }
+
+    @Override
+    public boolean hasNullSentinel() {
+        return true;
+    }
+
+    @Override
+    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
+        return () -> dataMem.putFloat(Float.NaN);
+    }
+
+    @Override
+    public void setNull(long addr, long count) {
+        Vect.setMemoryFloat(addr, Float.NaN, count);
     }
 }
