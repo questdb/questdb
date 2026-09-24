@@ -1255,6 +1255,35 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateWithNonDigitCharThresholdRejected() throws Exception {
+        // A one-character literal binds as CHAR, and the comparison with the timestamp reads it as a number on
+        // every row. Only a digit converts, so a policy such as ts < 'a' would fail every read of the view with
+        // "inconvertible value: a [CHAR -> LONG]". DDL refuses it at CREATE and at ALTER, with the timestamp
+        // on either side. A digit such as '5' converts, and the view keeps it.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
+            for (String predicate : new String[]{"ts < 'a'", "'a' > ts", "ts >= 'x'"}) {
+                assertExceptionNoLeakCheck(
+                        "create materialized view mv as (select * from base) expire rows when " + predicate,
+                        25,
+                        "a CHAR threshold must be a digit, or every read of the view fails"
+                );
+            }
+            execute("create materialized view mv as (select * from base) expire rows when ts < '5'");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "alter materialized view mv set expire rows when ts < 'a'",
+                    48,
+                    "a CHAR threshold must be a digit, or every read of the view fails"
+            );
+            assertQuery("select expire_clause from materialized_views() where view_name = 'mv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("expire_clause\nts < '5'\n");
+        });
+    }
+
+    @Test
     public void testSinglePartitionViewReclaimsNothing() throws Exception {
         // Active-partition protection bails out below two partitions, so a view whose data all sits in one
         // partition never reclaims - under an ordinary "expire old" policy, on the shape a low-volume view

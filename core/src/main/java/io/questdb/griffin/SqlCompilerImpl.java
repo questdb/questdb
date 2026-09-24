@@ -878,7 +878,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // Last, because it reuses this compiler's lexer and parser and so invalidates `node`.
             validateExpiryKeepFilterBinds(executionContext, metadata, predicate, position);
             // Also re-lexes, so it has to follow everything that reads `node`.
-            rejectNullConstantExpiryThreshold(executionContext, metadata, predicate, timestampColumn, position);
+            rejectUnusableConstantExpiryThreshold(executionContext, metadata, predicate, timestampColumn, position);
             return result;
         } finally {
             Misc.free(f);
@@ -6919,8 +6919,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * returns {@code LONG_NULL} for a dozen unrelated reasons - no designated timestamp, the opposite
      * comparison direction, a non-timestamp threshold type - so it cannot tell a NULL threshold from a
      * shape it simply does not handle.
+     * <p>
+     * It also rejects a CHAR threshold that does not convert to a number ({@link #isInconvertibleCharConstant}),
+     * such as {@code ts < 'a'}. The bind accepts it, but every read of the view fails on the first row.
      */
-    private void rejectNullConstantExpiryThreshold(
+    private void rejectUnusableConstantExpiryThreshold(
             SqlExecutionContext executionContext,
             RecordMetadata metadata,
             CharSequence predicate,
@@ -6928,6 +6931,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int position
     ) throws SqlException {
         final boolean isNullThreshold;
+        final boolean isInconvertibleCharThreshold;
         Function t = null;
         try {
             clear();
@@ -6943,6 +6947,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             t.init(null, executionContext);
             isNullThreshold = isNullConstant(t);
+            isInconvertibleCharThreshold = isInconvertibleCharConstant(t);
         } catch (SqlException | CairoException | ImplicitCastException e) {
             // The whole-predicate bind above already reported anything that matters; a failure here only
             // means the threshold could not be evaluated, which is not itself a reason to reject.
@@ -6950,11 +6955,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } finally {
             Misc.free(t);
         }
+        // The caret carries the caller's position, as every other error here does: this lexes the predicate
+        // on its own, so a node position from it would be an offset into the predicate text rather than into
+        // the statement the user wrote.
         if (isNullThreshold) {
-            // The caret carries the caller's position, as every other error here does: this lexes the
-            // predicate on its own, so a node position from it would be an offset into the predicate text
-            // rather than into the statement the user wrote.
             throw SqlException.$(position, "invalid EXPIRE ROWS predicate: the threshold is NULL, so no row can ever expire");
+        }
+        if (isInconvertibleCharThreshold) {
+            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: a CHAR threshold must be a digit, or every read of the view fails");
         }
     }
 
@@ -7333,6 +7341,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return exprReferencesColumn(node.lhs) ? null : node.lhs;
         }
         return null;
+    }
+
+    /**
+     * Whether this constant is a CHAR that a comparison with the timestamp cannot read as a number. The
+     * comparison reads a CHAR threshold with {@code getLong()} on every row, and that converts only the
+     * digits {@code '0'} to {@code '9'}; any other character throws
+     * <p>
+     * {@code inconvertible value: a [CHAR -> LONG]}
+     * <p>
+     * on the first row every read evaluates. Calling the same getter here gives the same answer without a
+     * row. A STRING threshold needs no such check: the bind converts it to a timestamp once, and reports a
+     * value that is not a date there.
+     */
+    private static boolean isInconvertibleCharConstant(Function t) {
+        if (ColumnType.tagOf(t.getType()) != ColumnType.CHAR) {
+            return false;
+        }
+        try {
+            t.getLong(null);
+            return false;
+        } catch (ImplicitCastException e) {
+            return true;
+        }
     }
 
     /**

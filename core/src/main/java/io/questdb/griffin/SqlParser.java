@@ -1369,7 +1369,7 @@ public class SqlParser {
      * {@link #expandExpiringTable}), so it inspects exactly the tree the filter will carry. That is what
      * the premise {@link #isOperandProvablyNonNull} rests on for arithmetic: the expression it judges is
      * the DDL-validated one, whose constant threshold
-     * {@code SqlCompilerImpl.rejectNullConstantExpiryThreshold} has already evaluated and proven non-NULL.
+     * {@code SqlCompilerImpl.rejectUnusableConstantExpiryThreshold} has already evaluated and proven non-NULL.
      */
     private boolean isTimestampFlippablePredicate(
             String predicate,
@@ -1437,7 +1437,7 @@ public class SqlParser {
         if (node.type == ExpressionNode.CONSTANT) {
             // NaN is how QuestDB spells a NULL DOUBLE/FLOAT, so it is a NULL constant even though it is
             // not the "null" keyword. Every policy that could reach here with a NaN is already rejected
-            // at DDL time by rejectNullConstantExpiryThreshold; refusing it here as well keeps this
+            // at DDL time by rejectUnusableConstantExpiryThreshold; refusing it here as well keeps this
             // method correct on its own terms instead of relying on that shield.
             return !SqlKeywords.isNullKeyword(node.token) && !SqlKeywords.isNanKeyword(node.token);
         }
@@ -1447,7 +1447,7 @@ public class SqlParser {
             }
             if (isArithmeticOperator(node.token)) {
                 // Arithmetic can overflow onto the NULL sentinel, so it is trusted only as a compile-time
-                // constant, which SqlCompilerImpl.rejectNullConstantExpiryThreshold has already evaluated
+                // constant, which SqlCompilerImpl.rejectUnusableConstantExpiryThreshold has already evaluated
                 // and proven non-NULL at DDL time. A clock under the operator makes the subtree a runtime
                 // constant, which that check cannot answer for, so it stays possibly-NULL here. The DDL
                 // premise covers every tree that reaches this point: the probe parse carries no
@@ -1501,7 +1501,7 @@ public class SqlParser {
      * <p>
      * {@link #isOperandProvablyNonNull} accepts arithmetic by a different route: a subtree whose leaves are
      * all constants is a compile-time constant, and
-     * {@code SqlCompilerImpl.rejectNullConstantExpiryThreshold} evaluates exactly that at DDL time and
+     * {@code SqlCompilerImpl.rejectUnusableConstantExpiryThreshold} evaluates exactly that at DDL time and
      * refuses to store a policy whose threshold comes out NULL. Naming the operators here as well would
      * extend the same trust to a subtree with a clock under it, whose value depends on the read-time clock
      * and which DDL therefore cannot evaluate.
