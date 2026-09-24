@@ -114,6 +114,18 @@ public class BooleanSubQueryPredicateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestOnWhereKeyOrAndSubQueryPredicate() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertPredicate(THE_ROW, "select * from t where (sym = 'a' or sym = 'b') and (select b from x_true limit 1) latest on ts partition by sym");
+            assertPredicate(NO_ROWS, "select * from t where (sym = 'a' or sym = 'b') and (select b from x_false limit 1) latest on ts partition by sym");
+            assertPredicate(NO_ROWS, "select * from t where (sym = 'a' or sym = 'b') and (select b from x_empty limit 1) latest on ts partition by sym");
+            assertPredicate(THE_ROW, "select * from t where (select b from x_true limit 1) and ((sym = 'a' or sym = 'b') and v = 1) latest on ts partition by sym");
+            assertPredicate(NO_ROWS, "select * from t where (select b from x_false limit 1) and ((sym = 'a' or sym = 'b') and v = 1) latest on ts partition by sym");
+        });
+    }
+
+    @Test
     public void testLatestOnWhereOrSubQueryPredicateWithWithinOptimisation() throws Exception {
         setProperty(PropertyKey.QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED, "true");
         assertMemoryLeak(() -> {
@@ -134,6 +146,8 @@ public class BooleanSubQueryPredicateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             assertPredicate(NO_ROWS, "select * from t where (select b from x_false limit 1) latest on ts partition by sym");
+            assertPredicate(THE_ROW, "select * from t where (select b from x_true limit 1) latest on ts partition by sym");
+            assertPredicate(NO_ROWS, "select * from t where (select b from x_empty limit 1) latest on ts partition by sym");
             assertPredicate(THE_ROW, "select * from t where sym in ('a') and (select b from x_true limit 1) latest on ts partition by sym");
         });
     }

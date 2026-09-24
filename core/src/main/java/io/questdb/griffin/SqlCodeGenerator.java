@@ -7553,7 +7553,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private ExpressionNode normaliseLatestByKeyOr(ExpressionNode root, RecordMetadata metadata, int keyIndex) {
-        if (root == null || (!isAndKeyword(root.token) && !isOrKeyword(root.token))) {
+        if (root == null || root.type != OPERATION || (!isAndKeyword(root.token) && !isOrKeyword(root.token))) {
             return root;
         }
         ExpressionNode copy = ExpressionNode.deepClone(expressionNodePool, root);
@@ -7564,7 +7564,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         sqlNodeStack2.push(copy);
         while (!sqlNodeStack2.isEmpty()) {
             ExpressionNode node = sqlNodeStack2.pop();
-            if (isAndKeyword(node.token)) {
+            if (node.type == OPERATION && isAndKeyword(node.token)) {
                 node.lhs = normaliseLatestByKeyOrLeaf(node.lhs, metadata, keyIndex);
                 node.rhs = normaliseLatestByKeyOrLeaf(node.rhs, metadata, keyIndex);
                 sqlNodeStack2.push(node.lhs);
