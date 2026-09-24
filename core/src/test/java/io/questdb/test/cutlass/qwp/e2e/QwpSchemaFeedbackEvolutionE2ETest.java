@@ -24,10 +24,13 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.client.LineSenderSchemaException;
+import io.questdb.client.Sender;
 import io.questdb.client.cutlass.http.client.WebSocketClient;
 import io.questdb.client.cutlass.http.client.WebSocketClientFactory;
 import io.questdb.client.cutlass.http.client.WebSocketFrameHandler;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
 import io.questdb.client.cutlass.qwp.client.sf.cursor.CursorSendEngine;
 import io.questdb.client.cutlass.qwp.client.sf.cursor.CursorWebSocketSendLoop;
@@ -145,6 +148,71 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
     }
 
     @Test
+    public void testRejectedConversionEvictsStaleSnapshot() throws Exception {
+        execute("CREATE TABLE stale_conversion (v BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        runInContext(port -> {
+            try (Sender sender = Sender.fromConfig(autoSenderConfig(port))) {
+                QwpWebSocketSender ws = (QwpWebSocketSender) sender;
+                sender.table("stale_conversion").boolColumn("v", true).atNow();
+                Assert.assertTrue(sender.drain(10_000));
+
+                execute("ALTER TABLE stale_conversion DROP COLUMN v");
+                execute("ALTER TABLE stale_conversion ADD COLUMN v LONG");
+                drainWalQueue();
+
+                // The cached snapshot still types v as BOOLEAN, and no frame for the
+                // table reached the server since, so no feedback reported the change.
+                try {
+                    sender.table("stale_conversion").longColumn("v", 42);
+                    Assert.fail("expected the stale BOOLEAN snapshot to reject a LONG");
+                } catch (LineSenderSchemaException e) {
+                    Assert.assertEquals(LineSenderSchemaException.Reason.UNSUPPORTED_FEATURE, e.getReason());
+                }
+                // The rejection evicted the snapshot, so the retry looks the table up.
+                sender.table("stale_conversion").longColumn("v", 42).atNow();
+                Assert.assertTrue(sender.drain(10_000));
+                Assert.assertEquals(0, ws.getTotalReconnectAttempts());
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM stale_conversion")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\nnull\n42\n");
+        });
+    }
+
+    @Test
+    public void testRejectedRangeEvictsStaleSnapshot() throws Exception {
+        execute("CREATE TABLE stale_range (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        runInContext(port -> {
+            try (Sender sender = Sender.fromConfig(autoSenderConfig(port))) {
+                QwpWebSocketSender ws = (QwpWebSocketSender) sender;
+                sender.table("stale_range").longColumn("v", 1).atNow();
+                Assert.assertTrue(sender.drain(10_000));
+
+                execute("ALTER TABLE stale_range ALTER COLUMN v TYPE LONG");
+                drainWalQueue();
+
+                // The cached snapshot still types v as INT.
+                try {
+                    sender.table("stale_range").longColumn("v", 3_000_000_000L);
+                    Assert.fail("expected the stale INT snapshot to reject the value");
+                } catch (LineSenderSchemaException e) {
+                    Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, e.getReason());
+                }
+                sender.table("stale_range").longColumn("v", 3_000_000_000L).atNow();
+                Assert.assertTrue(sender.drain(10_000));
+                Assert.assertEquals(0, ws.getTotalReconnectAttempts());
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM stale_range")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n1\n3000000000\n");
+        });
+    }
+
+    @Test
     public void testStaleIntBytesYieldLongSnapshotAndNewTypedLongFrame() throws Exception {
         execute("create table feedback_evolution (n int, ts timestamp) timestamp(ts) partition by day wal");
         runInContext(port -> {
@@ -225,6 +293,12 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
         } finally {
             Unsafe.free(address, bytes.length, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    private static String autoSenderConfig(int port) {
+        return "ws::addr=localhost:" + port
+                + ";schema_mode=auto;auto_flush_rows=2147483647;auto_flush_bytes=0;"
+                + "auto_flush_interval=2147483646;close_flush_timeout_millis=0;";
     }
 
     private static WebSocketClient connect(int port) {
