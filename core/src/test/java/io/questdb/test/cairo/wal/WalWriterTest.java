@@ -27,6 +27,7 @@ package io.questdb.test.cairo.wal;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.MicrosTimestampDriver;
@@ -1061,6 +1062,47 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertNull(dataInfo.nextSymbolMapDiff());
 
                 assertFalse(eventCursor.hasNext());
+            }
+        });
+    }
+
+    @Test
+    public void testWalWriterNamesColumnVersionBehindTxnInsteadOfSpinning() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cv_behind (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("ALTER TABLE cv_behind ADD COLUMN y LONG");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("cv_behind");
+            engine.releaseInactive();
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+                final long version = mem.getLong(ColumnVersionReader.OFFSET_VERSION_64);
+                Assert.assertTrue(version > 0);
+                // _txn still names `version`; a stable _cv one behind it is a state no writer can repair, and
+                // the symbol-map bootstrap used to loop on it until the process was killed.
+                mem.putLong(ColumnVersionReader.OFFSET_VERSION_64, version - 1);
+                mem.close();
+                try {
+                    // Freeze the clock: the diagnosis must not depend on a deadline arriving. The tick guard
+                    // turns a regression into a bounded failure instead of a hung test.
+                    final AtomicInteger ticks = new AtomicInteger();
+                    testMicrosClock = () -> {
+                        if (ticks.incrementAndGet() > 100_000) {
+                            throw new AssertionError("WalWriter spun on a _cv that is behind _txn");
+                        }
+                        return 1_000_000L;
+                    };
+                    try (WalWriter ignored = engine.getWalWriter(token)) {
+                        Assert.fail("a _cv behind _txn must not bootstrap a WalWriter");
+                    }
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "_cv is behind the column version _txn references");
+                } finally {
+                    testMicrosClock = defaultMicrosecondClock;
+                    mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+                    mem.putLong(ColumnVersionReader.OFFSET_VERSION_64, version);
+                }
             }
         });
     }

@@ -2056,12 +2056,27 @@ public class TableReader implements Closeable, SymbolTableSource {
         return true;
     }
 
-    private boolean reloadColumnVersion(long columnVersion) {
-        if (columnVersionReader.getVersion() != columnVersion) {
-            // A duration, unlike the absolute deadline readTxnSlow() and reloadMetadata() take.
-            columnVersionReader.readSafe(clock, configuration.getSpinLockTimeout());
+    private boolean reloadColumnVersion(long columnVersion, long deadline) {
+        if (columnVersionReader.getVersion() == columnVersion) {
+            return true;
         }
-        return columnVersionReader.getVersion() == columnVersion;
+        // A duration, unlike the absolute deadline readTxnSlow() and reloadMetadata() take. A consistent _cv
+        // that lands BEHIND the version _txn names is terminal - a torn live area or a file that lags the
+        // transaction - and the reader throws it by name in there, without waiting on any clock.
+        columnVersionReader.readSafe(clock, configuration.getSpinLockTimeout(), columnVersion);
+        if (columnVersionReader.getVersion() == columnVersion) {
+            return true;
+        }
+        // _cv is AHEAD of the _txn record we loaded: a commit in flight has published _cv but not yet _txn.
+        // That one is worth waiting for, on this reload's deadline, then _txn is re-read.
+        if (clock.getTicks() > deadline) {
+            throw CairoException.critical(0).put("Column Version read timeout [src=reader, table=").put(tableToken)
+                    .put(", txnColumnVersion=").put(columnVersion)
+                    .put(", cvVersion=").put(columnVersionReader.getVersion())
+                    .put(", timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
+        }
+        Os.pause();
+        return false;
     }
 
     private boolean reloadMetadata(int txnMetadataVersion, long deadline, boolean reshuffleColumns) {
@@ -2114,7 +2129,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // Reload _meta if the structure version updated, reload _cv if column version updated
         } while (
             // Reload column versions, column version used in metadata reload column shuffle
-                !reloadColumnVersion(txFile.getColumnVersion())
+                !reloadColumnVersion(txFile.getColumnVersion(), deadline)
                         // Start again if _meta with the matching structure version cannot be loaded
                         || !reloadMetadata(txFile.getMetadataVersion(), deadline, reshuffle)
         );

@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -46,12 +47,171 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 public class TableReadFailTest extends AbstractCairoTest {
+    @Test
+    public void testColumnVersionAheadOfTxnIsWaitedForOnTheReloadDeadline() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 20);
+        spinLockTimeout = 20;
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cv_ahead (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("ALTER TABLE cv_ahead ADD COLUMN y LONG");
+            execute("ALTER TABLE cv_ahead ADD COLUMN z LONG");
+            TableToken token = engine.verifyTableName("cv_ahead");
+            engine.releaseInactive();
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+                long version = mem.getLong(ColumnVersionReader.OFFSET_VERSION_64);
+                Assert.assertTrue(version >= 2);
+                // The one mismatch a live writer CAN produce: _cv published, _txn not yet. Here the writer never
+                // arrives, so the reader must give up on its deadline - and say which side it was waiting for.
+                mem.putLong(ColumnVersionReader.OFFSET_VERSION_64, version + 1);
+                mem.close();
+                try {
+                    try (TableReader ignored = newOffPoolReader(configuration, "cv_ahead")) {
+                        Assert.fail("a _cv ahead of _txn with no commit arriving must not open");
+                    }
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Column Version read timeout [src=reader");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "txnColumnVersion=" + version + ", cvVersion=" + (version + 1));
+                } finally {
+                    mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+                    mem.putLong(ColumnVersionReader.OFFSET_VERSION_64, version);
+                }
+            }
+            engine.clear();
+        });
+    }
+
+    @Test
+    public void testColumnVersionBehindTxnIsNamedEvenWhenTheClockCannotAdvance() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cv_behind (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("ALTER TABLE cv_behind ADD COLUMN y LONG");
+            TableToken token = engine.verifyTableName("cv_behind");
+            engine.releaseInactive();
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+                long version = mem.getLong(ColumnVersionReader.OFFSET_VERSION_64);
+                Assert.assertTrue(version > 0);
+                // _txn still names `version`. A stable _cv one behind it is a state no writer can repair: _cv is
+                // published BEFORE the _txn that references it, so waiting is not an option to offer.
+                mem.putLong(ColumnVersionReader.OFFSET_VERSION_64, version - 1);
+                mem.close();
+                try {
+                    // Frozen clock: the diagnosis must come from the ordering invariant, not from a deadline. The
+                    // tick guard turns a regression back into a bounded failure rather than a hung test.
+                    AtomicInteger ticks = new AtomicInteger();
+                    testMicrosClock = () -> {
+                        if (ticks.incrementAndGet() > 100_000) {
+                            throw new AssertionError("reader spun on a _cv that is behind _txn");
+                        }
+                        return 1_000_000L;
+                    };
+                    try (TableReader ignored = newOffPoolReader(configuration, "cv_behind")) {
+                        Assert.fail("a _cv behind _txn must not open");
+                    }
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "_cv is behind the column version _txn references [version=" + (version - 1) + ", expected=" + version + ']');
+                } finally {
+                    testMicrosClock = defaultMicrosecondClock;
+                    mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+                    mem.putLong(ColumnVersionReader.OFFSET_VERSION_64, version);
+                }
+            }
+            engine.clear();
+        });
+    }
+
+    @Test
+    public void testMetadataBehindTxnTimesOutOnTheReloadDeadline() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 20);
+        spinLockTimeout = 20;
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE meta_timeout (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("ALTER TABLE meta_timeout ADD COLUMN y LONG");
+            TableToken token = engine.verifyTableName("meta_timeout");
+            engine.releaseInactive();
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME).$();
+                mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+                long version = mem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
+                Assert.assertTrue(version > 0);
+                mem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, version - 1);
+                mem.close();
+                try {
+                    try (TableReader ignored = newOffPoolReader(configuration, "meta_timeout")) {
+                        Assert.fail("mismatched metadata must not open");
+                    }
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Metadata read timeout");
+                } finally {
+                    mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+                    mem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, version);
+                }
+            }
+            engine.clear();
+        });
+    }
+
+    @Test
+    public void testTornLiveColumnVersionAreaIsNamedEvenWhenTheClockCannotAdvance() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cv_torn (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("ALTER TABLE cv_torn ADD COLUMN y LONG");
+            execute("ALTER TABLE cv_torn ADD COLUMN z LONG");
+            TableToken token = engine.verifyTableName("cv_torn");
+            engine.releaseInactive();
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+                long version = mem.getLong(ColumnVersionReader.OFFSET_VERSION_64);
+                Assert.assertTrue(version >= 2);
+                long offset = mem.getLong((version & 1) == 0 ? ColumnVersionReader.OFFSET_OFFSET_A_64 : ColumnVersionReader.OFFSET_OFFSET_B_64);
+                long original = mem.getLong(offset);
+                // Leave the matching-version trailer in place, but tear its covered body: the reader must fall
+                // back to the previous commit, find it cannot satisfy _txn, and say so - once, with no retry.
+                mem.putLong(offset, original ^ 0x5a5aL);
+                mem.close();
+                LogCapture capture = new LogCapture();
+                try {
+                    AtomicInteger ticks = new AtomicInteger();
+                    testMicrosClock = () -> {
+                        if (ticks.incrementAndGet() > 100_000) {
+                            throw new AssertionError("reader spun on a torn live _cv area");
+                        }
+                        return 1_000_000L;
+                    };
+                    capture.start();
+                    ColumnVersionReader.resetBodyChecksumFallbackCount();
+                    try (TableReader ignored = newOffPoolReader(configuration, "cv_torn")) {
+                        Assert.fail("torn current _cv must not open at its prior version");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "_cv live area is torn, reader cannot advance past the previous column version [version=" + (version - 1) + ", expected=" + version + ']');
+                    }
+                    Assert.assertEquals("one fallback attempt, no spin", 1L, ColumnVersionReader.getBodyChecksumFallbackCount());
+                    capture.drain();
+                    capture.assertOnlyOnce("read fell back to other _cv area after checksum mismatch");
+                } finally {
+                    testMicrosClock = defaultMicrosecondClock;
+                    capture.stop();
+                    mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+                    mem.putLong(offset, original);
+                }
+            }
+            engine.clear();
+        });
+    }
+
     @Test
     public void testMetaFileCannotOpenConstructor() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);

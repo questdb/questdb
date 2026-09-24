@@ -287,6 +287,118 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCvOldAllocatorReusesAreaWithStaleTrailer() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                LPSZ cvPath = path.of(root).concat("_cv").$();
+                try (ColumnVersionWriter w = new ColumnVersionWriter(configuration, cvPath, true)) {
+                    for (int i = 1; i <= 4; i++) {
+                        w.upsert(1, 0, i, i);
+                        w.commit();
+                    }
+                }
+                Assert.assertEquals(4, peekLong(ff, cvPath, OFFSET_VERSION_64));
+                long oldOffset = peekLong(ff, cvPath, OFFSET_OFFSET_B_64);
+                long oldSize = peekLong(ff, cvPath, OFFSET_SIZE_B_64);
+                Assert.assertEquals(HEADER_SIZE, oldOffset);
+                Assert.assertEquals(BLOCK_SIZE_BYTES, oldSize);
+                // The released writer computes the next B offset from A without reserving a trailer.
+                // Its version-5 block replaces B's body, but leaves version-3's trailer untouched.
+                Assert.assertEquals(HEADER_SIZE + BLOCK_SIZE_BYTES + 16, peekLong(ff, cvPath, OFFSET_OFFSET_A_64));
+                Assert.assertEquals(TableUtils.CV_CHECKSUM_MAGIC ^ 3, peekLong(ff, cvPath, oldOffset + oldSize));
+                pokeLong(ff, cvPath, oldOffset + 2 * Long.BYTES, 5);
+                pokeLong(ff, cvPath, oldOffset + 3 * Long.BYTES, 55);
+                pokeLong(ff, cvPath, OFFSET_VERSION_64, 5);
+
+                ColumnVersionReader.resetBodyChecksumFallbackCount();
+                try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                    r.readSafe(configuration.getMillisecondClock(), 100);
+                    Assert.assertEquals(5, r.getVersion());
+                    Assert.assertEquals(55, r.getColumnTopQuick(1, 0));
+                    Assert.assertEquals(0, ColumnVersionReader.getBodyChecksumFallbackCount());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCvReadSafeNamesTornLiveAreaOnlyForItsOwnVersion() throws Exception {
+        // The A/B fallback stays useful to a consumer of the PREVIOUS commit (a _txn that fell back alongside
+        // it names exactly that version). A consumer of the torn commit itself is told so by name, and at once:
+        // waiting cannot repair a torn area, and "timeout" would send an operator hunting for contention.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                LPSZ cvPath = path.of(root).concat("_cv").$();
+                long liveOffset;
+                try (ColumnVersionWriter w = new ColumnVersionWriter(configuration, cvPath, true)) {
+                    w.upsert(1, 0, 1, 10);
+                    w.commit();
+                    w.upsert(1, 0, 2, 20);
+                    w.commit();
+                    long version = peekLong(ff, cvPath, OFFSET_VERSION_64);
+                    Assert.assertEquals(2, version);
+                    liveOffset = peekLong(ff, cvPath, (version & 1L) == 0 ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
+                }
+                // Tear the live body under its own, matching, stamp.
+                long orig = peekLong(ff, cvPath, liveOffset);
+                pokeLong(ff, cvPath, liveOffset, orig ^ 0x5a5aL);
+
+                ColumnVersionReader.resetBodyChecksumFallbackCount();
+                try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                    r.readSafe(configuration.getMillisecondClock(), 100, 1);
+                    Assert.assertEquals(1, r.getVersion());
+                    Assert.assertEquals(10, r.getColumnTopQuick(1, 0));
+                    Assert.assertEquals(1L, ColumnVersionReader.getBodyChecksumFallbackCount());
+                    try {
+                        r.readSafe(configuration.getMillisecondClock(), 100, 2);
+                        Assert.fail("the torn commit must not be reported as reached");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(
+                                e.getFlyweightMessage(),
+                                "_cv live area is torn, reader cannot advance past the previous column version [version=1, expected=2]"
+                        );
+                    }
+                    Assert.assertEquals("one more attempt, no spin", 2L, ColumnVersionReader.getBodyChecksumFallbackCount());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCvReadSafeNamesVersionBehindExpected() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                LPSZ cvPath = path.of(root).concat("_cv").$();
+                try (ColumnVersionWriter w = new ColumnVersionWriter(configuration, cvPath, true)) {
+                    w.upsert(1, 0, 1, 10);
+                    w.commit();
+                    w.upsert(1, 0, 2, 20);
+                    w.commit();
+                }
+                Assert.assertEquals(2, peekLong(ff, cvPath, OFFSET_VERSION_64));
+                try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                    // Exactly what _txn names, or ahead of it (a commit in flight): both are the caller's to act on.
+                    r.readSafe(configuration.getMillisecondClock(), 100, 2);
+                    Assert.assertEquals(2, r.getVersion());
+                    r.readSafe(configuration.getMillisecondClock(), 100, 1);
+                    Assert.assertEquals(2, r.getVersion());
+                    // Behind it: _cv is published before the _txn that references it, so there is no writer to
+                    // wait for. Named, with no clock involved.
+                    try {
+                        r.readSafe(configuration.getMillisecondClock(), 100, 3);
+                        Assert.fail("a _cv behind the expected version must not be reported as reached");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "_cv is behind the column version _txn references [version=2, expected=3]");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCvChecksumDetectsCorruption() throws Exception {
         // Single commit => only the live area is valid (the other area was never written / is empty).
         // Corrupting a covered byte of the live area, leaving its checksum stale, must NOT silently return

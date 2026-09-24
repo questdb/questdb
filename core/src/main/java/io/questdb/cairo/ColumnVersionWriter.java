@@ -453,9 +453,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         // area.
         bumpFileSize(writeOffset + areaSize + TableUtils.CV_CHECKSUM_TRAILER_SIZE);
         store(entryCount, writeOffset);
-        // Body checksum trailer over the whole freshly-written area [writeOffset, writeOffset + areaSize),
-        // stored immediately after it. Written AFTER store() (the bytes it covers) and BEFORE the
-        // storeFence()/version bump, so a torn area can never hide behind an already-published version.
+        // Stamp and checksum the body before publishing the new version.
         storeAreaChecksum(writeOffset, areaSize);
         // OFFSET_SIZE_{A,B} records the DATA length only (areaSize, a multiple of BLOCK_SIZE_BYTES);
         // the trailer (MAGIC + checksum) is found by the reader at offset + size.
@@ -498,16 +496,12 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         }
     }
 
-    // Writes the 16-byte body-checksum trailer for the area [areaOffset, areaOffset + areaSize):
-    // CV_CHECKSUM_MAGIC at [areaOffset + areaSize] then the checksum at [areaOffset + areaSize + 8].
-    // The MAGIC is what makes the trailer unambiguously distinguishable from a legacy page-rounded
-    // file's non-zero adjacent-area bytes (see TableUtils.CV_CHECKSUM_MAGIC). The caller MUST have
-    // already written the area's data (store()) and bumped the file size to at least
-    // areaOffset + areaSize + CV_CHECKSUM_TRAILER_SIZE, and MUST call this BEFORE the
-    // storeFence()/version bump so a torn area is never reachable under a valid version.
+    // Store [CV_CHECKSUM_MAGIC ^ nextVersion][checksum] after the data, before publishing
+    // nextVersion. The stamp distinguishes this commit from an old writer reusing the area
+    // without touching a trailer left by an earlier version.
     private void storeAreaChecksum(long areaOffset, long areaSize) {
         long checksum = TableUtils.calculateCvAreaChecksum(mem.addressOf(areaOffset), areaSize);
-        mem.putLong(areaOffset + areaSize, TableUtils.CV_CHECKSUM_MAGIC);
+        mem.putLong(areaOffset + areaSize, TableUtils.CV_CHECKSUM_MAGIC ^ (version + 1));
         mem.putLong(areaOffset + areaSize + Long.BYTES, checksum);
     }
 

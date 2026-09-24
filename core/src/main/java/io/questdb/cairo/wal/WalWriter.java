@@ -1506,7 +1506,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                             initialized = false;
                             break;
                         }
-                        columnVersionReader.readSafe(milliClock, spinLockTimeout);
+                        // Names a _cv stuck behind _txn instead of looping on it; see ColumnVersionReader.readSafe.
+                        columnVersionReader.readSafe(milliClock, spinLockTimeout, txReader.getColumnVersion());
                     } while (txReader.getColumnVersion() != columnVersionReader.getVersion());
                 }
 
@@ -1959,7 +1960,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             if (txReader.getColumnStructureVersion() != structureVersion) {
                 return false; // Version mismatch - caller should use fallback
             }
-            columnVersionReader.readSafe(milliClock, spinLockTimeout);
+            // Names a _cv stuck behind _txn instead of looping on it; see ColumnVersionReader.readSafe.
+            columnVersionReader.readSafe(milliClock, spinLockTimeout, txReader.getColumnVersion());
         } while (txReader.getColumnVersion() != columnVersionReader.getVersion());
 
         // Update each symbol column
