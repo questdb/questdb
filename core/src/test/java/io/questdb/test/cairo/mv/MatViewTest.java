@@ -8832,6 +8832,28 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPassthroughAlterRefreshPeriodRejected() throws Exception {
+        // CREATE rejects PERIOD for a passthrough view, and ALTER does the same: a passthrough view has
+        // no SAMPLE BY bucket for a period to align to.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_copy as (select * from base_price)");
+            drainQueues();
+
+            final String message = "PERIOD is not supported for non-aggregating (passthrough) materialized views";
+            final String immediate = "alter materialized view price_copy set refresh immediate ";
+            assertExceptionNoLeakCheck(immediate + "period (sample by interval)", immediate.length(), message);
+            assertExceptionNoLeakCheck(immediate + "period (length 1h)", immediate.length(), message);
+            final String bare = "alter materialized view price_copy set refresh ";
+            assertExceptionNoLeakCheck(bare + "period (length 1h)", bare.length(), message);
+        });
+    }
+
+    @Test
     public void testPassthroughColumnSubsetAndFilter() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -8963,6 +8985,40 @@ public class MatViewTest extends AbstractCairoTest {
             // would have missed this).
             execute("insert into base_price values('eurusd', 1.100, '2024-09-10T11:30')");
             drainQueues();
+            assertPassthroughMatchesBase();
+        });
+    }
+
+    @Test
+    public void testPassthroughRefreshReplacesOnlyChangedRange() throws Exception {
+        // wal_transactions() reports per-transaction row counts only from the chunked sequencer log
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 100);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_copy as (select * from base_price)");
+            // one row per minute from 00:00 to 16:39
+            execute("insert into base_price select 'gbpusd', x, timestamp_sequence('2024-09-10', 60_000_000L) from long_sequence(1_000)");
+            drainQueues();
+            assertPassthroughMatchesBase();
+
+            // An in-order row: the refresh replaces only the row's own timestamp, not the 1_000 rows
+            // already in the day.
+            long viewTxn = passthroughViewSeqTxn();
+            execute("insert into base_price values('gbpusd', 0.5, '2024-09-10T20:00')");
+            drainQueues();
+            assertPassthroughRefreshedRows(viewTxn, 1);
+            assertPassthroughMatchesBase();
+
+            // Two out-of-order rows at 01:00:30 and 01:05:30: the refresh replaces the range between them,
+            // which holds the 5 base rows 01:01 to 01:05 and the 2 new rows.
+            viewTxn = passthroughViewSeqTxn();
+            execute("insert into base_price values('eurusd', 0.1, '2024-09-10T01:00:30'), ('eurusd', 0.2, '2024-09-10T01:05:30')");
+            drainQueues();
+            assertPassthroughRefreshedRows(viewTxn, 7);
             assertPassthroughMatchesBase();
         });
     }
@@ -10577,6 +10633,14 @@ public class MatViewTest extends AbstractCairoTest {
         assertQuery("price_copy order by ts, sym, price").timestamp("ts").expectSize().noLeakCheck().returns(expected);
     }
 
+    private void assertPassthroughRefreshedRows(long afterViewTxn, long expectedRows) throws Exception {
+        assertQuery("select sum(rowCount) rows from wal_transactions('price_copy') where sequencerTxn > " + afterViewTxn)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("rows\n" + expectedRows + "\n");
+    }
+
     private String copySql(int from, int count) {
         return "select * from tmp where n >= " + from + " and n < " + (from + count);
     }
@@ -10627,6 +10691,10 @@ public class MatViewTest extends AbstractCairoTest {
 
     private String outSelect(String out, String in) {
         return out + " from (" + in + ")";
+    }
+
+    private long passthroughViewSeqTxn() {
+        return engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("price_copy")).getSeqTxn();
     }
 
     private String replaceExpectedTimestamp(String expected) {

@@ -480,8 +480,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
         // No SAMPLE BY and no timestamp_floor(): treat as a non-aggregating "passthrough" view
         // (e.g. SELECT * FROM base) when the query has no aggregates/joins. Such a view copies base
-        // rows 1:1; samplingInterval becomes a refresh commit-chunk size (set later from the base
-        // partitioning in validateAndUpdateMetadataFromSelect), not an aggregation bucket.
+        // rows 1:1; samplingInterval becomes the granularity of refresh ranges (set later in
+        // validateAndUpdateMetadataFromSelect), not an aggregation bucket.
         if (intervalExpr == null) {
             if (isPassthrough(functionFactoryCache, queryModel)) {
                 passthrough = true;
@@ -632,7 +632,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 throw SqlException.$(timestampPosition,
                         "passthrough materialized view timestamp must reference the base table designated timestamp without transformation");
             }
-            setPassthroughChunkInterval(baseTableMetadata.getPartitionBy());
+            setPassthroughChunkInterval();
         }
         updateMatViewTablePartitionBy(createTableOperation.getTimestampType(), baseTableMetadata.getPartitionBy());
         this.baseTableTimestampType = baseTableMetadata.getTimestampType();
@@ -853,33 +853,14 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         return true;
     }
 
-    private void setPassthroughChunkInterval(int basePartitionBy) {
-        // Refresh commit-chunk size for a passthrough view. Correctness-neutral: it only bounds the
-        // size of each REPLACE_RANGE refresh batch (it is not an aggregation bucket). We mirror the
-        // base table's partition unit. NOTE: a single very dense base partition still commits as one
-        // batch, since the refresh step cannot subdivide below one sampler bucket.
-        switch (basePartitionBy) {
-            case PartitionBy.HOUR -> {
-                samplingInterval = 1;
-                samplingIntervalUnit = 'h';
-            }
-            case PartitionBy.WEEK -> {
-                samplingInterval = 7;
-                samplingIntervalUnit = 'd';
-            }
-            case PartitionBy.MONTH -> {
-                samplingInterval = 1;
-                samplingIntervalUnit = 'M';
-            }
-            case PartitionBy.YEAR -> {
-                samplingInterval = 1;
-                samplingIntervalUnit = 'y';
-            }
-            default -> { // DAY (and any non-time-unit partitioning)
-                samplingInterval = 1;
-                samplingIntervalUnit = 'd';
-            }
-        }
+    private void setPassthroughChunkInterval() {
+        // Refresh range granularity for a passthrough view. It is not an aggregation bucket: incremental
+        // refresh rounds the timestamp ranges the new base transactions touched out to this granularity
+        // and replaces each rounded range in the view. At one microsecond the rounded range matches the
+        // touched range to the microsecond, so a refresh rewrites only the view rows inside it. The
+        // rows-per-query estimate sizes each query step, independently of this granularity.
+        samplingInterval = 1;
+        samplingIntervalUnit = 'U';
     }
 
     private static @Nullable CharSequence resolveColumnName(ExpressionNode columnNode, IQueryModel queryModel) {

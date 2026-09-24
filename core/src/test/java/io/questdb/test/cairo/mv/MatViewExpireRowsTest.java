@@ -1301,11 +1301,11 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         // sweep after that, using its per-partition content generation - but not here, since
         // sweepExpiredRows builds a fresh job each time and that cache lives on the job instance.
         //
-        // A write that lands back inside an already-compacted range does make it eligible again, and the
-        // refresh that carries the write re-materializes the rows the earlier sweep deleted - the partition
-        // goes back to three rows, not the two that the survivor plus the new row would give. The next sweep
-        // compacts it a second time. Reclamation is therefore proportional to the writes a partition
-        // receives, not once-and-done, and reads are correct at every step.
+        // A write that lands back inside an already-compacted range does make it eligible again. The refresh
+        // that carries the write replaces only the timestamp range the write touched, so the rows the
+        // earlier sweep deleted stay deleted: the partition holds the survivor plus the new row. The next
+        // sweep compacts the new expired row away. Reclamation is therefore proportional to the writes a
+        // partition receives, not once-and-done, and reads are correct at every step.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
             execute("""
@@ -1340,7 +1340,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             assertPartitions("mv", """
                     name\tnumRows
-                    2024-01-05\t3
+                    2024-01-05\t2
                     2024-01-06\t1
                     """);
 

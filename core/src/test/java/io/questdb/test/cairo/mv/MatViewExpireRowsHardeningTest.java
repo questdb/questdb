@@ -2068,9 +2068,10 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
         // partition, so the SKIP that the generation cache holds no longer applies. The next sweep scans the
         // partition again and compacts it a second time. The job therefore copies such a partition one time
         // for each back-fill, and not one time for each sweep.
-        // The refresh rebuilds the whole affected range from the base table, which still holds every expired
-        // row, so it also restores the row that the first sweep removed. Reclamation from a view is
-        // best-effort against a refresh: the read filter hides the restored row at once, and the next sweep
+        // The refresh replaces only the timestamp range the back-fill touched, so a row that the first sweep
+        // removed outside that range stays removed. Reclamation from a view is still best-effort against a
+        // refresh: a back-fill whose range covers a removed row restores it from the base table, which still
+        // holds every expired row. The read filter hides the restored row at once, and the next sweep
         // removes it from disk again.
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION, "1");
@@ -2090,20 +2091,37 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             assertPhysicalRows(3);
             Assert.assertFalse("an untouched partition must not be compacted again", runCleanup("mv"));
 
-            // A late base row lands in the already-compacted 2024-01-15 range. The refresh rebuilds that
-            // range from base, so the partition holds 4 rows again: the new expired row 'f', the restored
-            // expired row 'a', and the two survivors.
+            // A late base row lands in the already-compacted 2024-01-15 partition. The refresh replaces only
+            // the row's own timestamp range, so the partition holds 3 rows: the new expired row 'f' and the
+            // two survivors, while 'a' stays removed.
             execute("INSERT INTO base VALUES ('f', 1.5, '2024-01-15T09:00:00.000000Z')");
             drainWalAndMatViewQueues();
-            assertPhysicalRows(5);
+            assertPhysicalRows(4);
             assertQuery("SELECT sym FROM mv ORDER BY sym").noLeakCheck().returns("sym\nb\nc\ne\n");
 
-            // The back-fill re-arms the cleanup: the job scans the partition again and removes both 'f'
-            // and the restored 'a'.
+            // The back-fill re-arms the cleanup: the job scans the partition again and removes 'f'.
             Assert.assertTrue("a back-filled partition must be compacted again", runCleanup("mv"));
             drainWalAndMatViewQueues();
             assertPhysicalRows(3);
             assertQuery("SELECT sym FROM mv ORDER BY sym").noLeakCheck().returns("sym\nb\nc\ne\n");
+
+            // A back-fill whose range covers a removed row restores it. The refresh replaces
+            // [00:00, 03:00] from base, which still holds 'a', so the partition holds the restored 'a',
+            // the new rows 'g' and 'h', and the two survivors. 'f' lies outside the range and stays
+            // removed. The read filter hides both expired rows.
+            execute("""
+                    INSERT INTO base VALUES
+                    ('g', 1.2, '2024-01-15T00:00:00.000000Z'),
+                    ('h', 4.0, '2024-01-15T03:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            assertPhysicalRows(6);
+            assertQuery("SELECT sym FROM mv ORDER BY sym").noLeakCheck().returns("sym\nb\nc\ne\nh\n");
+
+            // The next sweep removes the restored 'a' and the new 'g' from disk again.
+            Assert.assertTrue("a partition with a restored row must be compacted again", runCleanup("mv"));
+            drainWalAndMatViewQueues();
+            assertPhysicalRows(4);
+            assertQuery("SELECT sym FROM mv ORDER BY sym").noLeakCheck().returns("sym\nb\nc\ne\nh\n");
         });
     }
 

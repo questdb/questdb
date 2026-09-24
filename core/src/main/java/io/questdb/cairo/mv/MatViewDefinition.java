@@ -73,7 +73,8 @@ public class MatViewDefinition implements Mutable {
     private String matViewSql;
     private volatile TableToken matViewToken;
     // When true, this is a non-aggregating "passthrough" view (e.g. SELECT * FROM base) with no SAMPLE BY;
-    // samplingInterval/samplingIntervalUnit then describe the refresh commit chunk, not an aggregation bucket.
+    // samplingInterval/samplingIntervalUnit then set the granularity that refresh ranges round out to, not an
+    // aggregation bucket.
     private boolean passthrough;
     private int periodDelay;
     private char periodDelayUnit;

@@ -398,10 +398,11 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
                     Assert.assertEquals(processedBefore, dep.getLastProcessedSeqTxn());
                     assertQuery("SELECT s FROM dep").noLeakCheck().expectSize().returns("s\n1.0\n");
                 }
-                // SET + DROP changes the metadata version. The existing metadata-drift
-                // recovery counts one diagnostic fault when it recompiles the old plan,
-                // but consumes no flush retry budget. Pending turns above must count none.
-                Assert.assertEquals(isDrop ? 1 : 0, dep.getRefreshFaultCount());
+                // SET + DROP changes the source's metadata version, but no turn reopens the source
+                // with the old plan: each source refresh replaces only the range its base write
+                // touched, above the view's frontier, so the view never replays. Pending turns above
+                // must count no fault either.
+                Assert.assertEquals(0, dep.getRefreshFaultCount());
                 Assert.assertEquals(0, dep.getFlushRetryCount());
                 assertNoRefreshFaults("noise_lv");
             }

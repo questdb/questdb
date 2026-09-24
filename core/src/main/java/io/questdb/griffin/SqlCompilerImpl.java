@@ -2714,6 +2714,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         }
 
                         if (tok != null && isPeriodKeyword(tok)) {
+                            if (viewDefinition.isPassthrough()) {
+                                // Mirrors the CREATE-time rejection. A passthrough view has no SAMPLE BY
+                                // bucket to align a period to: its sampling interval only sets the
+                                // granularity of refresh ranges.
+                                throw SqlException.$(lexer.lastTokenPosition(), "PERIOD is not supported for non-aggregating (passthrough) materialized views");
+                            }
                             final TimestampSampler periodSamplerMicros;
                             expectKeyword(lexer, "(");
                             tok = expectToken(lexer, "'length' or 'sample'");
