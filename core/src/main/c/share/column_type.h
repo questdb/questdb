@@ -31,7 +31,8 @@
 #include "jni.h"
 
 /**
- * ColumnType enum, matching the Java definitions.
+ * ColumnType enum, matching the Java definitions in io.questdb.cairo.ColumnType.
+ * ColumnTypeTest parses this file and fails when a number here differs from Java.
  */
 enum class ColumnType : int {
   UNDEFINED = 0,
@@ -62,12 +63,20 @@ enum class ColumnType : int {
   IPV4 = 25,
   VARCHAR = 26,
   ARRAY = 27,
-  REGCLASS = 28,
-  REGPROCEDURE = 29,
-  ARRAY_STRING = 30,
-  PARAMETER = 31,
-  INTERVAL = 32,
-  NULL_ = 33,
+  DECIMAL8 = 28,
+  DECIMAL16 = 29,
+  DECIMAL32 = 30,
+  DECIMAL64 = 31,
+  DECIMAL128 = 32,
+  DECIMAL256 = 33,
+  DECIMAL = 34,
+  REGCLASS = 35,
+  REGPROCEDURE = 36,
+  ARRAY_STRING = 37,
+  PARAMETER = 38,
+  INTERVAL = 39,
+  VARCHAR_SLICE = 40,
+  NULL_ = 41,
   TIMESTAMP_NANO = 1 << 18 | TIMESTAMP_MICRO,
 };
 
