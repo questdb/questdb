@@ -1459,14 +1459,17 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
      * A swap handed to a BUSY writer is queued and applied later, on the writer's own thread. The sweep
      * used to record nothing about that, so the next interval built the whole staging copy over again -
      * one redundant full-partition copy per interval, of which only one swap could ever be used.
-     */
-    /**
+     * <p>
      * A MOVE-TAIL leaves a day as two composite directories - the front, and a sibling split at a later
      * timestamp inside the same day - and both floor to the same logical partition timestamp. The sweep keyed
      * its pending-swap record by that floor, so the sibling's turn found the front's record, took it for a
      * stale one and dropped it, then dispatched by the floor - which resolves to the FRONT. The rebuild
      * removed the front's staging directory while the swap queued on the writer still owned it, and that
      * swap then renamed a half-built copy into place.
+     * <p>
+     * Both folders are idle past the squash threshold here, so the sweep now dispatches one whole-partition
+     * MERGE for the day rather than a per-folder REWRITE. The guard is the same either way - one record per
+     * LOGICAL partition, checked before dispatch - so the count below covers both staging markers.
      */
     @Test
     public void testScanDoesNotRebuildAQueuedSwapWhenASiblingSplitSharesTheDay() throws Exception {
@@ -1480,12 +1483,17 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
         node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
 
-        final ObjList<String> frontStagingMkdirs = new ObjList<>();
+        // Both markers: the day's two folders can be idle enough for the sweep to dispatch a whole-partition
+        // MERGE (.merging) instead of a single-folder REWRITE (.compacting), and counting only the latter
+        // would make the assertion below pass by never seeing a staging directory at all.
+        final ObjList<String> dayStagingMkdirs = new ObjList<>();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int mkdirs(Path path, int mode) {
-                if (Utf8s.containsAscii(path, "/2024-01-01" + TableUtils.COMPACTING_DIR_MARKER)) {
-                    frontStagingMkdirs.add(path.toString());
+                if (Utf8s.containsAscii(path, "/2024-01-01")
+                        && (Utf8s.containsAscii(path, TableUtils.COMPACTING_DIR_MARKER)
+                        || Utf8s.containsAscii(path, TableUtils.MERGING_DIR_MARKER))) {
+                    dayStagingMkdirs.add(path.toString());
                 }
                 return super.mkdirs(path, mode);
             }
@@ -1550,8 +1558,9 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                     setCurrentMicros(currentMicros + interval + 1);
                     job.run();
                 }
-                Assert.assertTrue("the front's staging copy must be rebuilt at most once while its swap is queued: " + frontStagingMkdirs,
-                        frontStagingMkdirs.size() <= 1);
+                Assert.assertEquals("the day must take exactly one staging copy across three sweeps - the first"
+                                + " sweep's, whose swap is queued on the held writer: " + dayStagingMkdirs,
+                        1, dayStagingMkdirs.size());
                 writer.tick(true);
             }
 
@@ -1969,7 +1978,29 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
 
         final AtomicInteger updateCount = new AtomicInteger();
+        final AtomicInteger mergedColumnWrites = new AtomicInteger();
+        final AtomicInteger mergingRenames = new AtomicInteger();
         final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                // The build writing the merged timestamp column separates "the copy was made and the swap
+                // then declined" from "the build itself failed", which the assertions below cannot tell apart.
+                if (Utf8s.containsAscii(name, TableUtils.MERGING_DIR_MARKER) && Utf8s.endsWithAscii(name, "ts.d")) {
+                    mergedColumnWrites.incrementAndGet();
+                }
+                return super.openRW(name, opts);
+            }
+
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                // Landing a merge renames the staging directory over the day's folders. Nothing may rename it
+                // here: the swap has to decline on the column version the UPDATE moved.
+                if (Utf8s.containsAscii(from, TableUtils.MERGING_DIR_MARKER)) {
+                    mergingRenames.incrementAndGet();
+                }
+                return super.rename(from, to);
+            }
+
             @Override
             public int mkdirs(Path path, int mode) {
                 final int result = super.mkdirs(path, mode);
@@ -2021,6 +2052,10 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                 job.run();
             }
             Assert.assertEquals("the merge must reach the UPDATE interleaving", 1, updateCount.get());
+            Assert.assertTrue("the merge must have built its staging copy, not failed before writing it",
+                    mergedColumnWrites.get() > 0);
+            Assert.assertEquals("the staged copy holds pre-UPDATE bytes; the swap must decline instead of"
+                    + " renaming it into place", 0, mergingRenames.get());
             engine.releaseAllReaders();
             engine.releaseAllWriters();
 

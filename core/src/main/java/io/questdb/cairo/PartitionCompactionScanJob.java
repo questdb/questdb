@@ -55,6 +55,9 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 import java.util.function.LongConsumer;
 
+import static io.questdb.tasks.TableWriterTask.CMD_COMPOSITE_PARTITION_SWAP;
+import static io.questdb.tasks.TableWriterTask.getCommandName;
+
 /**
  * Periodically scans every WAL table for idle LOGICAL partitions - one period of the table's PARTITION BY unit, i.e.
  * the main directory plus every MOVE-TAIL split inside it - and dispatches the appropriate compaction entry point.
@@ -894,13 +897,18 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         int recordIndex = findPendingSwap(tableToken.getTableId(), Long.MIN_VALUE);
         recordIndex = recordIndex < 0 ? -recordIndex - 1 : recordIndex;
         final int firstRecordIndex = recordIndex;
+        final long liveWriterId = engine.getWriterId(tableToken);
         boolean isExpired = false;
         while (recordIndex * IN_FLIGHT_STRIDE < inFlightSwaps.size()) {
             final int offset = recordIndex * IN_FLIGHT_STRIDE;
             if (inFlightSwaps.getQuick(offset + IN_FLIGHT_TABLE_ID_OFFSET) != tableToken.getTableId()) {
                 break;
             }
-            isExpired |= nowMicros >= inFlightSwaps.getQuick(offset + IN_FLIGHT_EXPIRY_OFFSET);
+            // Only a record still held by the table's live writer can have a command queued on it. A record
+            // left by a dead writer needs no tick to resolve - prunePendingSwaps() drops it this same sweep -
+            // and draining for one would open a brand-new writer for nothing.
+            isExpired |= inFlightSwaps.getQuick(offset + IN_FLIGHT_WRITER_ID_OFFSET) == liveWriterId
+                    && nowMicros >= inFlightSwaps.getQuick(offset + IN_FLIGHT_EXPIRY_OFFSET);
             recordIndex++;
         }
         final int lastRecordIndex = recordIndex;
@@ -908,7 +916,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             return;
         }
         boolean isDrained = false;
-        try (TableWriter writer = engine.getWriter(tableToken, "compaction swap drain")) {
+        // The same lock reason the swap itself takes: TableUtils.isUnsolicitedTableLock() whitelists it, so a
+        // WAL apply colliding with this window re-queues on notifyWalTxnCommitted instead of logging an
+        // intruder and falling back to the CheckWalTransactionsJob-paced republisher.
+        try (TableWriter writer = engine.getWriter(tableToken, getCommandName(CMD_COMPOSITE_PARTITION_SWAP))) {
             writer.tick(false);
             isDrained = true;
         } catch (CairoException e) {
