@@ -2092,8 +2092,8 @@ public class GroupByTest extends AbstractCairoTest {
                               keys: [s2]
                               values: [sum(l)]
                                 LatestByDeferredListValuesFiltered
-                                  filter: s2 in [c]
                                   jit: true
+                                  filter: s2 in [c]
                                     Frame backward scan on: t
                             """);
             assertQuery(query)
@@ -2130,8 +2130,8 @@ public class GroupByTest extends AbstractCairoTest {
                                   keys: [s2]
                                   values: [sum(l)]
                                     LatestByDeferredListValuesFiltered
-                                      filter: s2 in [c,d]
                                       jit: true
+                                      filter: s2 in [c,d]
                                         Frame backward scan on: t
                             """);
             assertQuery(query)
@@ -2167,8 +2167,8 @@ public class GroupByTest extends AbstractCairoTest {
                               keys: [concat]
                               values: [sum(l)]
                                 LatestByDeferredListValuesFiltered
-                                  filter: s2 in [d]
                                   jit: true
+                                  filter: s2 in [d]
                                     Frame backward scan on: t
                             """);
             assertQuery(query)

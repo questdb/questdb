@@ -49,6 +49,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
     private final boolean restrictedByExcludedValues;
     private final boolean restrictedByIncludedValues;
     private final DirectLongList rowIds;
+    private final LatestByFrameScanner scanner;
     private final int shrinkToCapacity;
     private boolean areRecordsFound;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -72,6 +73,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         this.shrinkToCapacity = shrinkToCapacity;
         this.columnIndex = columnIndex;
         this.filter = filter;
+        this.scanner = filter != null ? new LatestByFrameScanner(filter, frameMemoryPool, frameAddressCache) : null;
         this.restrictedByIncludedValues = restrictedByIncludedValues;
         this.restrictedByExcludedValues = restrictedByExcludedValues;
         if (restrictedByIncludedValues || restrictedByExcludedValues) {
@@ -91,13 +93,8 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
                 foundKeys = new IntHashSet(shrinkToCapacity);
             }
         } finally {
-            try {
-                Misc.free(rowIds);
-            } finally {
-                LatestByCompiledFilter.closeCursor(filter);
-            }
+            Misc.free(rowIds);
         }
-        Misc.free(rowIds);
     }
 
     @Override
@@ -202,36 +199,19 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
-
             frameAddressCache.add(frameCount, frame);
             frameMemoryPool.navigateTo(frameCount++, recordA);
-            for (long batchHi = partitionHi - partitionLo + 1; batchHi > 0; ) {
-                long batchLo = Math.max(0, batchHi - LatestByCompiledFilter.BATCH_SIZE);
-                final DirectLongList matches = LatestByCompiledFilter.apply(
-                        filter, frameMemoryPool, frameAddressCache, frameIndex, batchLo, batchHi
-                );
-                if (matches == null) {
-                    // Unsupported frames retain the original whole-frame Java scan.
-                    batchLo = 0;
-                }
-                final long rowCount = matches != null ? matches.size() : batchHi;
-
-                for (long iRow = rowCount - 1; iRow >= 0; iRow--) {
-                    long row = matches != null ? matches.get(iRow) + batchLo : iRow;
+            scanner.of(frameIndex, frame.getPartitionHi() - frame.getPartitionLo());
+            while (scanner.nextBatch(circuitBreaker)) {
+                for (long i = scanner.getRowCount() - 1; i >= 0; i--) {
+                    final long row = scanner.getRow(i);
                     recordA.setRowIndex(row);
-                    int key = recordA.getInt(columnIndex);
-                    if ((matches != null || filter.getBool(recordA)) && foundKeys.add(key)) {
+                    if (scanner.isMatch(recordA) && foundKeys.add(recordA.getInt(columnIndex))) {
                         rowIds.add(Rows.toRowID(frameIndex, row));
                         if (++foundSize == distinctCount) {
                             return;
                         }
                     }
-                }
-                batchHi = batchLo;
-                if (batchHi > 0) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 }
             }
         }
@@ -319,36 +299,20 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
-
             frameAddressCache.add(frameCount, frame);
             frameMemoryPool.navigateTo(frameCount++, recordA);
-            for (long batchHi = partitionHi - partitionLo + 1; batchHi > 0; ) {
-                long batchLo = Math.max(0, batchHi - LatestByCompiledFilter.BATCH_SIZE);
-                final DirectLongList matches = LatestByCompiledFilter.apply(
-                        filter, frameMemoryPool, frameAddressCache, frameIndex, batchLo, batchHi
-                );
-                if (matches == null) {
-                    // Unsupported frames retain the original whole-frame Java scan.
-                    batchLo = 0;
-                }
-                final long rowCount = matches != null ? matches.size() : batchHi;
-
-                for (long iRow = rowCount - 1; iRow >= 0; iRow--) {
-                    long row = matches != null ? matches.get(iRow) + batchLo : iRow;
+            scanner.of(frameIndex, frame.getPartitionHi() - frame.getPartitionLo());
+            while (scanner.nextBatch(circuitBreaker)) {
+                for (long i = scanner.getRowCount() - 1; i >= 0; i--) {
+                    final long row = scanner.getRow(i);
                     recordA.setRowIndex(row);
-                    int key = recordA.getInt(columnIndex);
-                    if ((matches != null || filter.getBool(recordA)) && excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
+                    final int key = recordA.getInt(columnIndex);
+                    if (scanner.isMatch(recordA) && excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
                         rowIds.add(Rows.toRowID(frameIndex, row));
                         if (++foundSize == distinctCount) {
                             return;
                         }
                     }
-                }
-                batchHi = batchLo;
-                if (batchHi > 0) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 }
             }
         }
@@ -382,41 +346,25 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
 
     private void findRestrictedWithFilter() {
         assert filter != null;
-        int searchSize = includedSymbolKeys.size();
+        final int searchSize = includedSymbolKeys.size();
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
-
             frameAddressCache.add(frameCount, frame);
             frameMemoryPool.navigateTo(frameCount++, recordA);
-            for (long batchHi = partitionHi - partitionLo + 1; batchHi > 0; ) {
-                long batchLo = Math.max(0, batchHi - LatestByCompiledFilter.BATCH_SIZE);
-                final DirectLongList matches = LatestByCompiledFilter.apply(
-                        filter, frameMemoryPool, frameAddressCache, frameIndex, batchLo, batchHi
-                );
-                if (matches == null) {
-                    // Unsupported frames retain the original whole-frame Java scan.
-                    batchLo = 0;
-                }
-                final long rowCount = matches != null ? matches.size() : batchHi;
-
-                for (long iRow = rowCount - 1; iRow >= 0; iRow--) {
-                    long row = matches != null ? matches.get(iRow) + batchLo : iRow;
+            scanner.of(frameIndex, frame.getPartitionHi() - frame.getPartitionLo());
+            while (scanner.nextBatch(circuitBreaker)) {
+                for (long i = scanner.getRowCount() - 1; i >= 0; i--) {
+                    final long row = scanner.getRow(i);
                     recordA.setRowIndex(row);
-                    int key = recordA.getInt(columnIndex);
-                    if ((matches != null || filter.getBool(recordA)) && includedSymbolKeys.contains(key) && excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
+                    final int key = recordA.getInt(columnIndex);
+                    if (scanner.isMatch(recordA) && includedSymbolKeys.contains(key) && excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
                         rowIds.add(Rows.toRowID(frameIndex, row));
                         if (++foundSize == searchSize) {
                             return;
                         }
                     }
-                }
-                batchHi = batchLo;
-                if (batchHi > 0) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 }
             }
         }

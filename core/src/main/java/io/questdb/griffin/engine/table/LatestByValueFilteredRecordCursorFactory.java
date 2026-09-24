@@ -75,9 +75,7 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractPageFrameR
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("LatestByValueFiltered");
-        if (usesCompiledFilter()) {
-            sink.attr("jit").val(true);
-        }
+        LatestByCompiledFilter.addJitAttr(sink, filter);
         sink.child(cursor);
         sink.child(partitionFrameCursorFactory);
     }

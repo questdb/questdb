@@ -106,12 +106,10 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("LatestByDeferredListValuesFiltered");
+        LatestByCompiledFilter.addJitAttr(sink, filter);
         sink.optAttr("filter", filter);
         sink.optAttr("includedSymbols", includedSymbolFuncs);
         sink.optAttr("excludedSymbols", excludedSymbolFuncs);
-        if (usesCompiledFilter()) {
-            sink.attr("jit").val(true);
-        }
         sink.child(partitionFrameCursorFactory);
     }
 

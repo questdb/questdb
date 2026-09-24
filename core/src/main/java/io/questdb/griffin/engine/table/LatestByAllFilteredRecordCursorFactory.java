@@ -84,9 +84,7 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("LatestByAllFiltered");
-        if (usesCompiledFilter()) {
-            sink.attr("jit").val(true);
-        }
+        LatestByCompiledFilter.addJitAttr(sink, filter);
         sink.child(cursor);
         sink.child(partitionFrameCursorFactory);
     }

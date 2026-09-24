@@ -4712,8 +4712,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             Lt Join Light
                                               condition: maps.cluster=_xQdbA3.cluster and maps.alias=_xQdbA3.alias
                                                 LatestByAllSymbolsFiltered
-                                                  filter: cluster in [cluster10]
                                                   jit: true
+                                                  filter: cluster in [cluster10]
                                                     Row backward scan
                                                       expectedSymbolsCount: 2147483647
                                                     Interval backward scan on: maps
@@ -4976,8 +4976,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);")
                 .assertsPlan("""
                         LatestByAllSymbolsFiltered
-                          filter: (s1 in [S1,S2] and s2='S3' and 0<i)
                           jit: true
+                          filter: (s1 in [S1,S2] and s2='S3' and 0<i)
                             Row backward scan
                               expectedSymbolsCount: 2
                             Frame backward scan on: a
@@ -4990,8 +4990,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);")
                 .assertsPlan("""
                         LatestByAllSymbolsFiltered
-                          filter: (s1 in [S1,S2] and s2='S3')
                           jit: true
+                          filter: (s1 in [S1,S2] and s2='S3')
                             Row backward scan
                               expectedSymbolsCount: 2
                             Frame backward scan on: a
@@ -5004,8 +5004,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);")
                 .assertsPlan("""
                         LatestByAllSymbolsFiltered
-                          filter: s1='S1'
                           jit: true
+                          filter: s1='S1'
                             Row backward scan
                               expectedSymbolsCount: 2147483647
                             Interval backward scan on: a

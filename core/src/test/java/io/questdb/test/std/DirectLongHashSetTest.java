@@ -45,28 +45,6 @@ public class DirectLongHashSetTest {
     private static final Log LOG = LogFactory.getLog(DirectLongHashSetTest.class);
 
     @Test
-    public void testLazyOpenAndReuseWithAllLongValues() throws Exception {
-        assertMemoryLeak(() -> {
-            try (DirectLongHashSet set = new DirectLongHashSet(4, 0.5, MemoryTag.NATIVE_DEFAULT, 32, false)) {
-                Assert.assertEquals(0, set.capacity());
-                for (int execution = 0; execution < 3; execution++) {
-                    set.reopen();
-                    Assert.assertEquals(16, set.capacity());
-                    for (long value : new long[]{0, Long.MIN_VALUE, Long.MAX_VALUE, -1, 1}) {
-                        Assert.assertTrue(set.add(value));
-                        Assert.assertFalse(set.add(value));
-                    }
-                    for (int i = 2; i < 1000; i++) {
-                        Assert.assertTrue(set.add(i));
-                    }
-                    set.close();
-                    Assert.assertEquals(0, set.size());
-                }
-            }
-        });
-    }
-
-    @Test
     public void testAddAndContains() throws Exception {
         assertMemoryLeak(() -> {
             try (DirectLongHashSet set = new DirectLongHashSet(16)) {
@@ -247,6 +225,28 @@ public class DirectLongHashSetTest {
                 rnd.reset(seed0, seed1);
                 for (int i = 0; i < N; i++) {
                     Assert.assertTrue(set.contains(rnd.nextLong()));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLazyOpenAndReuseWithAllLongValues() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectLongHashSet set = new DirectLongHashSet(4, 0.5, MemoryTag.NATIVE_DEFAULT, 32, false)) {
+                Assert.assertEquals(0, set.capacity());
+                for (int execution = 0; execution < 3; execution++) {
+                    set.reopen();
+                    Assert.assertEquals(16, set.capacity());
+                    for (long value : new long[]{0, Long.MIN_VALUE, Long.MAX_VALUE, -1, 1}) {
+                        Assert.assertTrue(set.add(value));
+                        Assert.assertFalse(set.add(value));
+                    }
+                    for (int i = 2; i < 1000; i++) {
+                        Assert.assertTrue(set.add(i));
+                    }
+                    set.close();
+                    Assert.assertEquals(0, set.size());
                 }
             }
         });

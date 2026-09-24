@@ -61,104 +61,6 @@ public class LatestByParquetTest extends AbstractCairoTest {
     private static final String QUERY_C = "SELECT sym, v, ts FROM x WHERE sym = 'c' LATEST ON ts PARTITION BY sym";
 
     @Test
-    public void testLatestOnJitBatchesAcrossFrameFormats() throws Exception {
-        Assume.assumeTrue(JitUtil.isJitSupported());
-        assertMemoryLeak(() -> {
-            sqlExecutionContext.changePageFrameSizes(8193, 8193);
-            try {
-                setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8193);
-                execute("CREATE TABLE jit_batches AS (SELECT x id, (x % 7)::STRING::SYMBOL s,"
-                        + " (x % 5)::STRING::SYMBOL t, (x % 3)::STRING::SYMBOL u, (x % 11)::INT k,"
-                        + " (CASE WHEN x % 17 = 0 THEN NULL ELSE x::STRING END)::VARCHAR p,"
-                        + " (((x-1) / 8193) * 86400000000L + (x-1) % 8193)::TIMESTAMP ts"
-                        + " FROM long_sequence(24_577)) TIMESTAMP(ts) PARTITION BY DAY");
-                execute("CREATE TABLE batch_keys (s STRING)");
-                execute("INSERT INTO batch_keys VALUES ('1'), ('3'), ('1'), (NULL), ('missing')");
-                bindVariableService.setStr("key", "1");
-                String[] keys = {"s", "s,t", "s,t,u", "k", "s,k", "s", "s", "s", "s", "s"};
-                String[] predicates = {"", "", "", "", "", " AND s='1'", " AND s=:key",
-                        " AND s IN ('1','3',NULL,'missing')", " AND s NOT IN ('1','3',NULL)",
-                        " AND s IN (SELECT s FROM batch_keys)"};
-                StringSink expected = new StringSink();
-                for (int format = 0; format < 3; format++) {
-                    if (format == 1) {
-                        execute("ALTER TABLE jit_batches CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-03'");
-                    } else if (format == 2) {
-                        // The Parquet VARCHAR-to-LONG conversion requires the Java frame fallback.
-                        execute("ALTER TABLE jit_batches ALTER COLUMN p TYPE LONG");
-                    }
-                    for (int i = 0; i < keys.length; i++) {
-                        for (String interval : new String[]{"", " AND ts >= '1970-01-01T00:00:00.000100' AND ts < '1970-01-02T00:00:00.007001'"}) {
-                            String query = "SELECT id FROM jit_batches WHERE id < 12_291 AND p != NULL"
-                                    + interval + predicates[i] + " LATEST ON ts PARTITION BY " + keys[i];
-                            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-                            expected.clear();
-                            TestUtils.printSql(engine, sqlExecutionContext, query, expected);
-                            for (int mode : new int[]{SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_ENABLED}) {
-                                sqlExecutionContext.setJitMode(mode);
-                                try (RecordCursorFactory factory = select(query)) {
-                                    Assert.assertTrue("format=" + format + ": " + query, factory.usesCompiledFilter());
-                                    for (int attempt = 0; attempt < 2; attempt++) {
-                                        assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns(expected.toString());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            } finally {
-                sqlExecutionContext.restoreToDefaultPageFrameSizes();
-                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            }
-        });
-    }
-
-    @Test
-    public void testLatestOnJitAcrossFrameFormatsAndKeyShapes() throws Exception {
-        Assume.assumeTrue(JitUtil.isJitSupported());
-        assertMemoryLeak(() -> {
-            sqlExecutionContext.changePageFrameSizes(1, 17);
-            try {
-                setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 31);
-                execute("CREATE TABLE jit_frames AS (SELECT x id, (x % 11)::STRING::SYMBOL s,"
-                        + " (x % 7)::STRING::SYMBOL t, (x % 5)::STRING::SYMBOL u, (x % 13)::INT k,"
-                        + " (x % 10)::INT v, (CASE WHEN x % 19 = 0 THEN NULL ELSE 'pass' END)::VARCHAR payload,"
-                        + " (x / 3 * 500000000)::TIMESTAMP ts FROM long_sequence(2000)) TIMESTAMP(ts) PARTITION BY DAY");
-                execute("CREATE TABLE jit_keys (s STRING)");
-                execute("INSERT INTO jit_keys VALUES ('1'), ('3'), ('1'), (NULL), ('missing')");
-                bindVariableService.setStr("key", "1");
-                String[] keys = {"s", "s,t", "s,t,u", "k", "s,k", "s", "s", "s", "s", "s"};
-                String[] predicates = {"", "", "", "", "", " AND s='1'", " AND s=:key",
-                        " AND s IN ('1','3',NULL,'missing')", " AND s NOT IN ('1','3',NULL)",
-                        " AND s IN (SELECT s FROM jit_keys)"};
-                StringSink expected = new StringSink();
-                for (int format = 0; format < 3; format++) {
-                    if (format == 1) {
-                        execute("ALTER TABLE jit_frames CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-04'");
-                    } else if (format == 2) {
-                        execute("ALTER TABLE jit_frames ALTER COLUMN v TYPE DOUBLE");
-                    }
-                    for (int i = 0; i < keys.length; i++) {
-                        String query = "SELECT id FROM jit_frames WHERE v > 2 AND v < 8 AND payload != NULL"
-                                + " AND ts >= 4000000000::TIMESTAMP AND ts < 300000000000::TIMESTAMP"
-                                + predicates[i] + " LATEST ON ts PARTITION BY " + keys[i];
-                        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-                        expected.clear();
-                        TestUtils.printSql(engine, sqlExecutionContext, query, expected);
-                        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-                        try (RecordCursorFactory factory = select(query)) {
-                            Assert.assertTrue("format=" + format + ": " + query, factory.usesCompiledFilter());
-                            assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns(expected.toString());
-                        }
-                    }
-                }
-            } finally {
-                sqlExecutionContext.restoreToDefaultPageFrameSizes();
-            }
-        });
-    }
-
-    @Test
     public void testLatestOnAllIndexedOverMixedPartitions() throws Exception {
         // Indexed symbol routes through LatestByAllIndexedRecordCursorFactory, whose worker
         // tasks (LatestByTask) construct the parquet decoder from the configuration.
@@ -208,6 +110,111 @@ public class LatestByParquetTest extends AbstractCairoTest {
             assertParquetPartitionCount(2);
 
             assertQuery(query).expectSize().returns(expected);
+        });
+    }
+
+    @Test
+    public void testLatestOnJitAcrossFrameFormatsAndKeyShapes() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 17);
+            try {
+                setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 31);
+                execute("""
+                        CREATE TABLE jit_frames AS (
+                          SELECT x id, (x % 11)::STRING::SYMBOL s, (x % 7)::STRING::SYMBOL t, (x % 5)::STRING::SYMBOL u,
+                            (x % 13)::INT k, (x % 10)::INT v,
+                            (CASE WHEN x % 19 = 0 THEN NULL ELSE 'pass' END)::VARCHAR payload,
+                            (x / 3 * 500_000_000)::TIMESTAMP ts
+                          FROM long_sequence(2000)
+                        ) TIMESTAMP(ts) PARTITION BY DAY
+                        """);
+                execute("CREATE TABLE jit_keys (s STRING)");
+                execute("INSERT INTO jit_keys VALUES ('1'), ('3'), ('1'), (NULL), ('missing')");
+                bindVariableService.setStr("key", "1");
+                String[] keys = {"s", "s,t", "s,t,u", "k", "s,k", "s", "s", "s", "s", "s"};
+                String[] predicates = {"", "", "", "", "", " AND s='1'", " AND s=:key",
+                        " AND s IN ('1','3',NULL,'missing')", " AND s NOT IN ('1','3',NULL)",
+                        " AND s IN (SELECT s FROM jit_keys)"};
+                StringSink expected = new StringSink();
+                for (int format = 0; format < 3; format++) {
+                    if (format == 1) {
+                        execute("ALTER TABLE jit_frames CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-04'");
+                    } else if (format == 2) {
+                        execute("ALTER TABLE jit_frames ALTER COLUMN v TYPE DOUBLE");
+                    }
+                    for (int i = 0; i < keys.length; i++) {
+                        String query = "SELECT id FROM jit_frames WHERE v > 2 AND v < 8 AND payload != NULL"
+                                + " AND ts >= 4_000_000_000::TIMESTAMP AND ts < 300_000_000_000::TIMESTAMP"
+                                + predicates[i] + " LATEST ON ts PARTITION BY " + keys[i];
+                        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                        expected.clear();
+                        TestUtils.printSql(engine, sqlExecutionContext, query, expected);
+                        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+                        try (RecordCursorFactory factory = select(query)) {
+                            Assert.assertTrue("format=" + format + ": " + query, factory.usesCompiledFilter());
+                            assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns(expected.toString());
+                        }
+                    }
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
+    public void testLatestOnJitBatchesAcrossFrameFormats() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(8193, 8193);
+            try {
+                setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8193);
+                execute("""
+                        CREATE TABLE jit_batches AS (
+                          SELECT x id, (x % 7)::STRING::SYMBOL s, (x % 5)::STRING::SYMBOL t, (x % 3)::STRING::SYMBOL u,
+                            (x % 11)::INT k, (CASE WHEN x % 17 = 0 THEN NULL ELSE x::STRING END)::VARCHAR p,
+                            (((x-1) / 8193) * 86_400_000_000L + (x-1) % 8193)::TIMESTAMP ts
+                          FROM long_sequence(24_577)
+                        ) TIMESTAMP(ts) PARTITION BY DAY
+                        """);
+                execute("CREATE TABLE batch_keys (s STRING)");
+                execute("INSERT INTO batch_keys VALUES ('1'), ('3'), ('1'), (NULL), ('missing')");
+                bindVariableService.setStr("key", "1");
+                String[] keys = {"s", "s,t", "s,t,u", "k", "s,k", "s", "s", "s", "s", "s"};
+                String[] predicates = {"", "", "", "", "", " AND s='1'", " AND s=:key",
+                        " AND s IN ('1','3',NULL,'missing')", " AND s NOT IN ('1','3',NULL)",
+                        " AND s IN (SELECT s FROM batch_keys)"};
+                StringSink expected = new StringSink();
+                for (int format = 0; format < 3; format++) {
+                    if (format == 1) {
+                        execute("ALTER TABLE jit_batches CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-03'");
+                    } else if (format == 2) {
+                        // The Parquet VARCHAR-to-LONG conversion requires the Java frame fallback.
+                        execute("ALTER TABLE jit_batches ALTER COLUMN p TYPE LONG");
+                    }
+                    for (int i = 0; i < keys.length; i++) {
+                        for (String interval : new String[]{"", " AND ts >= '1970-01-01T00:00:00.000100' AND ts < '1970-01-02T00:00:00.007001'"}) {
+                            String query = "SELECT id FROM jit_batches WHERE id < 12_291 AND p != NULL"
+                                    + interval + predicates[i] + " LATEST ON ts PARTITION BY " + keys[i];
+                            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                            expected.clear();
+                            TestUtils.printSql(engine, sqlExecutionContext, query, expected);
+                            for (int mode : new int[]{SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_ENABLED}) {
+                                sqlExecutionContext.setJitMode(mode);
+                                try (RecordCursorFactory factory = select(query)) {
+                                    Assert.assertTrue("format=" + format + ": " + query, factory.usesCompiledFilter());
+                                    for (int attempt = 0; attempt < 2; attempt++) {
+                                        assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns(expected.toString());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
         });
     }
 

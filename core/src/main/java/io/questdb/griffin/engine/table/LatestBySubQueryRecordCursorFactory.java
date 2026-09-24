@@ -52,7 +52,6 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     private final int columnIndex;
     private final Record.CharSequenceFunction func;
     private final boolean indexed;
-    private final IntHashSet symbolKeys;
     private Function filter;
     private RecordCursorFactory recordCursorFactory;
 
@@ -71,24 +70,24 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         try {
-            // this instance is shared between factory and cursor
-            // factory will be resolving symbols for cursor and if successful
-            // symbol keys will be added to this hash set
-            symbolKeys = indexed ? new IntHashSet() : null;
             this.indexed = indexed;
-            PageFrameRecordCursor cursor;
+            final IntHashSet symbolKeys;
+            final PageFrameRecordCursor cursor;
             if (indexed) {
+                symbolKeys = new IntHashSet();
                 if (filter != null) {
                     cursor = new LatestByValuesIndexedFilteredRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, null, filter);
                 } else {
                     cursor = new LatestByValuesIndexedRecordCursor(configuration, metadata, columnIndex, symbolKeys, null, rows);
                 }
             } else {
-                cursor = new LatestByValueListRecordCursor(
+                final LatestByValueListRecordCursor valueListCursor = new LatestByValueListRecordCursor(
                         configuration, metadata, columnIndex, filter, configuration.getDefaultSymbolCapacity(), true, false
                 );
+                symbolKeys = valueListCursor.getIncludedSymbolKeys();
+                cursor = valueListCursor;
             }
-            this.cursor = new PageFrameRecordCursorWrapper(cursor);
+            this.cursor = new PageFrameRecordCursorWrapper(cursor, symbolKeys);
             this.recordCursorFactory = recordCursorFactory;
             this.filter = filter;
             this.columnIndex = columnIndex;
@@ -112,9 +111,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("LatestBySubQuery");
-        if (usesCompiledFilter()) {
-            sink.attr("jit").val(true);
-        }
+        LatestByCompiledFilter.addJitAttr(sink, filter);
         sink.child("Subquery", recordCursorFactory);
         sink.child(cursor);
         sink.child(partitionFrameCursorFactory);
@@ -157,10 +154,12 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
 
     private class PageFrameRecordCursorWrapper implements PageFrameRecordCursor {
         private final PageFrameRecordCursor delegate;
+        private final IntHashSet symbolKeys;
         private RecordCursor baseCursor;
 
-        private PageFrameRecordCursorWrapper(PageFrameRecordCursor delegate) {
+        private PageFrameRecordCursorWrapper(PageFrameRecordCursor delegate, IntHashSet symbolKeys) {
             this.delegate = delegate;
+            this.symbolKeys = symbolKeys;
         }
 
         @Override
@@ -227,11 +226,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
                 baseCursor = Misc.free(baseCursor);
             }
             baseCursor = recordCursorFactory.getCursor(executionContext);
-            if (indexed) {
-                symbolKeys.clear();
-            } else {
-                ((LatestByValueListRecordCursor) delegate).getIncludedSymbolKeys().clear();
-            }
+            symbolKeys.clear();
             delegate.of(cursor, executionContext);
         }
 
@@ -281,11 +276,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             while (baseCursor.hasNext()) {
                 int symbolKey = AbstractDeferredTreeSetRecordCursorFactory.resolveSymbolKey(symbolTable, func.get(record, 0, sink));
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                    if (indexed) {
-                        symbolKeys.add(TableUtils.toIndexKey(symbolKey));
-                    } else {
-                        ((LatestByValueListRecordCursor) delegate).getIncludedSymbolKeys().add(symbolKey);
-                    }
+                    symbolKeys.add(indexed ? TableUtils.toIndexKey(symbolKey) : symbolKey);
                 }
             }
         }

@@ -5788,13 +5788,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isSqlLatestByJitEnabled() {
-            return sqlLatestByJitEnabled;
+        public boolean isSqlJitDebugEnabled() {
+            return sqlJitDebugEnabled;
         }
 
         @Override
-        public boolean isSqlJitDebugEnabled() {
-            return sqlJitDebugEnabled;
+        public boolean isSqlLatestByJitEnabled() {
+            return sqlLatestByJitEnabled;
         }
 
         @Override

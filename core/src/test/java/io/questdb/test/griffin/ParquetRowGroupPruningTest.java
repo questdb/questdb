@@ -6220,16 +6220,16 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createBoundarySaturatedPartialParquetTyped("FLOAT", "1.641532049179162e-11", "-100.0");
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertNativeMatchesPartialParquetUnordered("c6 >= 1.1641532182693481e-10", "c6\n", "c6\n1.641532E-11\n", false);
-            assertNativeMatchesPartialParquetUnordered("c6 < 1.1641532182693481e-10", "c6\n1.641532E-11\n-100.0\n", "c6\n-100.0\n", false);
+            assertNativeMatchesPartialParquetPerJitMode("c6 >= 1.1641532182693481e-10", "c6\n", "c6\n1.641532E-11\n", false);
+            assertNativeMatchesPartialParquetPerJitMode("c6 < 1.1641532182693481e-10", "c6\n1.641532E-11\n-100.0\n", "c6\n-100.0\n", false);
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
 
             execute("DROP TABLE tn");
             execute("DROP TABLE tp");
             createBoundarySaturatedPartialParquetTyped("FLOAT", "1.1641532182693481e-10", "100.0");
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertNativeMatchesPartialParquetUnordered("c6 <= 1.641532049179162e-11", "c6\n", "c6\n1.1641532E-10\n", false);
-            assertNativeMatchesPartialParquetUnordered("c6 > 1.641532049179162e-11", "c6\n1.1641532E-10\n100.0\n", "c6\n100.0\n", false);
+            assertNativeMatchesPartialParquetPerJitMode("c6 <= 1.641532049179162e-11", "c6\n", "c6\n1.1641532E-10\n", false);
+            assertNativeMatchesPartialParquetPerJitMode("c6 > 1.641532049179162e-11", "c6\n1.1641532E-10\n100.0\n", "c6\n100.0\n", false);
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
 
             // Bounds clear of the tolerance band still prune.
@@ -6254,8 +6254,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             // Zero is exactly one DOUBLE_TOLERANCE from these bounds and compares equal.
             createRepeatedFloatPartialParquet("0.0", "100.0");
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertNativeMatchesPartialParquetUnordered("c6 < 1e-10", "c6\n", false);
-            assertNativeMatchesPartialParquetUnordered(
+            assertNativeMatchesPartialParquetPerJitMode("c6 < 1e-10", "c6\n", false);
+            assertNativeMatchesPartialParquetPerJitMode(
                     "c6 >= 1e-10", "c6\n" + "0.0\n".repeat(REPEATED_FLOAT_ROW_COUNT) + "100.0\n", false
             );
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
@@ -6264,8 +6264,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("DROP TABLE tp");
             createRepeatedFloatPartialParquet("0.0", "-100.0");
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertNativeMatchesPartialParquetUnordered("c6 > -1e-10", "c6\n", false);
-            assertNativeMatchesPartialParquetUnordered(
+            assertNativeMatchesPartialParquetPerJitMode("c6 > -1e-10", "c6\n", false);
+            assertNativeMatchesPartialParquetPerJitMode(
                     "c6 <= -1e-10", "c6\n" + "0.0\n".repeat(REPEATED_FLOAT_ROW_COUNT) + "-100.0\n", false
             );
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
@@ -6275,8 +6275,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("DROP TABLE tp");
             createRepeatedFloatPartialParquet("1e-10", "100.0");
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertNativeMatchesPartialParquetUnordered("c6 < 2e-10", "c6\n", false);
-            assertNativeMatchesPartialParquetUnordered(
+            assertNativeMatchesPartialParquetPerJitMode("c6 < 2e-10", "c6\n", false);
+            assertNativeMatchesPartialParquetPerJitMode(
                     "c6 >= 2e-10", "c6\n" + "1.0E-10\n".repeat(REPEATED_FLOAT_ROW_COUNT) + "100.0\n", false
             );
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
@@ -6286,8 +6286,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("DROP TABLE tp");
             createRepeatedFloatPartialParquet("1.6415322226515094e-11", "100.0");
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertNativeMatchesPartialParquetUnordered("c6 < 1.1641532182693481e-10", "c6\n", false);
-            assertNativeMatchesPartialParquetUnordered(
+            assertNativeMatchesPartialParquetPerJitMode("c6 < 1.1641532182693481e-10", "c6\n", false);
+            assertNativeMatchesPartialParquetPerJitMode(
                     "c6 >= 1.1641532182693481e-10", "c6\n" + "1.6415322E-11\n".repeat(REPEATED_FLOAT_ROW_COUNT) + "100.0\n", false
             );
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
@@ -6296,8 +6296,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("DROP TABLE tp");
             createRepeatedFloatPartialParquet("1.1641532182693481e-10", "-100.0");
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertNativeMatchesPartialParquetUnordered("c6 > 1.6415322226515094e-11", "c6\n", false);
-            assertNativeMatchesPartialParquetUnordered(
+            assertNativeMatchesPartialParquetPerJitMode("c6 > 1.6415322226515094e-11", "c6\n", false);
+            assertNativeMatchesPartialParquetPerJitMode(
                     "c6 <= 1.6415322226515094e-11", "c6\n" + "1.1641532E-10\n".repeat(REPEATED_FLOAT_ROW_COUNT) + "-100.0\n", false
             );
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
@@ -6307,10 +6307,10 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("DROP TABLE tp");
             createRepeatedFloatPartialParquet("1.641532049179162e-11", "-100.0");
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertNativeMatchesPartialParquetUnordered(
+            assertNativeMatchesPartialParquetPerJitMode(
                     "c6 >= 1.1641532182693481e-10", "c6\n", "c6\n" + "1.641532E-11\n".repeat(REPEATED_FLOAT_ROW_COUNT), false
             );
-            assertNativeMatchesPartialParquetUnordered(
+            assertNativeMatchesPartialParquetPerJitMode(
                     "c6 < 1.1641532182693481e-10", "c6\n" + "1.641532E-11\n".repeat(REPEATED_FLOAT_ROW_COUNT) + "-100.0\n",
                     "c6\n-100.0\n", false
             );
@@ -6320,10 +6320,10 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("DROP TABLE tp");
             createRepeatedFloatPartialParquet("1.1641532182693481e-10", "100.0");
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertNativeMatchesPartialParquetUnordered(
+            assertNativeMatchesPartialParquetPerJitMode(
                     "c6 <= 1.641532049179162e-11", "c6\n", "c6\n" + "1.1641532E-10\n".repeat(REPEATED_FLOAT_ROW_COUNT), false
             );
-            assertNativeMatchesPartialParquetUnordered(
+            assertNativeMatchesPartialParquetPerJitMode(
                     "c6 > 1.641532049179162e-11", "c6\n" + "1.1641532E-10\n".repeat(REPEATED_FLOAT_ROW_COUNT) + "100.0\n",
                     "c6\n100.0\n", false
             );
@@ -6335,13 +6335,13 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("DROP TABLE tp");
             createRepeatedFloatPartialParquet("1.0", "100.0");
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertNativeMatchesPartialParquetUnordered("c6 < 1.0", "c6\n", true);
+            assertNativeMatchesPartialParquetPerJitMode("c6 < 1.0", "c6\n", true);
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertNativeMatchesPartialParquetUnordered("c6 > 100.0", "c6\n", true);
+            assertNativeMatchesPartialParquetPerJitMode("c6 > 100.0", "c6\n", true);
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertNativeMatchesPartialParquetUnordered("c6 > 1.0", "c6\n100.0\n", true);
+            assertNativeMatchesPartialParquetPerJitMode("c6 > 1.0", "c6\n100.0\n", true);
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -6724,15 +6724,15 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     // Reading only the filtered column avoids parquet late materialization and its Java fallback.
     // Check exact per-mode rows with Java, scalar JIT and vector JIT for both storage formats.
     // The partition scan order is deterministic without ORDER BY.
-    private void assertNativeMatchesPartialParquetUnordered(
+    private void assertNativeMatchesPartialParquetPerJitMode(
             String whereClause,
             String expected,
             boolean isPruningExpected
     ) throws Exception {
-        assertNativeMatchesPartialParquetUnordered(whereClause, expected, expected, isPruningExpected);
+        assertNativeMatchesPartialParquetPerJitMode(whereClause, expected, expected, isPruningExpected);
     }
 
-    private void assertNativeMatchesPartialParquetUnordered(
+    private void assertNativeMatchesPartialParquetPerJitMode(
             String whereClause,
             String javaExpected,
             String jitExpected,

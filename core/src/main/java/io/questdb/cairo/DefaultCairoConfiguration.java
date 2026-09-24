@@ -1776,13 +1776,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean isSqlLatestByJitEnabled() {
-        return true;
+    public boolean isSqlJitDebugEnabled() {
+        return false;
     }
 
     @Override
-    public boolean isSqlJitDebugEnabled() {
-        return false;
+    public boolean isSqlLatestByJitEnabled() {
+        return true;
     }
 
     @Override

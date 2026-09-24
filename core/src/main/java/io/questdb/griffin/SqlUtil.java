@@ -118,15 +118,10 @@ public class SqlUtil {
         }
     }
 
-    public static ExpressionNode rewriteEqualsOr(
-            ExpressionNode node,
-            ObjectPool<ExpressionNode> expressionNodePool,
-            ArrayDeque<ExpressionNode> stack
-    ) {
-        if (node == null || node.token == null || !SqlKeywords.isOrKeyword(node.token)) {
-            return node;
+    public static ExpressionNode getEqualsOrColumn(ExpressionNode node, ArrayDeque<ExpressionNode> stack) {
+        if (node == null || node.paramCount != 2 || node.token == null || !SqlKeywords.isOrKeyword(node.token)) {
+            return null;
         }
-        ExpressionNode in = expressionNodePool.next().of(ExpressionNode.FUNCTION, "in", node.precedence, node.position);
         ExpressionNode column = null;
         stack.clear();
         stack.push(node);
@@ -138,25 +133,44 @@ public class SqlUtil {
                     stack.push(leaf.rhs);
                     continue;
                 }
-                if (leaf.paramCount != 2 || !Chars.equals(leaf.token, "=") || leaf.lhs == null || leaf.rhs == null) {
-                    return node;
-                }
-                ExpressionNode key = leaf.lhs.type == ExpressionNode.LITERAL ? leaf.lhs : leaf.rhs;
-                ExpressionNode value = key == leaf.lhs ? leaf.rhs : leaf.lhs;
-                if (key.type != ExpressionNode.LITERAL || value.type != ExpressionNode.CONSTANT
-                        || !(SqlKeywords.isNullKeyword(value.token) || Chars.isQuoted(value.token))
-                        || (column != null && !Chars.equalsIgnoreCase(column.token, key.token))) {
-                    return node;
+                ExpressionNode key = getEqualsKey(leaf);
+                if (key == null || (column != null && !Chars.equalsIgnoreCase(column.token, key.token))) {
+                    return null;
                 }
                 column = key;
-                in.args.add(value);
             }
-            in.args.add(column);
-            in.paramCount = in.args.size();
-            return in;
+            return column;
         } finally {
             stack.clear();
         }
+    }
+
+    public static void rewriteEqualsOrToIn(ExpressionNode node, ArrayDeque<ExpressionNode> stack) {
+        assert node.args.size() == 0;
+        ExpressionNode column = null;
+        stack.clear();
+        stack.push(node);
+        try {
+            while (!stack.isEmpty()) {
+                ExpressionNode leaf = stack.pop();
+                if (leaf.paramCount == 2 && SqlKeywords.isOrKeyword(leaf.token)) {
+                    stack.push(leaf.lhs);
+                    stack.push(leaf.rhs);
+                    continue;
+                }
+                column = getEqualsKey(leaf);
+                assert column != null;
+                node.args.add(column == leaf.lhs ? leaf.rhs : leaf.lhs);
+            }
+        } finally {
+            stack.clear();
+        }
+        node.args.add(column);
+        node.paramCount = node.args.size();
+        node.type = ExpressionNode.FUNCTION;
+        node.token = "in";
+        node.lhs = null;
+        node.rhs = null;
     }
 
     public static void addSelectStar(
@@ -2092,6 +2106,19 @@ public class SqlUtil {
                 collectColumnReferencesFromExpression(engine, joinColumn, model, depMap);
             }
         }
+    }
+
+    private static ExpressionNode getEqualsKey(ExpressionNode node) {
+        if (node.paramCount != 2 || !Chars.equals(node.token, "=") || node.lhs == null || node.rhs == null) {
+            return null;
+        }
+        ExpressionNode key = node.lhs.type == ExpressionNode.LITERAL ? node.lhs : node.rhs;
+        ExpressionNode value = key == node.lhs ? node.rhs : node.lhs;
+        if (key.type != ExpressionNode.LITERAL || value.type != ExpressionNode.CONSTANT
+                || !(SqlKeywords.isNullKeyword(value.token) || Chars.isQuoted(value.token))) {
+            return null;
+        }
+        return key;
     }
 
     private static int findEndOfDigitsPos(CharSequence tok, int tokLen, int tokPosition) throws SqlException {

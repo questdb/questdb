@@ -42,7 +42,6 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
@@ -80,9 +79,6 @@ public class LatestByCompiledFilter extends BooleanFunction implements UnaryFunc
         if (filter instanceof LatestByCompiledFilter jit) {
             PageFrameMemory memory = memoryPool.navigateTo(frameIndex);
             if (!memory.hasColumnTops() && !memory.hasColumnTypeCasts()) {
-                jit.filteredRows.reopen();
-                jit.dataAddresses.reopen();
-                jit.auxAddresses.reopen();
                 AsyncFilterUtils.applyCompiledFilter(jit.compiledFilter, jit.bindVarMemory, jit.bindVarFunctions,
                         memory, addressCache, jit.dataAddresses, jit.auxAddresses, jit.filteredRows, rowLo, rowHi - rowLo);
                 return jit.filteredRows;
@@ -91,9 +87,9 @@ public class LatestByCompiledFilter extends BooleanFunction implements UnaryFunc
         return null;
     }
 
-    public static void closeCursor(Function filter) {
-        if (filter instanceof LatestByCompiledFilter jit) {
-            jit.cursorClosed();
+    static void addJitAttr(PlanSink sink, Function filter) {
+        if (filter instanceof LatestByCompiledFilter) {
+            sink.attr("jit").val(true);
         }
     }
 
@@ -113,11 +109,6 @@ public class LatestByCompiledFilter extends BooleanFunction implements UnaryFunc
     }
 
     @Override
-    public void cursorClosed() {
-        CairoException.rethrowCleanupFailure(closeBuffers(null));
-    }
-
-    @Override
     public Function getArg() {
         return filter;
     }
@@ -129,12 +120,9 @@ public class LatestByCompiledFilter extends BooleanFunction implements UnaryFunc
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        CairoException.rethrowCleanupFailure(closeBuffers(null));
-        MemoryTracker tracker = executionContext.getMemoryTracker();
-        filteredRows.setMemoryTracker(tracker);
-        dataAddresses.setMemoryTracker(tracker);
-        auxAddresses.setMemoryTracker(tracker);
-        bindVarMemory.setMemoryTracker(tracker);
+        filteredRows.reopen();
+        dataAddresses.reopen();
+        auxAddresses.reopen();
         filter.init(symbolTableSource, executionContext);
         Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
         AsyncFilterUtils.prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);

@@ -63,9 +63,7 @@ public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDe
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("LatestByValueDeferredFiltered");
-        if (usesCompiledFilter()) {
-            sink.attr("jit").val(true);
-        }
+        LatestByCompiledFilter.addJitAttr(sink, filter);
         super.toPlan(sink);
     }
 

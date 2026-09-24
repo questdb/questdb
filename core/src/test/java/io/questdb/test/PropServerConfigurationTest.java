@@ -2495,15 +2495,6 @@ public class PropServerConfigurationTest {
     }
 
     @Test
-    public void testSqlLatestByJitEnabled() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty("cairo.sql.latest.by.jit.enabled", "false");
-        Assert.assertFalse(newPropServerConfiguration(properties).getCairoConfiguration().isSqlLatestByJitEnabled());
-        properties.setProperty("cairo.sql.latest.by.jit.enabled", "true");
-        Assert.assertTrue(newPropServerConfiguration(properties).getCairoConfiguration().isSqlLatestByJitEnabled());
-    }
-
-    @Test
     public void testSqlJitMode() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("cairo.sql.jit.mode", "");
@@ -2525,6 +2516,15 @@ public class PropServerConfigurationTest {
         properties.setProperty("cairo.sql.jit.mode", "foobar");
         configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(SqlJitMode.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
+    }
+
+    @Test
+    public void testSqlLatestByJitEnabled() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.latest.by.jit.enabled", "false");
+        Assert.assertFalse(newPropServerConfiguration(properties).getCairoConfiguration().isSqlLatestByJitEnabled());
+        properties.setProperty("cairo.sql.latest.by.jit.enabled", "true");
+        Assert.assertTrue(newPropServerConfiguration(properties).getCairoConfiguration().isSqlLatestByJitEnabled());
     }
 
     @Test
