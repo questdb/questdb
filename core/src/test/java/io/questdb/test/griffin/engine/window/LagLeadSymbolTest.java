@@ -343,6 +343,42 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLagLeadOverSymbolIgnoreNullsOffsetTwo() throws Exception {
+        // an offset above one keeps several ring slots; skipped NULLs must not advance the ring
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE symbols (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO symbols VALUES
+                    (NULL, '2024-01-01T00:00:00.000000Z'),
+                    ('a', '2024-01-01T00:01:00.000000Z'),
+                    (NULL, '2024-01-01T00:02:00.000000Z'),
+                    ('b', '2024-01-01T00:03:00.000000Z'),
+                    ('c', '2024-01-01T00:04:00.000000Z'),
+                    (NULL, '2024-01-01T00:05:00.000000Z'),
+                    ('d', '2024-01-01T00:06:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT sym,
+                        LAG(sym, 2) IGNORE NULLS OVER (ORDER BY ts) AS prev_sym,
+                        LEAD(sym, 2) IGNORE NULLS OVER (ORDER BY ts) AS next_sym
+                    FROM symbols
+                    """)
+                    .expectSize()
+                    .returns("""
+                            sym\tprev_sym\tnext_sym
+                            \t\tb
+                            a\t\tc
+                            \t\tc
+                            b\t\td
+                            c\ta\t
+                            \tb\t
+                            d\tb\t
+                            """);
+        });
+    }
+
+    @Test
     public void testLagLeadSymbolDownstreamFilter() throws Exception {
         // The window column reports a static symbol table when its argument is a table column,
         // so the outer filter resolves its constants to int keys. 'nope' is absent from the
@@ -384,6 +420,68 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
                     .returns("""
                             ts\tx
                             2024-01-02T03:00:00.000000Z\ta3
+                            """);
+        });
+    }
+
+    @Test
+    public void testLagLeadSymbolEqualsNocacheHashCollision() throws Exception {
+        // "Aa" and "BB" share a hash bucket. Symbol equality resolves the left key through the
+        // reader's valueOf() and looks it up with keyOf() on the same reader; keyOf() must scan
+        // the bucket through its own view, or the first candidate overwrites the left value and
+        // "BB" matches the key of "Aa".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE n (ts TIMESTAMP, s SYMBOL NOCACHE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO n VALUES
+                    ('2024-01-01T00:00:00', 'Aa'),
+                    ('2024-01-01T01:00:00', 'BB'),
+                    ('2024-01-01T02:00:00', 'Aa'),
+                    ('2024-01-01T03:00:00', 'BB')
+                    """);
+
+            assertQuery("SELECT s, s = s eq FROM n")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\teq
+                            Aa\ttrue
+                            BB\ttrue
+                            Aa\ttrue
+                            BB\ttrue
+                            """);
+            // streaming window
+            assertQuery("""
+                    SELECT ts, s, l1, l2, l1 = l2 eq FROM (
+                        SELECT ts, s, lag(s) OVER () l1, lag(s, 2) OVER () l2 FROM n
+                    )
+                    """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\ts\tl1\tl2\teq
+                            2024-01-01T00:00:00.000000Z\tAa\t\t\ttrue
+                            2024-01-01T01:00:00.000000Z\tBB\tAa\t\tfalse
+                            2024-01-01T02:00:00.000000Z\tAa\tBB\tAa\tfalse
+                            2024-01-01T03:00:00.000000Z\tBB\tAa\tBB\tfalse
+                            """);
+            // cached window
+            assertQuery("""
+                    SELECT ts, s, l1, l2, l1 = l2 eq FROM (
+                        SELECT ts, s, lag(s) OVER (ORDER BY ts DESC) l1, lag(s, 2) OVER (ORDER BY ts DESC) l2 FROM n
+                    ) ORDER BY ts
+                    """)
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\ts\tl1\tl2\teq
+                            2024-01-01T00:00:00.000000Z\tAa\tBB\tAa\tfalse
+                            2024-01-01T01:00:00.000000Z\tBB\tAa\tBB\tfalse
+                            2024-01-01T02:00:00.000000Z\tAa\tBB\t\tfalse
+                            2024-01-01T03:00:00.000000Z\tBB\t\t\ttrue
                             """);
         });
     }
