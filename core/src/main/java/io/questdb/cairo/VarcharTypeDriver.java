@@ -534,6 +534,14 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         return VARCHAR_AUX_WIDTH_BYTES * row;
     }
 
+    /**
+     * VARCHAR; this driver also serves VARCHAR_SLICE, the transient in-memory slice of a varchar.
+     */
+    @Override
+    public ColumnTypeTag getTag() {
+        return ColumnTypeTag.VARCHAR;
+    }
+
     @Override
     public long getAuxVectorSize(long storageRowCount) {
         return VARCHAR_AUX_WIDTH_BYTES * storageRowCount;

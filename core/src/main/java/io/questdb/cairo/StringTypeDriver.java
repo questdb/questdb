@@ -130,6 +130,11 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public ColumnTypeTag getTag() {
+        return ColumnTypeTag.STRING;
+    }
+
+    @Override
     public long getAuxVectorSize(long storageRowCount) {
         return (storageRowCount + 1) << LEGACY_VAR_SIZE_AUX_SHL;
     }

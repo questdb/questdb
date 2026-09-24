@@ -41,6 +41,11 @@ public class BinaryTypeDriver extends StringTypeDriver {
     }
 
     @Override
+    public ColumnTypeTag getTag() {
+        return ColumnTypeTag.BINARY;
+    }
+
+    @Override
     public boolean isSparseDataVector(long auxMemAddr, long dataMemAddr, long rowCount) {
         for (int row = 0; row < rowCount; row++) {
             long offset = Unsafe.getLong(auxMemAddr + (long) row * Long.BYTES);

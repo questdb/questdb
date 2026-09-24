@@ -374,6 +374,17 @@ public final class ColumnType {
         return leftPriority >= rightPriority ? left : right;
     }
 
+    /**
+     * The per-type driver of a column type: one instance per non-pseudo tag, see
+     * {@link TypeDriver}. Fetch it once per column, batch or query, not per value. Throws
+     * {@link CairoException} for pseudo tags, which have no driver. Unlike
+     * {@link #getDriver(int)}, which serves the var-size storage API only, this is total
+     * over every type a column or a value can have.
+     */
+    public static TypeDriver getTypeDriver(int columnType) {
+        return TypeDrivers.get(columnType);
+    }
+
     public static TimestampDriver getTimestampDriver(int timestampType) {
         final short tag = tagOf(timestampType);
         // null and UNDEFINED use MicrosTimestamp
