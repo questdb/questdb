@@ -682,6 +682,14 @@ public interface CairoConfiguration {
 
     int getPartitionCompactionPrefixMinPercent();
 
+    /**
+     * How long every folder of a logical partition - the main directory and all its MOVE-TAIL splits - has to
+     * have been idle before the background sweep merges the whole logical partition into a single folder. Always
+     * at or below {@link #getPartitionCompactionIdleTimeout()}, which is the threshold for compacting one
+     * composite folder on its own.
+     */
+    long getPartitionCompactionSquashIdleTimeout();
+
     int getPartitionCompactionTableDeadStopPercent();
 
     long getPartitionCompactionTableDeadThreshold();

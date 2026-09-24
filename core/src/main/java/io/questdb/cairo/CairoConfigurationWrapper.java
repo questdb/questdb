@@ -910,6 +910,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getPartitionCompactionSquashIdleTimeout() {
+        return getDelegate().getPartitionCompactionSquashIdleTimeout();
+    }
+
+    @Override
     public int getPartitionCompactionTableDeadStopPercent() {
         return getDelegate().getPartitionCompactionTableDeadStopPercent();
     }

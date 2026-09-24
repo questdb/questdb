@@ -129,6 +129,12 @@ public final class TableUtils {
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
     public static final short META_FORMAT_MINOR_VERSION_TABLE_FORMAT = 2;
     public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
+    /**
+     * Marks a whole LOGICAL partition's merge - every folder of one period, the main directory and all its splits,
+     * copied into one - staged next to the source directories before the writer has agreed to swap it in. Named
+     * {@code <logicalPartition>.<firstFolderNameTxn>.merging<folderCount>}; see {@code PartitionCompactionScanJob}.
+     */
+    public static final String MERGING_DIR_MARKER = ".merging";
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // INT

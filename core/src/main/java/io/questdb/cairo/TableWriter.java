@@ -4213,6 +4213,173 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Swaps in one directory holding the live rows of a whole LOGICAL partition - the main directory and every
+     * MOVE-TAIL split - built off a {@link TableReader} snapshot by {@code PartitionCompactionScanJob}, and
+     * replaces the run of {@code _txn} entries it was built from with a single entry. Like
+     * {@link #swapCompactedCompositePartition}, this writer is held only for the metadata-only swap; the copy
+     * itself ran with no writer at all.
+     * <p>
+     * {@code folders} carries {@link CompositePartitionSwapCommand#LONGS_PER_FOLDER} longs per source folder, in
+     * {@code _txn} order: its start timestamp, name txn, generation (a composite folder's writer txn, zero for a
+     * plain one), live row count and column version. Every one of them has to still be exactly as the copy found
+     * it, and the run has to still be the WHOLE logical partition - a folder added or removed since the snapshot
+     * means the copy does not hold the partition's rows. The column version is the word an UPDATE moves on its
+     * own: it rewrites a folder's column files under new name txns while the folder keeps its name txn, its
+     * generation and its row count, so without it a swap would publish pre-UPDATE files under post-UPDATE names.
+     * <p>
+     * The run may not end on the last {@code _txn} entry. That partition is the one this writer holds open, and
+     * whose files carry the WAL lag rows past the live ones - rows no piece accounts for and the copy therefore
+     * never saw. The writer's own squash folds the active logical partition on commit; this path stands down.
+     *
+     * @throws io.questdb.cairo.sql.TableReferenceOutOfDateException if the logical partition moved since the build
+     *                                                               snapshot, or the writer is in a transaction -
+     *                                                               either way the staged copy is removed and the
+     *                                                               next sweep decides again
+     */
+    public void swapMergedLogicalPartition(
+            long logicalPartitionTimestamp,
+            LongList folders,
+            long expectedSrcNameTxn,
+            long expectedWriterTxn,
+            long expectedMetadataVersion,
+            long liveRows,
+            ColumnTopRecorder columnTops
+    ) {
+        final int folderCount = folders.size() / CompositePartitionSwapCommand.LONGS_PER_FOLDER;
+        // See swapCompactedCompositePartition: an open transaction can hold uncommitted rows the build's
+        // snapshot never saw, so decline rather than swap over them.
+        final boolean isInTransaction = inTransaction();
+        final long liveMetadataVersion = getMetadataVersion();
+        final int firstIndex = folderCount > 1
+                ? txWriter.findAttachedPartitionIndexByLoTimestamp(folders.getQuick(0))
+                : -1;
+        // A run that reaches the last entry is the active logical partition - see the method doc.
+        boolean stale = isInTransaction
+                || firstIndex < 0
+                || liveMetadataVersion != expectedMetadataVersion
+                || firstIndex + folderCount > txWriter.getPartitionCount() - 1;
+        for (int i = 0; !stale && i < folderCount; i++) {
+            final int offset = i * CompositePartitionSwapCommand.LONGS_PER_FOLDER;
+            final int partitionIndex = firstIndex + i;
+            stale = txWriter.getPartitionTimestampByIndex(partitionIndex) != folders.getQuick(offset)
+                    || txWriter.getPartitionNameTxn(partitionIndex) != folders.getQuick(offset + 1)
+                    || txWriter.isPartitionReadOnly(partitionIndex)
+                    || txWriter.isPartitionRemote(partitionIndex)
+                    || txWriter.isPartitionParquet(partitionIndex)
+                    || txWriter.getPartitionSize(partitionIndex) != folders.getQuick(offset + 3)
+                    || compositePartitionGeneration(partitionIndex) != folders.getQuick(offset + 2)
+                    || columnVersionWriter.getMaxPartitionVersion(folders.getQuick(offset)) != folders.getQuick(offset + 4);
+        }
+        if (!stale) {
+            // The run has to still BE the logical partition: a split that appeared on either side of it holds
+            // rows the staging copy does not, and dropping its entry would drop those rows.
+            stale = txWriter.getLogicalPartitionTimestamp(folders.getQuick(0)) != logicalPartitionTimestamp
+                    || txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(firstIndex + folderCount)) == logicalPartitionTimestamp
+                    || (firstIndex > 0
+                    && txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(firstIndex - 1)) == logicalPartitionTimestamp);
+        }
+
+        other.trimTo(pathSize);
+        setPathForNativePartition(other, timestampType, partitionBy, logicalPartitionTimestamp, expectedSrcNameTxn);
+        other.put(TableUtils.MERGING_DIR_MARKER).put(folderCount);
+
+        if (stale) {
+            LOG.info().$("discarding stale logical partition merge [table=").$(tableToken)
+                    .$(", dir=").$substr(pathRootSize, other)
+                    .$(", folders=").$(folderCount)
+                    .$(", expectedMetadataVersion=").$(expectedMetadataVersion)
+                    .$(", liveMetadataVersion=").$(liveMetadataVersion)
+                    .$(", inTransaction=").$(isInTransaction)
+                    .I$();
+            if (ff.exists(other.$())) {
+                ff.rmdir(other, false);
+            }
+            other.trimTo(pathSize);
+            throw TableReferenceOutOfDateException.ofOutdatedView(tableToken, expectedWriterTxn, -1L);
+        }
+
+        final long newNameTxn = txWriter.getTxn();
+        path.trimTo(pathSize);
+        setPathForNativePartition(path, timestampType, partitionBy, logicalPartitionTimestamp, newNameTxn);
+        if (ff.rename(other.$(), path.$()) != Files.FILES_RENAME_OK) {
+            // Built before the trims, so it names the staging and target directories rather than the
+            // table root twice. The trims still have to run: processAsyncWriterCommand swallows this
+            // exception and the writer keeps going with these two reusable Path fields.
+            final CairoException e = CairoException.critical(ff.errno())
+                    .put("could not rename staged logical partition merge [table=").put(tableToken)
+                    .put(", from=").put(other)
+                    .put(", to=").put(path)
+                    .put(']');
+            other.trimTo(pathSize);
+            path.trimTo(pathSize);
+            throw e;
+        }
+        path.trimTo(pathSize);
+        other.trimTo(pathSize);
+
+        // Hoisted: the formatter writes through a reusable sink, so it runs before the ring slot is taken.
+        final Utf8Sequence mergedDir = formatPartitionForTimestamp(logicalPartitionTimestamp, newNameTxn);
+        LOG.info().$("merging a logical partition into one directory [table=").$(tableToken)
+                .$(", dir=").$(mergedDir)
+                .$(", folders=").$(folderCount)
+                .$(", liveRows=").$(liveRows)
+                .I$();
+
+        // Cold version of the merged partition: max of the merged sources' stamps, the same rule squashing applies.
+        long mergedSeqTxn = 0;
+        for (int i = 0; i < folderCount; i++) {
+            mergedSeqTxn = Math.max(mergedSeqTxn, nativePartitionSeqTxn(firstIndex + i));
+        }
+        // Back to front, so the indexes of the folders not yet removed do not shift under the loop.
+        for (int i = folderCount - 1; i >= 0; i--) {
+            removeAttachedPartitionsTracked(folders.getQuick(i * CompositePartitionSwapCommand.LONGS_PER_FOLDER));
+        }
+        for (int i = 0; i < folderCount; i++) {
+            final long folderTimestamp = folders.getQuick(i * CompositePartitionSwapCommand.LONGS_PER_FOLDER);
+            if (folderTimestamp != logicalPartitionTimestamp) {
+                columnVersionWriter.squashPartition(logicalPartitionTimestamp, folderTimestamp);
+            }
+        }
+        txWriter.insertPartition(firstIndex, logicalPartitionTimestamp, liveRows, newNameTxn);
+        // The merged directory is one piece at row 0, the ordinary shape, so it publishes no geometry record.
+        setPartitionGeometryRefTracked(logicalPartitionTimestamp, NO_GEOMETRY_REF);
+        txWriter.setPartitionSeqTxn(firstIndex, mergedSeqTxn);
+
+        ColumnTopSink sink = columnVersionWriter.asColumnTopSink(logicalPartitionTimestamp);
+        columnTops.pushInto(sink);
+
+        // The splits this merge folded may have been the earliest ones the squash scan starts from.
+        minSplitPartitionTimestamp = findMinSplitPartitionTimestamp();
+
+        try {
+            if (sealPostingIndexForPartition(logicalPartitionTimestamp, false)) {
+                restorePostingIndexersToLastPartition();
+            }
+        } catch (Throwable e) {
+            LOG.critical().$("logical partition merge succeeded but posting-index reseal failed `").$(e).$('`').$();
+            distressed = true;
+            throw e;
+        }
+
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        commitTxWriterAndPublishPendingPostingSealPurges();
+
+        // Filled and drained here, the way safeDeletePartitionDir does it for a single directory: a list built
+        // before the commit is one the commit may clear without draining.
+        try {
+            partitionRemoveCandidates.clear();
+            for (int i = 0; i < folderCount; i++) {
+                final int offset = i * CompositePartitionSwapCommand.LONGS_PER_FOLDER;
+                partitionRemoveCandidates.add(folders.getQuick(offset), folders.getQuick(offset + 1));
+            }
+            processPartitionRemoveCandidates();
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
+        }
+    }
+
     // Returns SWITCH_OK (0) on successful switch, SWITCH_SKIPPED (-2) if the partition was
     // skipped (active or already parquet), SWITCH_NO_PARQUET (-1) if there is no parquet file to switch to.
     public int switchNativePartitionWithParquet(long partitionTimestamp, long parquetFileSize) {
@@ -6608,6 +6775,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return COMPACTION_SKIPPED_HOT;
         }
         return compactPartition(partitionIndex) ? COMPACTION_REWRITTEN : COMPACTION_NONE;
+    }
+
+    /**
+     * A native partition's compaction generation: the writer txn of a COMPOSITE partition's geometry record, and
+     * zero for a plain one, which has no geometry to move on. The pair {@code (nameTxn, generation)} is what a swap
+     * built off a reader snapshot re-checks against the live {@code _txn}.
+     */
+    private long compositePartitionGeneration(int partitionIndex) {
+        return txWriter.isPartitionComposite(partitionIndex) ? getGeometry().getWriterTxn(partitionIndex) : 0L;
     }
 
     private void configureAppendPosition() {
@@ -15395,6 +15571,62 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * The {@link TableUtils#MERGING_DIR_MARKER} twin of {@link #removeCompactingPartitionDirIfStale}: a merge's
+     * staging directory is still wanted only while the logical partition it names still holds exactly the folder
+     * count the copy was built from, starting on the name txn its name carries.
+     */
+    private void removeMergingPartitionDirIfStale(long pUtf8NameZ) {
+        final int markerLo = Utf8s.indexOfAscii(utf8Sink, 0, utf8Sink.size(), MERGING_DIR_MARKER);
+        final boolean stale;
+        try {
+            final long folderCount = Numbers.parseLong(utf8Sink, markerLo + MERGING_DIR_MARKER.length(), utf8Sink.size());
+            final long srcNameTxn;
+            int txnSep = Utf8s.indexOfAscii(utf8Sink, 0, markerLo, '.');
+            if (txnSep < 0) {
+                txnSep = markerLo;
+                srcNameTxn = -1;
+            } else {
+                srcNameTxn = Numbers.parseLong(utf8Sink, txnSep + 1, markerLo);
+            }
+            final long logicalPartitionTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, EN_LOCALE);
+            int partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(logicalPartitionTimestamp);
+            if (partitionIndex < 0) {
+                // No folder starts on the logical start: a run of splits alone begins at the insertion point.
+                partitionIndex = -partitionIndex - 1;
+            }
+            long liveFolderCount = 0;
+            for (int i = partitionIndex, n = txWriter.getPartitionCount(); i < n; i++) {
+                if (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(i)) != logicalPartitionTimestamp) {
+                    break;
+                }
+                liveFolderCount++;
+            }
+            // A merge always names two folders or more, and a matching live count then puts partitionIndex
+            // inside the table, so the name txn below is readable.
+            stale = liveFolderCount < 2
+                    || liveFolderCount != folderCount
+                    || txWriter.getPartitionNameTxn(partitionIndex) != srcNameTxn;
+        } catch (NumericException ignore) {
+            // Not a name this writer's compaction produced; leave the directory rather than guess.
+            path.trimTo(pathSize);
+            path.concat(pUtf8NameZ).$();
+            LOG.error().$("invalid staging partition directory inside table folder: ").$(path).$();
+            path.trimTo(pathSize);
+            return;
+        }
+        if (stale) {
+            path.trimTo(pathSize);
+            path.concat(pUtf8NameZ);
+            LOG.info().$("removing abandoned logical partition merge staging directory [path=").$substr(pathRootSize, path.$()).I$();
+            if (!ff.rmdir(path, false)) {
+                LOG.error().$("could not remove abandoned logical partition merge staging directory [path=").$substr(pathRootSize, path.$())
+                        .$(", errno=").$(ff.errno()).I$();
+            }
+            path.trimTo(pathSize);
+        }
+    }
+
     private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
         // Do not remove detached partitions, they are probably about to be attached
         // Do not remove wal and sequencer directories either
@@ -15406,6 +15638,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // A partition compaction's staging directory: its name carries the source's generation after
             // the marker rather than a partition name txn, so it needs its own liveness test.
             removeCompactingPartitionDirIfStale(pUtf8NameZ);
+            return;
+        }
+        if (Utf8s.containsAscii(utf8Sink, TableUtils.MERGING_DIR_MARKER)) {
+            // A logical partition merge's staging directory, named after the whole run rather than one
+            // folder, so it too needs its own liveness test.
+            removeMergingPartitionDirIfStale(pUtf8NameZ);
             return;
         }
         if (!CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&

@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.wal.MetadataService;
+import io.questdb.std.LongList;
 import io.questdb.tasks.TableWriterTask;
 
 /**
@@ -37,16 +38,30 @@ import io.questdb.tasks.TableWriterTask;
  *     <li>MAKE-PLAIN ({@link #ofMakePlain}): for a partition already reduced to a single piece at row 0, where the
  *     copy buys nothing - the writer drops the dead space and trims the files in place. Nothing is staged, so
  *     {@code liveRows} and the recorded tops go unused.</li>
+ *     <li>MERGE ({@link #ofMerge}): the whole LOGICAL partition - the main directory plus every MOVE-TAIL split -
+ *     copied into one staging directory, which replaces the run of {@code _txn} entries it was built from.</li>
  * </ul>
- * Both are the same errand - compact this partition - so they share one command and one lock reason.
+ * All three are the same errand - compact this partition - so they share one command and one lock reason.
  */
 public class CompositePartitionSwapCommand implements AsyncWriterCommand {
+    /**
+     * Longs per {@link #folders} entry: the folder's own start timestamp, its name txn, its generation
+     * (a composite folder's writer txn, zero for a plain one), its live row count and the column version its
+     * files carried when the copy read them. Together they are the state the writer re-checks each source
+     * folder against before it swaps the merged copy in.
+     */
+    public static final int LONGS_PER_FOLDER = 5;
     private final ColumnTopRecorder columnTops = new ColumnTopRecorder();
+    /**
+     * MERGE only: the source folders the staging copy was built from, in {@code _txn} order.
+     */
+    private final LongList folders = new LongList();
     private long correlationId = -1L;
     private long expectedMetadataVersion;
     private long expectedSrcNameTxn;
     private long expectedWriterTxn;
     private boolean isMakePlain;
+    private boolean isMerge;
     private long liveRows;
     private long partitionTimestamp;
     private int tableId;
@@ -54,7 +69,17 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
 
     @Override
     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) {
-        if (isMakePlain) {
+        if (isMerge) {
+            ((TableWriter) svc).swapMergedLogicalPartition(
+                    partitionTimestamp,
+                    folders,
+                    expectedSrcNameTxn,
+                    expectedWriterTxn,
+                    expectedMetadataVersion,
+                    liveRows,
+                    columnTops
+            );
+        } else if (isMakePlain) {
             ((TableWriter) svc).makePartitionPlainInPlace(
                     partitionTimestamp,
                     expectedSrcNameTxn,
@@ -171,6 +196,8 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
         this.expectedMetadataVersion = expectedMetadataVersion;
         this.liveRows = liveRows;
         this.isMakePlain = false;
+        this.isMerge = false;
+        this.folders.clear();
         this.columnTops.clear();
     }
 
@@ -187,6 +214,38 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
     ) {
         of(tableToken, tableId, partitionTimestamp, expectedSrcNameTxn, expectedWriterTxn, expectedMetadataVersion, 0);
         this.isMakePlain = true;
+    }
+
+    /**
+     * The MERGE mode. {@code folders} carries {@link #LONGS_PER_FOLDER} longs per source folder, in {@code _txn}
+     * order. The first folder's name txn names the staging directory - {@code
+     * <logicalPartition>.<firstFolderNameTxn>.merging<folderCount>} - so the writer can find what the job built
+     * without being told the path.
+     *
+     * @param logicalPartitionTimestamp the start of the logical partition, which is where the merged directory lands
+     * @param folders                   the source folders, copied into this command
+     * @param liveRows                  the live rows of the whole logical partition, which the staging copy holds
+     */
+    public void ofMerge(
+            TableToken tableToken,
+            int tableId,
+            long logicalPartitionTimestamp,
+            LongList folders,
+            long expectedMetadataVersion,
+            long liveRows
+    ) {
+        assert folders.size() >= 2 * LONGS_PER_FOLDER : "a merge needs at least two folders";
+        of(
+                tableToken,
+                tableId,
+                logicalPartitionTimestamp,
+                folders.getQuick(1),
+                folders.getQuick(2),
+                expectedMetadataVersion,
+                liveRows
+        );
+        this.isMerge = true;
+        this.folders.add(folders);
     }
 
     @Override

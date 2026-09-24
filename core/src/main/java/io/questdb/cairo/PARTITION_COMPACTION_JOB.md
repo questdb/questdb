@@ -10,6 +10,28 @@ updates, gets no more commits to trigger its own reclamation.
 hands each to its writer to compact. It reclaims exactly the same waste the per-commit path would have, off
 the writer thread, for partitions the per-commit path can no longer reach.
 
+## The unit of work: a LOGICAL partition
+
+One period of the table's PARTITION BY unit - an hour, day, week, month or year - can be several directories:
+the main folder (`2024-01-01`) and the splits a MOVE-TAIL or an O3 partition split leaves later in the same
+period (`2024-01-01T050000-...`). Each is its own `_txn` entry. The sweep takes the whole run of entries
+sharing one logical start as one unit, and dispatches at most one command for it per sweep.
+
+| logical partition state | action |
+|---|---|
+| every folder idle >= squash idle, two folders or more, not the active period | merge the whole logical partition into one folder |
+| anything else | compact alone each COMPOSITE folder idle >= single idle; leave plain folders alone |
+
+The merge stands down on three shapes, which keep their per-folder treatment: a logical partition holding a
+Parquet, READ ONLY or REMOTE folder (none of them rows this native copy may read or replace), and the ACTIVE
+logical partition - the one holding the last `_txn` entry. That partition is the one the writer holds open,
+and its files carry the WAL lag rows past the live ones, which no piece accounts for and a copy built off a
+reader snapshot would drop; the writer's own squash folds it on commit. The writer re-checks all of this.
+
+A plain folder alone in its logical partition has no dead space and no split to merge, so the sweep still
+skips it outright. A plain folder is never compacted on its own, however cold: only the whole-partition merge
+has anything to gain there.
+
 ## Where it runs
 
 Its own single-thread worker pool (`PartitionCompactionPoolConfiguration`), never the shared write pool: a
@@ -41,9 +63,13 @@ Per partition, in `scanTable`, each gate avoids the cost of the next:
 3. **Recency filter** - skip any partition whose upper time bound is inside `[now - idleTimeout, now]`. For
    time-partitioned data only the newest partitions can still take O3 writes, so this rules out most
    survivors using fields already in `_txn`. `cairo.partition.compaction.idle.timeout`, default 60 min.
-4. **Confirm idle** with one targeted read of the survivors: a composite partition's `_geometry`
-   `lastWriteMicros`, or a Parquet partition's `_pm` footer for dead bytes / a stale schema. Parquet "clean"
-   answers are memoised (`cleanParquetPartitions`) so a compacted partition is not re-read every pass.
+4. **Confirm idle** with one targeted read of the survivors: a composite folder's `_geometry`
+   `lastWriteMicros`, a plain folder's designated timestamp column file modification time, or a Parquet
+   partition's `_pm` footer for dead bytes / a stale schema. Parquet "clean" answers are memoised
+   (`cleanParquetPartitions`) so a compacted partition is not re-read every pass.
+
+Gate 3 reads the END of the logical partition - the next logical partition's start, or the table's max
+timestamp - never the next split's start, which is inside the run being decided.
 
 ## Dispatch
 
@@ -51,24 +77,43 @@ Three entry points, chosen by the partition's shape:
 
 | entry point | partition | what it asks for |
 |---|---|---|
+| `dispatchMerge` | a whole logical partition, every folder idle past the squash threshold | one directory holding every folder's live rows, built off a `TableReader` snapshot into a `.merging<folderCount>` staging directory; the swap replaces the run of `_txn` entries with one |
 | `dispatchMakePlain` | composite, already one piece at row 0 with dead space above (`isMakePlainShape`) | MAKE-PLAIN + TRIM-FILES in place - nothing staged, nothing copied |
 | `dispatchComposite` | composite, otherwise | a REWRITE: all live rows in timestamp order, built off a `TableReader` snapshot into a `.compacting<generation>` staging directory |
 | `dispatchParquet` | Parquet with dead row groups or a stale schema | live row groups copied (re-encoded under the current schema when stale) into staging |
+
+The three single-folder entry points dispatch by the folder's OWN start timestamp. The logical start resolves
+to the main folder, which for a split is the wrong directory entirely - and a logical partition whose main
+folder is missing resolves to nothing at all.
+
+The merge does not reuse the writer's own squash: the job builds the merged directory itself, off a reader
+snapshot, holding no writer, exactly as a REWRITE does. The writer only runs the swap.
 
 ## Swap protocol
 
 `engine.getWriterOrPublishCommand` decides how the result lands. An idle writer applies the swap inline on
 the sweep thread. A busy writer instead gets the command queued onto its own `TableWriterTask` queue and
 applies it on its own thread via `tick()`. The pool captures that writer's monotonic instance id while its
-publish fence holds the writer live. The sweep records five longs, sorted by table and partition:
-`(tableId, partitionTimestamp, srcNameTxn, generation, writerId)`.
+publish fence holds the writer live. The sweep records five longs, sorted by table and LOGICAL partition:
+`(tableId, logicalPartitionTimestamp, state, expiry, writerId)`, where `state` folds the whole run of folders
+- each one's start, name txn, generation and row count - into one word.
 
-The record suppresses a rebuild only while both the partition generation and the live writer id still match.
-When the job next visits the table, it prunes records whose swap made the partition plain or advanced its
-generation. A closed, distressed, evicted, or replaced writer also invalidates its records, and every sweep
-removes records for dropped tables. Records belonging to existing tables skipped because a sweep spent its
-budget remain untouched. No TTL or staging-directory existence
-check participates: neither can establish command ownership safely.
+The record stands down the sweep on EVERY folder of that logical partition, not just the one the swap was
+built from: rebuilding a sibling would take the writer's queued command down a path that no longer matches
+what it is about to rename. At most one swap per logical partition is therefore outstanding, and folders that
+each deserve their own compaction take their turns one sweep after another.
+
+When the job next visits the table, it prunes records whose logical partition state has moved on - which is
+what landing the swap does, and also what any ingestion into it does. A closed, distressed, evicted, or
+replaced writer also invalidates its records, and every sweep removes records for dropped tables. Records
+belonging to existing tables skipped because a sweep spent its budget remain untouched. No staging-directory
+existence check participates: it cannot establish command ownership safely.
+
+The expiry is not a TTL on the record. A command a writer consumed without moving `_txn` - one it refused, or
+one whose rename failed - would otherwise park its logical partition for the life of that writer instance. 30
+minutes after the record was taken, the sweep takes the writer out of the pool and ticks it, which consumes
+whatever is still queued; only then does it forget the records. A writer too busy to hand over keeps them,
+and the next sweep tries again. Nothing is rebuilt on the strength of the elapsed time alone.
 
 After an inline swap, `notifyWalApplyIfLagging` re-sends the WAL apply notification that was dropped while the
 writer was out of the pool.
@@ -88,7 +133,8 @@ record it retires.
 | key | default | meaning |
 |---|---|---|
 | `cairo.partition.compaction.check.interval` | 2 min | sweep cadence; negative disables the sweep |
-| `cairo.partition.compaction.idle.timeout` | 60 min | a partition must be untouched this long to qualify |
+| `cairo.partition.compaction.idle.timeout` | 60 min | a composite folder must be untouched this long to be compacted on its own |
+| `cairo.partition.compaction.squash.idle.timeout` | 30 min | EVERY folder of a logical partition must be untouched this long for the whole partition to be merged; clamped to at most the key above |
 | `cairo.partition.compaction.io.budget` | 1 GiB | estimated read-plus-write bytes a sweep may start; the first dispatch always runs |
 | `cairo.partition.compaction.time.budget` | 1 s | elapsed-time backstop checked between dispatches |
 
