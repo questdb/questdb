@@ -109,9 +109,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private static final int FLAG_PREFERENCES_OUT_OF_DATE_ERROR = 1 << 7;
     private static final int FLAG_READ_ONLY_ACCESS_REFUSAL = 1 << 8;
     private static final int FLAG_SCHEMA_MISMATCH = 1 << 9;
+    private static final int FLAG_DATA_SYNC_FAILURE = 1 << 10;
     protected final StringSink message = new StringSink();
     protected final StringSink nativeBacktrace = new StringSink();
     protected int errno;
+    private String dataSyncOperation;
     private int flags;
     private int interruptionReason;
     private int messagePosition;
@@ -122,6 +124,13 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public static CairoException critical(int errno) {
         return instance(errno);
+    }
+
+    public static CairoException dataSyncFailure(int errno, String operation) {
+        CairoException exception = critical(errno);
+        exception.dataSyncOperation = operation;
+        exception.flags |= FLAG_DATA_SYNC_FAILURE;
+        return exception;
     }
 
     public static CairoException detachedColumnMetadataMismatch(int columnIndex, CharSequence columnName, CharSequence attribute) {
@@ -173,6 +182,16 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public static boolean isCairoOomError(Throwable t) {
         return t instanceof CairoException && ((CairoException) t).isOutOfMemory();
+    }
+
+    public static boolean isDataSyncFailure(Throwable t) {
+        while (t != null) {
+            if (t instanceof CairoException cairoException && cairoException.isDataSyncFailure()) {
+                return true;
+            }
+            t = t.getCause();
+        }
+        return false;
     }
 
     /**
@@ -360,6 +379,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return message;
     }
 
+    public String getDataSyncOperation() {
+        return dataSyncOperation;
+    }
+
     public int getInterruptionReason() {
         return interruptionReason;
     }
@@ -407,6 +430,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 && errno != MAT_VIEW_DOES_NOT_EXIST
                 && errno != VIEW_DOES_NOT_EXIST
                 && errno != TABLE_DOES_NOT_EXIST;
+    }
+
+    public boolean isDataSyncFailure() {
+        return (flags & FLAG_DATA_SYNC_FAILURE) != 0;
     }
 
     public boolean isFileCannotRead() {
@@ -682,6 +709,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         // are belt-and-suspenders. They are load-bearing for subclasses that still recycle a pooled
         // flyweight through this method (e.g. LineProtocolException via ThreadLocal): without a full
         // reset a stale flag would leak onto the next exception built on the same flyweight.
+        dataSyncOperation = null;
         flags = 0;
         interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
         messagePosition = 0;

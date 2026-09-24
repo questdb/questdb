@@ -31,7 +31,7 @@ public final class DefaultDurableAckRegistry implements DurableAckRegistry {
     }
 
     @Override
-    public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
+    public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
         return -1L;
     }
 

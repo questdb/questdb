@@ -1,0 +1,1689 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.cairo;
+
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.ErrorTag;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RecoveryCoordinator;
+import io.questdb.cairo.SnapshotMarker;
+import io.questdb.cairo.SymbolCountProvider;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
+import io.questdb.cairo.TxnScoreboard;
+import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static org.junit.Assert.assertTrue;
+
+/**
+ * Unit-level oracle for {@link RecoveryCoordinator}: a durable epoch was taken at seqTxn=K, then more
+ * rows were applied LAZILY (advancing {@code _txn} to K+M without a new epoch). Recovery must REWIND
+ * {@code _txn}/{@code _cv} to the durable epoch cut by copying the immutable {@code _txn.epoch} /
+ * {@code _cv.epoch} back over them, so the table opens at exactly {@code epoch.seqTxn}.
+ */
+public class RecoveryCoordinatorTest extends AbstractCairoTest {
+
+    /**
+     * A table created while the instance ran nosync has no anchor: the generation-zero baseline is
+     * published at CREATE only when the effective mode is already adaptive. Turning adaptive on globally --
+     * unpinning {@code cairo.commit.mode}, or upgrading to a build where it is the default -- must not
+     * refuse that table. It has nothing to roll forward: enrollment is what permits lazy apply, and it
+     * publishes the anchor first, so a table that was never enrolled cannot be ahead of a cut.
+     *
+     * <p>This test replaces one that pinned the opposite (the refusal, which failed the whole engine
+     * component and so took the instance down over a single table). The discriminator that makes the
+     * difference is the ENROLLED commit mode recorded in {@code _meta}: absent/non-adaptive here, which is
+     * what lets recovery permit the missing anchor instead of guessing.
+     * {@link #testEnrolledTableWithLostAnchorStillRefusesLiveStateFallback()} is the other half -- the same
+     * missing anchor on an ENROLLED table is still a hard refusal.
+     */
+    @Test
+    public void testTableCreatedUnderNosyncEnrolsOnGlobalSwitchToAdaptive() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        try {
+            assertMemoryLeak(() -> {
+                execute("create table mode_flip (ts timestamp, v long) timestamp(ts) partition by day wal");
+                execute("insert into mode_flip values ('2024-09-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+
+                final TableToken token = engine.verifyTableName("mode_flip");
+                try (Path path = new Path()) {
+                    path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                    Assert.assertFalse(
+                            "precondition: a nosync-created table has no anchor",
+                            TestFilesFacadeImpl.INSTANCE.exists(path.$())
+                    );
+                }
+
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                // A live SeqTxnTracker still remembers the mode this table was written under, which would let
+                // recovery resolve the mode from memory and skip the table entirely -- the flip would not be
+                // modelled at all. Drop the cached sequencer and tracker, as a cold start has.
+                engine.getTableSequencerAPI().resetForReboot(token);
+
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+                // Boots. Recovery permits the absent anchor because _meta does not record the table as enrolled.
+                new RecoveryCoordinator(engine).recover();
+
+                // The first writer to open the table enrols it: baseline at the LIVE cut, then the record.
+                try (io.questdb.cairo.TableWriter writer = getWriter(token)) {
+                    Assert.assertEquals(CommitMode.ADAPTIVE, writer.getEffectiveCommitMode());
+                }
+                engine.releaseAllWriters();
+
+                try (Path path = new Path()) {
+                    path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                    Assert.assertTrue("enrollment must publish the anchor",
+                            TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+                }
+                try (TableReaderMetadata md = new TableReaderMetadata(engine.getConfiguration(), token)) {
+                    md.loadMetadata();
+                    Assert.assertEquals("the anchor is only trustworthy if _meta records the enrollment with it",
+                            CommitMode.ADAPTIVE, md.getEnrolledCommitMode());
+                }
+
+                // The row written under nosync is still there, and the anchor now published is one an ordinary
+                // startup validates rather than merely tolerates.
+                new RecoveryCoordinator(engine).recover();
+                try (io.questdb.cairo.TableReader reader = engine.getReader(token)) {
+                    Assert.assertEquals("the row written under nosync must survive enrollment", 1L, reader.size());
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    /**
+     * The safety half of {@link #testTableCreatedUnderNosyncEnrolsOnGlobalSwitchToAdaptive()}: permitting an
+     * absent anchor for a never-enrolled table must not make the refusal unreachable. An ENROLLED table has
+     * been applied lazily, so its live state may sit ahead of a durable cut that nothing can name any more.
+     * That is still fail-closed.
+     */
+    @Test
+    public void testEnrolledTableWithLostAnchorStillRefusesLiveStateFallback() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        try {
+            assertMemoryLeak(() -> {
+                execute("create table lost_anchor (ts timestamp, v long) timestamp(ts) partition by day wal");
+                execute("insert into lost_anchor values ('2024-09-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+
+                final TableToken token = engine.verifyTableName("lost_anchor");
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+
+                try (TableReaderMetadata md = new TableReaderMetadata(engine.getConfiguration(), token)) {
+                    md.loadMetadata();
+                    Assert.assertEquals("precondition: an adaptive table is enrolled by its first writer",
+                            CommitMode.ADAPTIVE, md.getEnrolledCommitMode());
+                }
+
+                // Lose the anchor the way a filesystem or a stray hand would: the artifacts go, the record stays.
+                try (Path path = new Path()) {
+                    final int tableRootLen = path.of(engine.getConfiguration().getDbRoot()).concat(token).size();
+                    RecoveryCoordinator.removeAdaptiveEpochArtifacts(
+                            engine.getConfiguration().getFilesFacade(), path, tableRootLen);
+                }
+                engine.getTableSequencerAPI().resetForReboot(token);
+
+                try {
+                    new RecoveryCoordinator(engine).recover();
+                    Assert.fail("expected an enrolled table with no anchor to be refused");
+                } catch (CairoException expected) {
+                    TestUtils.assertContains(expected.getFlyweightMessage(), "adaptive epoch marker is absent");
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    @Test
+    public void testRecoveryDisableSwitchFailsClosedForAdaptiveTable() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, "false");
+            try {
+                execute("create table disabled_recovery (ts timestamp, v long) timestamp(ts) partition by day wal");
+                engine.releaseAllWriters();
+                try {
+                    new RecoveryCoordinator(engine).recover();
+                    Assert.fail("disabled adaptive recovery must not expose possibly torn live state");
+                } catch (CairoException expected) {
+                    TestUtils.assertContains(expected.getFlyweightMessage(), "refusing unsafe startup");
+                }
+            } finally {
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, "true");
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            }
+        });
+    }
+
+    @Test
+    public void testRuntimeCheckpointBaselineHandsOverEpochPin() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+            try {
+                execute("create table checkpoint_pin (ts timestamp, v long) timestamp(ts) partition by day wal");
+                execute("insert into checkpoint_pin values ('2024-01-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                final TableToken token = engine.verifyTableName("checkpoint_pin");
+                final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+                final long priorEpochTxn = tracker.getPinnedEpochTxn();
+                Assert.assertTrue(priorEpochTxn >= 0);
+
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+                execute("insert into checkpoint_pin values ('2024-01-01T01:00:00.000000Z', 2)");
+                drainWalQueue();
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                try (Path path = new Path()) {
+                    final int rootLen = path.of(configuration.getDbRoot()).concat(token).size();
+                    RecoveryCoordinator.removeAdaptiveEpochArtifacts(configuration.getFilesFacade(), path, rootLen);
+                }
+
+                new RecoveryCoordinator(engine, true).recover();
+                final long newEpochTxn = tracker.getPinnedEpochTxn();
+                Assert.assertTrue(newEpochTxn > priorEpochTxn);
+                try (TxnScoreboard scoreboard = engine.getTxnScoreboard(token)) {
+                    Assert.assertTrue("the superseded checkpoint pin must be released",
+                            scoreboard.isRangeAvailable(priorEpochTxn, priorEpochTxn + 1));
+                    Assert.assertFalse("the checkpoint-restored baseline must remain pinned",
+                            scoreboard.isRangeAvailable(newEpochTxn, newEpochTxn + 1));
+                }
+            } finally {
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            }
+        });
+    }
+
+    @Test
+    public void testRecoverRestoresTxnToEpochCut() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            // Epoch interval -1 => the auto-epoch never fires; we drive the durable cut explicitly so the
+            // epoch is recorded at a KNOWN seqTxn (K), then apply more after it without a new epoch.
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+            try {
+                Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
+
+                execute("create table r (ts timestamp, v long) timestamp(ts) partition by day wal");
+                // K rows, fully applied.
+                for (int i = 0; i < 3; i++) {
+                    execute("insert into r values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+                }
+                drainWalQueue();
+
+                final TableToken tt = engine.verifyTableName("r");
+
+                final long epochSeqTxn;
+                try (io.questdb.cairo.TableWriter w = getWriter(tt)) {
+                    w.advanceDurableEpoch(1L);
+                    epochSeqTxn = w.getSeqTxn();
+                }
+                Assert.assertTrue("epoch must be at seqTxn >= 3", epochSeqTxn >= 3);
+
+                // M more rows, applied lazily AFTER the epoch (no new epoch fires).
+                for (int i = 3; i < 7; i++) {
+                    execute("insert into r values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+                }
+                drainWalQueue();
+
+                // Sanity: _txn now reflects the post-epoch frontier (seqTxn advanced past the epoch).
+                final long frontierSeqTxn = readTxnSeqTxn(tt);
+                Assert.assertTrue("post-epoch _txn seqTxn must be > epoch seqTxn",
+                        frontierSeqTxn > epochSeqTxn);
+
+                // Release writers so RecoveryCoordinator can rewrite _txn/_cv unobstructed.
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+
+                // ACT: roll forward / restore the durable cut.
+                new RecoveryCoordinator(engine).recover();
+
+                // ASSERT: _txn was rewound to exactly the epoch cut.
+                final long restoredSeqTxn = readTxnSeqTxn(tt);
+                Assert.assertEquals("recovery must restore _txn to the epoch cut", epochSeqTxn, restoredSeqTxn);
+
+                // ASSERT: recoveryIncarnation was bumped exactly once (one successful restore).
+                final long incarnation = engine.getTableSequencerAPI().getTxnTracker(tt).getRecoveryIncarnation();
+                Assert.assertEquals("recoveryIncarnation must be 1 after one successful restore", 1L, incarnation);
+            } finally {
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            }
+        });
+    }
+
+    /**
+     * SP-F Task 3: {@code wal_adaptive_recovery_events} is the engine-wide aggregate counter of
+     * "a table was rewound to its durable epoch at recovery" — incremented once per successful
+     * validated restore, co-located with the per-table {@code bumpRecoveryIncarnation()} call. This
+     * mirrors {@link #testRecoverRestoresTxnToEpochCut()}'s arrange (the happy-path rewind) and asserts
+     * the global counter moves; the per-table {@code _txn}/{@code recoveryIncarnation} assertions for
+     * this same scenario are already covered there.
+     */
+    @Test
+    public void testRecoverIncrementsRecoveryEventsMetric() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            // Epoch interval -1 => the auto-epoch never fires; we drive the durable cut explicitly so the
+            // epoch is recorded at a KNOWN seqTxn (K), then apply more after it without a new epoch.
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+            try {
+                Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
+
+                execute("create table r (ts timestamp, v long) timestamp(ts) partition by day wal");
+                // K rows, fully applied.
+                for (int i = 0; i < 3; i++) {
+                    execute("insert into r values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+                }
+                drainWalQueue();
+
+                final TableToken tt = engine.verifyTableName("r");
+
+                final long epochSeqTxn;
+                try (io.questdb.cairo.TableWriter w = getWriter(tt)) {
+                    w.advanceDurableEpoch(1L);
+                    epochSeqTxn = w.getSeqTxn();
+                }
+                Assert.assertTrue("epoch must be at seqTxn >= 3", epochSeqTxn >= 3);
+
+                // M more rows, applied lazily AFTER the epoch (no new epoch fires).
+                for (int i = 3; i < 7; i++) {
+                    execute("insert into r values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+                }
+                drainWalQueue();
+
+                // Sanity: _txn now reflects the post-epoch frontier (seqTxn advanced past the epoch).
+                final long frontierSeqTxn = readTxnSeqTxn(tt);
+                Assert.assertTrue("post-epoch _txn seqTxn must be > epoch seqTxn",
+                        frontierSeqTxn > epochSeqTxn);
+
+                // Release writers so RecoveryCoordinator can rewrite _txn/_cv unobstructed.
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+
+                // ACT + ASSERT: the global recovery-events counter must increment for this successful
+                // validated restore (the metric is the only new behavior under test here; the per-table
+                // _txn/recoveryIncarnation outcomes for this exact scenario are asserted in
+                // testRecoverRestoresTxnToEpochCut).
+                long before = TestUtils.getMetricValue(engine, "questdb_wal_adaptive_recovery_events_total");
+                new RecoveryCoordinator(engine).recover();
+                long after = TestUtils.getMetricValue(engine, "questdb_wal_adaptive_recovery_events_total");
+                assertTrue("a table rewound to its durable epoch at recovery must increment the counter", after > before);
+            } finally {
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            }
+        });
+    }
+
+    @Test
+    public void testRecoveryRestoresMetadataMatchingEpochTxnAfterStructuralWal() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+            try {
+                execute("create table schema_epoch (ts timestamp, v long) timestamp(ts) partition by day wal");
+                final TableToken token = engine.verifyTableName("schema_epoch");
+                Assert.assertTrue("creation epoch must bind its metadata payload",
+                        io.questdb.cairo.DurableEpochManifest.isMetadataBound(configuration, token, 0));
+                try (Path markerPath = new Path(); SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                    markerPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                    marker.of(markerPath.$());
+                    Assert.assertEquals(SnapshotMarker.FORMAT_VERSION, marker.loadCandidates()[0].formatVersion);
+                }
+                execute("alter table schema_epoch add column extra long");
+                drainWalQueue();
+
+                try (Path epochMetaPath = new Path(); TableReaderMetadata epochMetadata = new TableReaderMetadata(configuration)) {
+                    epochMetaPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME)
+                            .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(0);
+                    epochMetadata.loadMetadata(epochMetaPath.$());
+                    Assert.assertEquals("creation epoch metadata must remain immutable", 0, epochMetadata.getMetadataVersion());
+                }
+
+                long liveMetadataVersion;
+                try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                    liveMetadataVersion = metadata.getMetadataVersion();
+                }
+                Assert.assertTrue("structural WAL must advance live metadata beyond the creation epoch",
+                        liveMetadataVersion > 0);
+
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                try (Path epochMetaPath = new Path(); TableReaderMetadata epochMetadata = new TableReaderMetadata(configuration)) {
+                    epochMetaPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME)
+                            .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(0);
+                    epochMetadata.loadMetadata(epochMetaPath.$());
+                    Assert.assertEquals("writer release must not mutate epoch metadata", 0, epochMetadata.getMetadataVersion());
+                    epochMetaPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
+                    configuration.getFilesFacade().remove(epochMetaPath.$());
+                    Assert.assertFalse("simulate crash during metadata swap", configuration.getFilesFacade().exists(epochMetaPath.$()));
+                }
+                new RecoveryCoordinator(engine).recover();
+
+                final long restoredMetadataVersion;
+                try (Path metaPath = new Path(); TableReaderMetadata metadata = new TableReaderMetadata(configuration);
+                     TxReader txn = new TxReader(configuration.getFilesFacade())) {
+                    metaPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
+                    metadata.loadMetadata(metaPath.$());
+                    restoredMetadataVersion = metadata.getMetadataVersion();
+                    metaPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.TXN_FILE_NAME);
+                    txn.ofRO(metaPath.$(), metadata.getTimestampType(), metadata.getPartitionBy());
+                    Assert.assertTrue(txn.unsafeLoadAll());
+                    Assert.assertEquals("restored _meta and _txn must describe the same schema cut",
+                            restoredMetadataVersion, txn.getMetadataVersion());
+                }
+                Assert.assertEquals("creation baseline must restore metadata version zero", 0, restoredMetadataVersion);
+            } finally {
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            }
+        });
+    }
+
+    /**
+     * Missing the creation baseline selector is an untrusted startup state and must fail closed.
+     */
+    @Test
+    public void testRecoverWithNoSnapshotFailsClosed() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+            try {
+                execute("create table noepoch (ts timestamp, v long) timestamp(ts) partition by day wal");
+                execute("insert into noepoch values ('2024-09-01T00:00:00.000000Z', 42)");
+                drainWalQueue();
+
+                final TableToken tt = engine.verifyTableName("noepoch");
+
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                try (Path p = new Path()) {
+                    p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                    Assert.assertTrue("creation baseline marker must exist", engine.getConfiguration().getFilesFacade().exists(p.$()));
+                    engine.getConfiguration().getFilesFacade().remove(p.$());
+                    Assert.assertFalse("marker removal must succeed", engine.getConfiguration().getFilesFacade().exists(p.$()));
+                }
+
+                try {
+                    new RecoveryCoordinator(engine).recover();
+                    Assert.fail("recovery without a trustworthy baseline must fail");
+                } catch (CairoException expected) {
+                    Assert.assertTrue(expected.getFlyweightMessage().toString().contains("marker is absent"));
+                }
+            } finally {
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            }
+        });
+    }
+
+    /**
+     * The interrupted swap of {@link #testRecoverRepairsMetaSwapInterruptedBetweenRenames()} on an enrolled
+     * adaptive table: the {@code _todo_} repair runs first, so the durable epoch is restored over a readable
+     * {@code _meta}, and the writer later finds no {@code _meta.prev} to roll back over the restored cut.
+     */
+    @Test
+    public void testRecoverRepairsInterruptedMetaSwapBeforeAdaptiveRestore() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+            try {
+                final long epochSeqTxn = buildAdaptiveLazyGapTable("swap_adaptive");
+                final TableToken tt = engine.verifyTableName("swap_adaptive");
+                crashMetaSwap(tt, false);
+                assertMetaSwapFiles(tt, false, true);
+
+                new RecoveryCoordinator(engine).recover();
+
+                assertMetaSwapFiles(tt, true, false);
+                Assert.assertEquals("recovery must restore _txn to the epoch cut", epochSeqTxn, readTxnSeqTxn(tt));
+                drainWalQueue();
+                try (TableReader reader = engine.getReader(tt)) {
+                    Assert.assertEquals("WAL replay must rebuild every row past the epoch", 7L, reader.size());
+                }
+            } finally {
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            }
+        });
+    }
+
+    /**
+     * First start after switching an instance to adaptive: a table created under nosync was never enrolled,
+     * so it has no anchor and no adaptive state. A {@code _meta} that cannot be read there must not stop the
+     * instance from starting; nothing can open the table without it, so it fails on its own when opened.
+     */
+    @Test
+    public void testAdaptiveBootLeavesNeverEnrolledTableWithUnreadableMetaToFail() throws Exception {
+        assertBootLeavesTablesWithUnreadableMetaToFail("nosync", "adaptive");
+    }
+
+    /**
+     * A table whose {@code _meta} cannot be read must not stop a nosync instance from starting, exactly as
+     * before adaptive recovery existed. Recovery reads {@code _meta} of every WAL table, because a table left
+     * enrolled by adaptive must be rolled forward whatever the instance runs now, but a table it cannot read
+     * is left to fail when opened.
+     */
+    @Test
+    public void testNosyncBootLeavesTablesWithUnreadableMetaToFail() throws Exception {
+        assertBootLeavesTablesWithUnreadableMetaToFail("nosync", "nosync");
+    }
+
+    /**
+     * The one table a nosync startup still refuses: a table adaptive left enrolled, whose {@code _meta} exists
+     * but fails to read. Its writer opens once the read succeeds, finds the enrolment, and takes the lazily
+     * applied state as durable. The same table with its {@code _meta} gone cannot be opened by anything, so it
+     * is left to fail when opened, and its anchor is not restored from outside adaptive.
+     */
+    @Test
+    public void testNosyncBootRefusesEnrolledTableWhoseMetaFailsToRead() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        try {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE left_enrolled (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO left_enrolled VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                final TableToken tt = engine.verifyTableName("left_enrolled");
+                try (TableReaderMetadata metadata = new TableReaderMetadata(engine.getConfiguration(), tt)) {
+                    metadata.loadMetadata();
+                    Assert.assertEquals("precondition: the table is enrolled", CommitMode.ADAPTIVE, metadata.getEnrolledCommitMode());
+                }
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                engine.getTableSequencerAPI().resetForReboot(tt);
+
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                final FilesFacade ffBefore = AbstractCairoTest.ff;
+                AbstractCairoTest.ff = new TestFilesFacadeImpl() {
+                    @Override
+                    public long openRO(LPSZ name) {
+                        return isTargetMeta(name) ? -1 : super.openRO(name);
+                    }
+
+                    @Override
+                    public long openRONoCache(LPSZ name) {
+                        return isTargetMeta(name) ? -1 : super.openRONoCache(name);
+                    }
+
+                    private boolean isTargetMeta(LPSZ name) {
+                        return Utf8s.containsAscii(name, tt.getDirName()) && Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME);
+                    }
+                };
+                try {
+                    new RecoveryCoordinator(engine).recover();
+                    Assert.fail("an enrolled table whose _meta fails to read must abort the startup");
+                } catch (CairoException expected) {
+                    TestUtils.assertContains(expected.getFlyweightMessage(), TableUtils.META_FILE_NAME);
+                } finally {
+                    AbstractCairoTest.ff = ffBefore;
+                }
+
+                final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                try (Path path = new Path()) {
+                    path.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.META_FILE_NAME);
+                    Assert.assertTrue("remove _meta", ff.removeQuiet(path.$()));
+                    new RecoveryCoordinator(engine).recover();
+                    Assert.assertFalse("outside adaptive, _meta must not be restored from the anchor", ff.exists(path.$()));
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    @Test
+    public void testSyncBootLeavesTablesWithUnreadableMetaToFail() throws Exception {
+        assertBootLeavesTablesWithUnreadableMetaToFail("sync", "sync");
+    }
+
+    /**
+     * A crash between TableWriter's two metadata renames leaves no {@code _meta}, only {@code _meta.prev} and a
+     * {@code _todo_} armed to restore it. The writer restores it when it opens, but recovery runs first and reads
+     * {@code _meta} of every WAL table. It must finish the same repair rather than refuse to start, in nosync
+     * too, where the table has no adaptive state to recover at all.
+     */
+    @Test
+    public void testRecoverRepairsMetaSwapInterruptedBetweenRenames() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            execute("CREATE TABLE swap_gap (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO swap_gap VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("swap_gap");
+            crashMetaSwap(tt, false);
+            assertMetaSwapFiles(tt, false, true);
+
+            // Boot a whole engine over the crashed root, the way ServerMain does.
+            try (CairoEngine rebooted = new CairoEngine(configuration)) {
+                Assert.assertNotNull(rebooted.getTableTokenIfExists("swap_gap"));
+            }
+
+            assertMetaSwapFiles(tt, true, false);
+            Assert.assertEquals("the pre-ALTER schema must be restored", 2, readMetaColumnCount(tt));
+            // The table opens and takes the interrupted ALTER again.
+            execute("ALTER TABLE swap_gap ADD COLUMN c INT");
+            execute("INSERT INTO swap_gap VALUES ('2024-09-01T01:00:00.000000Z', 2, 3)");
+            drainWalQueue();
+            assertQuery("SELECT * FROM swap_gap")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv\tc
+                            2024-09-01T00:00:00.000000Z\t1\tnull
+                            2024-09-01T01:00:00.000000Z\t2\t3
+                            """);
+        });
+    }
+
+    /**
+     * A {@code _todo_} restore entry whose txn pair does not match the live {@code _txn} is stale: TableWriter
+     * ignores it, and recovery must never roll {@code _meta} back on its strength.
+     */
+    @Test
+    public void testRecoverIgnoresStaleMetaRestoreTodo() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            execute("CREATE TABLE swap_stale (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO swap_stale VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("swap_stale");
+            crashMetaSwap(tt, true);
+            // Keep the entry internally consistent, but name a txn the table is not at.
+            final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            pokeLong(ff, tt, TableUtils.TODO_FILE_NAME, 0, 1_000_000);
+            pokeLong(ff, tt, TableUtils.TODO_FILE_NAME, 24, 1_000_000);
+
+            new RecoveryCoordinator(engine).recover();
+
+            assertMetaSwapFiles(tt, true, true);
+            Assert.assertEquals("a stale _todo_ must leave _meta alone", 3, readMetaColumnCount(tt));
+        });
+    }
+
+    /**
+     * A crash after the second rename, before {@code _txn} commits, leaves the uncommitted ALTER's {@code _meta}
+     * in place. The writer rolls it back when it opens; recovery must read the metadata the table will open
+     * with, so it applies the same rollback first.
+     */
+    @Test
+    public void testRecoverRollsBackMetaSwapInterruptedBeforeTxnCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            execute("CREATE TABLE swap_uncommitted (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO swap_uncommitted VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("swap_uncommitted");
+            crashMetaSwap(tt, true);
+            assertMetaSwapFiles(tt, true, true);
+            Assert.assertEquals("precondition: _meta holds the uncommitted ALTER", 3, readMetaColumnCount(tt));
+
+            new RecoveryCoordinator(engine).recover();
+
+            assertMetaSwapFiles(tt, true, false);
+            Assert.assertEquals("the uncommitted ALTER must be rolled back", 2, readMetaColumnCount(tt));
+            assertQuery("SELECT * FROM swap_uncommitted")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            2024-09-01T00:00:00.000000Z\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testRecoverLegacyV1AnchorWhenAvailableTupleMatches() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+            try {
+                execute("create table legacy (ts timestamp, v long) timestamp(ts) partition by day wal");
+                for (int i = 0; i < 3; i++) {
+                    execute("insert into legacy values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+                }
+                drainWalQueue();
+                final TableToken token = engine.verifyTableName("legacy");
+                final long epochSeqTxn;
+                final long epochTxn;
+                try (io.questdb.cairo.TableWriter writer = getWriter(token)) {
+                    writer.fsyncMaterializedState();
+                    epochSeqTxn = writer.getSeqTxn();
+                    epochTxn = writer.getTxn();
+                }
+                try (SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration()); Path p = new Path()) {
+                    p.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                    marker.of(p.$()).write(epochSeqTxn, epochTxn, 1L);
+                }
+                execute("insert into legacy values ('2024-09-01T03:00:00.000000Z', 3)");
+                drainWalQueue();
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+
+                new RecoveryCoordinator(engine).recover();
+                Assert.assertEquals(epochSeqTxn, readTxnSeqTxn(token));
+            } finally {
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            }
+        });
+    }
+
+    @Test
+    public void testCreationBaselineAndPreviousGenerationFallback() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+            try {
+                execute("create table baseline (ts timestamp, v long) timestamp(ts) partition by day wal");
+                final TableToken token = engine.verifyTableName("baseline");
+                try (Path p = new Path(); SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
+                    p.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                    marker.of(p.$());
+                    SnapshotMarker.Candidate[] candidates = marker.loadCandidates();
+                    Assert.assertEquals(1, candidates.length);
+                    Assert.assertEquals(0, candidates[0].epochSeqTxn);
+                    Assert.assertEquals(0, candidates[0].generation);
+                }
+
+                execute("insert into baseline values ('2024-09-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                try (io.questdb.cairo.TableWriter writer = getWriter(token)) {
+                    writer.advanceDurableEpoch(2L);
+                    Assert.assertTrue(writer.getSeqTxn() > 0);
+                }
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+
+                final io.questdb.std.FilesFacade files = engine.getConfiguration().getFilesFacade();
+                try (Path p = new Path()) {
+                    p.of(engine.getConfiguration().getDbRoot()).concat(token)
+                            .concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(1);
+                    final long fd = files.openRW(p.$(), CairoConfiguration.O_NONE);
+                    Assert.assertTrue(fd > -1);
+                    try {
+                        Assert.assertTrue(files.truncate(fd, 0));
+                    } finally {
+                        files.close(fd);
+                    }
+                }
+
+                new RecoveryCoordinator(engine).recover();
+                Assert.assertEquals("torn newest generation must fall back to creation baseline", 0, readTxnSeqTxn(token));
+                try (Path p = new Path(); SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration())) {
+                    p.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                    marker.of(p.$());
+                    Assert.assertTrue(marker.tryLoad());
+                    Assert.assertTrue("fallback recovery must repair the selector to the restored generation",
+                            marker.wasLoadedFromSelector());
+                    Assert.assertEquals(0L, marker.getEpochSeqTxn());
+                    Assert.assertEquals(0, marker.getGeneration());
+                }
+            } finally {
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            }
+        });
+    }
+
+    /**
+     * Regression: a regular VIEW token is {@code isView()==true} AND {@code isWal()==true} (see
+     * {@code CreateViewOperationImpl}), so it slips past the loop's {@code !isWal()} filter. But a view has
+     * no {@code _meta}/{@code _txn}/{@code _cv}/data/epoch, and its {@code ViewState} is NOT hydrated when
+     * {@code recover()} runs (at {@code CairoEngine.completeInit}, right after the name registry is loaded
+     * but BEFORE views are compiled). Before the fix, resolving the view's metadata threw
+     * {@code view does not exist} on the view token and failed boot. {@code recover()} must skip regular
+     * views (mat-views, {@code isView()==false}, are still recovered).
+     */
+    @Test
+    public void testRecoverSkipsRegularViewWithUnhydratedState() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+            try {
+                execute("create table base (ts timestamp, v long) timestamp(ts) partition by day wal");
+                execute("insert into base values ('2024-09-01T00:00:00.000000Z', 1)");
+                execute("create view v as (select * from base)");
+                drainWalQueue();
+
+                final TableToken viewToken = engine.verifyTableName("v");
+                // The two flags that make a regular view slip into the recovery loop:
+                Assert.assertTrue("precondition: v must be a regular VIEW", viewToken.isView());
+                Assert.assertTrue("precondition: view token is WAL", viewToken.isWal());
+
+                // Reproduce the boot condition precisely. At completeInit, recover() runs against an
+                // enumerable view token (the name registry is loaded) whose ViewState is NOT yet hydrated —
+                // views compile lazily, after recover() — so getViewMetadata() returns null.
+                engine.getViewStateStore().removeViewState(viewToken);
+                Assert.assertNull("view state must be absent (pre-hydration boot condition)",
+                        engine.getViewStateStore().getViewState(viewToken));
+
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+
+                // ACT: before the fix this threw `view does not exist [view=v]` and failed boot.
+                new RecoveryCoordinator(engine).recover();
+
+                // ASSERT: the view was skipped, never treated as a recoverable adaptive table.
+                final long incarnation = engine.getTableSequencerAPI().getTxnTracker(viewToken).getRecoveryIncarnation();
+                Assert.assertEquals("a regular view must not be recovered", 0L, incarnation);
+            } finally {
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            }
+        });
+    }
+
+    /**
+     * Restore/PITR coexistence: a durable epoch is a PAST cut, so in one lineage the live {@code _txn} is
+     * always at or ahead of it. If a backup/checkpoint/PITR restore rewinds the table BENEATH a stale
+     * epoch it forgot to clear, the on-disk epoch ends up AHEAD of the (restored) live {@code _txn}.
+     * Recovery must NOT roll {@code _txn} forward to that stale, higher-lineage epoch — doing so resurrects
+     * the discarded lineage and leaves {@code _txn} ahead of the restored sequencer. Here we simulate the
+     * restore as the file copies it physically is (restore the earlier {@code _txn}/{@code _cv} over the
+     * live ones while leaving {@code _snapshot}/{@code .epoch} from a LATER cut in place).
+     */
+    @Test
+    public void testRecoverSkipsEpochAheadOfRestoredTxn() throws Exception {
+        // The epoch-ahead-of-live guard is platform-neutral, but this test's physical restore simulation
+        // is not: it reads a live _txn QuestDB holds locked (Windows ReadFile fails on the byte-0 lock)
+        // and copies over an existing destination (Windows ff.copy refuses one). Covered by POSIX legs.
+        org.junit.Assume.assumeFalse("restore simulation rewrites live files, which Windows forbids", Os.isWindows());
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+            try {
+                execute("create table r (ts timestamp, v long) timestamp(ts) partition by day wal");
+                // Earlier cut: apply 3 rows, then capture (back up) _txn/_cv — the "backup".
+                for (int i = 0; i < 3; i++) {
+                    execute("insert into r values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+                }
+                drainWalQueue();
+                final TableToken tt = engine.verifyTableName("r");
+                final long restoredSeqTxn = readTxnSeqTxn(tt);
+                copyTableFile(tt, TableUtils.TXN_FILE_NAME, "_txn.bak");
+                copyTableFile(tt, TableUtils.COLUMN_VERSION_FILE_NAME, "_cv.bak");
+
+                // Later cut: apply 3 more rows, then take a durable epoch at this LATER seqTxn.
+                for (int i = 3; i < 6; i++) {
+                    execute("insert into r values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+                }
+                drainWalQueue();
+                final long epochSeqTxn;
+                try (io.questdb.cairo.TableWriter w = getWriter(tt)) {
+                    w.advanceDurableEpoch(1L);
+                    epochSeqTxn = w.getSeqTxn();
+                }
+                Assert.assertTrue("epoch cut must be ahead of the earlier/backup cut", epochSeqTxn > restoredSeqTxn);
+
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+
+                // Simulate the restore: bring _txn/_cv back to the EARLIER cut, but (the bug) leave the LATER
+                // _snapshot/_txn.epoch/_cv.epoch trio in place.
+                copyTableFile(tt, "_txn.bak", TableUtils.TXN_FILE_NAME);
+                copyTableFile(tt, "_cv.bak", TableUtils.COLUMN_VERSION_FILE_NAME);
+                Assert.assertEquals("precondition: live _txn rewound to the earlier (restored) cut",
+                        restoredSeqTxn, readTxnSeqTxn(tt));
+
+                // ACT: a stale marker that post-dates restored live state is untrusted and must abort startup.
+                try {
+                    new RecoveryCoordinator(engine).recover();
+                    Assert.fail("recovery must fail closed on an epoch ahead of restored live state");
+                } catch (CairoException expected) {
+                    TestUtils.assertContains(expected.getFlyweightMessage(), "post-dates live state");
+                }
+
+                Assert.assertEquals("failed-closed recovery must leave the restored _txn untouched",
+                        restoredSeqTxn, readTxnSeqTxn(tt));
+                Assert.assertEquals("a rejected stale epoch must not bump recoveryIncarnation",
+                        0L, engine.getTableSequencerAPI().getTxnTracker(tt).getRecoveryIncarnation());
+            } finally {
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            }
+        });
+    }
+
+    /**
+     * A table-type conversion RESETS the WAL lineage: {@code TableConverter} zeroes {@code _txn.seqTxn}
+     * and re-seeds {@code txn_seq} from txn 0. The durable epoch taken under the PREVIOUS lineage is then
+     * unreachable, and left on disk it post-dates the live cut, which is a refusal that takes the whole
+     * instance down over a supported operator workflow. The converter must therefore clear the anchor and
+     * publish a replacement, the way the REBASE WAL clone does.
+     */
+    @Test
+    public void testTypeConversionRoundTripLeavesInstanceBootable() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        try {
+            assertMemoryLeak(() -> {
+                execute("create table conv (ts timestamp, v long) timestamp(ts) partition by day wal");
+                execute("insert into conv values ('2024-09-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                execute("insert into conv values ('2024-09-02T00:00:00.000000Z', 2)");
+                drainWalQueue();
+                Assert.assertTrue("precondition: the WAL table has an anchor beyond seqTxn 0",
+                        readTxnSeqTxn(engine.verifyTableName("conv")) > 0);
+
+                execute("alter table conv set type bypass wal");
+                engine.releaseInactive();
+                engine.load();
+
+                execute("alter table conv set type wal", sqlExecutionContext);
+                engine.releaseInactive();
+                engine.load();
+
+                final TableToken tt = engine.verifyTableName("conv");
+                Assert.assertTrue("the converted table must carry its own anchor",
+                        epochArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME, ""));
+                Assert.assertEquals("the conversion re-seeds the lineage at seqTxn 0", 0L, readTxnSeqTxn(tt));
+
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                new RecoveryCoordinator(engine).recover();
+
+                try (io.questdb.cairo.TableReader reader = engine.getReader(tt)) {
+                    Assert.assertEquals("both rows must survive the round trip", 2L, reader.size());
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    /**
+     * A WAL table dropped while a {@code SET TYPE WAL} request is still pending is resurrected by
+     * {@code TableConverter} on the next boot (questdb/questdb#7649, an OSS bug that predates adaptive
+     * commit). The resurrection re-seeds the lineage exactly as any other conversion does, so recovery must
+     * find a table it can validate rather than a stale anchor that fails the startup closed. Written to pass
+     * either way, so it keeps its value once the upstream resurrection is fixed.
+     */
+    @Test
+    public void testDroppedTableResurrectedByConversionDoesNotBlockStartup() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        try {
+            assertMemoryLeak(() -> {
+                execute("create table zt (ts timestamp, v long) timestamp(ts) partition by day wal");
+                execute("insert into zt values ('2024-09-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                execute("insert into zt values ('2024-09-02T00:00:00.000000Z', 2)");
+                drainWalQueue();
+
+                execute("alter table zt set type bypass wal");
+                execute("alter table zt set type wal", sqlExecutionContext);
+                execute("drop table zt");
+                Assert.assertNull("precondition: dropped before the restart", engine.getTableTokenIfExists("zt"));
+
+                engine.releaseInactive();
+                engine.load();
+
+                final TableToken resurrected = engine.getTableTokenIfExists("zt");
+                if (resurrected != null) {
+                    engine.getTableSequencerAPI().resetForReboot(resurrected);
+                }
+                new RecoveryCoordinator(engine).recover();
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    /**
+     * A database written by a build that reset the WAL lineage WITHOUT clearing the anchor (every build
+     * before the {@code TableConverter} fix above) still carries an epoch beyond the sequencer frontier.
+     * Such an epoch names a cut no replay can reach, so it is a superseded lineage, not the lost-write case
+     * the freshness guard fails closed on: recovery must discard it and re-enrol at the live cut instead of
+     * refusing to start. The stale anchor is restored here from copies taken before the conversion, which is
+     * exactly the on-disk state such an upgrade presents.
+     */
+    @Test
+    public void testEpochBeyondSequencerFrontierIsDiscardedAndReEnrolled() throws Exception {
+        org.junit.Assume.assumeFalse("replants files over existing destinations, which Windows forbids", Os.isWindows());
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        try {
+            assertMemoryLeak(() -> {
+                execute("create table lin (ts timestamp, v long) timestamp(ts) partition by day wal");
+                execute("insert into lin values ('2024-09-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                execute("insert into lin values ('2024-09-02T00:00:00.000000Z', 2)");
+                drainWalQueue();
+
+                final TableToken pre = engine.verifyTableName("lin");
+                final long staleEpochSeqTxn = readTxnSeqTxn(pre);
+                Assert.assertTrue("precondition: anchor beyond seqTxn 0", staleEpochSeqTxn > 0);
+                copyEpochArtifacts(pre, false);
+
+                execute("alter table lin set type bypass wal");
+                engine.releaseInactive();
+                engine.load();
+                execute("alter table lin set type wal", sqlExecutionContext);
+                engine.releaseInactive();
+                engine.load();
+
+                final TableToken tt = engine.verifyTableName("lin");
+                Assert.assertEquals("the conversion re-seeds the lineage at seqTxn 0", 0L, readTxnSeqTxn(tt));
+                // Replant the pre-conversion anchor in full: the state an upgraded database arrives in.
+                copyEpochArtifacts(tt, true);
+
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                new RecoveryCoordinator(engine).recover();
+
+                Assert.assertEquals("the discarded anchor must not rewind the live cut", 0L, readTxnSeqTxn(tt));
+                Assert.assertTrue("the table must be re-enrolled with a replacement anchor",
+                        epochArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME, ""));
+                try (io.questdb.cairo.TableReader reader = engine.getReader(tt)) {
+                    Assert.assertEquals("rows must survive the discarded anchor", 2L, reader.size());
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    /**
+     * Finding C2 (invariant pin) — locks the {@code TxReader.unsafeLoadAll} SLOT-SELECTION property that
+     * {@code RecoveryCoordinator.epochIsAheadOfLiveTxn}'s C2 assert relies on: {@code unsafeLoadAll} returns
+     * the VERSION-SELECTED (latest) A/B slot when it is intact, and ONLY its IMMEDIATE predecessor
+     * (version - 1) when the latest is torn — never an older slot. So {@code unsafeReadVersion() -
+     * getVersion()} is exactly 0 on a clean load and exactly 1 on the torn-latest fallback. Together with the
+     * version word being durably floored at the epoch cut, that is WHY a single-lineage post-crash {@code
+     * _txn} can never load cleanly BELOW the epoch, so the recovery guard's refusal is only ever the genuine
+     * multi-lineage / stale-epoch case (never a slot-selection artifact).
+     * <p>
+     * The recovery guard's clean-load branch (diff 0) is exercised end-to-end by
+     * {@link #testRecoverRestoresTxnToEpochCut} (proceed) and {@link #testRecoverSkipsEpochAheadOfRestoredTxn}
+     * (refuse). This test pins the tolerated FALLBACK branch (diff 1) directly and deterministically, using the
+     * proven two-commit {@code TxWriter} torn-body pattern (A and B both hold a valid checksummed record), so
+     * a regression that narrowed the assert to "must be the latest" (which would wrongly reject the
+     * legitimate torn-latest fallback) or widened slot selection to return an older slot is caught here.
+     */
+    @Test
+    public void testUnsafeLoadAllReturnsLatestOrImmediatePredecessorSlot() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String tableName = "slotpin";
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            // Two commits (fixedRowCount 100 then 200) => the A and B areas each hold a valid, body-checksummed
+            // record, so the version-selected latest is 200 and its immediate predecessor is 100.
+            final TableModel model = new TableModel(engine.getConfiguration(), tableName, PartitionBy.HOUR);
+            model.timestamp();
+            AbstractCairoTest.create(model);
+            final int timestampType = TableUtils.getTimestampType(model);
+            final ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+            try (Path path = new Path(); TxWriter txWriter = new TxWriter(ff, engine.getConfiguration())) {
+                final TableToken tableToken = engine.verifyTableName(tableName);
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
+                txWriter.ofRW(path.$(), timestampType, PartitionBy.HOUR);
+                txWriter.updatePartitionSizeByTimestamp(0, 10);
+                txWriter.updatePartitionSizeByTimestamp(Micros.HOUR_MICROS, 11);
+                txWriter.setMaxTimestamp(Micros.HOUR_MICROS);
+                txWriter.reset(100L, txWriter.getTransientRowCount(), txWriter.getMaxTimestamp(), symbolCounts);
+                txWriter.reset(200L, txWriter.getTransientRowCount(), txWriter.getMaxTimestamp(), symbolCounts);
+            }
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+
+            // (1) CLEAN load returns the version-selected (latest) slot -> diff 0.
+            final long latestBaseOffset;
+            try (Path path = new Path(); TxReader tx = new TxReader(ff)) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
+                tx.ofRO(path.$(), timestampType, PartitionBy.HOUR);
+                Assert.assertTrue(tx.unsafeLoadAll());
+                Assert.assertEquals("clean load must return the latest committed record", 200L, tx.getFixedRowCount());
+                Assert.assertEquals("clean load must return the version-selected (latest) slot: diff 0",
+                        0L, tx.unsafeReadVersion() - tx.getVersion());
+                latestBaseOffset = tx.getBaseOffset();
+            }
+
+            // Tear ONLY the latest slot's fixedRowCount, leaving its checksum stale (positional write, no
+            // truncation) — the realistic torn-latest post-crash cut; the predecessor slot stays intact.
+            pokeLongTxn(ff, tableToken, latestBaseOffset + TableUtils.TX_OFFSET_FIXED_ROW_COUNT_64, 0xdead_beefL);
+
+            // (2) TORN-LATEST load falls back to the IMMEDIATE predecessor -> diff EXACTLY 1, returning the
+            // prior (100) record — never an older slot.
+            try (Path path = new Path(); TxReader tx = new TxReader(ff)) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
+                tx.ofRO(path.$(), timestampType, PartitionBy.HOUR);
+                Assert.assertTrue("torn-latest _txn must load via the A/B predecessor fallback", tx.unsafeLoadAll());
+                Assert.assertEquals("fallback must return the prior (predecessor) record", 100L, tx.getFixedRowCount());
+                Assert.assertEquals("torn-latest fallback must return the IMMEDIATE predecessor: diff 1",
+                        1L, tx.unsafeReadVersion() - tx.getVersion());
+            }
+        });
+    }
+
+    /**
+     * Positional 8-byte write of a table's {@code _txn} — corrupts a committed record WITHOUT truncating.
+     */
+    private void pokeLongTxn(FilesFacade ff, TableToken tt, long offset, long value) {
+        pokeLong(ff, tt, TableUtils.TXN_FILE_NAME, offset, value);
+    }
+
+    /**
+     * Positional 8-byte write into a file of the table's directory.
+     */
+    private void pokeLong(FilesFacade ff, TableToken tt, CharSequence fileName, long offset, long value) {
+        try (Path p = new Path()) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(fileName).$();
+            final long fd = ff.openRW(p.$(), CairoConfiguration.O_NONE);
+            Assert.assertTrue(fd > -1);
+            final long buf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.putLong(buf, value);
+                Assert.assertEquals(Long.BYTES, ff.write(fd, buf, Long.BYTES, offset));
+                ff.fsync(fd);
+            } finally {
+                Unsafe.free(buf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                ff.close(fd);
+            }
+        }
+    }
+
+    /**
+     * Copies every epoch artifact of {@code tt} aside ({@code restore == false}) or back into place
+     * ({@code restore == true}), covering both ping-pong generations so the replanted state is exactly the
+     * one the marker selector described when it was taken.
+     */
+    private void copyEpochArtifacts(TableToken tt, boolean restore) {
+        final String[] names = {
+                TableUtils.SNAPSHOT_FILE_NAME,
+                "_meta.epoch.0", "_txn.epoch.0", "_cv.epoch.0", "_epoch.manifest.0",
+                "_meta.epoch.1", "_txn.epoch.1", "_cv.epoch.1", "_epoch.manifest.1"
+        };
+        for (int i = 0; i < names.length; i++) {
+            final String live = names[i];
+            final String saved = live + ".bak";
+            final String from = restore ? saved : live;
+            if (epochArtifactExists(tt, from, "")) {
+                copyTableFile(tt, from, restore ? live : saved);
+            }
+        }
+    }
+
+    private void copyTableFile(TableToken tt, CharSequence from, CharSequence to) {
+        final io.questdb.std.FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path src = new Path(); Path dst = new Path()) {
+            src.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(from);
+            dst.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(to);
+            Assert.assertTrue("copy " + from + " -> " + to + " must succeed", ff.copy(src.$(), dst.$()) >= 0);
+        }
+    }
+
+    /**
+     * The shared clear helper used by the ENT restore + demote paths must remove exactly the epoch trio
+     * (_snapshot + _txn.epoch + _cv.epoch), leave the LIVE _txn/_cv untouched, and be idempotent.
+     */
+    @Test
+    public void testRemoveAdaptiveEpochArtifactsRemovesTrioOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+            try {
+                execute("create table r (ts timestamp, v long) timestamp(ts) partition by day wal");
+                execute("insert into r values ('2024-09-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                final TableToken tt = engine.verifyTableName("r");
+
+                // Take a bound generational epoch.
+                try (io.questdb.cairo.TableWriter w = getWriter(tt)) {
+                    w.advanceDurableEpoch(1L);
+                }
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+
+                // Precondition: both bound generations and the live files exist.
+                Assert.assertTrue("marker present", epochArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME, ""));
+                for (int generation = 0; generation < 2; generation++) {
+                    final String suffix = TableUtils.EPOCH_COPY_SUFFIX + "." + generation;
+                    Assert.assertTrue("meta epoch generation present", epochArtifactExists(tt, TableUtils.META_FILE_NAME, suffix));
+                    Assert.assertTrue("txn epoch generation present", epochArtifactExists(tt, TableUtils.TXN_FILE_NAME, suffix));
+                    Assert.assertTrue("cv epoch generation present", epochArtifactExists(tt, TableUtils.COLUMN_VERSION_FILE_NAME, suffix));
+                    Assert.assertTrue("manifest generation present", epochArtifactExists(tt, io.questdb.cairo.DurableEpochManifest.FILE_NAME, "." + generation));
+                }
+
+                final io.questdb.std.FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                try (Path p = new Path()) {
+                    final int rootLen = p.of(engine.getConfiguration().getDbRoot()).concat(tt).size();
+                    RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, p, rootLen);
+                }
+
+                // All anchors are gone; the live _txn/_cv are untouched.
+                Assert.assertFalse("marker removed", epochArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME, ""));
+                for (int generation = 0; generation < 2; generation++) {
+                    final String suffix = TableUtils.EPOCH_COPY_SUFFIX + "." + generation;
+                    Assert.assertFalse("meta epoch generation removed", epochArtifactExists(tt, TableUtils.META_FILE_NAME, suffix));
+                    Assert.assertFalse("txn epoch generation removed", epochArtifactExists(tt, TableUtils.TXN_FILE_NAME, suffix));
+                    Assert.assertFalse("cv epoch generation removed", epochArtifactExists(tt, TableUtils.COLUMN_VERSION_FILE_NAME, suffix));
+                    Assert.assertFalse("manifest generation removed", epochArtifactExists(tt, io.questdb.cairo.DurableEpochManifest.FILE_NAME, "." + generation));
+                }
+                Assert.assertTrue("live _meta untouched", epochArtifactExists(tt, TableUtils.META_FILE_NAME, ""));
+                Assert.assertTrue("live _txn untouched", epochArtifactExists(tt, TableUtils.TXN_FILE_NAME, ""));
+                Assert.assertTrue("live _cv untouched", epochArtifactExists(tt, TableUtils.COLUMN_VERSION_FILE_NAME, ""));
+
+                // Idempotent: a second call on the now-absent trio is a no-op (must not throw).
+                try (Path p = new Path()) {
+                    final int rootLen = p.of(engine.getConfiguration().getDbRoot()).concat(tt).size();
+                    RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, p, rootLen);
+                }
+            } finally {
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            }
+        });
+    }
+
+    @Test
+    public void testRemoveAdaptiveEpochArtifactsFailsClosedWhenArtifactSurvives() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        try {
+            assertMemoryLeak(() -> {
+                execute("create table remove_fail (ts timestamp, v long) timestamp(ts) partition by day wal");
+                final TableToken token = engine.verifyTableName("remove_fail");
+                final FilesFacade refusingFf = new TestFilesFacadeImpl() {
+                    @Override
+                    public boolean removeQuiet(LPSZ name) {
+                        if (Utf8s.containsAscii(name, TableUtils.SNAPSHOT_FILE_NAME)) {
+                            return false;
+                        }
+                        return super.removeQuiet(name);
+                    }
+                };
+                try (Path p = new Path()) {
+                    final int rootLen = p.of(configuration.getDbRoot()).concat(token).size();
+                    try {
+                        RecoveryCoordinator.removeAdaptiveEpochArtifacts(refusingFf, p, rootLen);
+                        Assert.fail("surviving marker must abort stale-lineage cleanup");
+                    } catch (CairoException expected) {
+                        TestUtils.assertContains(expected.getFlyweightMessage(),
+                                "could not remove stale adaptive epoch artifact");
+                    }
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    /**
+     * SP-B — per-table failure isolation. A genuine I/O error while restoring ONE adaptive table's
+     * durable epoch cut must not strand its healthy siblings or brick boot. {@code recover()} must catch
+     * the failure, SUSPEND just that table (idiomatic to WAL-apply error handling — visible in
+     * {@code wal_tables()} with an error tag/message), and continue rolling the other adaptive tables
+     * forward. Before the fix the unguarded per-table loop let the restore's {@code CairoException}
+     * propagate out of {@code recover()}, so every not-yet-visited table was skipped (came up un-rewound)
+     * or boot failed outright.
+     */
+    @Test
+    public void testRecoverDirectorySyncFailurePoisonsEngineAndPropagates() throws Exception {
+        // The injected fault point does not exist on Windows: RecoveryCoordinator skips the recovery
+        // directory fsync there (no directory handles to fsync), so fsyncAndClose is never reached and
+        // recover() has nothing to classify. POSIX-only by the shape of the product code.
+        org.junit.Assume.assumeFalse("recovery takes no directory fsync on Windows", Os.isWindows());
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+            final AtomicBoolean isCounting = new AtomicBoolean();
+            final AtomicBoolean failNext = new AtomicBoolean();
+            final AtomicInteger syncAttempts = new AtomicInteger();
+            final FilesFacade failingFf = new TestFilesFacadeImpl() {
+                @Override
+                public void fsyncAndClose(long fd) {
+                    if (isCounting.get()) {
+                        syncAttempts.incrementAndGet();
+                    }
+                    if (failNext.compareAndSet(true, false)) {
+                        super.close(fd);
+                        throw CairoException.dataSyncFailure(5, "fsyncAndClose")
+                                .put("injected recovery directory sync failure");
+                    }
+                    super.fsyncAndClose(fd);
+                }
+            };
+            final FilesFacade ffBefore = AbstractCairoTest.ff;
+            try {
+                buildAdaptiveLazyGapTable("syncfail");
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                AbstractCairoTest.ff = failingFf;
+                isCounting.set(true);
+                failNext.set(true);
+
+                try {
+                    new RecoveryCoordinator(engine).recover();
+                    Assert.fail("classified recovery sync failure must propagate");
+                } catch (CairoError expected) {
+                    Assert.assertTrue(CairoException.isDataSyncFailure(expected));
+                }
+
+                Assert.assertEquals(1, syncAttempts.get());
+                Assert.assertTrue(engine.isDurabilityFailed());
+                Assert.assertEquals("fsyncAndClose", engine.getDurabilityFailure().getOperation());
+            } finally {
+                AbstractCairoTest.ff = ffBefore;
+                engine.resetDurabilityFailure();
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            }
+        });
+    }
+
+    @Test
+    public void testRecoverAbortsOnRestoreIoErrorBeforeServingSiblings() throws Exception {
+        // The fault is injected on the openRW + copyData in-place transfer -- the POSIX branch of
+        // TableUtils.replaceFileContent. Windows takes the removeQuiet + copy route instead, so the
+        // seam this facade arms is never exercised there. POSIX-only by the shape of the product code.
+        org.junit.Assume.assumeFalse("restore transfer fault seam is POSIX-only", Os.isWindows());
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+            // A path-targeted transfer fault: fail ONLY the target table's live _txn restore
+            // (_txn.epoch -> _txn), reporting ENOSPC (28 -> ErrorTag.DISK_FULL on linux). errno() returns the
+            // simulated code exactly once, right after the failed transfer, so no other errno read is poisoned.
+            final int simErrno = 28;
+            final AtomicReference<String> failDirName = new AtomicReference<>();
+            final AtomicBoolean justFailed = new AtomicBoolean(false);
+            final FilesFacade failingFf = new RestoreTransferFaultFacade(failDirName, justFailed, simErrno, TableUtils.TXN_FILE_NAME);
+            final FilesFacade ffBefore = AbstractCairoTest.ff;
+            try {
+                // Two adaptive tables, each with a durable epoch + a lazy gap (live _txn ahead of the epoch),
+                // so recover() attempts a real restore on both.
+                final long epochA = buildAdaptiveLazyGapTable("iso_a");
+                final long epochB = buildAdaptiveLazyGapTable("iso_b");
+                final TableToken ttA = engine.verifyTableName("iso_a");
+                final TableToken ttB = engine.verifyTableName("iso_b");
+
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+
+                // Fail the FIRST of our two tables in recover()'s actual (hash-based) iteration order, so the
+                // other is GUARANTEED to be visited AFTER the failure — proving recover() continues past a
+                // failed table, not merely that an earlier table was already recovered. recover() enumerates
+                // via the same engine.getTableTokens(), so this ordering matches its own.
+                final ObjHashSet<TableToken> order = new ObjHashSet<>();
+                engine.getTableTokens(order, false);
+                TableToken failTarget = null;
+                for (int i = 0, n = order.size(); i < n; i++) {
+                    final TableToken t = order.get(i);
+                    if (t.equals(ttA) || t.equals(ttB)) {
+                        failTarget = t;
+                        break;
+                    }
+                }
+                Assert.assertNotNull("expected one of our tables in the iteration order", failTarget);
+                final TableToken sibling = failTarget.equals(ttA) ? ttB : ttA;
+
+                // Arm the fault on the fail target's _txn restore and inject the facade for the recover() pass.
+                failDirName.set(failTarget.getDirName());
+                AbstractCairoTest.ff = failingFf;
+
+                try {
+                    new RecoveryCoordinator(engine).recover();
+                    Assert.fail("startup recovery must abort on a restore I/O error");
+                } catch (CairoException expected) {
+                    Assert.assertEquals(simErrno, expected.getErrno());
+                }
+                AbstractCairoTest.ff = ffBefore;
+
+                Assert.assertFalse("failed-closed startup must not substitute sequencer suspension",
+                        engine.getTableSequencerAPI().isSuspended(failTarget));
+                Assert.assertEquals("a failed table must not bump recoveryIncarnation",
+                        0L, engine.getTableSequencerAPI().getTxnTracker(failTarget).getRecoveryIncarnation());
+                Assert.assertEquals("a later sibling must not be exposed as recovered after startup abort",
+                        0L, engine.getTableSequencerAPI().getTxnTracker(sibling).getRecoveryIncarnation());
+            } finally {
+                AbstractCairoTest.ff = ffBefore;
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            }
+        });
+    }
+
+    /**
+     * SP-B / C2 (known limitation, documented in RecoveryCoordinator.recoverTable): the restore truncates
+     * its destination before transferring, so a restore that fails mid-transfer leaves the LIVE file torn.
+     * Because recover() now SUSPENDS such a table instead of aborting boot (so healthy siblings still
+     * recover), a read of the torn table must fail LOUD — it must NEVER silently serve wrong data. The
+     * _txn/_cv A/B checksums + mmap bounds guarantee a loud CairoException / SIGBUS-InternalError, not a
+     * plausible-but-wrong result. This test proves the suspend + fail-loud contract. (A future temp-copy +
+     * atomic-rename restore would remove even the loud window, but is blocked today by the path-keyed fd
+     * cache — see the recoverTable NOTE.)
+     */
+    @Test
+    public void testRestoreCvFailureAbortsStartupAndFailsLoud() throws Exception {
+        // Same POSIX-only seam as testRecoverAbortsOnRestoreIoErrorBeforeServingSiblings, and the
+        // torn-destination window under test (truncate-then-transfer) exists only in that branch of
+        // TableUtils.replaceFileContent; Windows replaces the file whole via removeQuiet + copy.
+        org.junit.Assume.assumeFalse("restore transfer fault seam is POSIX-only", Os.isWindows());
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+            final int simErrno = 28;
+            final AtomicBoolean justFailed = new AtomicBoolean(false);
+            final AtomicReference<String> failDirName = new AtomicReference<>();
+            // The restore itself truncates the live _cv to 0 before the transfer this facade fails, so the
+            // torn-destination state is produced by the product code rather than staged by the test.
+            final FilesFacade failingFf = new RestoreTransferFaultFacade(
+                    failDirName, justFailed, simErrno, TableUtils.COLUMN_VERSION_FILE_NAME);
+            final FilesFacade ffBefore = AbstractCairoTest.ff;
+            try {
+                buildAdaptiveLazyGapTable("cvtorn");
+                final TableToken tt = engine.verifyTableName("cvtorn");
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                failDirName.set(tt.getDirName());
+                AbstractCairoTest.ff = failingFf;
+                try {
+                    new RecoveryCoordinator(engine).recover();
+                    Assert.fail("startup recovery must abort after a torn live _cv restore");
+                } catch (CairoException expected) {
+                    Assert.assertEquals(simErrno, expected.getErrno());
+                }
+                AbstractCairoTest.ff = ffBefore;
+
+                Assert.assertFalse("failed-closed startup must not substitute sequencer suspension",
+                        engine.getTableSequencerAPI().isSuspended(tt));
+
+                // Fail-loud contract: a read off the torn _cv must throw, never silently return wrong data.
+                boolean threwLoud = false;
+                try {
+                    printSql("select v from cvtorn");
+                } catch (Throwable t) {
+                    threwLoud = true;
+                }
+                assertTrue("a read off the torn _cv must fail loud, never silently serve wrong data", threwLoud);
+            } finally {
+                AbstractCairoTest.ff = ffBefore;
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            }
+        });
+    }
+
+    /**
+     * Fails the CONTENT TRANSFER of one named live file's restore, for one table dir.
+     * <p>
+     * The restore replaces a live file's content in place ({@code TableUtils.replaceFileContent}: open the
+     * destination read-write, truncate, transfer) rather than whole-file copying onto it, because a
+     * whole-file copy is refused on Windows once the destination exists. The fault therefore has to be
+     * injected on the transfer, and it is keyed by the destination FD learned from the read-write open —
+     * {@code copyData} sees fds, not paths. Matching {@code endsWith} keeps the {@code .epoch.N} sources
+     * out of it; those are opened read-only anyway.
+     */
+    private static final class SimulatedCrash extends RuntimeException {
+    }
+
+    private static final class RestoreTransferFaultFacade extends TestFilesFacadeImpl {
+        private final AtomicReference<String> failDirName;
+        private final CharSequence fileName;
+        private final AtomicBoolean justFailed;
+        private final int simErrno;
+        private final AtomicLong targetFd = new AtomicLong(-1);
+
+        RestoreTransferFaultFacade(
+                AtomicReference<String> failDirName,
+                AtomicBoolean justFailed,
+                int simErrno,
+                CharSequence fileName
+        ) {
+            this.failDirName = failDirName;
+            this.justFailed = justFailed;
+            this.simErrno = simErrno;
+            this.fileName = fileName;
+        }
+
+        @Override
+        public boolean close(long fd) {
+            targetFd.compareAndSet(fd, -1);
+            return super.close(fd);
+        }
+
+        @Override
+        public long copyData(long srcFd, long destFd, long offsetSrc, long length) {
+            if (destFd == targetFd.get()) {
+                justFailed.set(true);
+                return -1;
+            }
+            return super.copyData(srcFd, destFd, offsetSrc, length);
+        }
+
+        @Override
+        public int errno() {
+            return justFailed.compareAndSet(true, false) ? simErrno : super.errno();
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final long fd = super.openRW(name, opts);
+            final String dir = failDirName.get();
+            // Match on the UTF-8 sequence: an LPSZ's toString is object identity, not the path.
+            if (fd > -1 && dir != null && Utf8s.containsAscii(name, dir) && Utf8s.endsWithAscii(name, fileName)) {
+                targetFd.set(fd);
+            }
+            return fd;
+        }
+    }
+
+    /**
+     * Builds an adaptive table with a durable epoch taken at seqTxn=K (via {@code fsyncMaterializedState}
+     * + an explicit {@code _snapshot} marker, exactly as {@link #testRecoverRestoresTxnToEpochCut()}),
+     * then applies M more rows LAZILY so the live {@code _txn} sits ahead of the epoch. Returns the epoch
+     * cut's seqTxn. The caller drives recovery.
+     */
+    private long buildAdaptiveLazyGapTable(String name) throws Exception {
+        execute("create table " + name + " (ts timestamp, v long) timestamp(ts) partition by day wal");
+        for (int i = 0; i < 3; i++) {
+            execute("insert into " + name + " values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+        }
+        drainWalQueue();
+
+        final TableToken tt = engine.verifyTableName(name);
+        final long epochSeqTxn;
+        try (io.questdb.cairo.TableWriter w = getWriter(tt)) {
+            w.advanceDurableEpoch(1L);
+            epochSeqTxn = w.getSeqTxn();
+        }
+
+        for (int i = 3; i < 7; i++) {
+            execute("insert into " + name + " values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+        }
+        drainWalQueue();
+        return epochSeqTxn;
+    }
+
+    private boolean epochArtifactExists(TableToken tt, CharSequence base, CharSequence suffix) {
+        final io.questdb.std.FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path p = new Path()) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(base);
+            if (suffix.length() > 0) {
+                p.put(suffix);
+            }
+            return ff.exists(p.$());
+        }
+    }
+
+    private void assertMetaSwapFiles(TableToken tt, boolean hasMeta, boolean hasMetaPrev) {
+        Assert.assertEquals("_meta exists", hasMeta, epochArtifactExists(tt, TableUtils.META_FILE_NAME, ""));
+        Assert.assertEquals("_meta.prev exists", hasMetaPrev, epochArtifactExists(tt, TableUtils.META_PREV_FILE_NAME, ""));
+    }
+
+    /**
+     * Kills an {@code ADD COLUMN} inside TableWriter's metadata swap, as a process death would: on the
+     * {@code _meta.swp -> _meta} rename, either before it ({@code isAfterSwapRename == false}: no {@code _meta},
+     * only {@code _meta.prev}) or right after it (the uncommitted new {@code _meta}), with {@code _todo_} armed
+     * either way. No in-process rollback runs. Then drops the table's cached sequencer state, as a cold start
+     * has none.
+     */
+    private void crashMetaSwap(TableToken tt, boolean isAfterSwapRename) throws Exception {
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final FilesFacade ffBefore = AbstractCairoTest.ff;
+        AbstractCairoTest.ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (isArmed.get() && Utf8s.containsAscii(from, TableUtils.META_SWAP_FILE_NAME)) {
+                    if (isAfterSwapRename) {
+                        super.rename(from, to);
+                    }
+                    throw new SimulatedCrash();
+                }
+                return super.rename(from, to);
+            }
+
+            @Override
+            public int renameDurable(LPSZ from, LPSZ to) {
+                if (isArmed.get() && Utf8s.containsAscii(from, TableUtils.META_SWAP_FILE_NAME)) {
+                    if (isAfterSwapRename) {
+                        super.renameDurable(from, to);
+                    }
+                    throw new SimulatedCrash();
+                }
+                return super.renameDurable(from, to);
+            }
+        };
+        try (TableWriter writer = getWriter(tt)) {
+            isArmed.set(true);
+            try {
+                writer.addColumn("c", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+                Assert.fail("the simulated crash must interrupt the metadata swap");
+            } catch (SimulatedCrash expected) {
+                // the process dies here
+            } finally {
+                isArmed.set(false);
+            }
+        } finally {
+            AbstractCairoTest.ff = ffBefore;
+        }
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
+        engine.getTableSequencerAPI().resetForReboot(tt);
+    }
+
+    private void assertBootLeavesTablesWithUnreadableMetaToFail(String createMode, String bootMode) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, createMode);
+        try {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE healthy (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE no_meta (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE empty_meta (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO healthy VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                execute("INSERT INTO no_meta VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                execute("INSERT INTO empty_meta VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                final TableToken noMeta = engine.verifyTableName("no_meta");
+                final TableToken emptyMeta = engine.verifyTableName("empty_meta");
+                engine.releaseInactive();
+                // Settle the storage-version migration first. It reads every _meta itself when it runs, which
+                // happens only when the storage version changes, and is not what this test is about.
+                try (CairoEngine ignored = new CairoEngine(configuration)) {
+                    Assert.assertNotNull(ignored.getTableTokenIfExists("healthy"));
+                }
+
+                final FilesFacade ff = configuration.getFilesFacade();
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(noMeta).concat(TableUtils.META_FILE_NAME);
+                    Assert.assertTrue("remove _meta", ff.removeQuiet(path.$()));
+                    path.of(configuration.getDbRoot()).concat(emptyMeta).concat(TableUtils.META_FILE_NAME);
+                    final long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+                    Assert.assertTrue("open _meta", fd > -1);
+                    try {
+                        Assert.assertTrue("truncate _meta", ff.truncate(fd, 0));
+                    } finally {
+                        ff.close(fd);
+                    }
+                }
+
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, bootMode);
+                try (CairoEngine rebooted = new CairoEngine(configuration)) {
+                    Assert.assertNotNull("the table stays registered", rebooted.getTableTokenIfExists("no_meta"));
+                    Assert.assertNotNull("the table stays registered", rebooted.getTableTokenIfExists("empty_meta"));
+                    rebooted.execute("INSERT INTO healthy VALUES ('2024-09-01T01:00:00.000000Z', 2)");
+                    TestUtils.drainWalQueue(rebooted);
+                    final TableToken healthy = rebooted.verifyTableName("healthy");
+                    Assert.assertFalse(rebooted.getTableSequencerAPI().isSuspended(healthy));
+                    try (TableReader reader = rebooted.getReader(healthy)) {
+                        Assert.assertEquals("the healthy table must keep working", 2L, reader.size());
+                    }
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    private int readMetaColumnCount(TableToken tt) {
+        try (TableReaderMetadata metadata = new TableReaderMetadata(engine.getConfiguration(), tt)) {
+            metadata.loadMetadata();
+            return metadata.getColumnCount();
+        }
+    }
+
+    private long readTxnSeqTxn(TableToken tt) {
+        try (TxReader tx = new TxReader(engine.getConfiguration().getFilesFacade());
+             Path p = new Path()) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.TXN_FILE_NAME);
+            tx.ofRO(p.$(), io.questdb.cairo.ColumnType.TIMESTAMP_MICRO, io.questdb.cairo.PartitionBy.DAY);
+            tx.unsafeLoadAll();
+            return tx.getSeqTxn();
+        }
+    }
+}

@@ -107,9 +107,55 @@ public interface MapWriter extends SymbolCountProvider {
 
     void rollback(int symbolCount);
 
+    /**
+     * Marks this symbol writer's CHAR memory as strictly append-only, mirroring
+     * {@link io.questdb.cairo.vm.api.MemoryMA#setAppendOnly(boolean)} on the table's data/aux column
+     * memories: only safe under {@link io.questdb.cairo.CommitMode#ADAPTIVE}; legacy modes pass
+     * false so {@code sync()} stays full-extent, byte-identical to master. Default is a no-op so
+     * writers with no such memory (e.g. {@link io.questdb.cairo.vm.NullMapWriter}) are unaffected.
+     */
+    default void setAppendOnly(boolean appendOnly) {
+    }
+
     void setSymbolIndexInTxWriter(int symbolIndexInTxWriter);
 
     void sync(boolean async);
+
+    /**
+     * Follow {@link #sync(boolean)}'s msync with an fsync of the underlying files.
+     * <p>
+     * The adaptive durable epoch finishes with ONE device barrier that, per {@code fcntl(2)}, persists
+     * "data that had been fsync'd on the same device before". Symbol maps live in the table root rather
+     * than a partition directory, so the epoch's partition sweep never reaches them and msync alone leaves
+     * them outside the letter of that guarantee. Default is a no-op: implementations with no files (the
+     * no-op and view map writers) have nothing to flush.
+     */
+    default void fsyncFiles() {
+    }
+
+    /**
+     * Phase 1 of the batched SYNC-mode flush (Linux only); see {@link io.questdb.cairo.vm.api.MemoryMA#syncFlushKick()}.
+     * Default keeps current behavior (no-op kick + the fallback {@code sync(false)} in
+     * {@link #syncFlushFinishIfExtended()} provides durability), so non-overriding writers are unchanged.
+     */
+    default void syncFlushKick() {
+    }
+
+    /**
+     * Phase 2 of the batched SYNC-mode flush (Linux only); see {@link io.questdb.cairo.vm.api.MemoryMA#syncFlushDrain()}.
+     * Default keeps current behavior: a no-op.
+     */
+    default void syncFlushDrain() {
+    }
+
+    /**
+     * Phase 3 of the batched SYNC-mode flush; see {@link io.questdb.cairo.vm.api.MemoryMA#syncFlushFinishIfExtended()}.
+     * Default keeps current behavior: a full {@code sync(false)} (the conservative fallback for writers that
+     * did not push content to the device cache via the no-op default kick/drain, and for the non-Linux path).
+     */
+    default void syncFlushFinishIfExtended() {
+        sync(false);
+    }
 
     void truncate();
 

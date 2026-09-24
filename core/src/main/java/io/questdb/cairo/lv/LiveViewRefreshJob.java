@@ -9114,7 +9114,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     if (flushDue && instance.getRefreshedUpToSeqTxn() > instance.getLastProcessedSeqTxn()) {
                         attempted = true;
                         flushLead(instance, getWindowFactory(instance), instance.getRefreshedUpToSeqTxn(), 0);
-                        instance.setLastFlushTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
+                        // nowUs, not a fresh clock read: see the coupled branch below.
+                        instance.setLastFlushTimeUs(nowUs);
                     }
                 } else {
                     long lastSeqTxn = instance.getLastProcessedSeqTxn();
@@ -9167,7 +9168,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         } else {
                             incrementalRefresh(instance, lastSeqTxn, seqTxn, false);
                         }
-                        instance.setLastFlushTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
+                        // Stamp the cadence with nowUs -- the instant this cycle READ the clock and
+                        // decided the flush was due -- not with a fresh read taken after the drain.
+                        // A fresh read charges the cadence for the drain's own duration, so FLUSH
+                        // EVERY 100ms with a 160ms drain actually flushes every 260ms: the interval
+                        // drifts by the work it is meant to schedule around. It also breaks outright
+                        // against a clock that jumps DURING the drain, which is how the frozen test
+                        // clock in LiveViewReplicationTest#testReplicateLiveViewOverDedupBase wedged
+                        // a view forever: the drain straddled the test's clock advance, the trailing
+                        // read stamped the POST-advance instant, and every later cycle then computed
+                        // nowUs - lastFlushUs == 0 against a clock that never moves again, so
+                        // flushDue stayed false and the view never processed another base commit.
+                        instance.setLastFlushTimeUs(nowUs);
                     }
                 }
                 if (attempted) {

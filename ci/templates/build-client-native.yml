@@ -30,7 +30,15 @@ steps:
       # gcc is already present (the core and Rust builds need it); add cmake and
       # nasm (the x86-64 asmlib) only when missing.
       if ! command -v cmake >/dev/null 2>&1 || ! command -v nasm >/dev/null 2>&1; then
-        sudo apt-get update
+        # TEMPORARY: the Hetzner agent image carries a HashiCorp apt source whose
+        # signing key is no longer in the keyring, so apt-get update exits 100
+        # ('repository is not signed') and set -e kills this step before cmake is
+        # installed. No QuestDB package comes from that repo, and the Ubuntu
+        # indexes refresh normally, so a failed index refresh is tolerable here.
+        # The apt-get install below still runs under set -e: a genuinely broken
+        # Ubuntu mirror fails the step one line later. Revert once the agent
+        # image drops the stale HashiCorp keyring.
+        sudo apt-get update || echo "apt-get update reported errors; continuing"
         sudo apt-get install -y cmake nasm build-essential
       fi
       export JAVA_HOME="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")}"

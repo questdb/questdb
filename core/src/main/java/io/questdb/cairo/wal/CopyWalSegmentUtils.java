@@ -156,10 +156,20 @@ public class CopyWalSegmentUtils {
                         columnRollSink
                 );
                 if (commitMode != CommitMode.NOSYNC) {
-                    ff.fsync(srcFixFd);
-                    ff.fsync(srcVarFd);
-                    ff.fsync(dstFixFd);
-                    ff.fsync(dstVarFd);
+                    // A fixed-size (non-var) source or destination column has no var file, so its var fd
+                    // is the -1 sentinel (set above); fsync(-1) would throw "could not fsync [fd=-1]".
+                    if (srcFixFd != -1) {
+                        ff.fsync(srcFixFd);
+                    }
+                    if (srcVarFd != -1) {
+                        ff.fsync(srcVarFd);
+                    }
+                    if (dstFixFd != -1) {
+                        ff.fsync(dstFixFd);
+                    }
+                    if (dstVarFd != -1) {
+                        ff.fsync(dstVarFd);
+                    }
                 }
 
             } catch (Throwable th) {
