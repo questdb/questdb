@@ -62,6 +62,7 @@ public class QwpSchemaSenderRecoveryE2ETest extends AbstractQwpWebSocketTest {
                                 .noLeakCheck()
                                 .expectSize().noRandomAccess().returns("count\n0\n");
 
+                        gate.beginClose();
                         child.process.destroyForcibly();
                         Assert.assertTrue("producer JVM did not terminate",
                                 child.process.waitFor(15, TimeUnit.SECONDS));
@@ -124,6 +125,7 @@ public class QwpSchemaSenderRecoveryE2ETest extends AbstractQwpWebSocketTest {
                     publishedFrame = gate.getDataFrame();
                     assertStaleUuidBlock(publishedFrame, engine.verifyTableName(table).getTableId());
                     assertQuery("select count() from " + table).noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+                    gate.beginClose();
                     child.process.destroyForcibly();
                     Assert.assertTrue(child.process.waitFor(15, TimeUnit.SECONDS));
                     Assert.assertNotEquals(0, child.process.exitValue());
@@ -362,6 +364,10 @@ public class QwpSchemaSenderRecoveryE2ETest extends AbstractQwpWebSocketTest {
             boolean captured = data.await(timeout, unit);
             assertHealthy();
             return captured;
+        }
+
+        private void beginClose() {
+            closed = true;
         }
 
         private byte[] getDataFrame() {
