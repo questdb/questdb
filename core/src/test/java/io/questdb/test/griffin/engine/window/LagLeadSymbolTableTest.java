@@ -111,8 +111,20 @@ public class LagLeadSymbolTableTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .expectSize()
                         .returns(function.equals("lag")
-                                ? "rn\tg\n1\t\n2\taa\n3\tbb\n4\tcc\n"
-                                : "rn\tg\n1\tbb\n2\tcc\n3\tdd\n4\t\n");
+                                ? """
+                                        rn\tg
+                                        1\t
+                                        2\taa
+                                        3\tbb
+                                        4\tcc
+                                        """
+                                : """
+                                        rn\tg
+                                        1\tbb
+                                        2\tcc
+                                        3\tdd
+                                        4\t
+                                        """);
             }
         });
     }
@@ -139,8 +151,20 @@ public class LagLeadSymbolTableTest extends AbstractCairoTest {
                         .expectSize()
                         .withPlanContaining("Window Fast Join", "CachedWindowLight")
                         .returns(function.equals("lag")
-                                ? "rn\ttotal\n1\t7\n2\t11\n3\t13\n4\t17\n"
-                                : "rn\ttotal\n1\t13\n2\t17\n3\tnull\n4\t7\n");
+                                ? """
+                                        rn\ttotal
+                                        1\t7
+                                        2\t11
+                                        3\t13
+                                        4\t17
+                                        """
+                                : """
+                                        rn\ttotal
+                                        1\t13
+                                        2\t17
+                                        3\tnull
+                                        4\t7
+                                        """);
             }
         });
     }
@@ -176,8 +200,32 @@ public class LagLeadSymbolTableTest extends AbstractCairoTest {
             for (String function : List.of("lag", "lead")) {
                 for (boolean isPartitioned : new boolean[]{false, true}) {
                     String expected = function.equals("lag")
-                            ? (isPartitioned ? "id\trn\n1\t4\n2\t3\n3\t2\n4\tnull\n" : "id\trn\n1\t3\n2\t2\n3\t1\n4\tnull\n")
-                            : (isPartitioned ? "id\trn\n1\tnull\n2\tnull\n3\t4\n4\tnull\n" : "id\trn\n1\t1\n2\tnull\n3\t4\n4\tnull\n");
+                            ? (isPartitioned ? """
+                                    id\trn
+                                    1\t4
+                                    2\t3
+                                    3\t2
+                                    4\tnull
+                                    """ : """
+                                    id\trn
+                                    1\t3
+                                    2\t2
+                                    3\t1
+                                    4\tnull
+                                    """)
+                            : (isPartitioned ? """
+                                    id\trn
+                                    1\tnull
+                                    2\tnull
+                                    3\t4
+                                    4\tnull
+                                    """ : """
+                                    id\trn
+                                    1\t1
+                                    2\tnull
+                                    3\t4
+                                    4\tnull
+                                    """);
                     for (String nullTreatment : List.of("", "IGNORE NULLS")) {
                         String window = "SELECT ts, rn, " + function + "(a) " + nullTreatment + " OVER (" +
                                 (isPartitioned ? "PARTITION BY grp " : "") + "ORDER BY rn) g FROM src ORDER BY ts";

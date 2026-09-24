@@ -318,9 +318,9 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
             execute("""
                     INSERT INTO symbols VALUES
                     ('a', '2024-01-01T00:00:00.000000Z'),
-                    (null, '2024-01-01T00:01:00.000000Z'),
+                    (NULL, '2024-01-01T00:01:00.000000Z'),
                     ('b', '2024-01-01T00:02:00.000000Z'),
-                    (null, '2024-01-01T00:03:00.000000Z'),
+                    (NULL, '2024-01-01T00:03:00.000000Z'),
                     ('c', '2024-01-01T00:04:00.000000Z')
                     """);
 
@@ -636,8 +636,8 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
 
             assertQuery("""
                     SELECT sym,
-                        LAG(sym, 1, null) OVER (ORDER BY ts) AS prev_sym,
-                        LEAD(sym, 1, null) OVER (ORDER BY ts) AS next_sym
+                        LAG(sym, 1, NULL) OVER (ORDER BY ts) AS prev_sym,
+                        LEAD(sym, 1, NULL) OVER (ORDER BY ts) AS next_sym
                     FROM symbols
                     """)
                     .expectSize()
