@@ -3,6 +3,8 @@ package io.questdb.test.cairo;
 import io.questdb.TelemetryConfigLogger;
 import io.questdb.cairo.TableFlagResolver;
 import io.questdb.cairo.TableFlagResolverImpl;
+import io.questdb.metrics.MetricsPersistenceJob;
+import io.questdb.metrics.QueryTracingJob;
 import io.questdb.tasks.TelemetryMatViewTask;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.TelemetryWalTask;
@@ -47,5 +49,18 @@ public class TableFlagsResolverTest {
         assertTrue(flags.isSystem("SYS."));
 
         assertFalse(flags.isSystem("anything"));
+    }
+
+    @Test
+    public void testSysTablesWithCustomPrefix() {
+        final TableFlagResolver customFlags = new TableFlagResolverImpl("__sys.");
+        // Fixed-name internal tables stay system tables regardless of the configured prefix.
+        assertTrue(customFlags.isSystem(MetricsPersistenceJob.TABLE_NAME));
+        assertTrue(customFlags.isSystem(MetricsPersistenceJob.TABLE_NAME.toUpperCase()));
+        assertTrue(customFlags.isSystem(QueryTracingJob.TABLE_NAME));
+        assertTrue(customFlags.isSystem("__sys.anything"));
+
+        assertFalse(customFlags.isSystem("sys.anything"));
+        assertFalse(customFlags.isSystem("anything"));
     }
 }

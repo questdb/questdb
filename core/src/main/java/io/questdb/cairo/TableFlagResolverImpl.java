@@ -1,6 +1,7 @@
 package io.questdb.cairo;
 
 import io.questdb.TelemetryConfigLogger;
+import io.questdb.metrics.MetricsPersistenceJob;
 import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.Chars;
 import io.questdb.tasks.TelemetryMatViewTask;
@@ -39,6 +40,10 @@ public class TableFlagResolverImpl implements TableFlagResolver {
         return Chars.startsWithIgnoreCase(tableName, systemTableNamePrefix)
                 || Chars.equalsIgnoreCase(tableName, TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)
                 || Chars.equalsIgnoreCase(tableName, TelemetryTask.TABLE_NAME)
-                || Chars.equalsIgnoreCase(tableName, QueryTracingJob.TABLE_NAME);
+                || Chars.equalsIgnoreCase(tableName, QueryTracingJob.TABLE_NAME)
+                // The name is fixed rather than prefix-derived, so list it explicitly: under a custom
+                // system table prefix it must still be a system table (e.g. Enterprise rejects TTL on
+                // non-system tables, which would disable the job).
+                || Chars.equalsIgnoreCase(tableName, MetricsPersistenceJob.TABLE_NAME);
     }
 }
