@@ -308,6 +308,10 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@4d1965c9142484e48d40c19de54b5cba84953a06
         with:
           toolchain: nightly-2025-09-24
+          # The action exports RUSTFLAGS=-D warnings by default; keep the
+          # verify step's from-source build on the same flags as every other
+          # release build, which sets none.
+          rustflags: ""
       - name: Regenerate THIRD_PARTY_LICENSES.txt
         run: bash ci/generate_third_party_licenses.sh
         env:
@@ -582,7 +586,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      actions: write
     steps:
       - uses: actions/checkout@v5
         with:
@@ -599,12 +602,23 @@ jobs:
         run: .github/scripts/publish-github-release-assets.sh "${GITHUB_REF_NAME}" artifacts/linux artifacts/windows
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # The asset script publishes the draft with the Actions token, and GitHub
-      # does not start workflows from events caused by that token, so the
-      # release:published trigger of release_website.yml never fires. Dispatch
-      # the website rebuild explicitly instead.
+
+  # The asset script publishes the draft with the Actions token, and GitHub
+  # does not start workflows from events caused by that token, so the
+  # release:published trigger of release_website.yml never fires. Dispatch the
+  # website rebuild explicitly. It is its own job so that a failed dispatch is
+  # visible on the run but does not block AMI publication, which depends only
+  # on the published release assets.
+  publish-website:
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && needs.publish-github.result == 'success' }}
+    needs:
+      - publish-github
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
       - name: Trigger the questdb.io rebuild
-        run: gh workflow run release_website.yml --ref "${GITHUB_REF_NAME}"
+        run: gh workflow run release_website.yml --ref "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

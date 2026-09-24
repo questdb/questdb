@@ -428,6 +428,7 @@ for required in (
     "rust_versions",
     "publish-github:",
     "publish-ami:",
+    "publish-website:",
     "github.event_name == 'push'",
     "startsWith(github.ref, 'refs/tags/')",
     "publish-github-release-assets.sh",
@@ -445,7 +446,7 @@ if "gh release upload \"${tag_name}\" artifacts/*.gz" in workflow:
 if "  release:\n" in workflow:
     raise SystemExit("workflow retains the combined release job")
 
-for job_name in ("publish-github", "publish-ami"):
+for job_name in ("publish-github", "publish-website", "publish-ami"):
     job = jobs.get(job_name)
     if not isinstance(job, dict):
         raise SystemExit(f"release workflow has no {job_name} job")
@@ -460,12 +461,25 @@ github_checkout_index = next((index for index, step in enumerate(github_steps) i
 github_helper_index = next((index for index, step in enumerate(github_steps) if isinstance(step, dict) and "publish-github-release-assets.sh" in str(step.get("run", ""))), None)
 if github_checkout_index is None or github_helper_index is None or github_checkout_index >= github_helper_index:
     raise SystemExit("GitHub publication must check out the helper before invoking it")
-github_website_index = next((index for index, step in enumerate(github_steps) if isinstance(step, dict) and "gh workflow run release_website.yml" in str(step.get("run", ""))), None)
-if github_website_index is None or github_website_index <= github_helper_index:
-    raise SystemExit("GitHub publication must dispatch the questdb.io rebuild after publishing the release assets")
 github_permissions = jobs["publish-github"].get("permissions")
-if not isinstance(github_permissions, dict) or github_permissions.get("contents") != "write" or github_permissions.get("actions") != "write":
-    raise SystemExit("GitHub publication needs contents: write and actions: write to publish assets and dispatch the website rebuild")
+if not isinstance(github_permissions, dict) or github_permissions.get("contents") != "write":
+    raise SystemExit("GitHub publication needs contents: write to publish assets")
+website_job = jobs.get("publish-website")
+if not isinstance(website_job, dict):
+    raise SystemExit("release workflow has no publish-website job")
+website_condition = website_job.get("if")
+if not isinstance(website_condition, str) or "github.event_name == 'push'" not in website_condition or "startsWith(github.ref, 'refs/tags/')" not in website_condition:
+    raise SystemExit("publish-website does not have the exact tag-push publication guard")
+if website_job.get("needs") != ["publish-github"]:
+    raise SystemExit("publish-website must run after publish-github and must not gate any other job")
+if any(isinstance(job, dict) and "publish-website" in (job.get("needs") or []) for job in jobs.values()):
+    raise SystemExit("no job may depend on publish-website; a failed dispatch must not block AMI publication")
+website_permissions = website_job.get("permissions")
+if not isinstance(website_permissions, dict) or website_permissions.get("actions") != "write":
+    raise SystemExit("publish-website needs actions: write to dispatch the website rebuild")
+website_steps = website_job.get("steps", [])
+if not any(isinstance(step, dict) and "gh workflow run release_website.yml" in str(step.get("run", "")) for step in website_steps):
+    raise SystemExit("publish-website does not dispatch release_website.yml")
 
 website_workflow = yaml.load(website_workflow_path.read_text(), Loader=yaml.BaseLoader)
 website_triggers = website_workflow.get("on") if isinstance(website_workflow, dict) else None
