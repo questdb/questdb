@@ -27,6 +27,7 @@ package io.questdb.cairo.arr;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -543,6 +544,11 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     @Override
     public long getAuxVectorOffset(long row) {
         return getAuxVectorOffsetStatic(row);
+    }
+
+    @Override
+    public ColumnTypeTag getTag() {
+        return ColumnTypeTag.ARRAY;
     }
 
     @Override
