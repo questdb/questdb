@@ -221,6 +221,15 @@ in `core/rust/qdbr/target/`, which is on no classpath.
 `io.questdb.std.Os` reads the locally built C++ library from `bin-local/` and the
 Rust library from the platform directory. `mvn clean` deletes both outputs.
 
+An IDE-only build (IntelliJ "Rebuild Project" without delegating to Maven)
+copies resources but never runs the Rust build, so every test then fails in
+`Os.<clinit>` with `Internal error: cannot find
+/io/questdb/bin/<platform>/libquestdbr.<ext>, broken package?`. Run
+`mvn -pl core compile`, or wire the `qdbr-build` target from
+`core/rust/intellij_triggers.xml` as a before-compile Ant trigger, and rebuild.
+A locally built jar carries the Rust library only for the platform it was
+built on; official release jars bundle it for every supported platform.
+
 For more details, see [CMake build instructions](core/CMAKE_README.md).
 
 For C/C++ development we use CLion. This IDE understands CMake files and makes
