@@ -5503,7 +5503,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             throw SqlException.position(position).put("reader or column index is missing for symbol constant: ").put(token);
         }
 
-        final SymbolConstant function = SymbolConstant.newInstance(symbol);
+        final SymbolConstant function = SymbolConstant.newUnquotedInstance(symbol);
         bindVarFunctions.add(new CompiledFilterSymbolBindVariable(function, predicateContext.symbolColumnIndex));
         int index = bindVarFunctions.size() - 1;
 

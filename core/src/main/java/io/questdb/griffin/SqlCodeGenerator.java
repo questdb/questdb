@@ -2228,7 +2228,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * The compiled filter carries the generic JIT's FLOAT semantics: an f32 comparison uses the
      * native {@code FLOAT_EPSILON}, a shade wider than {@link Numbers#DOUBLE_TOLERANCE}, so a
      * LATEST ON query disagrees with the Java filter exactly where a plain WHERE already does
-     * (see {@code CompiledFilterRegressionTest#testIntColumnVsFloatToleranceBoundConstantStillDivergesOnF32Width}).
+     * (see {@code CompiledFilterRegressionTest#testNumericColumnVsFloatToleranceBoundConstant}).
      * That divergence is pre-existing and deliberately not guarded here: falling back to the
      * Java filter for FLOAT operands would forfeit the JIT speedup for an edge case that is
      * reachable only at the tolerance boundary itself.

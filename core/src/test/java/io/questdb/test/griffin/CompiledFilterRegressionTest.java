@@ -6094,7 +6094,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             execute("CREATE TABLE ft (f FLOAT, g FLOAT, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO ft VALUES (1e-10, 0, 'a', 0), (5, 5, 'b', 1)");
             // Pre-existing f32 tolerance divergence of the generic JIT, which LATEST ON now shares
-            // with plain WHERE; see testIntColumnVsFloatToleranceBoundConstantStillDivergesOnF32Width.
+            // with plain WHERE; see testNumericColumnVsFloatToleranceBoundConstant.
             assertJitToleranceQuery("SELECT s FROM ft WHERE f > g", "s\na\n", "s\n");
             assertJitToleranceQuery("SELECT s FROM ft WHERE f > g LATEST ON ts PARTITION BY s", "s\na\n", "s\n");
             assertJitToleranceQuery("SELECT s FROM ft WHERE f = g", "s\nb\n", "s\na\nb\n");

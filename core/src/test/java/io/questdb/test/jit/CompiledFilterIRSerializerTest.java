@@ -2245,6 +2245,16 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testSymbolConstantSpelling() throws Exception {
+        serialize("asymbol = 'TRUE' or asymbol = '''x'''");
+        assertIR("(i32 :0)(i32 asymbol)(=)(i32 :1)(i32 asymbol)(=)(||)(ret)");
+
+        Assert.assertEquals(2, bindVarFunctions.size());
+        Assert.assertEquals("'x'", bindVarFunctions.get(0).getStrA(null));
+        Assert.assertEquals("TRUE", bindVarFunctions.get(1).getStrA(null));
+    }
+
+    @Test
     public void testUnknownSymbolConstant() throws Exception {
         serialize("asymbol = '" + UNKNOWN_SYMBOL + "'");
         assertIR("(i32 :0)(i32 asymbol)(=)(ret)");

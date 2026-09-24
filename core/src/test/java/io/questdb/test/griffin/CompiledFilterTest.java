@@ -1741,6 +1741,27 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolConstantSpelling() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, v INT, s SYMBOL) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, 1, 'TRUE'),
+                    (2, 2, 'true'),
+                    (3, 3, 'False'),
+                    (4, 4, 'false'),
+                    (5, 5, '''x'''),
+                    (6, 6, 'x')
+                    """);
+            assertSymbolFilter("s = 'TRUE'", "v\n1\n");
+            assertSymbolFilter("s = 'False'", "v\n3\n");
+            assertSymbolFilter("s = '''x'''", "v\n5\n");
+            assertSymbolFilter("s != 'TRUE'", "v\n2\n3\n4\n5\n6\n");
+            assertSymbolFilter("s IN ('TRUE', '''x''')", "v\n1\n5\n");
+        });
+    }
+
+    @Test
     public void testUuid() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -2055,6 +2076,12 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     .returns(expected);
             assertSqlRunWithJit(query);
         });
+    }
+
+    private void assertSymbolFilter(String filter, String expected) throws Exception {
+        final String query = "SELECT v FROM x WHERE " + filter;
+        assertQuery(query).noLeakCheck().returns(expected);
+        assertSqlRunWithJit(query);
     }
 
     private void testSelectSingleColumnFilterWithColTops(int jitMode, boolean preTouch) throws Exception {
