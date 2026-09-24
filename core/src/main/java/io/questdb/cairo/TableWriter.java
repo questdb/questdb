@@ -3799,6 +3799,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
 
         int newPartitionDirLen = 0;
+        // Drives the active-partition recovery in the finally below. Only a returned commitTxWriter()
+        // makes the switch real, so anything that leaves this false -- an early return, a throw -- is an
+        // abort that must not hand back a writer with a closed active partition. Do NOT infer this from
+        // txWriter.isPartitionParquet(partitionIndex): setPartitionParquet() flips that in memory BEFORE
+        // the commit, so it reads true even when the commit then failed, which silently disabled the
+        // recovery for the one window it exists to cover.
+        boolean switchCommitted = false;
         try {
             setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
             final int partitionDirLen = path.size();
@@ -3858,6 +3865,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.setPartitionParquet(partitionTimestamp, parquetFileSize);
             txWriter.bumpPartitionTableVersion();
             commitTxWriter();
+            switchCommitted = true;
         } catch (Throwable e) {
             if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
                 LOG.error().$("could not remove partition dir [path=").$(other).I$();
@@ -3866,8 +3874,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
-            if (activePartition && !txWriter.isPartitionParquet(partitionIndex) && isLastPartitionClosed()) {
-                reopenLastPartitionOrDistress();
+            if (activePartition && !switchCommitted && isLastPartitionClosed()) {
+                if (txWriter.isPartitionParquet(partitionIndex)) {
+                    // setPartitionParquet() landed in memory but commitTxWriter() did not, so this
+                    // writer believes the active partition is parquet while _txn on disk still says
+                    // native. Reopening would map native append columns over a partition the writer
+                    // no longer describes as native, so expel it instead -- the same call
+                    // applyColdSwitch0 makes when its own active-partition window aborts.
+                    distressed = true;
+                } else {
+                    reopenLastPartitionOrDistress();
+                }
             }
         }
 
