@@ -31,6 +31,8 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -114,21 +116,30 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     }
 
     private void lookupDeferredSymbols(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        if (includedSymbolFuncs != null) {
-            AbstractDeferredTreeSetRecordCursorFactory.resolveSymbolKeys(
-                    includedSymbolFuncs, cursor.getIncludedSymbolKeys(), pageFrameCursor, executionContext, columnIndex, false
-            );
-        }
         if (excludedSymbolFuncs != null) {
-            IntHashSet excludedKeys = cursor.getExcludedSymbolKeys();
-            AbstractDeferredTreeSetRecordCursorFactory.resolveSymbolKeys(
-                    excludedSymbolFuncs, excludedKeys, pageFrameCursor, executionContext, columnIndex, false
-            );
-            if (includedSymbolFuncs != null) {
-                IntHashSet includedKeys = cursor.getIncludedSymbolKeys();
-                for (int i = 0, n = excludedKeys.size(); i < n; i++) {
-                    includedKeys.remove(excludedKeys.get(i));
-                }
+            resolveSymbolKeys(excludedSymbolFuncs, cursor.getExcludedSymbolKeys(), null, pageFrameCursor, executionContext);
+        }
+        if (includedSymbolFuncs != null) {
+            final IntHashSet excludedKeys = excludedSymbolFuncs != null ? cursor.getExcludedSymbolKeys() : null;
+            resolveSymbolKeys(includedSymbolFuncs, cursor.getIncludedSymbolKeys(), excludedKeys, pageFrameCursor, executionContext);
+        }
+    }
+
+    private void resolveSymbolKeys(
+            ObjList<Function> functions,
+            IntHashSet keys,
+            @Nullable IntHashSet excludedKeys,
+            PageFrameCursor pageFrameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        keys.clear();
+        final StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final Function function = functions.getQuick(i);
+            function.init(pageFrameCursor, executionContext);
+            final int key = AbstractDeferredTreeSetRecordCursorFactory.resolveSymbolKey(symbolTable, function.getStrA(null));
+            if (key != SymbolTable.VALUE_NOT_FOUND && (excludedKeys == null || excludedKeys.excludes(key))) {
+                keys.add(key);
             }
         }
     }
@@ -149,8 +160,8 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
         } catch (Throwable th) {
             failure = th;
         }
-        failure = Misc.freeBestEffort(failure, filter);
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, filter);
         failure = Misc.freeObjListBestEffort(failure, excludedSymbolFuncs);
         failure = Misc.freeObjListBestEffort(failure, includedSymbolFuncs);
         CairoException.rethrowCleanupFailure(failure);

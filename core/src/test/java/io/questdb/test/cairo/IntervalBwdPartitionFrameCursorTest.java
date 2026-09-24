@@ -43,6 +43,7 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.cairo.ParquetMetaFileReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.griffin.model.RuntimeIntervalModel;
@@ -526,6 +527,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                     final IntervalPartitionFrameCursorFactory factory = new IntervalPartitionFrameCursorFactory(
                             tableToken,
                             0,
+                            TableUtils.ANY_TABLE_VERSION,
                             new RuntimeIntervalModel(
                                     ColumnType.getTimestampDriver(metadata.getTimestampType()),
                                     partitionBy,
@@ -877,6 +879,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                     final IntervalPartitionFrameCursorFactory factory = new IntervalPartitionFrameCursorFactory(
                             tableToken,
                             0,
+                            TableUtils.ANY_TABLE_VERSION,
                             new RuntimeIntervalModel(
                                     ColumnType.getTimestampDriver(metadata.getTimestampType()),
                                     PartitionBy.DAY,

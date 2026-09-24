@@ -45,6 +45,7 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     private final RecordMetadata metadata;
     private final long metadataVersion;
     private final TableToken tableToken;
+    private final long truncateVersion;
     private final boolean updateQuery;
     private final String viewName;
     private final int viewPosition;
@@ -54,6 +55,7 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     AbstractPartitionFrameCursorFactory(
             TableToken tableToken,
             long metadataVersion,
+            long truncateVersion,
             RecordMetadata metadata,
             @Nullable String viewName,
             int viewPosition,
@@ -61,6 +63,7 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     ) {
         this.tableToken = tableToken;
         this.metadataVersion = metadataVersion;
+        this.truncateVersion = truncateVersion;
         this.metadata = metadata;
         this.viewName = viewName;
         this.viewPosition = viewPosition;
@@ -164,6 +167,10 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
                 tableToken,
                 metadataVersion
         );
+        if (truncateVersion != TableUtils.ANY_TABLE_VERSION && reader.getTxFile().getTruncateVersion() != truncateVersion) {
+            Misc.free(reader);
+            throw TableReferenceOutOfDateException.ofTruncate(tableToken);
+        }
         if (pushdownPartitionTableVersion > -1) {
             final long currentPartitionTableVersion = reader.getTxFile().getPartitionTableVersion();
             if (currentPartitionTableVersion != pushdownPartitionTableVersion) {

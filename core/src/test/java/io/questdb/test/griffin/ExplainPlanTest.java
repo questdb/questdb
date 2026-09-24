@@ -5103,7 +5103,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Index backward scan on: s
-                              symbolFilter: s in [1] or s in ['deferred']
+                              symbolFilter: s in ['1','deferred']
                                 Frame backward scan on: a
                             """);
         });
@@ -5119,7 +5119,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Index backward scan on: s
-                              symbolFilter: s in [1,2]
+                              symbolFilter: s in ['1','2']
                                 Frame backward scan on: a
                             """);
         });

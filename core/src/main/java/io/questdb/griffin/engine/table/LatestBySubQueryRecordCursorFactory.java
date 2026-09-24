@@ -76,9 +76,9 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             if (indexed) {
                 symbolKeys = new IntHashSet();
                 if (filter != null) {
-                    cursor = new LatestByValuesIndexedFilteredRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, null, filter);
+                    cursor = new LatestByValuesIndexedFilteredRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, filter);
                 } else {
-                    cursor = new LatestByValuesIndexedRecordCursor(configuration, metadata, columnIndex, symbolKeys, null, rows);
+                    cursor = new LatestByValuesIndexedRecordCursor(configuration, metadata, columnIndex, symbolKeys, rows);
                 }
             } else {
                 final LatestByValueListRecordCursor valueListCursor = new LatestByValueListRecordCursor(
@@ -147,8 +147,8 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             failure = th;
         }
         failure = Misc.freeBestEffort(failure, recordCursorFactory);
-        failure = Misc.freeBestEffort(failure, filter);
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, filter);
         CairoException.rethrowCleanupFailure(failure);
     }
 

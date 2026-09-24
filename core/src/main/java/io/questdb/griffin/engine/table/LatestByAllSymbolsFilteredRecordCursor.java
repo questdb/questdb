@@ -79,6 +79,7 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
     @Override
     public void close() {
         if (isOpen()) {
+            filter.cursorClosed();
             Misc.free(pairKeys);
             Misc.free(symbolKeys);
             super.close();

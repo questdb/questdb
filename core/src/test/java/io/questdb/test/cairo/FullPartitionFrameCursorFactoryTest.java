@@ -30,6 +30,7 @@ import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
@@ -115,7 +116,7 @@ public class FullPartitionFrameCursorFactoryTest extends AbstractCairoTest {
                 execute("alter table x convert partition to parquet where timestamp >= 0;");
             }
 
-            try (FullPartitionFrameCursorFactory factory = new FullPartitionFrameCursorFactory(tableToken, 0, metadata, ORDER_ASC, null, 0, false)) {
+            try (FullPartitionFrameCursorFactory factory = new FullPartitionFrameCursorFactory(tableToken, 0, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false)) {
                 long count = 0;
                 try (PartitionFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), new IntList(), ORDER_ASC)) {
                     PartitionFrame frame;

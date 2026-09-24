@@ -102,8 +102,8 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
         } catch (Throwable th) {
             failure = th;
         }
-        failure = Misc.freeBestEffort(failure, filter);
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, filter);
         if (symbolFunc != filter) {
             failure = Misc.freeBestEffort(failure, symbolFunc);
         }

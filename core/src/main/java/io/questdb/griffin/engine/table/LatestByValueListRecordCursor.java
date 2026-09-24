@@ -88,6 +88,9 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
     @Override
     public void close() {
         try {
+            if (filter != null) {
+                filter.cursorClosed();
+            }
             super.close();
             if (rowIds.getCapacity() > shrinkToCapacity) {
                 foundKeys = new IntHashSet(shrinkToCapacity);

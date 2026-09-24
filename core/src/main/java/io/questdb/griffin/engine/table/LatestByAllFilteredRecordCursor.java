@@ -63,6 +63,7 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
     @Override
     public void close() {
         if (isOpen()) {
+            filter.cursorClosed();
             map.close();
             super.close();
         }

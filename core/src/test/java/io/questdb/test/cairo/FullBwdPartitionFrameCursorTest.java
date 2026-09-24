@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
@@ -100,7 +101,7 @@ public class FullBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 columnIndexes.add(1); // b
                 columnIndexes.add(2); // timestamp
 
-                try (FullPartitionFrameCursorFactory factory = new FullPartitionFrameCursorFactory(writer.getTableToken(), 0, GenericRecordMetadata.copyOfNew(writer.getMetadata()), ORDER_DESC, null, 0, false)) {
+                try (FullPartitionFrameCursorFactory factory = new FullPartitionFrameCursorFactory(writer.getTableToken(), 0, TableUtils.ANY_TABLE_VERSION, GenericRecordMetadata.copyOfNew(writer.getMetadata()), ORDER_DESC, null, 0, false)) {
                     final TestTableReaderRecord record = new TestTableReaderRecord();
 
                     try (final PartitionFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), columnIndexes, ORDER_DESC)) {

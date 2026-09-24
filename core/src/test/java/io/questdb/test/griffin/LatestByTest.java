@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
@@ -246,9 +247,11 @@ public class LatestByTest extends AbstractCairoTest {
                 execute("INSERT INTO all_keys VALUES (NULL, 4, '2024-01-03'), ('missing', 5, '2024-01-03')");
                 assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n1.0\n2.0\n4.0\n5.0\n");
                 execute("ALTER TABLE all_keys DROP PARTITION LIST '2024-01-02'");
-                // Dropping rows need not remove their symbols from the dictionary.
-                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n1.0\n2.0\n4.0\n5.0\n");
+                assertCursorOutOfDate(factory);
             }
+            // Dropping rows need not remove their symbols from the dictionary.
+            assertQuery(latestKeyQuery("all_keys", "s IN ('a', 'b', NULL, 'missing')", false))
+                    .sizeMayVary().returns("v\n1.0\n2.0\n4.0\n5.0\n");
         });
     }
 
@@ -763,13 +766,17 @@ public class LatestByTest extends AbstractCairoTest {
                         + " ('b',-1,'2024-01-02'), (NULL,6,'2024-01-02')");
                 execute("CREATE TABLE subquery_keys (s STRING)");
                 execute("INSERT INTO subquery_keys VALUES ('a'), ('a'), (NULL), ('missing')");
-                try (RecordCursorFactory factory = select("SELECT v FROM subquery_main"
-                        + " WHERE s IN (SELECT s FROM subquery_keys) AND v > 0 LATEST ON ts PARTITION BY s")) {
+                final String query = "SELECT v FROM subquery_main WHERE s IN (SELECT s FROM subquery_keys) AND v > 0"
+                        + " LATEST ON ts PARTITION BY s";
+                try (RecordCursorFactory factory = select(query)) {
                     assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n5\n6\n");
+                    execute("INSERT INTO subquery_keys VALUES ('c'), ('b')");
+                    assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n2\n4\n5\n6\n");
                     execute("TRUNCATE TABLE subquery_keys");
                     execute("INSERT INTO subquery_keys VALUES ('c'), ('b')");
-                    assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n2\n4\n");
+                    assertCursorOutOfDate(factory);
                 }
+                assertQuery(query).sizeMayVary().returns("v\n2\n4\n");
                 execute("DROP TABLE subquery_main");
                 execute("DROP TABLE subquery_keys");
             }
@@ -1722,6 +1729,26 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByPairKeysWithNullSecondSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pair_nulls (s SYMBOL, t SYMBOL, v INT, ts " + timestampType.getTypeName()
+                    + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO pair_nulls VALUES
+                    ('a', NULL, 1, '2024-01-01T00:00:01Z'),
+                    ('b', NULL, 2, '2024-01-01T00:00:02Z'),
+                    ('a', 'x', 3, '2024-01-01T00:00:03Z'),
+                    ('b', 'x', 4, '2024-01-01T00:00:04Z'),
+                    ('a', NULL, 5, '2024-01-01T00:00:05Z'),
+                    ('b', NULL, 6, '2024-01-01T00:00:06Z')
+                    """);
+            final String expected = "s\tt\tv\na\tx\t3\nb\tx\t4\na\t\t5\nb\t\t6\n";
+            assertQuery("SELECT s, t, v FROM pair_nulls LATEST ON ts PARTITION BY s, t").sizeMayVary().returns(expected);
+            assertQuery("SELECT s, t, v FROM pair_nulls WHERE v > 0 LATEST ON ts PARTITION BY s, t").sizeMayVary().returns(expected);
+        });
+    }
+
+    @Test
     public void testLatestByPartitionByByte() throws Exception {
         testLatestByPartitionBy("byte", "1", "2");
     }
@@ -1872,6 +1899,39 @@ public class LatestByTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("pair\topen\tclose\tlow\thigh\tbase_volume\tcounter_volume\texchanges\tprev_rate\tprev_ts\n" +
                             "abc\t1.1\t1.1\t1.1\t1.1\t1.1\t1.1\t1\t1.1\t2024-01-29T15:00:00.000000" + suffix + "\n");
+        });
+    }
+
+    @Test
+    public void testLatestBySymbolComparisonFilterAcrossFactories() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cmp (a SYMBOL, b SYMBOL, g SYMBOL INDEX, h SYMBOL, v LONG, ts " + timestampType.getTypeName()
+                    + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO cmp VALUES
+                    ('p', 'p', 'x', 'm', 1, '2024-01-01T00:00:01Z'),
+                    ('p', 'q', 'x', 'm', 2, '2024-01-01T00:00:02Z'),
+                    ('r', 'r', 'y', 'n', 3, '2024-01-01T00:00:03Z'),
+                    ('r', 'r', 'x', 'm', 4, '2024-01-01T00:00:04Z')
+                    """);
+            execute("CREATE TABLE cmp_keys (g STRING)");
+            execute("INSERT INTO cmp_keys VALUES ('x')");
+            bindVariableService.setStr("key", "m");
+            final String[] queries = {
+                    "SELECT v FROM cmp WHERE a = b LATEST ON ts PARTITION BY h",
+                    "SELECT v FROM cmp WHERE a = b AND h = 'm' LATEST ON ts PARTITION BY h",
+                    "SELECT v FROM cmp WHERE a = b AND h = :key LATEST ON ts PARTITION BY h",
+                    "SELECT v FROM cmp WHERE a = b AND g IN (SELECT g FROM cmp_keys) LATEST ON ts PARTITION BY g",
+                    "SELECT v FROM cmp WHERE a = b AND g IN ('x', 'y') LATEST ON ts PARTITION BY g",
+                    "SELECT v FROM cmp WHERE a = b LATEST ON ts PARTITION BY v",
+                    "SELECT v FROM cmp WHERE a = b LATEST ON ts PARTITION BY g, h",
+            };
+            final String[] expected = {"v\n3\n4\n", "v\n4\n", "v\n4\n", "v\n4\n", "v\n3\n4\n", "v\n1\n3\n4\n", "v\n3\n4\n"};
+            for (int i = 0; i < queries.length; i++) {
+                try (RecordCursorFactory factory = select(queries[i])) {
+                    assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns(expected[i]);
+                }
+            }
         });
     }
 
@@ -3124,10 +3184,20 @@ public class LatestByTest extends AbstractCairoTest {
                 execute("INSERT INTO " + table + " VALUES (NULL, 30, '2024-01-03'), (NULL, -31, '2024-01-03')");
                 assertFactory(factory).withContext(sqlExecutionContext).returns(isFiltered ? "v\n30.0\n" : "v\n-31.0\n");
                 execute("TRUNCATE TABLE " + table);
+                assertCursorOutOfDate(factory);
+            }
+            try (RecordCursorFactory factory = select(query)) {
                 assertFactory(factory).withContext(sqlExecutionContext).returns("v\n");
                 execute("INSERT INTO " + table + " VALUES (NULL, 40, '2024-01-04')");
                 assertFactory(factory).withContext(sqlExecutionContext).returns("v\n40.0\n");
             }
+        }
+    }
+
+    private void assertCursorOutOfDate(RecordCursorFactory factory) throws Exception {
+        try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+            Assert.fail();
+        } catch (TableReferenceOutOfDateException ignore) {
         }
     }
 

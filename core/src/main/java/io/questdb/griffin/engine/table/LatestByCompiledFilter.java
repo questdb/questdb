@@ -109,6 +109,13 @@ public class LatestByCompiledFilter extends BooleanFunction implements UnaryFunc
     }
 
     @Override
+    public void cursorClosed() {
+        if (filter != null) {
+            filter.cursorClosed();
+        }
+    }
+
+    @Override
     public Function getArg() {
         return filter;
     }

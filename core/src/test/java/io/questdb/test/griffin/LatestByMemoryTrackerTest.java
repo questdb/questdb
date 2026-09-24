@@ -68,6 +68,7 @@ import org.junit.Test;
 public class LatestByMemoryTrackerTest extends AbstractCairoTest {
 
     private static final int HIGH_CARDINALITY = 50_000;
+    private static final int SYMBOL_SET_CARDINALITY = 8_000;
 
     @Before
     public void setUpSortPageSize() {
@@ -218,7 +219,7 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE symbol_sets AS (SELECT ('s' || x)::SYMBOL a, ('t' || x)::SYMBOL b,"
                     + " ('u' || x)::SYMBOL c, x v, (x * 1_000_000L)::TIMESTAMP ts FROM long_sequence("
-                    + HIGH_CARDINALITY + ")) TIMESTAMP(ts) PARTITION BY DAY");
+                    + SYMBOL_SET_CARDINALITY + ")) TIMESTAMP(ts) PARTITION BY DAY");
             for (String keys : new String[]{"a, b", "a, b, c"}) {
                 assertBreach("SELECT * FROM symbol_sets LATEST ON ts PARTITION BY " + keys,
                         LatestByAllSymbolsFilteredRecordCursorFactory.class);

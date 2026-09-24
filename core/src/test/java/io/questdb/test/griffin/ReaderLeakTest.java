@@ -79,6 +79,7 @@ public class ReaderLeakTest extends AbstractCairoTest {
                                                 new FullPartitionFrameCursorFactory(
                                                         token,
                                                         TableUtils.ANY_TABLE_VERSION,
+                                                        TableUtils.ANY_TABLE_VERSION,
                                                         metadata,
                                                         PartitionFrameCursorFactory.ORDER_ASC,
                                                         null,

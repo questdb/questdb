@@ -52,6 +52,12 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
     }
 
     @Override
+    public void close() {
+        filter.cursorClosed();
+        super.close();
+    }
+
+    @Override
     public boolean hasNext() {
         circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         if (!isFindPending) {

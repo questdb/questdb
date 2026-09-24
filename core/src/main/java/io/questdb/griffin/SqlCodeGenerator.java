@@ -7580,6 +7580,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             partitionFrameCursorFactory = new IntervalPartitionFrameCursorFactory(
                     tableToken,
                     model.getMetadataVersion(),
+                    reader.getTxFile().getTruncateVersion(),
                     intervalModel,
                     timestampIndex,
                     GenericRecordMetadata.copyOfNew(reader.getMetadata()),
@@ -7592,6 +7593,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             partitionFrameCursorFactory = new FullPartitionFrameCursorFactory(
                     tableToken,
                     model.getMetadataVersion(),
+                    reader.getTxFile().getTruncateVersion(),
                     GenericRecordMetadata.copyOfNew(reader.getMetadata()),
                     ORDER_DESC,
                     getViewName(viewExpr),
@@ -7857,7 +7859,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         sharedDfc,
                                         latestByIndex,
                                         intrinsicModel.keyValueFuncs,
-                                        symbolMapReader,
                                         sharedFilter,
                                         columnIndexes,
                                         columnSizeShifts
@@ -7900,7 +7901,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             partitionFrameCursorFactory,
                             latestByIndex,
                             intrinsicModel.keyValueFuncs,
-                            symbolMapReader,
                             filter,
                             columnIndexes,
                             columnSizeShifts
@@ -10167,6 +10167,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         dfcFactory = new IntervalPartitionFrameCursorFactory(
                                                 tableToken,
                                                 tableModel.getMetadataVersion(),
+                                                reader.getTxFile().getTruncateVersion(),
                                                 intervalModel,
                                                 tableMeta.getTimestampIndex(),
                                                 dfcMeta,
@@ -10179,6 +10180,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         dfcFactory = new FullPartitionFrameCursorFactory(
                                                 tableToken,
                                                 tableModel.getMetadataVersion(),
+                                                reader.getTxFile().getTruncateVersion(),
                                                 dfcMeta,
                                                 ORDER_ASC,
                                                 getViewName(viewExpr),
@@ -12352,6 +12354,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 dfcFactory = new IntervalPartitionFrameCursorFactory(
                         tableToken,
                         model.getMetadataVersion(),
+                        reader.getTxFile().getTruncateVersion(),
                         intervalModel,
                         metadata.getTimestampIndex(),
                         dfcFactoryMeta,
@@ -12365,6 +12368,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 dfcFactory = new FullPartitionFrameCursorFactory(
                         tableToken,
                         model.getMetadataVersion(),
+                        reader.getTxFile().getTruncateVersion(),
                         dfcFactoryMeta,
                         order,
                         getViewName(viewExpr),
@@ -12885,6 +12889,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             PartitionFrameCursorFactory cursorFactory = new FullPartitionFrameCursorFactory(
                     tableToken,
                     model.getMetadataVersion(),
+                    reader.getTxFile().getTruncateVersion(),
                     dfcFactoryMeta,
                     order,
                     getViewName(viewExpr),
@@ -12923,6 +12928,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         new FullPartitionFrameCursorFactory(
                                 tableToken,
                                 model.getMetadataVersion(),
+                                reader.getTxFile().getTruncateVersion(),
                                 dfcFactoryMeta,
                                 ORDER_DESC,
                                 getViewName(viewExpr),
@@ -12944,6 +12950,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         queryMeta,
                         new FullPartitionFrameCursorFactory(tableToken,
                                 model.getMetadataVersion(),
+                                reader.getTxFile().getTruncateVersion(),
                                 dfcFactoryMeta,
                                 ORDER_DESC,
                                 getViewName(viewExpr),
@@ -12973,6 +12980,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     new FullPartitionFrameCursorFactory(
                             tableToken,
                             model.getMetadataVersion(),
+                            reader.getTxFile().getTruncateVersion(),
                             dfcFactoryMeta,
                             ORDER_DESC,
                             getViewName(viewExpr),
@@ -12993,6 +13001,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 new FullPartitionFrameCursorFactory(
                         tableToken,
                         model.getMetadataVersion(),
+                        reader.getTxFile().getTruncateVersion(),
                         dfcFactoryMeta,
                         ORDER_DESC,
                         getViewName(viewExpr),

@@ -36,6 +36,7 @@ import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -574,6 +575,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
             try (
                     final IntervalPartitionFrameCursorFactory factory = new IntervalPartitionFrameCursorFactory(x,
                             0,
+                            TableUtils.ANY_TABLE_VERSION,
                             new RuntimeIntervalModel(
                                     ColumnType.getTimestampDriver(metadata.getTimestampType()),
                                     partitionBy,
@@ -939,6 +941,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                     final IntervalPartitionFrameCursorFactory factory = new IntervalPartitionFrameCursorFactory(
                             x,
                             0,
+                            TableUtils.ANY_TABLE_VERSION,
                             new RuntimeIntervalModel(
                                     ColumnType.getTimestampDriver(metadata.getTimestampType()),
                                     PartitionBy.DAY,
