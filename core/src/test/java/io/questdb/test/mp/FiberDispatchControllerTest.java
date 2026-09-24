@@ -71,7 +71,13 @@ public class FiberDispatchControllerTest {
                 Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
             }
             controller.session.grantAll();
-            Assert.assertEquals(count, runtime.drainOwned(owner, count));
+            // drainOwned stops after its scheduling budget, so one call may process fewer than count fibers.
+            final long drainDeadline = System.nanoTime() + 5_000_000_000L;
+            int drained = 0;
+            while (drained < count && System.nanoTime() < drainDeadline) {
+                drained += runtime.drainOwned(owner, count - drained);
+            }
+            Assert.assertEquals(count, drained);
 
             final List<Pending> requests = new ArrayList<>();
             for (int i = 0; i < count; i++) {
