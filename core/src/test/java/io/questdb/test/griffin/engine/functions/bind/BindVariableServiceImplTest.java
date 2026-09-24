@@ -1381,7 +1381,7 @@ public class BindVariableServiceImplTest {
         // value are preserved. If a new bindable type is added but not
         // handled below, the default branch fails with a clear message.
         assertMemoryLeak(() -> {
-            for (int tag = ColumnType.UNDEFINED + 1; tag < ColumnType.NULL; tag++) {
+            for (int tag = ColumnType.UNDEFINED + 1; tag <= ColumnType.MAX_TAG; tag++) {
                 bindVariableService.clear();
                 int type;
                 switch (tag) {

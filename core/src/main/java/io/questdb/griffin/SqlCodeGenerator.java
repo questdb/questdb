@@ -604,9 +604,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     @TestOnly
     public static int[][] expectedUnionCastMatrix() {
-        final int[][] expected = new int[NULL + 1][NULL + 1];
-        for (int typeA = 0; typeA <= NULL; typeA++) {
-            for (int typeB = 0; typeB <= NULL; typeB++) {
+        final int[][] expected = new int[MAX_TAG + 1][MAX_TAG + 1];
+        for (int typeA = 0; typeA <= MAX_TAG; typeA++) {
+            for (int typeB = 0; typeB <= MAX_TAG; typeB++) {
                 final int outType = (isGeoType(typeA) || isGeoType(typeB) || isDecimalType(typeA) || isDecimalType(typeB)) ? -1 : commonWideningType(typeA, typeB);
                 expected[typeA][typeB] = outType;
             }

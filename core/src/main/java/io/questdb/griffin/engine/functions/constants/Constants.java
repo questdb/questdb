@@ -36,7 +36,7 @@ import org.jetbrains.annotations.NotNull;
 public final class Constants {
     private static final ObjList<TypeConstant> doubleArrayTypeConstants = new ObjList<>();
     private static final ObjList<ConstantFunction> geoNullConstants = new ObjList<>();
-    private static final ObjList<ConstantFunction> nullConstants = new ObjList<>(ColumnType.NULL + 1);
+    private static final ObjList<ConstantFunction> nullConstants = new ObjList<>(ColumnType.MAX_TAG + 1);
     private static final ObjList<ConstantFunction> nullDoubleArrayConstants = new ObjList<>();
     private static final IntObjHashMap<TypeConstant> typeConstants = new IntObjHashMap<>(32);
 
@@ -111,7 +111,7 @@ public final class Constants {
     }
 
     static {
-        nullConstants.set(ColumnType.UNDEFINED, ColumnType.NULL + 1, NullConstant.NULL);
+        nullConstants.set(ColumnType.UNDEFINED, ColumnType.MAX_TAG + 1, NullConstant.NULL);
         nullConstants.extendAndSet(ColumnType.INT, IntConstant.NULL);
         nullConstants.extendAndSet(ColumnType.STRING, StrConstant.NULL);
         nullConstants.extendAndSet(ColumnType.SYMBOL, SymbolConstant.NULL);
@@ -134,7 +134,7 @@ public final class Constants {
         nullConstants.extendAndSet(ColumnType.IPv4, IPv4Constant.NULL);
         nullConstants.extendAndSet(ColumnType.VARCHAR, VarcharConstant.NULL);
         nullConstants.extendAndSet(ColumnType.INTERVAL, IntervalConstant.RAW_NULL);
-        nullConstants.setPos(ColumnType.NULL + 1);
+        nullConstants.setPos(ColumnType.MAX_TAG + 1);
 
         typeConstants.put(ColumnType.INT, IntTypeConstant.INSTANCE);
         typeConstants.put(ColumnType.STRING, StrTypeConstant.INSTANCE);

@@ -177,7 +177,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     // cross-table rejection, and once on the optimised one, for the joins the optimiser itself
     // introduces. Shared so the two cannot drift apart.
     private static final String UPDATE_WITH_JOIN_NOT_SUPPORTED = "UPDATE statements with join are not supported yet for WAL tables";
-    private static final boolean[][] columnConversionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
+    private static final boolean[][] columnConversionSupport = new boolean[ColumnType.MAX_TAG + 1][ColumnType.MAX_TAG + 1];
     protected final AlterOperationBuilder alterOperationBuilder;
     protected final SqlCodeGenerator codeGenerator;
     protected final CompiledQueryImpl compiledQuery;
