@@ -593,9 +593,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         );
                                         scoreboards.add(scoreboard);
 
-                                        if (isIncrementalBackup && reader.hasAnyDelta()) {
-                                            throw CairoException.nonCritical().put("Delta backup is not supported");
-                                        }
                                         deltaCheckpoint.capture(reader, path.trimTo(rootLen), circuitBreaker);
 
                                         if (isWalTable) {
