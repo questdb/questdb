@@ -652,11 +652,10 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
 
     @Test
     public void testLagLeadSymbolNullEquality() throws Exception {
-        // Neither source column stores a NULL, yet lag()/lead() mint a NULL for the missing
-        // neighbor. EqSymFunctionFactory matches a NULL key to a NULL key without consulting
-        // containsNullValue(), so NULL = NULL holds in line with the STRING comparison.
-        // EqSymFunctionFactoryTest.testNullFromOuterJoinMatchesNull covers the same rule for a
-        // NULL minted by an outer join.
+        // lag()/lead() synthesize NULL for missing neighbors. These SYMBOL values must compare
+        // like STRING values, including NULL = NULL.
+        // EqSymFunctionFactoryTest.testNullFromOuterJoinMatchesNull guards NULL comparison when
+        // the source dictionary reports no NULL.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (id INT, grp SYMBOL, left_sym SYMBOL, right_sym SYMBOL)");
             execute("""
