@@ -5890,6 +5890,32 @@ public class IODispatcherTest extends AbstractTest {
                                         0"""
                         );
 
+                        // a range ending at the last byte returns the full file
+                        sendAndReceive(
+                                rangeRequest("bytes=0-99", null),
+                                partialHeader + """
+                                        Content-Length: 100\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 0-99/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        """ + content
+                        );
+
+                        // the processor clamps an end equal to the file length
+                        sendAndReceive(
+                                rangeRequest("bytes=0-100", null),
+                                partialHeader + """
+                                        Content-Length: 100\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 0-99/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        """ + content
+                        );
+
                         // open range ends at the last byte of the file
                         sendAndReceive(
                                 rangeRequest("bytes=95-", null),
@@ -5919,6 +5945,25 @@ public class IODispatcherTest extends AbstractTest {
                         // start past the file is unsatisfiable
                         sendAndReceive(
                                 rangeRequest("bytes=100-", null),
+                                """
+                                        HTTP/1.1 416 Request range not satisfiable\r
+                                        Server: questDB/1.0\r
+                                        Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                        Transfer-Encoding: chunked\r
+                                        Content-Type: text/plain; charset=utf-8\r
+                                        Content-Range: bytes */100\r
+                                        \r
+                                        1f\r
+                                        Request range not satisfiable\r
+                                        \r
+                                        00\r
+                                        \r
+                                        """
+                        );
+
+                        // the processor rejects descending bounds
+                        sendAndReceive(
+                                rangeRequest("bytes=5-3", null),
                                 """
                                         HTTP/1.1 416 Request range not satisfiable\r
                                         Server: questDB/1.0\r
