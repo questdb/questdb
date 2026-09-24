@@ -6851,33 +6851,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Binds the predicate wrapped the way the cleanup sweep wraps it, and refuses the policy when that
-     * fails. The sweep never runs the predicate on its own: it computes its survivor set through
-     * {@link RowExpiryUtil#buildRowExpiryKeepFilter}, so what actually gets compiled is
+     * Binds {@link RowExpiryUtil#buildStrictBindKeepFilter} and refuses the policy when that fails. The
+     * strict form's type rules refuse a cross-type equality such as {@code s = 12345} on a {@code STRING}
+     * column, which binds on its own but casts every value to {@code INT} once rows are evaluated: every
+     * read and every sweep of the view would fail on the first non-numeric value, with an error that names
+     * neither the view's policy nor EXPIRE ROWS. They also refuse cross-type equalities that only match
+     * nothing, such as {@code k = 12345} on a {@code SYMBOL} column, because telling the two apart would
+     * mean evaluating rows.
      * <p>
-     * {@code CASE WHEN (<predicate>) THEN false ELSE true END}
+     * The sweep compiles {@link RowExpiryUtil#buildRowExpiryKeepFilter}, which binds whenever the strict
+     * form does, so every policy this method accepts also sweeps.
      * <p>
-     * and that form is stricter than the bare predicate about types. QuestDB compiles a single-branch
-     * {@code CASE WHEN (<expr> = <constant>)} into a {@code switch}, and {@code switch} requires the two
-     * operands to have the same type where {@code =} is happy to convert one. So
-     * {@code EXPIRE ROWS WHEN k = 12345} on a {@code SYMBOL} column {@code k} binds fine on its own -
-     * {@code SELECT ... WHERE k = 12345} runs and returns no rows - while the sweep over the view it is set
-     * on fails with
-     * <p>
-     * {@code type mismatch [expected=SYMBOL, actual=INT]}
-     * <p>
-     * every cadence, an error that names neither the view's policy nor EXPIRE ROWS, leaving nothing to work
-     * back from. Binding the wrapped form here turns that into a rejected {@code ALTER} / {@code CREATE}.
-     * <p>
-     * Reads are more permissive: they express the same keep set as {@code NOT (<predicate>)}, which adds no
-     * strictness of its own, so a predicate this method accepts always reads. Validating the stricter of
-     * the two wraps therefore refuses only policies whose sweep could not run.
-     * <p>
-     * A predicate whose implicit cast only fails once a row is evaluated - {@code v < 'abc'} on a
-     * {@code DOUBLE} column - still gets through, here and in the bare bind above. Catching it would mean
-     * evaluating a row at DDL time, which makes acceptance depend on whether the view happens to hold
-     * data. Such a predicate fails as a plain {@code WHERE} clause too, so it is wrong in a way the author
-     * sees immediately, unlike the {@code SYMBOL} case above.
+     * A predicate whose implicit cast only fails once a row is evaluated and that is not a bare
+     * {@code <column> = <constant>} - {@code v < 'abc'} on a {@code DOUBLE} column - still gets through,
+     * here and in the bare bind above. Catching it would mean evaluating a row at DDL time, which makes
+     * acceptance depend on whether the view happens to hold data. Such a predicate fails as a plain
+     * {@code WHERE} clause too, so it is wrong in a way the author sees immediately.
      */
     private void validateExpiryKeepFilterBinds(
             SqlExecutionContext executionContext,
@@ -6888,7 +6877,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         Function f = null;
         try {
             clear();
-            lexer.of(RowExpiryUtil.buildRowExpiryKeepFilter(Chars.toString(predicate)));
+            lexer.of(RowExpiryUtil.buildStrictBindKeepFilter(Chars.toString(predicate)));
             f = functionParser.parseFunction(parser.expr(lexer, (QueryModel) null, this), metadata, executionContext);
         } catch (SqlException | CairoException | ImplicitCastException e) {
             final String reason = reasonOf(e);

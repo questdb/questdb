@@ -516,6 +516,45 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExpireScalarCleanupKeepsRowsEqualityDoesNotMatch() throws Exception {
+        // The sweep must evaluate an equality with the same comparison a read uses. None of these
+        // predicates matches a row: the FLOAT 0.1 widens to a DOUBLE that differs from the literal 0.1 by
+        // more than the comparison tolerance, 257 is no BYTE value, and 2147483648 is no INT value (its
+        // 32-bit truncation is the INT NULL sentinel). The read filter shows every row, so the sweep must
+        // leave every row on disk.
+        assertMemoryLeak(() -> {
+            execute("create table base (f float, b byte, i int, ts timestamp) timestamp(ts) partition by day wal");
+            execute("""
+                    insert into base values
+                    (0.1, 1, null, '2024-01-01T00:00:00.000000Z'),
+                    (0.2, 2, 2, '2024-01-01T01:00:00.000000Z'),
+                    (0.1, 1, null, '2024-01-02T00:00:00.000000Z'),
+                    (0.3, 3, 3, '2024-01-03T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            final String expected = """
+                    f\tb\ti\tts
+                    0.1\t1\tnull\t2024-01-01T00:00:00.000000Z
+                    0.2\t2\t2\t2024-01-01T01:00:00.000000Z
+                    0.1\t1\tnull\t2024-01-02T00:00:00.000000Z
+                    0.3\t3\t3\t2024-01-03T00:00:00.000000Z
+                    """;
+            for (String predicate : new String[]{"f = 0.1", "0.1 = f", "b = 257", "i = 2147483648"}) {
+                execute("create materialized view mv as (select * from base) expire rows when " + predicate);
+                drainWalAndMatViewQueues();
+                assertQuery("select f, b, i, ts from mv order by ts").timestamp("ts").noLeakCheck().returns(expected);
+
+                assertFalse(predicate, sweepExpiredRows("mv"));
+                assertQuery("select count() p, sum(numRows) r from table_partitions('mv')")
+                        .noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
+                assertQuery("select f, b, i, ts from mv order by ts").timestamp("ts").noLeakCheck().returns(expected);
+
+                execute("drop materialized view mv");
+                drainWalAndMatViewQueues();
+            }
+        });
+    }
+
+    @Test
     public void testExpireScalarCleanupHourlyPartitionsCompactAndWipe() throws Exception {
         // Physical reclamation on PARTITION BY HOUR: partition floors and bounds are hourly, so the sweep
         // must wipe a fully-expired hour, compact a partial hour to its survivors, and leave a kept row

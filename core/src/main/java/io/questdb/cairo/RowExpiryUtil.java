@@ -161,12 +161,22 @@ public final class RowExpiryUtil {
 
     /**
      * Builds the keep-rows filter (the rows that have NOT expired) for a scalar-WHEN policy as
-     * {@code CASE WHEN (<predicate>) THEN false ELSE true END}, which keeps every row whose predicate is
-     * not TRUE. The predicate is wrapped in parentheses so its internal operator precedence cannot
-     * leak. Applies to any predicate shape, including compound ones and {@code IN}.
+     * {@code CASE WHEN ((<predicate>) AND true) THEN false ELSE true END}, which keeps every row whose
+     * predicate is not TRUE. The predicate is wrapped in parentheses so its internal operator precedence
+     * cannot leak. Applies to any predicate shape, including compound ones and {@code IN}.
      * <p>
-     * Two callers run this text: the cleanup sweep, and the DDL validation in
-     * {@code SqlCompilerImpl.validateExpiryPredicateOnMetadata}, which binds what the sweep will compile.
+     * The {@code AND true} keeps the WHEN clause from being a bare {@code <column> = <constant>}.
+     * {@code SqlParser.rewriteCase} compiles a {@code CASE} whose WHEN clauses all have that shape into a
+     * {@code switch} keyed on the column, and {@code switch} converts the constant to the column's type,
+     * narrowing it: {@code f = 0.1} on a {@code FLOAT} column matches {@code (float) 0.1}, and
+     * {@code b = 257} on a {@code BYTE} column matches {@code 1}. Those keys match rows that {@code =}
+     * does not, so a sweep compiled that way deletes rows a read keeps. Under the {@code AND}, the
+     * ordinary comparison evaluates the predicate, exactly as it does for a read.
+     * {@code AndFunctionFactory} drops a constant {@code true} operand when it builds the function, so
+     * the wrapper adds no per-row work.
+     * <p>
+     * The cleanup sweep runs this text. DDL validation binds {@link #buildStrictBindKeepFilter} instead,
+     * whose {@code switch} is stricter about operand types, so every policy it accepts also binds here.
      * Reads express the same keep set as {@code NOT (<predicate>)} ({@code SqlParser.keepFilterWhereText}),
      * which the JIT compiler can turn into machine code where a {@code CASE} cannot. Both spellings mean
      * "the predicate is not TRUE" and keep exactly the same rows, including rows whose operand is NULL;
@@ -183,6 +193,22 @@ public final class RowExpiryUtil {
      * can thus differ on NULL rows; see {@code SqlParser.keepFilterWhereText} for the full account.
      */
     public static String buildRowExpiryKeepFilter(String predicate) {
+        return "CASE WHEN ((" + predicate.trim() + ") AND true) THEN false ELSE true END";
+    }
+
+    /**
+     * Builds the scalar-WHEN keep-rows filter in its bare form,
+     * {@code CASE WHEN (<predicate>) THEN false ELSE true END}, for DDL validation to bind. This form binds
+     * under stricter type rules than {@link #buildRowExpiryKeepFilter}: {@code SqlParser.rewriteCase}
+     * compiles a single-branch {@code CASE WHEN (<column> = <constant>)} into a {@code switch}, which
+     * requires the two operands to have the same type where {@code =} converts one of them. So a predicate
+     * that binds here also binds in {@link #buildRowExpiryKeepFilter}, while a cross-type equality such as
+     * {@code s = 12345} on a {@code STRING} column binds only there.
+     * <p>
+     * Only the bind outcome of this form is meaningful. Evaluated, the {@code switch} narrows the constant to
+     * the column's type and matches rows that {@code =} does not, so survivors are never computed with it.
+     */
+    public static String buildStrictBindKeepFilter(String predicate) {
         return "CASE WHEN (" + predicate.trim() + ") THEN false ELSE true END";
     }
 

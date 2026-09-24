@@ -1076,16 +1076,17 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
 
     @Test
     public void testPredicateThatOnlyFailsWhenWrappedRejected() throws Exception {
-        // The cleanup sweep never runs the predicate on its own. It runs it wrapped, as
+        // Validation binds the predicate wrapped as (RowExpiryUtil.buildStrictBindKeepFilter)
         //
         //   CASE WHEN (<predicate>) THEN false ELSE true END
         //
-        // and QuestDB compiles a single-branch CASE WHEN (<expr> = <constant>) into a switch, which
-        // demands the two operands have the same type where '=' converts one of them. So a predicate can
-        // bind on its own and fail the sweep of the view it is set on, every cadence. Validation binds the
-        // wrapped form for exactly this reason, so these are refused at DDL time instead. Reads are more
-        // permissive - they run NOT (<predicate>), which adds no strictness - so validating the sweep's
-        // wrap refuses only policies whose sweep could not run.
+        // and QuestDB compiles a single-branch CASE WHEN (<column> = <constant>) into a switch, which
+        // demands the two operands have the same type where '=' converts one of them. So this bind refuses
+        // a cross-type equality that binds on its own. Some of those fail once rows are evaluated:
+        // s = 12345 on a STRING column casts each value to INT, so every read and every sweep of the view
+        // fails on a non-numeric value. Others, such as k = 12345 on a SYMBOL column, just match nothing.
+        // The strict bind refuses both at DDL time. The sweep itself does not compile a switch: it
+        // evaluates the predicate with the same comparison a read uses (RowExpiryUtil.buildRowExpiryKeepFilter).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (k SYMBOL INDEX, s STRING, i INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base VALUES ('a', 'x', 1, 1.0, '2024-01-01T00:00:00.000000Z')");
