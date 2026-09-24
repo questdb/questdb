@@ -290,6 +290,31 @@ public class QueryFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSeparatorCellsKeepFpToleranceAligned() {
+        // Found by the fused on/off axis: in SELECT (l.lk)::CHAR e0, count(*), stddev_samp(...),
+        // count(), count(r.k) FROM l LEFT JOIN r ON l.vk = r.vk, one group's CHAR key was code 9. Printed raw, the tab split its row into one more cell, so
+        // the stddev_samp cell met the count column's exact rule, and its reduction-order drift
+        // failed the query. The materialized cells escape their separators, so the drift is tolerated.
+        final boolean[] fpMask = {false, false, true, false, false};
+        for (String key : new String[]{"\t", "\n", "\r", "\\", "\t\n", "a"}) {
+            Assert.assertTrue(key, QueryRunner.rowEqualsWithFpTolerance(
+                    line(key, "74", "35.52387071528208", "74", "71"),
+                    line(key, "74", "35.52387071528207", "74", "71"),
+                    fpMask
+            ));
+            // The count cells still compare exactly.
+            Assert.assertFalse(key, QueryRunner.rowEqualsWithFpTolerance(
+                    line(key, "74", "35.52387071528208", "74", "71"),
+                    line(key, "74", "35.52387071528208", "74", "72"),
+                    fpMask
+            ));
+        }
+        // An escaped separator stays distinct from the text of its escape.
+        Assert.assertNotEquals(line("\t"), line("\\t"));
+        Assert.assertNotEquals(line("\\", "t"), line("\t"));
+    }
+
+    @Test
     public void testHorizonJoinFloatSumStorageReductionOrderToleratedByOracle() throws Exception {
         // Bug from multi-table HORIZON JOIN fuzzing (storage diff): a non-keyed
         // HORIZON JOIN that sums a FLOAT slave column diverged between a native
@@ -762,6 +787,16 @@ public class QueryFuzzTest extends AbstractCairoTest {
             }
         }
         LOG.info().$safe(sb.toString()).$();
+    }
+
+    // One materialized row, as QueryRunner.materialize() writes it, without its newline.
+    private static String line(String... cells) {
+        final StringSink sink = new StringSink();
+        for (String cell : cells) {
+            QueryRunner.appendCell(sink, cell);
+            sink.put('\t');
+        }
+        return sink.toString();
     }
 
     private static BufferedWriter openDump(String path) throws IOException {

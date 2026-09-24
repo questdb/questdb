@@ -828,17 +828,40 @@ public final class QueryRunner {
     }
 
     /**
+     * Appends one materialized cell with its own tabs, newlines, carriage returns and backslashes
+     * escaped. The comparisons split rows on newlines and cells on tabs, so a CHAR of code 9 or 10,
+     * or a string holding one, would otherwise shift every cell after it, and the floating-point
+     * tolerance would compare a DOUBLE cell against an integer column's exact rule. Both sides of a
+     * comparison escape alike, so exact comparisons do not change.
+     */
+    static void appendCell(StringSink rows, CharSequence cell) {
+        for (int i = 0, n = cell.length(); i < n; i++) {
+            final char c = cell.charAt(i);
+            switch (c) {
+                case '\t' -> rows.put("\\t");
+                case '\n' -> rows.put("\\n");
+                case '\r' -> rows.put("\\r");
+                case '\\' -> rows.put("\\\\");
+                default -> rows.put(c);
+            }
+        }
+    }
+
+    /**
      * Iterates {@code cursor} to exhaustion, appending one tab-separated line per
      * row to {@code rows} via {@link CursorPrinter#printColumn}, and returns the
      * row count. Shared by the first pass and the {@link #checkToTop} re-iteration
-     * so both materialize identically.
+     * so both materialize identically. Each cell goes through {@link #appendCell}.
      */
     private static int materialize(RecordCursor cursor, RecordMetadata metadata, int columnCount, StringSink rows) {
         Record record = cursor.getRecord();
+        final StringSink cell = new StringSink();
         int rowsRead = 0;
         while (cursor.hasNext()) {
             for (int i = 0; i < columnCount; i++) {
-                CursorPrinter.printColumn(record, metadata, i, rows, false);
+                cell.clear();
+                CursorPrinter.printColumn(record, metadata, i, cell, false);
+                appendCell(rows, cell);
                 rows.put('\t');
             }
             rows.put('\n');
