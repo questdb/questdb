@@ -46,9 +46,11 @@ import org.junit.Test;
  * <p>
  * {@code TableWriter.changeColumnType} transiently breaks it: it creates the destination SYMBOL column's map
  * writer BEFORE running the conversion, and publishes the column to {@code _meta} only afterwards. When the
- * conversion has to pull a partition back from parquet, it takes a durable epoch cut from inside that window
- * ({@code ConvertOperatorImpl.convertColumn -> TableWriter.commitPendingParquetToNativeConversions ->
- * advanceDurableEpoch}). The resulting epoch records a {@code _txn} that counts the not-yet-published symbol
+ * conversion had to pull a partition back from parquet, it used to take a durable epoch cut from inside that
+ * window ({@code ConvertOperatorImpl.convertColumn -> TableWriter.commitPendingParquetToNativeConversions ->
+ * advanceDurableEpoch}); the prepass no longer writes {@code _txn} at all, and the epoch is cut after the
+ * ALTER's final commit. The symbol-count check remains the backstop for any future caller in that window.
+ * Such an epoch would record a {@code _txn} that counts the not-yet-published symbol
  * column against a {@code _meta} that lacks it — at the SAME {@code metadataVersion}, so every identity
  * check in {@code RecoveryCoordinator.epochCopiesValid} passes and the pair is adopted.
  * <p>

@@ -1443,16 +1443,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             clearTodoAndCommitMetaStructureVersion();
+
+            // The commit above is the ONLY _txn write of this operation (the parquet->native prepass
+            // publishes nothing on its own, see applyPendingParquetToNativeConversions), so this is the
+            // first point where _txn and _meta on disk agree at the ALTER's seqTxn. Under adaptive, cut the
+            // durable epoch here: it anchors recovery past the rewrite (no replay of the conversion on the
+            // next boot) and moves the epoch pin, so the purges below can reclaim the superseded column
+            // files and parquet dirs inline instead of leaving them to the async purge jobs until the next
+            // cadence epoch. Best-effort; WAL-only (the durable epoch is a WAL-apply mechanism).
+            if (tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
+                try {
+                    advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
+                } catch (CairoException | CairoError e) {
+                    handleBestEffortDurableEpochFailure(e, "column type change");
+                }
+            }
         } catch (Throwable th) {
             LOG.critical().$("could not change column type [table=").$(tableToken).$(", column=").$safe(columnName)
                     .$(", error=").$(th).I$();
             distressed = true;
+            // The prepass batch was never published: on-disk _txn still references the parquet dirs, and
+            // the next writer open reclaims the unreferenced native dirs as non-attached partitions.
+            pendingParquetToNativeConversions.clear();
             throw th;
         } finally {
             // clear temp resources
             convertOperator.finishColumnConversion();
             path.trimTo(pathSize);
         }
+
+        purgeCommittedParquetToNativeSources();
 
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
@@ -1624,78 +1644,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Pre-commit for the batched parquet->native conversions queued by
-     * {@link #convertPartitionParquetToNative(long, boolean)} calls with {@code doCommit=false}.
-     * Writes {@code _txn} so it references the new native partitions and runs the deferred
-     * per-partition housekeeping (metadata cache refresh, old parquet dir cleanup, active
-     * partition reopen if the last partition was converted). Empty batch is a no-op. The
-     * pending list is cleared regardless of outcome.
+     * In-memory completion of the batched parquet->native conversions queued by
+     * {@link #convertPartitionParquetToNative(long, boolean)} calls with {@code doCommit=false}:
+     * if the active partition was converted, reopen the writer's append columns on its new native
+     * directory so the surrounding column-type change can open its output files there. Empty
+     * batch is a no-op.
      * <p>
-     * This is <b>not</b> a final commit. {@code txWriter.commit} below persists {@code _txn},
-     * but the new native column files written by {@link #produceNativeFromParquet} were closed
-     * without fsync and are not part of the writer's active column set, so no data fsync is
-     * issued here. Real durability is established by the column-conversion final commit
-     * ({@link #commit00}) that the caller (typically
-     * io.questdb.griffin.ConvertOperatorImpl#convertColumn0 runs after the column
-     * type-conversion phase: that commit's {@code syncColumns} fsyncs both the just-reopened
-     * native partition data and the new column-conversion output before publishing the next
-     * {@code _txn}.
+     * Deliberately writes <b>nothing</b> to {@code _txn}. The batch is published by the column
+     * conversion's final commit ({@link #clearTodoAndCommitMetaStructureVersion}) together with
+     * the new {@code _meta}, so the ALTER remains a single {@code _txn} write: no on-disk
+     * {@code _txn} ever names the ALTER's seqTxn while {@code _meta} still describes the old
+     * type. An intermediate {@code _txn} here used to do exactly that, and an adaptive epoch (or
+     * a crash in a syncing mode) taken in that window bound the OLD metadata to the NEW seqTxn,
+     * after which recovery skipped the ALTER and restored the wrong column type.
      * <p>
-     * Consequence for error handling: any failure here (the {@code txWriter.commit} itself,
-     * the metadata cache update, or the per-partition close/rmdir/reopen housekeeping) means
-     * the surrounding ALTER as a whole has not completed - the column-conversion phase will
-     * not run, the final commit will not happen, and on crash no part of the operation is
-     * durable. Sub-failures must therefore propagate as ordinary errors, not as the
-     * "data persisted, housekeeping failed" signal of {@link #handleHousekeepingException}:
-     * no data has been persisted in the durable sense at this point.
+     * Until that final commit the on-disk {@code _txn} keeps referencing the parquet directories,
+     * so they must not be removed here; {@link #purgeCommittedParquetToNativeSources} reclaims
+     * them after the commit. If the ALTER fails first, the in-memory updates are discarded with
+     * the (distressed) writer, the on-disk state is unchanged, and the next writer open removes
+     * the unreferenced native directories as non-attached partitions. The reconstructed column
+     * tops from {@link #produceNativeFromParquet} stay in the in-memory column version writer and
+     * are persisted by the same final commit.
      */
-    public void commitPendingParquetToNativeConversions() {
-        if (pendingParquetToNativeConversions.size() == 0) {
-            return;
-        }
-        try {
-            // Persist reconstructed column tops before the txn, else _txn references a stale _cv.
-            if (columnVersionWriter.hasChanges()) {
-                columnVersionWriter.commit();
-                txWriter.setColumnVersion(columnVersionWriter.getVersion());
+    public void applyPendingParquetToNativeConversions() {
+        for (int i = 0, n = pendingParquetToNativeConversions.size(); i < n; i += 3) {
+            if (pendingParquetToNativeConversions.getQuick(i + 2) != 0L) {
+                final long pts = pendingParquetToNativeConversions.getQuick(i);
+                closeActivePartition(false);
+                openPartition(pts, txWriter.getTransientRowCount());
+                setAppendPosition(txWriter.getTransientRowCount(), false);
             }
-            commitTxWriter();
-
-            // hasParquetPartitions reflects post-commit txWriter state and does not change
-            // across loop iterations (the loop only does file-system housekeeping). Acquire
-            // the engine-wide metadata-cache lock once instead of N times.
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
-            }
-
-            // Under adaptive, advance the durable epoch once for the batch so the parquet->native
-            // conversions are the recovery anchor and the epoch pin moves past this txn; otherwise the
-            // stale pin defers the old parquet-dir purges below to the async O3PartitionPurgeJob.
-            // Best-effort; WAL-only (the durable epoch is a WAL-apply mechanism).
-            if (tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
-                try {
-                    advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
-                } catch (CairoException | CairoError ex) {
-                    handleBestEffortDurableEpochFailure(ex, "batched parquet->native conversion");
-                }
-            }
-
-            for (int i = 0, n = pendingParquetToNativeConversions.size(); i < n; i += 3) {
-                long pts = pendingParquetToNativeConversions.getQuick(i);
-                long oldNameTxn = pendingParquetToNativeConversions.getQuick(i + 1);
-                boolean isLastConverted = pendingParquetToNativeConversions.getQuick(i + 2) != 0L;
-                if (isLastConverted) {
-                    closeActivePartition(false);
-                }
-                safeDeletePartitionDir(pts, oldNameTxn);
-                if (isLastConverted) {
-                    openPartition(pts, txWriter.getTransientRowCount());
-                    setAppendPosition(txWriter.getTransientRowCount(), false);
-                }
-
-            }
-        } finally {
-            pendingParquetToNativeConversions.clear();
         }
     }
 
@@ -1946,15 +1924,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * When {@code doCommit} is false, performs the partition rewrite and updates in-memory
      * {@code txWriter} state, but does not commit and does not run post-commit housekeeping.
      * The new native column files are written and closed without fsync. The caller must
-     * invoke {@link #commitPendingParquetToNativeConversions()} once after the batch to
-     * push {@code _txn} to disk and run the deferred housekeeping. Even after that
-     * pre-commit, the new data files are not yet fsynced - the real durability fence is
-     * the caller's subsequent {@link #commit00} (or equivalent {@code syncColumns} +
-     * {@code txWriter.commit}) at the end of the surrounding operation, typically the
-     * column-conversion final commit driven by
-     * io.questdb.griffin.ConvertOperatorImpl#convertColumn0. If the caller fails
-     * before either of those, the in-memory updates are discarded along with the
-     * (subsequently distressed) writer, leaving the on-disk state unchanged.
+     * invoke {@link #applyPendingParquetToNativeConversions()} once after the batch to
+     * reopen the active partition in memory, and is then responsible for the single
+     * {@code _txn} write that publishes the batch: the column-conversion final commit
+     * ({@link #clearTodoAndCommitMetaStructureVersion}) driven by
+     * io.questdb.griffin.ConvertOperatorImpl#convertColumn0, whose {@code syncColumns}
+     * also fsyncs the new native partition data. Nothing about the batch reaches disk in
+     * {@code _txn} before that commit; if the caller fails first, the in-memory updates are
+     * discarded along with the (subsequently distressed) writer, leaving the on-disk state
+     * unchanged.
      */
     public boolean convertPartitionParquetToNative(long partitionTimestamp, boolean doCommit) {
         assert metadata.getTimestampIndex() > -1;
@@ -13008,6 +12986,35 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Post-commit housekeeping for the batched parquet->native prepass of a column-type change
+     * (see {@link #applyPendingParquetToNativeConversions}). Runs after the ALTER's final commit,
+     * so the on-disk {@code _txn} already references the native directories: refresh the
+     * reader-side parquet hint and reclaim the superseded parquet directories. Same contract as
+     * the post-commit block of {@link #convertPartitionParquetToNative(long, boolean)}: the ALTER
+     * is durable, a failure here is housekeeping only. The pending list is cleared regardless.
+     */
+    private void purgeCommittedParquetToNativeSources() {
+        if (pendingParquetToNativeConversions.size() == 0) {
+            return;
+        }
+        try {
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+            }
+            for (int i = 0, n = pendingParquetToNativeConversions.size(); i < n; i += 3) {
+                safeDeletePartitionDir(
+                        pendingParquetToNativeConversions.getQuick(i),
+                        pendingParquetToNativeConversions.getQuick(i + 1)
+                );
+            }
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
+        } finally {
+            pendingParquetToNativeConversions.clear();
+        }
+    }
+
     private long readMinTimestamp() {
         other.of(path).trimTo(pathSize); // reset the path to table root
         final long timestamp = txWriter.getPartitionTimestampByIndex(1);
@@ -15873,10 +15880,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // the live symbol columns, so those two counts agreeing is precisely the precondition for a
         // mutually consistent pair. Structural operations transiently break it: changeColumnType() creates
         // the destination SYMBOL column's map writer BEFORE the conversion, and only publishes the column
-        // to _meta afterwards -- and the conversion itself takes an epoch cut
-        // (ConvertOperatorImpl.convertColumn -> commitPendingParquetToNativeConversions). A cut taken in
-        // that window records a _txn counting the not-yet-published symbol column against a _meta without
-        // it, at the SAME metadataVersion, so every identity check downstream passes.
+        // to _meta afterwards. No epoch caller sits inside that window any more -- the parquet->native
+        // prepass used to take one (it wrote an intermediate _txn at the ALTER's seqTxn against the OLD
+        // _meta, so recovery skipped the ALTER), and now publishes nothing until the ALTER's final commit,
+        // where changeColumnType() cuts the epoch itself. This check stays as the backstop: a cut taken
+        // in that window would record a _txn counting the not-yet-published symbol column against a
+        // _meta without it, at the SAME metadataVersion, so every identity check downstream passes.
         //
         // Adopting that pair rewinds the table into a state nothing can open: rollbackSymbolTables()
         // iterates the _txn count over denseSymbolMapWriters and throws ArrayIndexOutOfBounds inside the
@@ -15884,9 +15893,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // structure version". The table is then permanently suspended while the sequencer runs ahead.
         //
         // Declining to publish is the safe outcome and already the documented contract for this method: the
-        // prior epoch stays intact and the next batch retries. The only cost is the one this caller wanted
-        // to avoid -- superseded parquet dirs are reclaimed by the async O3PartitionPurgeJob rather than
-        // inline. Correctness over timing; the epoch bounds WAL replay, it never holds the only copy.
+        // prior epoch stays intact and the next batch retries. Correctness over timing; the epoch bounds
+        // WAL replay, it never holds the only copy.
         if (!symbolStateMatchesMetadata()) {
             LOG.info().$("adaptive durable epoch skipped: structural change in flight [table=").$(tableToken)
                     .$(", denseSymbolWriters=").$(denseSymbolMapWriters.size())
