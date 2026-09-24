@@ -34,7 +34,7 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
-public interface ColumnTypeDriver {
+public interface ColumnTypeDriver extends TypeDriver {
 
     /**
      * Appends null encoding to the memory.
