@@ -28,6 +28,9 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -895,8 +898,8 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
     @Test
     public void testLagSymbolOverPartitionChargesQueryMemoryLimit() throws Exception {
         // lag() over a high-cardinality partition key grows the function's partition map and
-        // ring buffer. The streaming window factory holds no other growing state, so the breach
-        // proves the SYMBOL function charges both to the per-query MemoryTracker.
+        // ring buffer. Either allocation can breach this limit; the allocation accounting tests
+        // below separately guard against losing either tracker attachment.
         node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024L);
         assertMemoryLeak(() -> {
             execute(
@@ -920,6 +923,11 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
             }
         });
+    }
+
+    @Test
+    public void testLagSymbolOverPartitionTracksMapAndRingAllocations() throws Exception {
+        assertPartitionTracksMapAndRingAllocations("lag");
     }
 
     @Test
@@ -974,6 +982,11 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeadSymbolOverPartitionTracksMapAndRingAllocations() throws Exception {
+        assertPartitionTracksMapAndRingAllocations("lead");
+    }
+
+    @Test
     public void testLeadSymbolZeroOffset() throws Exception {
         assertZeroOffset("lead");
     }
@@ -1020,6 +1033,43 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
             assertQuery("SELECT lead(sym, 1, 'x') OVER () FROM symbols")
                     .noLeakCheck()
                     .fails(20, "non-null default value is not supported for symbol lead");
+        });
+    }
+
+    private void assertPartitionTracksMapAndRingAllocations(String function) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, false);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4 * 1024L);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT x AS k, 'a'::SYMBOL AS sym FROM long_sequence(10_000))");
+            String query = "SELECT " + function + "(sym) OVER (PARTITION BY k) FROM tab";
+            assertQuery(query).noLeakCheck().assertsPlanContaining("lag".equals(function) ? "Window\n" : "CachedWindow\n");
+            try (RecordCursorFactory factory = select(query)) {
+                long mapBaseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_UNORDERED_MAP);
+                long ringBaseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                long chainBaseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN);
+                MemoryTracker tracker;
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    tracker = sqlExecutionContext.getMemoryTracker();
+                    Assert.assertNotNull(tracker);
+                    long rows = 0;
+                    while (cursor.hasNext()) {
+                        rows++;
+                    }
+                    Assert.assertEquals(10_000, rows);
+                    long mapBytes = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_UNORDERED_MAP) - mapBaseline;
+                    long ringBytes = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_CIRCULAR_BUFFER) - ringBaseline;
+                    long chainBytes = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN) - chainBaseline;
+                    Assert.assertTrue("partition map allocated", mapBytes > 0);
+                    Assert.assertTrue("partition rings grew beyond one page", ringBytes > 4 * 1024);
+                    // Account for lead's cached rows explicitly: their charge must not hide an
+                    // untracked map or ring. The streaming lag cursor has no record chain.
+                    Assert.assertEquals("map and ring allocations charged", mapBytes + ringBytes, tracker.getUsed() - chainBytes);
+                }
+                Assert.assertEquals("query memory released", 0, tracker.getUsed());
+                Assert.assertEquals(mapBaseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_UNORDERED_MAP));
+                Assert.assertEquals(ringBaseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_CIRCULAR_BUFFER));
+                Assert.assertEquals(chainBaseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN));
+            }
         });
     }
 
