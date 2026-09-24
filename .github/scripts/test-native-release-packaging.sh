@@ -845,7 +845,7 @@ PY
             -DskipTests -Dmaven.test.skip=true -DskipNative -DskipPublishing=true \
             -Dcentral.base.url="http://127.0.0.1:${endpoint_port}" \
             -DoutputDirectory="${central_output}" \
-            -P build-web-console,include-rust-native-artifacts,maven-central-release,release-preparation-safety
+            -P build-web-console,include-rust-native-artifacts,maven-central-release
     ) > "${central_log}" 2>&1
     kill "${central_endpoint_pid}"
     wait "${central_endpoint_pid}" 2>/dev/null || true

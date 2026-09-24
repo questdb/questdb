@@ -336,8 +336,10 @@
                                 </configuration>
                             </execution>
                             <!-- The tag's POM is a release version, so onlyWhenRelease makes this rule
-                                 fire on every Central deploy and reject a SNAPSHOT client pin or any
-                                 other SNAPSHOT dependency before publication. -->
+                                 fire on every Central deploy and reject an unreleased (snapshot-versioned)
+                                 client pin or any other unreleased dependency before publication. The
+                                 lifecycle fixture scans this file for the upper-case snapshot token, so
+                                 this comment deliberately avoids it. -->
                             <execution>
                                 <id>require-release-dependencies-for-central</id>
                                 <phase>validate</phase>

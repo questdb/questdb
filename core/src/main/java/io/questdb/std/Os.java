@@ -355,10 +355,11 @@ public final class Os {
                 // (rust-maven-plugin, build-rust-library profile) into
                 // target/classes/io/questdb/bin/<platform>/. An IDE-only build skips that
                 // step, so the resource is missing from the classpath.
-                throw new FatalError("cannot find " + lib + ". The Rust native library libquestdbr is built by Maven "
-                        + "(rust-maven-plugin) into target/classes/io/questdb/bin/<platform>/ and is not on the classpath "
-                        + "after an IDE-only build. Run 'mvn -pl core compile', or use the IntelliJ Ant trigger in "
-                        + "core/rust/intellij_triggers.xml, and rebuild.");
+                throw new FatalError("cannot find " + lib + ". Maven builds the Rust native library libquestdbr "
+                        + "(rust-maven-plugin) for the build host into target/classes/io/questdb/bin/<platform>/; "
+                        + "official release jars bundle it for every supported platform. After an IDE-only build, run "
+                        + "'mvn -pl core compile' or the IntelliJ Ant trigger in core/rust/intellij_triggers.xml and "
+                        + "rebuild. A locally built jar only carries the library for the platform it was built on.");
             }
             throw new FatalError("Internal error: cannot find " + lib + ", broken package?");
         }

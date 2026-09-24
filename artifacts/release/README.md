@@ -68,16 +68,17 @@ root, publish the verified aggregate jar with:
 
 ```bash
 mvn -B -pl core -am deploy -DskipTests -Dmaven.test.skip=true -DskipNative \
-  -P build-web-console,include-rust-native-artifacts,maven-central-release,release-preparation-safety
+  -P build-web-console,include-rust-native-artifacts,maven-central-release
 ```
 
 Do not add `local-client`. The active-profile Central gate, staged native
 validation, and verify-phase core-jar check fail before Central publication if
 the dependency, provenance, or native inputs are wrong. The tag's POM is a
-release version, so the `requireReleaseDeps` rule fires here: both the
-`maven-central-release` profile and `release-preparation-safety` carry it, and
-either rejects a SNAPSHOT client pin or any other SNAPSHOT dependency before
-Central publication.
+release version, so the `requireReleaseDeps` rule inside the
+`maven-central-release` profile fires here and rejects a SNAPSHOT client pin or
+any other SNAPSHOT dependency before Central publication. The root POM's
+`release-preparation-safety` profile is not part of this `-pl core` reactor
+(core has no parent POM), so do not add it to this command.
 
 ## GitHub assets and AMIs
 
