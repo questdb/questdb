@@ -1528,6 +1528,60 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloatingPointTimestampThresholdKeepsUnflippedFilter() throws Exception {
+        // The parser flips NOT(ts < T) to the bare ts >= T only when WhereClauseParser can turn T into a
+        // timestamp bound: it reads a constant's text as a date or a long, and requires any other bound to
+        // have a type it can convert to a timestamp. A DOUBLE threshold is neither, so the flipped filter
+        // would fail every read with "Invalid date". Such a policy keeps the un-inverted NOT, which compares
+        // ts with the DOUBLE row by row, the same way the cleanup sweep does. An integer threshold still
+        // flips and prunes. 1.5e15 microseconds is 2017-07-14T02:40:00Z, the timestamp of row B.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
+            execute("""
+                    insert into base values
+                    ('A', '2017-01-01T00:00:00.000000Z'),
+                    ('B', '2017-07-14T02:40:00.000000Z'),
+                    ('C', '2018-01-01T00:00:00.000000Z'),
+                    ('D', '2018-01-02T00:00:00.000000Z')""");
+            drainWalQueue();
+            final String[][] cases = {
+                    // predicate, visible rows, rows on disk after a sweep, whether the read prunes
+                    {"ts < 1500000000000000", "B\nC\nD\n", "3", "true"},
+                    {"ts < 1.5e15", "B\nC\nD\n", "3", "false"},
+                    {"1.5e15 > ts", "B\nC\nD\n", "3", "false"},
+                    {"ts < 1.5 * 1e15", "B\nC\nD\n", "3", "false"},
+                    {"ts <= 1.5e15", "C\nD\n", "2", "false"},
+                    {"ts > -1.5", "", "1", "false"},
+                    {"ts < '5'", "A\nB\nC\nD\n", "4", "false"}
+            };
+            for (String[] c : cases) {
+                final String predicate = c[0];
+                execute("create materialized view mv as (select * from base) expire rows when " + predicate);
+                drainWalAndMatViewQueues();
+                printSql("explain select * from mv");
+                if (Boolean.parseBoolean(c[3])) {
+                    TestUtils.assertNotContains(sink, "not (");
+                    TestUtils.assertContains(sink, "Interval forward scan");
+                } else {
+                    TestUtils.assertContains(sink, "not (");
+                }
+                final String expected = "sym\n" + c[1];
+                assertQuery("select sym from mv order by sym").noLeakCheck().returns(expected);
+
+                // The sweep removes only rows the read hides; the newest partition is never touched.
+                sweepExpiredRows("mv");
+                drainWalAndMatViewQueues();
+                assertQuery("select sym from mv order by sym").noLeakCheck().returns(expected);
+                assertQuery("select sum(numRows) r from table_partitions('mv')")
+                        .noRandomAccess().expectSize().noLeakCheck().returns("r\n" + c[2] + "\n");
+
+                execute("drop materialized view mv");
+                drainWalAndMatViewQueues();
+            }
+        });
+    }
+
+    @Test
     public void testClockArithmeticThresholdKeepsUnflippedFilter() throws Exception {
         // now() - c is a runtime constant: its value comes from the clock at cursor open, so the DDL check
         // cannot evaluate it and the parser will not flip it. The policy is correct, it just reads through a

@@ -1361,6 +1361,10 @@ public class SqlParser {
      * discarded). Returns false for everything else, which leaves the {@code NOT} un-inverted - always
      * correct, just unable to prune.
      * <p>
+     * The other operand must be provably non-NULL ({@link #isNullSafeOrderingFlip}), and it must also be a
+     * bound that {@link WhereClauseParser} can turn into a timestamp ({@link #isTimestampIntervalBound}),
+     * because the flipped comparison goes to it for interval extraction.
+     * <p>
      * The probe parses with no declarations in scope, the same way the keep-filter itself does (see
      * {@link #expandExpiringTable}), so it inspects exactly the tree the filter will carry. That is what
      * the premise {@link #isOperandProvablyNonNull} rests on for arithmetic: the expression it judges is
@@ -1380,7 +1384,8 @@ public class SqlParser {
         final ExpressionNode pred = expr(probeLexer, (IQueryModel) null, sqlParserCallback, null);
         return pred != null && pred.type == ExpressionNode.OPERATION && pred.paramCount == 2
                 && invertOrderingOperator(pred.token) != null
-                && isNullSafeOrderingFlip(pred.lhs, pred.rhs, designatedTimestampColumn);
+                && isNullSafeOrderingFlip(pred.lhs, pred.rhs, designatedTimestampColumn)
+                && isTimestampIntervalBound(isDesignatedTimestamp(pred.lhs, designatedTimestampColumn) ? pred.rhs : pred.lhs);
     }
 
     /**
@@ -1551,6 +1556,61 @@ public class SqlParser {
         return (node.lhs != null || node.rhs != null)
                 && (node.lhs == null || isConstantArithmetic(node.lhs))
                 && (node.rhs == null || isConstantArithmetic(node.rhs));
+    }
+
+    /**
+     * Whether every leaf under this node is an integer literal, with only {@code +}, {@code -} and
+     * {@code *} between them. Such a subtree binds as INT or LONG, which {@link WhereClauseParser} can
+     * convert to a timestamp; one fractional leaf makes it DOUBLE, which it cannot.
+     */
+    private static boolean isIntegerConstantArithmetic(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.CONSTANT) {
+            return isLongLiteral(node.token);
+        }
+        if (node.type != ExpressionNode.OPERATION || !isArithmeticOperator(node.token)) {
+            return false;
+        }
+        return (node.lhs != null || node.rhs != null)
+                && (node.lhs == null || isIntegerConstantArithmetic(node.lhs))
+                && (node.rhs == null || isIntegerConstantArithmetic(node.rhs));
+    }
+
+    private static boolean isLongLiteral(CharSequence token) {
+        try {
+            Numbers.parseLong(token);
+            return true;
+        } catch (NumericException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Whether {@link WhereClauseParser} can turn this operand into a timestamp bound, which it has to do
+     * once the flip hands it the bare {@code ts <op> bound}. For a constant bound it parses the token text,
+     * as a date string or as a long; for any other bound it requires a type it can convert to a timestamp.
+     * A DOUBLE or FLOAT threshold such as {@code 1.5e15} fails both, and so does a one-character literal
+     * such as {@code '5'}, which binds as CHAR. The flipped filter would then fail every read with
+     * "Invalid date", while the un-inverted {@code NOT} evaluates the comparison row by row, as the cleanup
+     * sweep does.
+     * <p>
+     * The rules mirror the parse and the type check, and may be stricter: rejecting a bound that would have
+     * worked only costs partition pruning. The caller has already applied {@link #isOperandProvablyNonNull},
+     * so a function here is a clock or timestamp function, and those return a TIMESTAMP.
+     */
+    private static boolean isTimestampIntervalBound(ExpressionNode node) {
+        if (node.type == ExpressionNode.CONSTANT) {
+            // FunctionParser.createConstant binds a quoted token of length 3 as CHAR and a longer one as
+            // STRING. DDL validation casts a STRING threshold to a timestamp and rejects one that is not a
+            // date, while a CHAR binds as a number and reaches the read without being parsed as a date.
+            return (Chars.isQuoted(node.token) && node.token.length() > 3) || isLongLiteral(node.token);
+        }
+        if (isArithmeticOperator(node.token)) {
+            return isIntegerConstantArithmetic(node);
+        }
+        return true;
     }
 
     /**
