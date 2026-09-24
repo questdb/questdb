@@ -389,6 +389,53 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLagLeadSymbolEqualsOverDynamicSymbol() throws Exception {
+        // rnd_symbol() has no static dictionary, so lag() resolves values through the argument's
+        // valueOf()/valueBOf(). Symbol equality must read its operands through distinct A/B
+        // flyweights, and rnd_symbol() must back valueBOf() with its own B flyweight, or resolving
+        // the right operand overwrites the left and distinct values compare equal. The seeded
+        // long_sequence() keeps the generated values stable across cursor re-reads.
+        assertMemoryLeak(() -> {
+            final String template = """
+                    SELECT ts, l1::VARCHAR l1, l2::VARCHAR l2, l1 = l2 eq FROM (
+                        SELECT ts,
+                            lag(s, 1) OVER (ORDER BY ts#DIR#) l1,
+                            lag(s, 2) OVER (ORDER BY ts#DIR#) l2
+                        FROM (SELECT timestamp_sequence(0, 1_000) ts, rnd_symbol(4, 4, 4, 0) s FROM long_sequence(8, 42, 42))
+                    )
+                    """;
+            assertQuery(template.replace("#DIR#", ""))
+                    .expectSize()
+                    .withPlanContaining("Window\n")
+                    .returns("""
+                            ts\tl1\tl2\teq
+                            1970-01-01T00:00:00.000000Z\t\t\ttrue
+                            1970-01-01T00:00:00.001000Z\tTJOI\t\tfalse
+                            1970-01-01T00:00:00.002000Z\tRWNN\tTJOI\tfalse
+                            1970-01-01T00:00:00.003000Z\tTJOI\tRWNN\tfalse
+                            1970-01-01T00:00:00.004000Z\tCSVG\tTJOI\tfalse
+                            1970-01-01T00:00:00.005000Z\tFJWK\tCSVG\tfalse
+                            1970-01-01T00:00:00.006000Z\tTJOI\tFJWK\tfalse
+                            1970-01-01T00:00:00.007000Z\tTJOI\tTJOI\ttrue
+                            """);
+            assertQuery(template.replace("#DIR#", " DESC"))
+                    .expectSize()
+                    .withPlanContaining("CachedWindow\n")
+                    .returns("""
+                            ts\tl1\tl2\teq
+                            1970-01-01T00:00:00.000000Z\tRWNN\tTJOI\tfalse
+                            1970-01-01T00:00:00.001000Z\tTJOI\tCSVG\tfalse
+                            1970-01-01T00:00:00.002000Z\tCSVG\tFJWK\tfalse
+                            1970-01-01T00:00:00.003000Z\tFJWK\tTJOI\tfalse
+                            1970-01-01T00:00:00.004000Z\tTJOI\tTJOI\ttrue
+                            1970-01-01T00:00:00.005000Z\tTJOI\tCSVG\tfalse
+                            1970-01-01T00:00:00.006000Z\tCSVG\t\tfalse
+                            1970-01-01T00:00:00.007000Z\t\t\ttrue
+                            """);
+        });
+    }
+
+    @Test
     public void testLagLeadSymbolEqualsSameTableValue() throws Exception {
         // BaseSymbolWindowFunction.init() gives lag()/lead() a private view of the argument's
         // dictionary. A non-cached dictionary keeps one A/B flyweight pair per view, so resolving

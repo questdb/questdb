@@ -188,7 +188,7 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
             // these are columns of the same record
             // records have re-usable character sequences
             final CharSequence a = left.getSymbol(rec);
-            final CharSequence b = right.getStrA(rec);
+            final CharSequence b = right.getStrB(rec);
 
             if (a == null) {
                 return negated != (b == null);

@@ -146,7 +146,7 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence valueBOf(int symbolKey) {
-            return valueOf(symbolKey);
+            return strMem.getStr2(symbolKey);
         }
 
         @Override
