@@ -275,7 +275,11 @@ final class QwpSchemaControl {
                     return writeResult(address, requestId, RESULT_TOO_LARGE);
                 }
                 CharSequence columnName = metadata.getColumnName(i);
-                if (columnName.length() > MAX_NAME_CHARS) {
+                // Tables from QuestDB 6.0 to 6.2.0 can carry column names that current
+                // rules reject, such as dashed ILP names. Clients reject a schema with
+                // such a name, so report it as undescribable and let them fall back to
+                // legacy rows. The check also enforces the name length limit.
+                if (!TableUtils.isValidColumnName(columnName, MAX_NAME_CHARS)) {
                     return writeResult(address, requestId, RESULT_TOO_LARGE);
                 }
                 int nameBytes = Utf8s.utf8Bytes(columnName);

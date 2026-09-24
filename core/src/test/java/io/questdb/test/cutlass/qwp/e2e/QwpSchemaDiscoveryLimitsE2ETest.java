@@ -25,6 +25,8 @@
 package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.client.Sender;
 import io.questdb.client.cutlass.http.client.WebSocketClient;
 import io.questdb.client.cutlass.http.client.WebSocketClientFactory;
@@ -35,6 +37,7 @@ import io.questdb.client.cutlass.qwp.protocol.QwpSchemaResponse;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TableModel;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -127,6 +130,35 @@ public class QwpSchemaDiscoveryLimitsE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testAutoSenderWritesLegacyRowsToTableWithLegacyColumnName() throws Exception {
+        createLegacyColumnNameTable("legacy_column_name_ingest");
+
+        runInContext(port -> {
+            try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port
+                    + ";schema_mode=auto;auto_flush_rows=2147483647;auto_flush_bytes=0;"
+                    + "auto_flush_interval=2147483646;close_flush_timeout_millis=0;")) {
+                QwpWebSocketSender ws = (QwpWebSocketSender) sender;
+                for (int i = 0; i < 10; i++) {
+                    sender.table("legacy_column_name_ingest").longColumn("x", i).atNow();
+                }
+                Assert.assertTrue(sender.drain(10_000));
+                Assert.assertNull("a schema the client cannot decode must not bind",
+                        ws.getTableBuffer("legacy_column_name_ingest").getSchemaBinding());
+                // Before the fix, the client rejected the dashed name inside the schema
+                // payload, dropped the ACK, and reconnected in a tight loop that replayed
+                // the same rows on every connection.
+                Assert.assertEquals(0, ws.getTotalReconnectAttempts());
+            }
+            drainWalQueue();
+            assertQuery("select count(), sum(x) from legacy_column_name_ingest")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\tsum\n10\t45\n");
+        });
+    }
+
+    @Test
     public void testConfiguredSendBufferReturnsTooLargeAndConnectionRemainsUsable() throws Exception {
         StringBuilder ddl = new StringBuilder("create table schema_large_response (");
         for (int i = 0; i < 20; i++) {
@@ -149,6 +181,19 @@ public class QwpSchemaDiscoveryLimitsE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertEquals("x", known.getColumnName(0));
             }
         }, 65_536, recvChunk, sendChunk, 512, null);
+    }
+
+    @Test
+    public void testDescribeReturnsTooLargeForLegacyColumnName() throws Exception {
+        createLegacyColumnNameTable("legacy_column_name_describe");
+
+        runInContext(port -> {
+            try (WebSocketClient client = connectSchemaClient(port)) {
+                QwpSchemaResponse response = describe(client, 1, "legacy_column_name_describe");
+                Assert.assertEquals(QwpSchemaProtocol.RESULT_TOO_LARGE, response.getResult());
+                Assert.assertFalse(response.hasSchema());
+            }
+        });
     }
 
     @Test
@@ -183,6 +228,20 @@ public class QwpSchemaDiscoveryLimitsE2ETest extends AbstractQwpWebSocketTest {
                 client.close();
             }
         }
+    }
+
+    /**
+     * QuestDB 6.0 to 6.2.0 accepted dashed ILP column names such as Telegraf's
+     * user-agent, and upgrades keep them. TableModel writes the metadata directly,
+     * skipping the SQL name check, which reproduces such a table.
+     */
+    private static void createLegacyColumnNameTable(String tableName) {
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                .col("user-agent", ColumnType.VARCHAR)
+                .col("x", ColumnType.LONG)
+                .timestamp("ts")
+                .wal();
+        AbstractCairoTest.createTable(model);
     }
 
     private static QwpSchemaResponse describe(WebSocketClient client, long requestId, String tableName) {
