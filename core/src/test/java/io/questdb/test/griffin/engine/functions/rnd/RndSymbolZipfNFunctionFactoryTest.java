@@ -24,9 +24,18 @@
 
 package io.questdb.test.griffin.engine.functions.rnd;
 
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.rnd.RndSymbolZipfNFunctionFactory;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class RndSymbolZipfNFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -215,6 +224,26 @@ public class RndSymbolZipfNFunctionFactoryTest extends AbstractFunctionFactoryTe
                         sym0\t63
                         sym1\t37
                         """);
+    }
+
+    @Test
+    public void testValueAndValueBAreIndependent() throws Exception {
+        // A consumer that resolves two keys through one dictionary holds the A and B views at
+        // once, e.g. lag() over the argument's own table; valueBOf() must not reuse the A view.
+        final ObjList<Function> args = new ObjList<>();
+        args.add(IntConstant.newInstance(4));
+        args.add(DoubleConstant.newInstance(1.5));
+        final IntList argPositions = new IntList();
+        argPositions.add(0);
+        argPositions.add(0);
+        try (Function func = new RndSymbolZipfNFunctionFactory().newInstance(0, args, argPositions, configuration, sqlExecutionContext)) {
+            final SymbolTable table = (SymbolFunction) func;
+            final CharSequence a = table.valueOf(0);
+            final CharSequence b = table.valueBOf(1);
+            TestUtils.assertEquals("sym0", a);
+            TestUtils.assertEquals("sym1", b);
+            Assert.assertNull(table.valueBOf(SymbolTable.VALUE_IS_NULL));
+        }
     }
 
     @Test
