@@ -212,16 +212,19 @@ public class WorkerPoolManagerTest {
     public void testClearDropsWorkerMetricsSnapshotUpdater() {
         final Metrics metrics = new Metrics(true, new MetricsRegistryImpl());
         final AtomicInteger metricUpdates = new AtomicInteger();
-        createMetricsWorkerPoolManager(metrics, metricUpdates);
+        final WorkerPoolManager workerPoolManager = createMetricsWorkerPoolManager(metrics, metricUpdates);
+        try {
+            metrics.snapshot(new MetricSnapshotVisitor() {
+            });
+            Assert.assertEquals(3, metricUpdates.get());
 
-        metrics.snapshot(new MetricSnapshotVisitor() {
-        });
-        Assert.assertEquals(3, metricUpdates.get());
-
-        metrics.clear();
-        metrics.snapshot(new MetricSnapshotVisitor() {
-        });
-        Assert.assertEquals(3, metricUpdates.get());
+            metrics.clear();
+            metrics.snapshot(new MetricSnapshotVisitor() {
+            });
+            Assert.assertEquals(3, metricUpdates.get());
+        } finally {
+            workerPoolManager.halt();
+        }
     }
 
     @Test
@@ -229,9 +232,13 @@ public class WorkerPoolManagerTest {
         final int workerCount = 2;
         final AtomicInteger counter = new AtomicInteger(0);
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount, sharedPool -> counter.incrementAndGet());
-        Assert.assertEquals(1, counter.get());
-        Assert.assertNotNull(workerPoolManager.getSharedPoolNetwork());
-        Assert.assertEquals(workerCount, workerPoolManager.getSharedQueryWorkerCount());
+        try {
+            Assert.assertEquals(1, counter.get());
+            Assert.assertNotNull(workerPoolManager.getSharedPoolNetwork());
+            Assert.assertEquals(workerCount, workerPoolManager.getSharedQueryWorkerCount());
+        } finally {
+            workerPoolManager.halt();
+        }
     }
 
     @Test
@@ -298,14 +305,17 @@ public class WorkerPoolManagerTest {
     public void testDisabledMetricsDoesNotRetainSnapshotUpdater() {
         final Metrics metrics = new Metrics(false, new MetricsRegistryImpl());
         final AtomicInteger metricUpdates = new AtomicInteger();
-        createMetricsWorkerPoolManager(metrics, metricUpdates);
-
-        metrics.snapshot(new MetricSnapshotVisitor() {
-        });
-        metrics.clear();
-        metrics.snapshot(new MetricSnapshotVisitor() {
-        });
-        Assert.assertEquals(0, metricUpdates.get());
+        final WorkerPoolManager workerPoolManager = createMetricsWorkerPoolManager(metrics, metricUpdates);
+        try {
+            metrics.snapshot(new MetricSnapshotVisitor() {
+            });
+            metrics.clear();
+            metrics.snapshot(new MetricSnapshotVisitor() {
+            });
+            Assert.assertEquals(0, metricUpdates.get());
+        } finally {
+            workerPoolManager.halt();
+        }
     }
 
     @Test
@@ -313,20 +323,24 @@ public class WorkerPoolManagerTest {
         final int workerCount = 2;
         final String poolName = "pool";
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount);
-        WorkerPool networkSharedPool = workerPoolManager.getSharedPoolNetwork(new WorkerPoolConfiguration() {
-            @Override
-            public String getPoolName() {
-                return poolName;
-            }
+        try {
+            WorkerPool networkSharedPool = workerPoolManager.getSharedPoolNetwork(new WorkerPoolConfiguration() {
+                @Override
+                public String getPoolName() {
+                    return poolName;
+                }
 
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
-        }, WorkerPoolManager.Requester.OTHER);
-        Assert.assertNotSame(workerPoolManager.getSharedPoolNetwork(), networkSharedPool);
-        Assert.assertEquals(workerCount, networkSharedPool.getWorkerCount());
-        Assert.assertEquals(poolName, networkSharedPool.getPoolName());
+                @Override
+                public int getWorkerCount() {
+                    return workerCount;
+                }
+            }, WorkerPoolManager.Requester.OTHER);
+            Assert.assertNotSame(workerPoolManager.getSharedPoolNetwork(), networkSharedPool);
+            Assert.assertEquals(workerCount, networkSharedPool.getWorkerCount());
+            Assert.assertEquals(poolName, networkSharedPool.getPoolName());
+        } finally {
+            workerPoolManager.halt();
+        }
     }
 
     @Test
@@ -345,34 +359,42 @@ public class WorkerPoolManagerTest {
                 return workerCount;
             }
         };
-        WorkerPool networkSharedPool0 = workerPoolManager.getSharedPoolNetwork(workerPoolConfiguration, WorkerPoolManager.Requester.OTHER);
-        Assert.assertNotSame(workerPoolManager.getSharedPoolNetwork(), networkSharedPool0);
-        WorkerPool networkSharedPool1 = workerPoolManager.getSharedPoolNetwork(workerPoolConfiguration, WorkerPoolManager.Requester.OTHER);
-        Assert.assertSame(networkSharedPool0, networkSharedPool1);
-        Assert.assertEquals(workerCount, networkSharedPool0.getWorkerCount());
-        Assert.assertEquals(poolName, networkSharedPool0.getPoolName());
-        Assert.assertEquals(workerCount, networkSharedPool1.getWorkerCount());
-        Assert.assertEquals(poolName, networkSharedPool1.getPoolName());
+        try {
+            WorkerPool networkSharedPool0 = workerPoolManager.getSharedPoolNetwork(workerPoolConfiguration, WorkerPoolManager.Requester.OTHER);
+            Assert.assertNotSame(workerPoolManager.getSharedPoolNetwork(), networkSharedPool0);
+            WorkerPool networkSharedPool1 = workerPoolManager.getSharedPoolNetwork(workerPoolConfiguration, WorkerPoolManager.Requester.OTHER);
+            Assert.assertSame(networkSharedPool0, networkSharedPool1);
+            Assert.assertEquals(workerCount, networkSharedPool0.getWorkerCount());
+            Assert.assertEquals(poolName, networkSharedPool0.getPoolName());
+            Assert.assertEquals(workerCount, networkSharedPool1.getWorkerCount());
+            Assert.assertEquals(poolName, networkSharedPool1.getPoolName());
+        } finally {
+            workerPoolManager.halt();
+        }
     }
 
     @Test
     public void testGetInstanceDefaultPool() {
         final int workerCount = 2;
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount);
-        WorkerPool networkSharedPool = workerPoolManager.getSharedPoolNetwork(new WorkerPoolConfiguration() {
-            @Override
-            public String getPoolName() {
-                return "pool";
-            }
+        try {
+            WorkerPool networkSharedPool = workerPoolManager.getSharedPoolNetwork(new WorkerPoolConfiguration() {
+                @Override
+                public String getPoolName() {
+                    return "pool";
+                }
 
-            @Override
-            public int getWorkerCount() {
-                return 0; // No workers, will result in returning the shared pool
-            }
-        }, WorkerPoolManager.Requester.OTHER);
-        Assert.assertSame(workerPoolManager.getSharedPoolNetwork(), networkSharedPool);
-        Assert.assertEquals(workerCount, networkSharedPool.getWorkerCount());
-        Assert.assertEquals("worker", networkSharedPool.getPoolName());
+                @Override
+                public int getWorkerCount() {
+                    return 0; // No workers, will result in returning the shared pool
+                }
+            }, WorkerPoolManager.Requester.OTHER);
+            Assert.assertSame(workerPoolManager.getSharedPoolNetwork(), networkSharedPool);
+            Assert.assertEquals(workerCount, networkSharedPool.getWorkerCount());
+            Assert.assertEquals("worker", networkSharedPool.getPoolName());
+        } finally {
+            workerPoolManager.halt();
+        }
     }
 
     @Test
@@ -610,28 +632,12 @@ public class WorkerPoolManagerTest {
     public void testSnapshotRefreshesWorkerMetricsBeforeVisitingGauges() {
         final Metrics metrics = new Metrics(true, new MetricsRegistryImpl());
         final AtomicInteger metricUpdates = new AtomicInteger();
-        createMetricsWorkerPoolManager(metrics, metricUpdates);
-
-        final AtomicLong max = new AtomicLong();
-        final AtomicLong min = new AtomicLong();
-        final MetricSnapshotVisitor visitor = new MetricSnapshotVisitor() {
-            @Override
-            public void visitLong(CharSequence name, MetricType type, long value) {
-                if ("workers_job_start_micros_max".contentEquals(name)) {
-                    max.set(value);
-                } else if ("workers_job_start_micros_min".contentEquals(name)) {
-                    min.set(value);
-                }
-            }
-        };
-
-        metrics.snapshot(visitor);
-        Assert.assertEquals(997, min.get());
-        Assert.assertEquals(1003, max.get());
-
-        metrics.snapshot(visitor);
-        Assert.assertEquals(994, min.get());
-        Assert.assertEquals(1006, max.get());
+        final WorkerPoolManager workerPoolManager = createMetricsWorkerPoolManager(metrics, metricUpdates);
+        try {
+            assertSnapshotRefreshesWorkerMetrics(metrics);
+        } finally {
+            workerPoolManager.halt();
+        }
     }
 
     @Test
@@ -658,6 +664,29 @@ public class WorkerPoolManagerTest {
         writerPool.freeOnExit(new OrderedCloseJob(closeOrder, 1));
         workerPoolManager.halt();
         Assert.assertEquals(2, closeOrder.get());
+    }
+
+    private static void assertSnapshotRefreshesWorkerMetrics(Metrics metrics) {
+        final AtomicLong max = new AtomicLong();
+        final AtomicLong min = new AtomicLong();
+        final MetricSnapshotVisitor visitor = new MetricSnapshotVisitor() {
+            @Override
+            public void visitLong(CharSequence name, MetricType type, long value) {
+                if ("workers_job_start_micros_max".contentEquals(name)) {
+                    max.set(value);
+                } else if ("workers_job_start_micros_min".contentEquals(name)) {
+                    min.set(value);
+                }
+            }
+        };
+
+        metrics.snapshot(visitor);
+        Assert.assertEquals(997, min.get());
+        Assert.assertEquals(1003, max.get());
+
+        metrics.snapshot(visitor);
+        Assert.assertEquals(994, min.get());
+        Assert.assertEquals(1006, max.get());
     }
 
     private static WorkerPoolManager createMetricsWorkerPoolManager(Metrics metrics, AtomicInteger metricUpdates) {

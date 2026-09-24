@@ -374,6 +374,8 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
             } finally {
                 setCurrentMicros(-1);
                 workerPoolManager.halt();
+                // the manager registered itself as a scrape target on the shared Metrics.ENABLED
+                metrics.getRegistry().removeTarget(workerPoolManager);
                 metrics.clear();
             }
 
