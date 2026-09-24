@@ -136,10 +136,15 @@ public final class ColumnType {
     public static final short INTERVAL = PARAMETER + 1;        // = 39;
     public static final short VARCHAR_SLICE = INTERVAL + 1;    // = 40;
     public static final short NULL = VARCHAR_SLICE + 1;        // = 41; ALWAYS the last
-    private static final short[] TYPE_SIZE = new short[NULL + 1];
+    // The highest tag number. Every table indexed by tag is sized MAX_TAG + 1 and every loop over
+    // the tag space runs to MAX_TAG inclusive; nothing else may derive a bound from NULL's number.
+    // The tag field is 8 bits wide and array element tags are stored in a 6-bit field, so
+    // ColumnTypeTest pins MAX_TAG < 128 and every array element tag < 64.
+    public static final short MAX_TAG = NULL;
+    private static final short[] TYPE_SIZE = new short[MAX_TAG + 1];
     private static final short[] TYPE_SIZE_POW2 = new short[TYPE_SIZE.length];
     // slightly bigger than needed to make it a power of 2
-    private static final short OVERLOAD_PRIORITY_N = (short) Math.pow(2.0, Numbers.msb(NULL) + 1.0);
+    private static final short OVERLOAD_PRIORITY_N = (short) Math.pow(2.0, Numbers.msb(MAX_TAG) + 1.0);
     private static final int[] OVERLOAD_PRIORITY_MATRIX = new int[OVERLOAD_PRIORITY_N * OVERLOAD_PRIORITY_N]; // NULL to any is 0
     public static final int INTERVAL_RAW = INTERVAL;
     public static final int INTERVAL_TIMESTAMP_MICRO = INTERVAL | 1 << 17;
@@ -158,7 +163,7 @@ public final class ColumnType {
     private static final int ARRAY_NDIMS_FIELD_MASK = ARRAY_NDIMS_LIMIT - 1;
     private static final int ARRAY_NDIMS_FIELD_POS = 14;
     private static final int BYTE_BITS = 8;
-    private static final short[][] OVERLOAD_PRIORITY;
+    private static final short[][] OVERLOAD_PRIORITY = new short[MAX_TAG + 1][];
     private static final int TYPE_FLAG_ARRAY_WEAK_DIMS = (1 << 19);
     private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
     private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
@@ -886,14 +891,21 @@ public final class ColumnType {
         return (baseType & ~(0xFF << BYTE_BITS)) | (bits << BYTE_BITS) | TYPE_FLAG_GEO_HASH; // bit 16 is GeoHash flag
     }
 
+    /**
+     * Declares the overload priority row of {@code fromTag}: the signature types a value of that
+     * tag may be passed as, best match first. Position in the row is the overload distance.
+     */
+    private static void overloadPriority(short fromTag, short... toTags) {
+        assert OVERLOAD_PRIORITY[fromTag] == null : "duplicate overload priority row for tag " + fromTag;
+        OVERLOAD_PRIORITY[fromTag] = toTags;
+    }
+
     static {
         assert MIGRATION_VERSION >= VERSION;
         // Overload priority is used (indirectly) to route argument type to correct function signature.
-        // The argument type keys the array (see comments in the array initialized). This type has to match
-        // the numeric value of the type text. Values are then picked in left-to-right order. Signature types
-        // on the left are used only if none of signature types on the right exist.
-        //
-        // All types must be mentioned at all times.
+        // The argument type keys the row (first argument of overloadPriority). Values are then picked in
+        // left-to-right order. Signature types on the left are used only if none of signature types on
+        // the right exist.
         //
         // Note that the overload rule here must align with the corresponding function implementation, or specific
         // rules specified by {@link io.questdb.griffin.FunctionParser}, which add explicit cast function(like uuid -> string).
@@ -902,58 +914,57 @@ public final class ColumnType {
         // all other getxxx methods throw an UnSupportException. Therefore, the Symbol datatype only supports
         // overloading by STRING, VARCHAR, CHAR, INT, and TIMESTAMP.
 
-        OVERLOAD_PRIORITY = new short[][]{
-                /* 0 UNDEFINED   */  {DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
-                /* 1  BOOLEAN    */, {BOOLEAN}
-                /* 2  BYTE       */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DECIMAL}
-                /* 3  SHORT      */, {SHORT, INT, LONG, FLOAT, DOUBLE, CHAR, DECIMAL}
-                /* 4  CHAR       */, {CHAR, STRING, VARCHAR, SHORT, INT, LONG, FLOAT, DOUBLE}
-                /* 5  INT        */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE, DECIMAL}
-                /* 6  LONG       */, {LONG, DOUBLE, TIMESTAMP, DATE, DECIMAL}
-                /* 7  DATE       */, {DATE, TIMESTAMP, LONG, DOUBLE}
-                /* 8  TIMESTAMP  */, {TIMESTAMP, LONG, DATE, DOUBLE}
-                /* 9  FLOAT      */, {FLOAT, DOUBLE}
-                /* 10 DOUBLE     */, {DOUBLE}
-                /* 11 STRING     */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
-                /* 12 SYMBOL     */, {SYMBOL, STRING, VARCHAR, CHAR, INT, TIMESTAMP}
-                /* 13 LONG256    */, {LONG256, LONG}
-                /* 14 GEOBYTE    */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
-                /* 15 GEOSHORT   */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
-                /* 16 GEOINT     */, {GEOINT, GEOLONG, GEOHASH}
-                /* 17 GEOLONG    */, {GEOLONG, GEOHASH}
-                /* 18 BINARY     */, {BINARY}
-                /* 19 UUID       */, {UUID, STRING}
-                /* 20 CURSOR     */, {CURSOR}
-                /* 21 unused     */, {}
-                /* 22 unused     */, {}
-                /* 23 unused     */, {}
-                /* 24 LONG128    */, {LONG128}
-                /* 25 IPv4       */, {IPv4, STRING, VARCHAR}
-                /* 26 VARCHAR    */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
-                /* 27 ARRAY      */, {ARRAY}
-                /* 28 DECIMAL8   */, {DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
-                /* 29 DECIMAL16  */, {DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
-                /* 30 DECIMAL32  */, {DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
-                /* 31 DECIMAL64  */, {DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
-                /* 32 DECIMAL128 */, {DECIMAL128, DECIMAL256, DECIMAL}
-                /* 33 DECIMAL256 */, {DECIMAL256, DECIMAL}
-                /* 34 DECIMAL    */, {}
-                /* 35 unused     */, {}
-                /* 36 unused     */, {}
-                /* 37 unused     */, {}
-                /* 38 unused     */, {}
-                /* 39 INTERVAL   */, {INTERVAL, STRING}
-                /* 40 VARCHAR_SLICE */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
-                /* 41 NULL       */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
-        };
-        for (short fromTag = UNDEFINED; fromTag < NULL; fromTag++) {
-            for (short toTag = BOOLEAN; toTag <= NULL; toTag++) {
+        // Rows are keyed by the from-tag, not by position, so inserting a tag renumbers nothing here.
+        // A tag without a row (VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING,
+        // PARAMETER) overloads to nothing. NULL has no row either: its matrix row is filled below.
+        overloadPriority(UNDEFINED, DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN);
+        overloadPriority(BOOLEAN, BOOLEAN);
+        overloadPriority(BYTE, BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DECIMAL);
+        overloadPriority(SHORT, SHORT, INT, LONG, FLOAT, DOUBLE, CHAR, DECIMAL);
+        overloadPriority(CHAR, CHAR, STRING, VARCHAR, SHORT, INT, LONG, FLOAT, DOUBLE);
+        overloadPriority(INT, INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE, DECIMAL);
+        overloadPriority(LONG, LONG, DOUBLE, TIMESTAMP, DATE, DECIMAL);
+        overloadPriority(DATE, DATE, TIMESTAMP, LONG, DOUBLE);
+        overloadPriority(TIMESTAMP, TIMESTAMP, LONG, DATE, DOUBLE);
+        overloadPriority(FLOAT, FLOAT, DOUBLE);
+        overloadPriority(DOUBLE, DOUBLE);
+        overloadPriority(STRING, STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4);
+        overloadPriority(SYMBOL, SYMBOL, STRING, VARCHAR, CHAR, INT, TIMESTAMP);
+        overloadPriority(LONG256, LONG256, LONG);
+        overloadPriority(GEOBYTE, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH);
+        overloadPriority(GEOSHORT, GEOSHORT, GEOINT, GEOLONG, GEOHASH);
+        overloadPriority(GEOINT, GEOINT, GEOLONG, GEOHASH);
+        overloadPriority(GEOLONG, GEOLONG, GEOHASH);
+        overloadPriority(BINARY, BINARY);
+        overloadPriority(UUID, UUID, STRING);
+        overloadPriority(CURSOR, CURSOR);
+        overloadPriority(LONG128, LONG128);
+        overloadPriority(IPv4, IPv4, STRING, VARCHAR);
+        overloadPriority(VARCHAR, VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4);
+        overloadPriority(ARRAY, ARRAY);
+        overloadPriority(DECIMAL8, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
+        overloadPriority(DECIMAL16, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
+        overloadPriority(DECIMAL32, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
+        overloadPriority(DECIMAL64, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
+        overloadPriority(DECIMAL128, DECIMAL128, DECIMAL256, DECIMAL);
+        overloadPriority(DECIMAL256, DECIMAL256, DECIMAL);
+        overloadPriority(INTERVAL, INTERVAL, STRING);
+        overloadPriority(VARCHAR_SLICE, VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4);
+
+        for (short fromTag = UNDEFINED; fromTag <= MAX_TAG; fromTag++) {
+            if (fromTag == NULL) {
+                // NULL to any is 0 (the array default), except the three cells set below
+                continue;
+            }
+            final short[] priority = OVERLOAD_PRIORITY[fromTag];
+            for (short toTag = BOOLEAN; toTag <= MAX_TAG; toTag++) {
                 short value = OVERLOAD_NONE;
-                short[] priority = OVERLOAD_PRIORITY[fromTag];
-                for (short i = 0; i < priority.length; i++) {
-                    if (priority[i] == toTag) {
-                        value = i;
-                        break;
+                if (priority != null) {
+                    for (short i = 0; i < priority.length; i++) {
+                        if (priority[i] == toTag) {
+                            value = i;
+                            break;
+                        }
                     }
                 }
                 OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * fromTag + toTag] = value;

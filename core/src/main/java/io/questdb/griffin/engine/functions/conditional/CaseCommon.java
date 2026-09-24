@@ -47,7 +47,7 @@ import static io.questdb.cairo.ColumnType.*;
 
 public class CaseCommon {
     private static final LongObjHashMap<FunctionFactory> castFactories = new LongObjHashMap<>();
-    private static final ObjList<CaseFunctionConstructor> constructors = new ObjList<>(NULL + 1);
+    private static final ObjList<CaseFunctionConstructor> constructors = new ObjList<>(MAX_TAG + 1);
     private static final FiberLocal<IntList> tlArgPositions = new FiberLocal<>(IntList::new);
     private static final FiberLocal<ObjList<Function>> tlArgs = new FiberLocal<>(ObjList::new);
     private static final LongIntHashMap typeEscalationMap = new LongIntHashMap();
@@ -327,7 +327,7 @@ public class CaseCommon {
     }
 
     static {
-        constructors.set(UNDEFINED, NULL + 1, null);
+        constructors.set(UNDEFINED, MAX_TAG + 1, null);
         constructors.extendAndSet(STRING, (position, picker, args, returnType) -> new StrCaseFunction(picker, args));
         constructors.extendAndSet(INT, (position, picker, args, returnType) -> new IntCaseFunction(picker, args));
         constructors.extendAndSet(LONG, (position, picker, args, returnType) -> new LongCaseFunction(picker, args));
@@ -353,6 +353,6 @@ public class CaseCommon {
         constructors.extendAndSet(DECIMAL256, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
         constructors.extendAndSet(VARCHAR, (position, picker, args, returnType) -> new VarcharCaseFunction(picker, args));
         constructors.extendAndSet(NULL, (position, picker, args, returnType) -> new NullCaseFunction(args));
-        constructors.setPos(NULL + 1);
+        constructors.setPos(MAX_TAG + 1);
     }
 }

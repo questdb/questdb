@@ -310,7 +310,7 @@ public class TableUtilsTest extends AbstractTest {
         long mem1 = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
         long mem2 = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
         try {
-            for (int columnType = 0; columnType < ColumnType.NULL; columnType++) {
+            for (int columnType = 0; columnType <= ColumnType.MAX_TAG; columnType++) {
                 if (!ColumnType.isVarSize(columnType)) {
                     int size = ColumnType.sizeOf(columnType);
                     if (size > 0) {
