@@ -115,7 +115,8 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         } catch (Throwable th) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
-            // of() reopens the sinks before adopting the cursors, so close() here frees only the partial heap.
+            // of() reopens the sinks and caches before adopting the cursors, so close() here frees
+            // only the partial heap.
             Misc.free(cursor);
             throw th;
         }
@@ -187,15 +188,17 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
         @Override
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            // Reopen the sinks and the short circuit's cache before super.of() adopts the cursors
-            // so an open-time breach frees each exactly once.
+            // Reopen the sinks, the short circuit's cache and the translation caches before super.of()
+            // adopts the cursors so an open-time breach frees each exactly once.
             masterSinkTarget.reopen();
             slaveSinkTarget.reopen();
             symbolShortCircuit.reopen();
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
+            }
             super.of(masterCursor, slaveCursor, circuitBreaker);
             masterKeyRecord = masterRecord;
             if (symbolTranslatingRecord != null) {
-                symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
                 symbolTranslatingRecord.of(masterRecord);
                 masterKeyRecord = symbolTranslatingRecord;
             } else {

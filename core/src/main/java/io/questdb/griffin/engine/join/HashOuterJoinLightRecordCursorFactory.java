@@ -172,8 +172,8 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
-            // of() binds the per-query tracker and reopens the slave chain + join map before it can throw;
-            // close() frees them under that tracker and resets isOpen so the factory is reusable.
+            // of() binds the per-query tracker and reopens the slave chain, join map and caches before it adopts
+            // the cursors; close() frees them under that tracker and resets isOpen so the factory is reusable.
             Misc.free(cursor);
             throw e;
         }
@@ -344,7 +344,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
         }
 
         protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext, boolean swapped) throws SqlException {
-            super.of(masterCursor, slaveCursor, sqlExecutionContext);
+            ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
             this.swapped = swapped;
             if (swapped) {
                 record.of(slaveRecord, masterRecord);
@@ -366,6 +366,9 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                 }
             }
             this.mapCursor = Misc.free(mapCursor);
+            // Adopt the cursors last so an initSources() breach above leaves them unset for the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
 
         @Override
@@ -429,13 +432,16 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
 
         @Override
         protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
-            super.of(masterCursor, slaveCursor, sqlExecutionContext);
+            ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
             record.of(masterRecord, slaveRecord);
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.of(slaveCursor.getRecord());
                 symbolTranslatingRecord.initSources(slaveCursor, masterCursor,
                         slaveSymbolKeyColumnIndices, masterSymbolKeyColumnIndices);
             }
+            // Adopt the cursors last so an initSources() breach above leaves them unset for the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 
@@ -519,7 +525,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
 
         @Override
         protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
-            super.of(masterCursor, slaveCursor, sqlExecutionContext);
+            ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
             record.of(masterRecord, slaveRecord);
             this.mapCursor = Misc.free(mapCursor);
             if (symbolTranslatingRecord != null) {
@@ -527,6 +533,9 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                 symbolTranslatingRecord.initSources(slaveCursor, masterCursor,
                         slaveSymbolKeyColumnIndices, masterSymbolKeyColumnIndices);
             }
+            // Adopt the cursors last so an initSources() breach above leaves them unset for the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 }

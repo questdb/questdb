@@ -103,14 +103,11 @@ public class SymbolToSymbolJoinKeyMappingTest extends AbstractCairoTest {
                     FROM (SELECT (sym || '')::SYMBOL sym, (sym2 || '')::SYMBOL sym2, val, ts FROM master) m
                     ASOF JOIN slave s ON (sym, sym2)
                     """;
-            assertFactory(query, AsOfJoinFastRecordCursorFactory.class);
-            try (RecordCursorFactory factory = select("EXPLAIN " + query); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                println(factory, cursor);
-                // The symbolKeyJoin attribute would mean SymbolTranslatingRecord, not the short circuit.
-                Assert.assertFalse(sink.toString(), sink.toString().contains("symbolKeyJoin"));
-            }
+            // The symbolKeyJoin attribute would mean SymbolTranslatingRecord, not the short circuit.
+            assertQuery(query).noLeakCheck().assertsPlanNotContaining("symbolKeyJoin");
             assertCachesReleased(
                     query,
+                    AsOfJoinFastRecordCursorFactory.class,
                     """
                             count\tcount1\tsum
                             2000\t1000\t499500.0
@@ -140,8 +137,8 @@ public class SymbolToSymbolJoinKeyMappingTest extends AbstractCairoTest {
     public void testOfShrinksGrownCache() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            final SymbolToSymbolJoinKeyMapping mapping = new SymbolToSymbolJoinKeyMapping(configuration, 0, 0);
             try (
+                    SymbolToSymbolJoinKeyMapping mapping = new SymbolToSymbolJoinKeyMapping(configuration, 0, 0);
                     RecordCursorFactory masterFactory = select("SELECT sym FROM master");
                     RecordCursorFactory slaveFactory = select("SELECT sym FROM slave");
                     RecordCursor masterCursor = masterFactory.getCursor(sqlExecutionContext);
@@ -185,42 +182,13 @@ public class SymbolToSymbolJoinKeyMappingTest extends AbstractCairoTest {
                     """;
             final String query = "SELECT %s count(), count(s.price), sum(s.price) FROM master m ASOF JOIN slave s ON (sym)";
 
-            String hintedQuery = query.formatted("");
-            assertFactory(hintedQuery, AsOfJoinFastRecordCursorFactory.class);
-            assertCachesReleased(hintedQuery, expected, 1);
-
-            hintedQuery = query.formatted("/*+ asof_linear(m s) */");
-            assertFactory(hintedQuery, AsOfJoinLightRecordCursorFactory.class);
-            assertCachesReleased(hintedQuery, expected, 1);
-
-            hintedQuery = query.formatted("/*+ asof_dense(m s) */");
-            assertFactory(hintedQuery, AsOfJoinDenseSingleSymbolRecordCursorFactory.class);
-            assertCachesReleased(hintedQuery, expected, 1);
-
-            hintedQuery = query.formatted("/*+ asof_index(m s) */");
-            assertFactory(hintedQuery, AsOfJoinIndexedRecordCursorFactory.class);
-            assertCachesReleased(hintedQuery, expected, 1);
-
-            hintedQuery = query.formatted("/*+ asof_memoized(m s) */");
-            assertFactory(hintedQuery, AsOfJoinMemoizedRecordCursorFactory.class);
-            assertCachesReleased(hintedQuery, expected, 1);
-
-            hintedQuery = query.formatted("/*+ asof_memoized_driveby(m s) */");
-            assertFactory(hintedQuery, AsOfJoinMemoizedRecordCursorFactory.class);
-            assertCachesReleased(hintedQuery, expected, 1);
+            assertCachesReleased(query.formatted(""), AsOfJoinFastRecordCursorFactory.class, expected, 1);
+            assertCachesReleased(query.formatted("/*+ asof_linear(m s) */"), AsOfJoinLightRecordCursorFactory.class, expected, 1);
+            assertCachesReleased(query.formatted("/*+ asof_dense(m s) */"), AsOfJoinDenseSingleSymbolRecordCursorFactory.class, expected, 1);
+            assertCachesReleased(query.formatted("/*+ asof_index(m s) */"), AsOfJoinIndexedRecordCursorFactory.class, expected, 1);
+            assertCachesReleased(query.formatted("/*+ asof_memoized(m s) */"), AsOfJoinMemoizedRecordCursorFactory.class, expected, 1);
+            assertCachesReleased(query.formatted("/*+ asof_memoized_driveby(m s) */"), AsOfJoinMemoizedRecordCursorFactory.class, expected, 1);
         });
-    }
-
-    private static void assertFactory(String query, Class<?> factoryClass) throws Exception {
-        try (RecordCursorFactory factory = select(query)) {
-            RecordCursorFactory current = factory;
-            while (!factoryClass.isInstance(current)) {
-                final RecordCursorFactory base = current.getBaseFactory();
-                Assert.assertNotNull("expected " + factoryClass.getSimpleName() + " in base chain of " + factory.getClass().getSimpleName(), base);
-                Assert.assertNotSame(current, base);
-                current = base;
-            }
-        }
     }
 
     private static void createNullKeyTables(boolean slaveHasNull) throws Exception {
@@ -266,11 +234,12 @@ public class SymbolToSymbolJoinKeyMappingTest extends AbstractCairoTest {
         );
     }
 
-    private void assertCachesReleased(String query, String expected, int cacheCount) throws Exception {
+    private void assertCachesReleased(String query, Class<?> factoryClass, String expected, int cacheCount) throws Exception {
         try (
                 SqlCompiler compiler = engine.getSqlCompiler();
                 RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
         ) {
+            TestUtils.assertFactoryInTree(factory, factoryClass, query);
             final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP);
             // The second execution checks that the closed caches reopen and translate correctly.
             for (int i = 0; i < 2; i++) {
@@ -292,8 +261,8 @@ public class SymbolToSymbolJoinKeyMappingTest extends AbstractCairoTest {
     }
 
     private void assertSlaveKeys() throws Exception {
-        final SymbolToSymbolJoinKeyMapping mapping = new SymbolToSymbolJoinKeyMapping(configuration, 0, 0);
         try (
+                SymbolToSymbolJoinKeyMapping mapping = new SymbolToSymbolJoinKeyMapping(configuration, 0, 0);
                 RecordCursorFactory masterFactory = select("master");
                 RecordCursorFactory slaveFactory = select("slave");
                 RecordCursor masterCursor = masterFactory.getCursor(sqlExecutionContext);

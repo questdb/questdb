@@ -173,13 +173,16 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
 
         @Override
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            // Reopen the sinks before super.of() adopts the cursors so an open-time breach frees each exactly once.
+            // Reopen the sinks and the translation caches before super.of() adopts the cursors
+            // so an open-time breach frees each exactly once.
             masterSinkTarget.reopen();
             slaveSinkTarget.reopen();
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
+            }
             super.of(masterCursor, slaveCursor, circuitBreaker);
             masterKeyRecord = masterRecord;
             if (symbolTranslatingRecord != null) {
-                symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
                 symbolTranslatingRecord.of(masterRecord);
                 masterKeyRecord = symbolTranslatingRecord;
             }

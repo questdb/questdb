@@ -154,7 +154,8 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
-            // of() reopens the sinks before adopting the cursors, so close() here frees only the partial heap.
+            // of() reopens the sinks and caches before adopting the cursors, so close() here frees
+            // only the partial heap.
             Misc.free(cursor);
             throw e;
         }
@@ -331,15 +332,18 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
         }
 
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, Record filterRecord, SqlExecutionCircuitBreaker circuitBreaker) {
-            // Reopen the sinks before super.of() adopts the cursors so an open-time breach frees each exactly once.
+            // Reopen the sinks and the translation caches before super.of() adopts the cursors
+            // so an open-time breach frees each exactly once.
             masterSinkTarget.reopen();
             slaveSinkTarget.reopen();
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
+            }
             super.of(masterCursor, slaveCursor);
             this.circuitBreaker = circuitBreaker;
             this.filterRecord = filterRecord;
             this.masterKeyRecord = masterRecord;
             if (symbolTranslatingRecord != null) {
-                symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
                 symbolTranslatingRecord.of(masterRecord);
                 masterKeyRecord = symbolTranslatingRecord;
             }

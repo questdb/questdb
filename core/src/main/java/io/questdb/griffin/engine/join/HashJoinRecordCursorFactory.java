@@ -114,8 +114,8 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
-            // of() binds the per-query tracker and reopens the join map before it can throw;
-            // close() frees it under that tracker and resets isOpen so the factory is reusable.
+            // of() binds the per-query tracker and reopens the join map and caches before it adopts the cursors;
+            // close() frees them under that tracker and resets isOpen so the factory is reusable.
             Misc.free(cursor);
             throw e;
         }
@@ -283,8 +283,6 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             // triggers a malloc under the bound tracker. After the cursor's
             // close(), the chain's backing is freed against the same tracker.
             slaveChain.setMemoryTracker(executionContext.getMemoryTracker());
-            this.masterCursor = masterCursor;
-            this.slaveCursor = slaveCursor;
             this.circuitBreaker = executionContext.getCircuitBreaker();
             masterRecord = masterCursor.getRecord();
             Record slaveRecord = slaveChain.getRecord();
@@ -298,6 +296,9 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             useSlaveCursor = false;
             size = -1;
             isMapBuilt = false;
+            // Adopt the cursors last so an initSources() breach above leaves them unset for the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 }

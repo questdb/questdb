@@ -120,8 +120,8 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
-            // of() binds the per-query tracker and reopens the join map + slave chain before it can throw;
-            // close() frees them under that tracker and resets isOpen so the factory is reusable.
+            // of() binds the per-query tracker and reopens the join map, slave chain and caches before it adopts
+            // the cursors; close() frees them under that tracker and resets isOpen so the factory is reusable.
             Misc.free(cursor);
             throw e;
         }
@@ -341,8 +341,6 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 slaveChain.setMemoryTracker(executionContext.getMemoryTracker());
                 slaveChain.reopen();
             }
-            this.masterCursor = masterCursor;
-            this.slaveCursor = slaveCursor;
             this.circuitBreaker = executionContext.getCircuitBreaker();
             masterRecord = masterCursor.getRecord();
             slaveRecord = slaveCursor.getRecordB();
@@ -369,6 +367,9 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             }
             slaveChainCursor = null;
             isMapBuilt = false;
+            // Adopt the cursors last so an initSources() breach above leaves them unset for the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 }

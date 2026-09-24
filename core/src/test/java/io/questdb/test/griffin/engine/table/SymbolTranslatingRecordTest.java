@@ -30,6 +30,20 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.HashJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.HashOuterJoinFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.join.HashOuterJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.HashOuterJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.MultiHorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.MultiHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.MemoryTag;
@@ -37,6 +51,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -92,7 +107,14 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         createTables(engine, sqlExecutionContext);
-                        assertHorizonJoins(compiler, sqlExecutionContext);
+                        assertHorizonJoins(
+                                compiler,
+                                sqlExecutionContext,
+                                AsyncHorizonJoinRecordCursorFactory.class,
+                                AsyncHorizonJoinNotKeyedRecordCursorFactory.class,
+                                AsyncMultiHorizonJoinRecordCursorFactory.class,
+                                AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class
+                        );
                     },
                     configuration,
                     LOG
@@ -101,65 +123,32 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullFatHashJoinsReleaseCachesOnCursorClose() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables(engine, sqlExecutionContext);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                // the compiler pool resets the flag when the compiler returns to the pool
+                compiler.setFullFatJoins(true);
+                assertHashJoins(
+                        compiler,
+                        HashJoinRecordCursorFactory.class,
+                        HashOuterJoinRecordCursorFactory.class,
+                        HashOuterJoinFilteredRecordCursorFactory.class
+                );
+            }
+        });
+    }
+
+    @Test
     public void testHashJoinsReleaseCachesOnCursorClose() throws Exception {
         assertMemoryLeak(() -> {
             createTables(engine, sqlExecutionContext);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                // INNER JOIN: only the master symbols present in the slave table match
-                assertCachesReleased(
+                assertHashJoins(
                         compiler,
-                        sqlExecutionContext,
-                        "SELECT count(), count(s.price), sum(s.price) FROM master m JOIN slave s ON (sym)",
-                        """
-                                count\tcount1\tsum
-                                1000\t1000\t499500.0
-                                """
-                );
-                assertCachesReleased(
-                        compiler,
-                        sqlExecutionContext,
-                        "SELECT count(), count(s.price), sum(s.price) FROM master m LEFT JOIN slave s ON (sym)",
-                        """
-                                count\tcount1\tsum
-                                2000\t1000\t499500.0
-                                """
-                );
-                assertCachesReleased(
-                        compiler,
-                        sqlExecutionContext,
-                        "SELECT count(), count(m.val), sum(s.price) FROM master m RIGHT JOIN slave s ON (sym)",
-                        """
-                                count\tcount1\tsum
-                                1000\t1000\t499500.0
-                                """
-                );
-                assertCachesReleased(
-                        compiler,
-                        sqlExecutionContext,
-                        "SELECT count(), count(s.price), sum(s.price) FROM master m FULL JOIN slave s ON (sym)",
-                        """
-                                count\tcount1\tsum
-                                2000\t1000\t499500.0
-                                """
-                );
-                // extra join condition routes to the filtered hash outer join factories
-                assertCachesReleased(
-                        compiler,
-                        sqlExecutionContext,
-                        "SELECT count(), count(s.price), sum(s.price) FROM master m LEFT JOIN slave s ON m.sym = s.sym AND s.price < m.val",
-                        """
-                                count\tcount1\tsum
-                                2000\t1000\t499500.0
-                                """
-                );
-                assertCachesReleased(
-                        compiler,
-                        sqlExecutionContext,
-                        "SELECT count(), count(s.price), sum(s.price) FROM master m FULL JOIN slave s ON m.sym = s.sym AND s.price < m.val",
-                        """
-                                count\tcount1\tsum
-                                2000\t1000\t499500.0
-                                """
+                        HashJoinLightRecordCursorFactory.class,
+                        HashOuterJoinLightRecordCursorFactory.class,
+                        HashOuterJoinFilteredLightRecordCursorFactory.class
                 );
             }
         });
@@ -167,11 +156,21 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
 
     @Test
     public void testSyncHorizonJoinReleasesCachesOnCursorClose() throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, "false");
+        // setUp() has already copied the configuration flag into the context, and the code
+        // generator reads the context, so the test switches the context itself. The next
+        // setUp() restores the flag from the configuration.
+        sqlExecutionContext.setParallelHorizonJoinEnabled(false);
         assertMemoryLeak(() -> {
             createTables(engine, sqlExecutionContext);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                assertHorizonJoins(compiler, sqlExecutionContext);
+                assertHorizonJoins(
+                        compiler,
+                        sqlExecutionContext,
+                        HorizonJoinRecordCursorFactory.class,
+                        HorizonJoinNotKeyedRecordCursorFactory.class,
+                        MultiHorizonJoinRecordCursorFactory.class,
+                        MultiHorizonJoinNotKeyedRecordCursorFactory.class
+                );
             }
         });
     }
@@ -260,7 +259,21 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
             String query,
             String expected
     ) throws Exception {
+        assertCachesReleased(compiler, sqlExecutionContext, query, expected, null);
+    }
+
+    private void assertCachesReleased(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String query,
+            String expected,
+            @Nullable Class<? extends RecordCursorFactory> expectedFactory
+    ) throws Exception {
         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            if (expectedFactory != null) {
+                // guards against a silent reroute to a factory that the test does not target
+                TestUtils.assertFactoryInTree(factory, expectedFactory, query);
+            }
             final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP);
             // The second execution checks that the closed caches reopen and translate correctly.
             for (int i = 0; i < 2; i++) {
@@ -281,17 +294,97 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
         }
     }
 
-    private void assertHorizonJoins(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception {
+    private void assertHashJoins(
+            SqlCompiler compiler,
+            Class<? extends RecordCursorFactory> innerJoinFactory,
+            Class<? extends RecordCursorFactory> outerJoinFactory,
+            Class<? extends RecordCursorFactory> filteredOuterJoinFactory
+    ) throws Exception {
+        // INNER JOIN: only the master symbols present in the slave table match
         assertCachesReleased(
                 compiler,
                 sqlExecutionContext,
-                "SELECT count(sym), sum(p) FROM (" +
-                        "SELECT m.sym, sum(s.price) p FROM master m HORIZON JOIN slave s ON (m.sym = s.sym) RANGE FROM 0s TO 0s STEP 1s AS h" +
-                        ")",
+                "SELECT count(), count(s.price), sum(s.price) FROM master m JOIN slave s ON (sym)",
+                """
+                        count\tcount1\tsum
+                        1000\t1000\t499500.0
+                        """,
+                innerJoinFactory
+        );
+        assertCachesReleased(
+                compiler,
+                sqlExecutionContext,
+                "SELECT count(), count(s.price), sum(s.price) FROM master m LEFT JOIN slave s ON (sym)",
+                """
+                        count\tcount1\tsum
+                        2000\t1000\t499500.0
+                        """,
+                outerJoinFactory
+        );
+        assertCachesReleased(
+                compiler,
+                sqlExecutionContext,
+                "SELECT count(), count(m.val), sum(s.price) FROM master m RIGHT JOIN slave s ON (sym)",
+                """
+                        count\tcount1\tsum
+                        1000\t1000\t499500.0
+                        """,
+                outerJoinFactory
+        );
+        assertCachesReleased(
+                compiler,
+                sqlExecutionContext,
+                "SELECT count(), count(s.price), sum(s.price) FROM master m FULL JOIN slave s ON (sym)",
+                """
+                        count\tcount1\tsum
+                        2000\t1000\t499500.0
+                        """,
+                outerJoinFactory
+        );
+        // extra join condition routes to the filtered hash outer join factories
+        assertCachesReleased(
+                compiler,
+                sqlExecutionContext,
+                "SELECT count(), count(s.price), sum(s.price) FROM master m LEFT JOIN slave s ON m.sym = s.sym AND s.price < m.val",
+                """
+                        count\tcount1\tsum
+                        2000\t1000\t499500.0
+                        """,
+                filteredOuterJoinFactory
+        );
+        assertCachesReleased(
+                compiler,
+                sqlExecutionContext,
+                "SELECT count(), count(s.price), sum(s.price) FROM master m FULL JOIN slave s ON m.sym = s.sym AND s.price < m.val",
+                """
+                        count\tcount1\tsum
+                        2000\t1000\t499500.0
+                        """,
+                filteredOuterJoinFactory
+        );
+    }
+
+    private void assertHorizonJoins(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            Class<? extends RecordCursorFactory> keyedFactory,
+            Class<? extends RecordCursorFactory> notKeyedFactory,
+            Class<? extends RecordCursorFactory> multiKeyedFactory,
+            Class<? extends RecordCursorFactory> multiNotKeyedFactory
+    ) throws Exception {
+        assertCachesReleased(
+                compiler,
+                sqlExecutionContext,
+                """
+                        SELECT count(sym), sum(p) FROM (
+                            SELECT m.sym, sum(s.price) p FROM master m HORIZON JOIN slave s ON (m.sym = s.sym) RANGE FROM 0s TO 0s STEP 1s AS h
+                        )
+                        """,
                 """
                         count\tsum
                         2000\t499500.0
-                        """
+                        """,
+                keyedFactory
         );
         assertCachesReleased(
                 compiler,
@@ -300,31 +393,38 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                 """
                         count\tsum
                         1000\t499500.0
-                        """
+                        """,
+                notKeyedFactory
         );
         assertCachesReleased(
                 compiler,
                 sqlExecutionContext,
-                "SELECT count(sym), sum(p) FROM (" +
-                        "SELECT m.sym, sum(s.price) p, count(s2.price) c FROM master m " +
-                        "HORIZON JOIN slave s ON (m.sym = s.sym) HORIZON JOIN slave s2 ON (m.sym = s2.sym) " +
-                        "RANGE FROM 0s TO 0s STEP 1s AS h" +
-                        ")",
+                """
+                        SELECT count(sym), sum(p) FROM (
+                            SELECT m.sym, sum(s.price) p, count(s2.price) c FROM master m
+                            HORIZON JOIN slave s ON (m.sym = s.sym) HORIZON JOIN slave s2 ON (m.sym = s2.sym)
+                            RANGE FROM 0s TO 0s STEP 1s AS h
+                        )
+                        """,
                 """
                         count\tsum
                         2000\t499500.0
-                        """
+                        """,
+                multiKeyedFactory
         );
         assertCachesReleased(
                 compiler,
                 sqlExecutionContext,
-                "SELECT count(s.price), sum(s.price), count(s2.price) FROM master m " +
-                        "HORIZON JOIN slave s ON (m.sym = s.sym) HORIZON JOIN slave s2 ON (m.sym = s2.sym) " +
-                        "RANGE FROM 0s TO 0s STEP 1s AS h",
+                """
+                        SELECT count(s.price), sum(s.price), count(s2.price) FROM master m
+                        HORIZON JOIN slave s ON (m.sym = s.sym) HORIZON JOIN slave s2 ON (m.sym = s2.sym)
+                        RANGE FROM 0s TO 0s STEP 1s AS h
+                        """,
                 """
                         count\tsum\tcount1
                         1000\t499500.0\t1000
-                        """
+                        """,
+                multiNotKeyedFactory
         );
     }
 }
