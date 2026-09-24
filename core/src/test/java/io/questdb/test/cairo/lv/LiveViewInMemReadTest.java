@@ -524,19 +524,19 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                 // handed it. rn=5 exists only in the tier.
                 assertLvQuery("SELECT * FROM lv WHERE g = 'bb'",
                         """
-                        ts\tg\trn
-                        2026-05-12T00:00:02.000000Z\tbb\t2
-                        2026-05-12T00:00:05.000000Z\tbb\t5
-                        """);
+                                ts\tg\trn
+                                2026-05-12T00:00:02.000000Z\tbb\t2
+                                2026-05-12T00:00:05.000000Z\tbb\t5
+                                """);
 
                 // 'cc' is lead-only AND in the second slot frame: the overlay is bound per
                 // cursor, not per frame, so it must resolve from any frame the cursor emits.
                 // A miss here reads as an empty result rather than a wrong one.
                 assertLvQuery("SELECT * FROM lv WHERE g = 'cc'",
                         """
-                        ts\tg\trn
-                        2026-05-12T00:00:04.000000Z\tcc\t4
-                        """);
+                                ts\tg\trn
+                                2026-05-12T00:00:04.000000Z\tcc\t4
+                                """);
 
                 assertLvMatchesOracle("SELECT * FROM lv WHERE rn > 1",
                         "SELECT * FROM (SELECT ts, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base) WHERE rn > 1");
@@ -780,9 +780,9 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             printSql("SELECT p.ts, p.id, lv.x FROM probe p ASOF JOIN lv", sink);
             Assert.assertEquals(
                     """
-                    ts\tid\tx
-                    2026-05-12T00:00:06.000000Z\t1\t5
-                    """,
+                            ts\tid\tx
+                            2026-05-12T00:00:06.000000Z\t1\t5
+                            """,
                     sink.toString());
         });
     }
@@ -823,13 +823,13 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     "ORDER BY sec_offs", sink);
             Assert.assertEquals(
                     """
-                    sec_offs\tagg
-                    -2\tnull
-                    -1\t2
-                    0\t3
-                    1\t4
-                    2\t5
-                    """,
+                            sec_offs\tagg
+                            -2\tnull
+                            -1\t2
+                            0\t3
+                            1\t4
+                            2\t5
+                            """,
                     sink.toString());
         });
     }
@@ -869,11 +869,11 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             printSql(horizonSql, sink);
             Assert.assertEquals(
                     """
-                    sec_offs\tagg
-                    0\t3
-                    1\t4
-                    2\t5
-                    """,
+                            sec_offs\tagg
+                            0\t3
+                            1\t4
+                            2\t5
+                            """,
                     sink.toString());
         });
     }
@@ -1592,12 +1592,12 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertLvMatchesOracle("SELECT ts FROM lv WHERE g != h", "SELECT ts FROM base WHERE g != h");
             assertLvQuery("SELECT ts FROM lv WHERE g != h",
                     """
-                    ts
-                    2026-05-12T00:00:01.000000Z
-                    2026-05-12T00:00:02.000000Z
-                    2026-05-12T00:00:03.000000Z
-                    2026-05-12T00:00:05.000000Z
-                    """);
+                            ts
+                            2026-05-12T00:00:01.000000Z
+                            2026-05-12T00:00:02.000000Z
+                            2026-05-12T00:00:03.000000Z
+                            2026-05-12T00:00:05.000000Z
+                            """);
         });
     }
 
@@ -2014,51 +2014,51 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // Bound above the whole lead: every lead row survives.
             assertLvQuery("SELECT x FROM lv WHERE ts <= '2023-11-14T22:13:25.000004Z'",
                     """
-                    x
-                    1
-                    2
-                    3
-                    4
-                    5
-                    6
-                    7
-                    """);
+                            x
+                            1
+                            2
+                            3
+                            4
+                            5
+                            6
+                            7
+                            """);
             // Bound INSIDE the lead: x = 6 is in, x = 7 is out. A cut that rounded either
             // way lands on a whole-band answer instead.
             assertLvQuery("SELECT x FROM lv WHERE ts <= '2023-11-14T22:13:25.000003Z'",
                     """
-                    x
-                    1
-                    2
-                    3
-                    4
-                    5
-                    6
-                    """);
+                            x
+                            1
+                            2
+                            3
+                            4
+                            5
+                            6
+                            """);
             // Bound below the lead: it drops out entirely, and disk still serves in full.
             assertLvQuery("SELECT x FROM lv WHERE ts <= '2023-11-14T22:13:25.000002Z'",
                     """
-                    x
-                    1
-                    2
-                    3
-                    4
-                    5
-                    """);
+                            x
+                            1
+                            2
+                            3
+                            4
+                            5
+                            """);
             // The interval's ends are CLOSED, so a bound sitting exactly on a lead row's
             // timestamp includes that row. Asserted from below as well, since the two ends
             // come from different searches.
             assertLvQuery("SELECT x FROM lv WHERE ts >= '2023-11-14T22:13:25.000003Z'",
                     """
-                    x
-                    6
-                    7
-                    """);
+                            x
+                            6
+                            7
+                            """);
             assertLvQuery("SELECT x FROM lv WHERE ts > '2023-11-14T22:13:25.000003Z'",
                     """
-                    x
-                    7
-                    """);
+                            x
+                            7
+                            """);
         });
     }
 
@@ -4047,10 +4047,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             printSql(sql, sink);
             Assert.assertEquals(
                     """
-                    ts\tid\tx
-                    2026-05-12T00:00:01.500000Z\t1\t1
-                    2026-05-12T00:00:04.500000Z\t2\t4
-                    """,
+                            ts\tid\tx
+                            2026-05-12T00:00:01.500000Z\t1\t1
+                            2026-05-12T00:00:04.500000Z\t2\t4
+                            """,
                     sink.toString());
         });
     }
@@ -4086,10 +4086,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             printSql(sql, sink);
             Assert.assertEquals(
                     """
-                    ts\tid\tx
-                    2026-05-12T00:00:00.500000Z\t1\tnull
-                    2026-05-12T00:00:01.500000Z\t2\t1
-                    """,
+                            ts\tid\tx
+                            2026-05-12T00:00:00.500000Z\t1\tnull
+                            2026-05-12T00:00:01.500000Z\t2\t1
+                            """,
                     sink.toString());
         });
     }
@@ -4159,13 +4159,13 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             printSql(sql, sink);
             Assert.assertEquals(
                     """
-                    ts\tk
-                    2026-05-12T00:00:01.000000Z\t93
-                    2026-05-12T00:00:02.000000Z\t86
-                    2026-05-12T00:00:03.000000Z\t79
-                    2026-05-12T00:00:04.000000Z\t72
-                    2026-05-12T00:00:05.000000Z\t65
-                    """,
+                            ts\tk
+                            2026-05-12T00:00:01.000000Z\t93
+                            2026-05-12T00:00:02.000000Z\t86
+                            2026-05-12T00:00:03.000000Z\t79
+                            2026-05-12T00:00:04.000000Z\t72
+                            2026-05-12T00:00:05.000000Z\t65
+                            """,
                     sink.toString());
         });
     }
@@ -4207,10 +4207,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             printSql(asofSql, sink);
             Assert.assertEquals(
                     """
-                    ts\tid\tx
-                    2026-05-12T00:00:04.500000Z\t1\t4
-                    2026-05-12T00:00:06.000000Z\t2\t5
-                    """,
+                            ts\tid\tx
+                            2026-05-12T00:00:04.500000Z\t1\t4
+                            2026-05-12T00:00:06.000000Z\t2\t5
+                            """,
                     sink.toString());
 
             // The flush moves those same rows from the lead band to disk. The answer must
@@ -4270,11 +4270,11 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             printSql(ltSql, sink);
             Assert.assertEquals(
                     """
-                    ts\tid\tx
-                    2026-05-12T00:00:04.500000Z\t1\t4
-                    2026-05-12T00:00:05.000000Z\t2\t4
-                    2026-05-12T00:00:06.000000Z\t3\t5
-                    """,
+                            ts\tid\tx
+                            2026-05-12T00:00:04.500000Z\t1\t4
+                            2026-05-12T00:00:05.000000Z\t2\t4
+                            2026-05-12T00:00:06.000000Z\t3\t5
+                            """,
                     sink.toString());
 
             // The flush moves those same rows from the lead band to disk. The answer must not

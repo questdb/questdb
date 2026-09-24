@@ -19666,9 +19666,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // an explicit cast remains available
             assertQuery("SELECT max(ts::STRING::SYMBOL::TIMESTAMP) OVER () AS m FROM symbols").expectSize().returns(
                     """
-                    m
-                    2024-01-01T00:00:00.000000Z
-                    """
+                            m
+                            2024-01-01T00:00:00.000000Z
+                            """
             );
         });
     }
