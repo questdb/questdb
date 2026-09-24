@@ -24,11 +24,14 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.Vect;
+
 /**
  * Type driver for the geohash family: GEOBYTE, GEOSHORT, GEOINT and GEOLONG are one type
  * stored at four widths, so they share one class with one instance per tag. The number of
  * bits is part of the encoded column type and is passed as an argument where a method
- * needs it.
+ * needs it. NULL is -1 at every width.
  */
 public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
     public static final GeoHashTypeDriver GEOBYTE = new GeoHashTypeDriver(ColumnTypeTag.GEOBYTE, 0);
@@ -38,5 +41,37 @@ public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
 
     private GeoHashTypeDriver(ColumnTypeTag tag, int pow2Width) {
         super(tag, pow2Width);
+    }
+
+    @Override
+    public long getNullLong(int longIndex) {
+        return GeoHashes.NULL;
+    }
+
+    @Override
+    public boolean hasNullSentinel() {
+        return true;
+    }
+
+    @Override
+    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
+        return switch (getPow2Width()) {
+            case 0 -> () -> dataMem.putByte(GeoHashes.BYTE_NULL);
+            case 1 -> () -> dataMem.putShort(GeoHashes.SHORT_NULL);
+            case 2 -> () -> dataMem.putInt(GeoHashes.INT_NULL);
+            case 3 -> () -> dataMem.putLong(GeoHashes.NULL);
+            default -> throw new IllegalStateException("no geohash width " + getPow2Width());
+        };
+    }
+
+    @Override
+    public void setNull(long addr, long count) {
+        switch (getPow2Width()) {
+            case 0 -> Vect.memset(addr, count, GeoHashes.BYTE_NULL);
+            case 1 -> Vect.setMemoryShort(addr, GeoHashes.SHORT_NULL, count);
+            case 2 -> Vect.setMemoryInt(addr, GeoHashes.INT_NULL, count);
+            case 3 -> Vect.setMemoryLong(addr, GeoHashes.NULL, count);
+            default -> throw new IllegalStateException("no geohash width " + getPow2Width());
+        }
     }
 }

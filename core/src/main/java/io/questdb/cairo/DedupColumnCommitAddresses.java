@@ -118,10 +118,11 @@ public class DedupColumnCommitAddresses implements Closeable {
         Unsafe.putInt(addr + VAL_SIZE_32, valueSizeBytes);
         Unsafe.putLong(addr + COL_TOP_64, columnTop);
 
-        Unsafe.putLong(addr + NULL_VAL_256, TableUtils.getNullLong(columnType, 0));
-        Unsafe.putLong(addr + NULL_VAL_256 + 8, TableUtils.getNullLong(columnType, 1));
-        Unsafe.putLong(addr + NULL_VAL_256 + 16, TableUtils.getNullLong(columnType, 2));
-        Unsafe.putLong(addr + NULL_VAL_256 + 24, TableUtils.getNullLong(columnType, 3));
+        final TypeDriver typeDriver = ColumnType.getTypeDriver(columnType);
+        Unsafe.putLong(addr + NULL_VAL_256, typeDriver.getNullLong(0));
+        Unsafe.putLong(addr + NULL_VAL_256 + 8, typeDriver.getNullLong(1));
+        Unsafe.putLong(addr + NULL_VAL_256 + 16, typeDriver.getNullLong(2));
+        Unsafe.putLong(addr + NULL_VAL_256 + 24, typeDriver.getNullLong(3));
         return addr;
     }
 

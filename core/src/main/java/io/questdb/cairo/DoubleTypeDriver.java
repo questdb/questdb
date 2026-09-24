@@ -24,6 +24,9 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.Vect;
+
 /**
  * Type driver for DOUBLE.
  */
@@ -32,5 +35,25 @@ public final class DoubleTypeDriver extends FixedSizeTypeDriver {
 
     private DoubleTypeDriver() {
         super(ColumnTypeTag.DOUBLE, 3);
+    }
+
+    @Override
+    public long getNullLong(int longIndex) {
+        return Double.doubleToLongBits(Double.NaN);
+    }
+
+    @Override
+    public boolean hasNullSentinel() {
+        return true;
+    }
+
+    @Override
+    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
+        return () -> dataMem.putDouble(Double.NaN);
+    }
+
+    @Override
+    public void setNull(long addr, long count) {
+        Vect.setMemoryDouble(addr, Double.NaN, count);
     }
 }

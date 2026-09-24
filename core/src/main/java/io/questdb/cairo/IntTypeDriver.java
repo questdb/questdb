@@ -24,6 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.Numbers;
+import io.questdb.std.Vect;
+
 /**
  * Type driver for INT.
  */
@@ -32,5 +36,25 @@ public final class IntTypeDriver extends FixedSizeTypeDriver {
 
     private IntTypeDriver() {
         super(ColumnTypeTag.INT, 2);
+    }
+
+    @Override
+    public long getNullLong(int longIndex) {
+        return Numbers.encodeLowHighInts(Numbers.INT_NULL, Numbers.INT_NULL);
+    }
+
+    @Override
+    public boolean hasNullSentinel() {
+        return true;
+    }
+
+    @Override
+    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
+        return () -> dataMem.putInt(Numbers.INT_NULL);
+    }
+
+    @Override
+    public void setNull(long addr, long count) {
+        Vect.setMemoryInt(addr, Numbers.INT_NULL, count);
     }
 }

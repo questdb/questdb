@@ -31,12 +31,20 @@ import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.DecimalTypeDriver;
 import io.questdb.cairo.FixedSizeTypeDriver;
 import io.questdb.cairo.GeoHashTypeDriver;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.IntervalTypeDriver;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampTypeDriver;
 import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -152,6 +160,104 @@ public class TypeDriverTest {
         }
         Assert.assertEquals(expected, fixedWidthTags);
         Assert.assertEquals(26, fixedWidthTags.size());
+    }
+
+    @Test
+    public void testNullAppenderWritesTheSameBytesAsSetNull() {
+        // the per-row appender and the batch fill must agree, for every driver
+        try (MemoryCARW mem = Vm.getCARWInstance(4096, 1, MemoryTag.NATIVE_DEFAULT)) {
+            final long buf = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
+                    if (PSEUDO_TAGS.contains(ColumnTypeTag.of(tag)) || ColumnType.isVarSize(tag)) {
+                        continue;
+                    }
+                    final FixedSizeTypeDriver driver = (FixedSizeTypeDriver) ColumnType.getTypeDriver(tag);
+                    mem.truncate();
+                    driver.newNullAppender(mem, null).run();
+                    Assert.assertEquals(driver.getTypeName(), driver.getWidth(), mem.getAppendOffset());
+                    driver.setNull(buf, 1);
+                    for (int b = 0; b < driver.getWidth(); b++) {
+                        Assert.assertEquals(driver.getTypeName() + " byte " + b, Unsafe.getByte(buf + b), mem.getByte(b));
+                    }
+                }
+            } finally {
+                Unsafe.free(buf, 32, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
+    }
+
+    @Test
+    public void testNullSentinelsAreTheDocumentedValues() {
+        // the values the deleted TableUtils.setNull / getNullLong switches produced, per type
+        Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.BOOLEAN).getNullLong(0));
+        Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.BYTE).getNullLong(0));
+        Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.SHORT).getNullLong(0));
+        Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.CHAR).getNullLong(0));
+        Assert.assertEquals(Numbers.encodeLowHighInts(Numbers.INT_NULL, Numbers.INT_NULL), ColumnType.getTypeDriver(ColumnType.INT).getNullLong(0));
+        Assert.assertEquals(Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, SymbolTable.VALUE_IS_NULL), ColumnType.getTypeDriver(ColumnType.SYMBOL).getNullLong(0));
+        Assert.assertEquals(Numbers.encodeLowHighInts(Float.floatToIntBits(Float.NaN), Float.floatToIntBits(Float.NaN)), ColumnType.getTypeDriver(ColumnType.FLOAT).getNullLong(0));
+        Assert.assertEquals(Double.doubleToLongBits(Double.NaN), ColumnType.getTypeDriver(ColumnType.DOUBLE).getNullLong(0));
+        Assert.assertEquals(Numbers.IPv4_NULL, ColumnType.getTypeDriver(ColumnType.IPv4).getNullLong(0));
+        Assert.assertEquals(GeoHashes.NULL, ColumnType.getTypeDriver(ColumnType.GEOBYTE).getNullLong(0));
+        Assert.assertEquals(GeoHashes.NULL, ColumnType.getTypeDriver(ColumnType.GEOLONG).getNullLong(0));
+        for (int tag : new int[]{ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.LONG256, ColumnType.LONG128, ColumnType.UUID, ColumnType.INTERVAL}) {
+            for (int i = 0; i < 4; i++) {
+                Assert.assertEquals(ColumnType.nameOf(tag), Numbers.LONG_NULL, ColumnType.getTypeDriver(tag).getNullLong(i));
+            }
+        }
+        Assert.assertEquals(Decimals.DECIMAL8_NULL, ColumnType.getTypeDriver(ColumnType.DECIMAL8).getNullLong(0));
+        Assert.assertEquals(Decimals.DECIMAL16_NULL, ColumnType.getTypeDriver(ColumnType.DECIMAL16).getNullLong(0));
+        Assert.assertEquals(Decimals.DECIMAL32_NULL, ColumnType.getTypeDriver(ColumnType.DECIMAL32).getNullLong(0));
+        Assert.assertEquals(Decimals.DECIMAL64_NULL, ColumnType.getTypeDriver(ColumnType.DECIMAL64).getNullLong(0));
+        Assert.assertEquals(Decimals.DECIMAL128_HI_NULL, ColumnType.getTypeDriver(ColumnType.DECIMAL128).getNullLong(0));
+        Assert.assertEquals(Decimals.DECIMAL128_LO_NULL, ColumnType.getTypeDriver(ColumnType.DECIMAL128).getNullLong(1));
+        Assert.assertEquals(Decimals.DECIMAL256_HH_NULL, ColumnType.getTypeDriver(ColumnType.DECIMAL256).getNullLong(0));
+        Assert.assertEquals(Decimals.DECIMAL256_HL_NULL, ColumnType.getTypeDriver(ColumnType.DECIMAL256).getNullLong(1));
+        Assert.assertEquals(Decimals.DECIMAL256_LH_NULL, ColumnType.getTypeDriver(ColumnType.DECIMAL256).getNullLong(2));
+        Assert.assertEquals(Decimals.DECIMAL256_LL_NULL, ColumnType.getTypeDriver(ColumnType.DECIMAL256).getNullLong(3));
+        // var-size: the aux entry of a NULL
+        Assert.assertEquals(Numbers.encodeLowHighInts(TableUtils.NULL_LEN, TableUtils.NULL_LEN), ColumnType.getTypeDriver(ColumnType.STRING).getNullLong(0));
+        Assert.assertEquals(TableUtils.NULL_LEN, ColumnType.getTypeDriver(ColumnType.BINARY).getNullLong(0));
+        Assert.assertEquals(TableUtils.NULL_LEN, ColumnType.getTypeDriver(ColumnType.VARCHAR).getNullLong(0));
+        Assert.assertEquals(TableUtils.NULL_LEN, ColumnType.getTypeDriver(ColumnType.ARRAY).getNullLong(0));
+
+        // only the four value-only types have no sentinel
+        for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
+            if (PSEUDO_TAGS.contains(ColumnTypeTag.of(tag))) {
+                continue;
+            }
+            final boolean isValueOnly = tag == ColumnType.BOOLEAN || tag == ColumnType.BYTE || tag == ColumnType.SHORT || tag == ColumnType.CHAR;
+            Assert.assertEquals(ColumnType.nameOf(tag), !isValueOnly, ColumnType.getTypeDriver(tag).hasNullSentinel());
+        }
+    }
+
+    @Test
+    public void testSetNullWritesTheNullLongs() {
+        // the batch fill and the per-long NULL description agree byte for byte, for every fixed type
+        final long mem1 = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
+        final long mem2 = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
+                if (PSEUDO_TAGS.contains(ColumnTypeTag.of(tag)) || ColumnType.isVarSize(tag)) {
+                    continue;
+                }
+                final TypeDriver driver = ColumnType.getTypeDriver(tag);
+                final int size = ColumnType.sizeOf(tag);
+                Assert.assertTrue(size > 0);
+                driver.setNull(mem2, 1);
+                Unsafe.putLong(mem1, driver.getNullLong(0));
+                Unsafe.putLong(mem1 + 8, driver.getNullLong(1));
+                Unsafe.putLong(mem1 + 16, driver.getNullLong(2));
+                Unsafe.putLong(mem1 + 24, driver.getNullLong(3));
+                for (int b = 0; b < size; b++) {
+                    Assert.assertEquals(ColumnType.nameOf(tag) + " byte " + b, Unsafe.getByte(mem1 + b), Unsafe.getByte(mem2 + b));
+                }
+            }
+        } finally {
+            Unsafe.free(mem1, 32, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(mem2, 32, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test

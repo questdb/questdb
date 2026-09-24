@@ -24,13 +24,39 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.Numbers;
+import io.questdb.std.Vect;
+
 /**
  * Type driver for LONG128.
+ * <p>
+ * A LONG128 is NULL when both longs are LONG_NULL.
  */
 public final class Long128TypeDriver extends FixedSizeTypeDriver {
     public static final Long128TypeDriver INSTANCE = new Long128TypeDriver();
 
     private Long128TypeDriver() {
         super(ColumnTypeTag.LONG128, 4);
+    }
+
+    @Override
+    public long getNullLong(int longIndex) {
+        return Numbers.LONG_NULL;
+    }
+
+    @Override
+    public boolean hasNullSentinel() {
+        return true;
+    }
+
+    @Override
+    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
+        return () -> dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL);
+    }
+
+    @Override
+    public void setNull(long addr, long count) {
+        Vect.setMemoryLong(addr, Numbers.LONG_NULL, count * 2);
     }
 }

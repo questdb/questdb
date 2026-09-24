@@ -40,6 +40,14 @@ public class BinaryTypeDriver extends StringTypeDriver {
         return Long.BYTES;
     }
 
+    /**
+     * Overrides the inherited STRING value: a NULL binary's aux entry is one NULL_LEN long.
+     */
+    @Override
+    public long getNullLong(int longIndex) {
+        return TableUtils.NULL_LEN;
+    }
+
     @Override
     public ColumnTypeTag getTag() {
         return ColumnTypeTag.BINARY;

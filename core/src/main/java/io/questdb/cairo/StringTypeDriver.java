@@ -33,6 +33,7 @@ import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
@@ -127,6 +128,14 @@ public class StringTypeDriver implements ColumnTypeDriver {
     @Override
     public long getAuxVectorOffset(long row) {
         return row << LEGACY_VAR_SIZE_AUX_SHL;
+    }
+
+    /**
+     * The aux entry of a NULL string: NULL_LEN in both halves.
+     */
+    @Override
+    public long getNullLong(int longIndex) {
+        return Numbers.encodeLowHighInts(TableUtils.NULL_LEN, TableUtils.NULL_LEN);
     }
 
     @Override

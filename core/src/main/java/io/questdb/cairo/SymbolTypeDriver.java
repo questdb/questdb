@@ -24,17 +24,43 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.std.Numbers;
+import io.questdb.std.Vect;
+
 /**
  * Type driver for SYMBOL.
  * <p>
  * The data vector is a 4-byte symbol key; the symbol table is a separate facet.
  * {@link ColumnType#isFixedSize(int)} reports SYMBOL as not fixed-size; this driver only
- * states the data vector width.
+ * states the data vector width. Writers wrap {@link #newNullAppender} to also raise the
+ * symbol map's null flag.
  */
 public final class SymbolTypeDriver extends FixedSizeTypeDriver {
     public static final SymbolTypeDriver INSTANCE = new SymbolTypeDriver();
 
     private SymbolTypeDriver() {
         super(ColumnTypeTag.SYMBOL, 2);
+    }
+
+    @Override
+    public long getNullLong(int longIndex) {
+        return Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, SymbolTable.VALUE_IS_NULL);
+    }
+
+    @Override
+    public boolean hasNullSentinel() {
+        return true;
+    }
+
+    @Override
+    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
+        return () -> dataMem.putInt(SymbolTable.VALUE_IS_NULL);
+    }
+
+    @Override
+    public void setNull(long addr, long count) {
+        Vect.setMemoryInt(addr, SymbolTable.VALUE_IS_NULL, count);
     }
 }
