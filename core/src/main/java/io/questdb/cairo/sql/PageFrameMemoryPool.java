@@ -2440,7 +2440,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             }
             final int columnOffset = slotCount;
             final long resource = decoder.materializeRemaining(
-                    rowGroupBuffers, columnOffset, rowLo, rowHi,
+                    rowGroupBuffers, columnOffset, columns, rowLo, rowHi,
                     filteredRows.getAddress(), filteredRows.size(), fillWithNulls
             );
             retainDecodeResource(decoder, resource);

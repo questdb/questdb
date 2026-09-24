@@ -60,13 +60,15 @@ public interface PartitionFrameDecoder extends DecodeResourceReleaser, QuietClos
     long decodeSubframe(RowGroupBuffers buffers, int rowLo, int rowHi);
 
     /**
-     * Materialize the remaining projection for a previously discovered subframe,
-     * install its output views into {@code buffers} at {@code columnOffset}, and
-     * return the owning, non-zero decode-resource handle.
+     * Materialize the requested remaining columns in the supplied order for a previously
+     * discovered subframe. Install the views into {@code buffers} at {@code columnOffset}
+     * and return the owning, non-zero decode-resource handle. Columns must belong to the
+     * prepared remaining projection.
      */
     long materializeRemaining(
             RowGroupBuffers buffers,
             int columnOffset,
+            DirectIntList columns,
             int rowLo,
             int rowHi,
             long survivorRowsAddress,
