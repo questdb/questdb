@@ -24,6 +24,9 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.Vect;
+
 /**
  * Type driver for CHAR.
  */
@@ -32,5 +35,25 @@ public final class CharTypeDriver extends FixedSizeTypeDriver {
 
     private CharTypeDriver() {
         super(ColumnTypeTag.CHAR, 1);
+    }
+
+    @Override
+    public long getNullLong(int longIndex) {
+        return 0L;
+    }
+
+    @Override
+    public boolean hasNullSentinel() {
+        return false;
+    }
+
+    @Override
+    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
+        return () -> dataMem.putChar((char) 0);
+    }
+
+    @Override
+    public void setNull(long addr, long count) {
+        Vect.setMemoryShort(addr, (short) 0, count);
     }
 }

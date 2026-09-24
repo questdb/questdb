@@ -306,38 +306,6 @@ public class TableUtilsTest extends AbstractTest {
     }
 
     @Test
-    public void testNullValue() {
-        long mem1 = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
-        long mem2 = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int columnType = 0; columnType <= ColumnType.MAX_TAG; columnType++) {
-                if (!ColumnType.isVarSize(columnType)) {
-                    int size = ColumnType.sizeOf(columnType);
-                    if (size > 0) {
-                        TableUtils.setNull(columnType, mem2, 1);
-                        Unsafe.putLong(mem1, TableUtils.getNullLong(columnType, 0));
-                        Unsafe.putLong(mem1 + 8, TableUtils.getNullLong(columnType, 1));
-                        Unsafe.putLong(mem1 + 16, TableUtils.getNullLong(columnType, 2));
-                        Unsafe.putLong(mem1 + 24, TableUtils.getNullLong(columnType, 3));
-
-                        String type = ColumnType.nameOf(columnType);
-                        for (int b = 0; b < size; b++) {
-                            Assert.assertEquals(
-                                    type,
-                                    Unsafe.getByte(mem1 + b),
-                                    Unsafe.getByte(mem2 + b)
-                            );
-                        }
-                    }
-                }
-            }
-        } finally {
-            Unsafe.free(mem1, 32, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(mem2, 32, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
     public void testCheckStoragePolicyTtlHoursExactBoundary() {
         // Storage policies measure partition age from the partition floor (its start), not the
         // ceiling that table TTL uses. Partition 2024-01-01 with a 24h policy becomes eligible

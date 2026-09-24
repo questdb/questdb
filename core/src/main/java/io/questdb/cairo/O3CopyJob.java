@@ -426,46 +426,15 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         } else if (ColumnType.isDesignatedTimestamp(columnType)) {
             Vect.oooCopyIndex(timestampMergeIndexAddr, timestampMergeIndexCount, dstFixAddr);
         } else {
-            switch (ColumnType.tagOf(columnType)) {
-                case ColumnType.BOOLEAN:
-                case ColumnType.BYTE:
-                case ColumnType.GEOBYTE:
-                case ColumnType.DECIMAL8:
-                    Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
-                    break;
-                case ColumnType.SHORT:
-                case ColumnType.CHAR:
-                case ColumnType.GEOSHORT:
-                case ColumnType.DECIMAL16:
-                    Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
-                    break;
-                case ColumnType.INT:
-                case ColumnType.IPv4:
-                case ColumnType.FLOAT:
-                case ColumnType.SYMBOL:
-                case ColumnType.GEOINT:
-                case ColumnType.DECIMAL32:
-                    Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
-                    break;
-                case ColumnType.DOUBLE:
-                case ColumnType.LONG:
-                case ColumnType.DATE:
-                case ColumnType.GEOLONG:
-                case ColumnType.TIMESTAMP:
-                case ColumnType.DECIMAL64:
-                    Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
-                    break;
-                case ColumnType.UUID:
-                case ColumnType.LONG128:
-                case ColumnType.DECIMAL128:
-                    Vect.mergeShuffle128Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
-                    break;
-                case ColumnType.LONG256:
-                case ColumnType.DECIMAL256:
-                    Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
-                    break;
-                default:
-                    break;
+            // every fixed-size type merges by width alone
+            switch (ColumnType.pow2SizeOf(columnType)) {
+                case 0 -> Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                case 1 -> Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                case 2 -> Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                case 3 -> Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                case 4 -> Vect.mergeShuffle128Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                case 5 -> Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                default -> throw CairoException.critical(0).put("cannot merge column of type ").put(ColumnType.nameOf(columnType));
             }
         }
     }

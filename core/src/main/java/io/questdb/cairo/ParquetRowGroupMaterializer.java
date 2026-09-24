@@ -274,7 +274,7 @@ final class ParquetRowGroupMaterializer {
         // these no-sentinel types. Re-encode the column while the remaining,
         // schema-compatible chunks still take the hybrid raw-copy path.
         return decoder.metadata().getColumnMaxDefLevel(parquetIndex) == 0
-                && (ColumnType.isSymbol(targetType) || ColumnType.isNoNullSentinelFixedType(targetType));
+                && (ColumnType.isSymbol(targetType) || !ColumnType.getTypeDriver(targetType).hasNullSentinel());
     }
 
     static void setTargetSchema(

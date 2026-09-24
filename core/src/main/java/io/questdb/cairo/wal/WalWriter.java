@@ -76,7 +76,6 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.BoolList;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal256;
-import io.questdb.std.Decimals;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
@@ -786,90 +785,21 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             BoolList symbolMapNullFlags
     ) {
         int columnTag = ColumnType.tagOf(type);
-        if (ColumnType.isVarSize(columnTag)) {
-            final ColumnTypeDriver typeDriver = ColumnType.getDriver(columnTag);
-            nullers.add(() -> typeDriver.appendNull(auxMem, dataMem));
+        if (columnTag == ColumnType.SYMBOL) {
+            nullers.add(() ->
+                    {
+                        dataMem.putInt(SymbolTable.VALUE_IS_NULL);
+                        if (!symbolMapNullFlags.get(columnIndex)) {
+                            symbolMapNullFlags.setQuick(columnIndex, true);
+                            symbolMapNullFlagsChanged.setQuick(columnIndex, true);
+                        }
+                    }
+            );
+        } else if (ColumnType.isPersisted(columnTag)) {
+            nullers.add(ColumnType.getTypeDriver(type).newNullAppender(dataMem, auxMem));
         } else {
-            switch (columnTag) {
-                case ColumnType.BOOLEAN:
-                case ColumnType.BYTE:
-                    nullers.add(() -> dataMem.putByte((byte) 0));
-                    break;
-                case ColumnType.DOUBLE:
-                    nullers.add(() -> dataMem.putDouble(Double.NaN));
-                    break;
-                case ColumnType.FLOAT:
-                    nullers.add(() -> dataMem.putFloat(Float.NaN));
-                    break;
-                case ColumnType.INT:
-                    nullers.add(() -> dataMem.putInt(Numbers.INT_NULL));
-                    break;
-                case ColumnType.IPv4:
-                    nullers.add(() -> dataMem.putInt(Numbers.IPv4_NULL));
-                    break;
-                case ColumnType.LONG:
-                case ColumnType.DATE:
-                case ColumnType.TIMESTAMP:
-                    nullers.add(() -> dataMem.putLong(Numbers.LONG_NULL));
-                    break;
-                case ColumnType.LONG256:
-                    nullers.add(() -> dataMem.putLong256(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL));
-                    break;
-                case ColumnType.SHORT:
-                    nullers.add(() -> dataMem.putShort((short) 0));
-                    break;
-                case ColumnType.CHAR:
-                    nullers.add(() -> dataMem.putChar((char) 0));
-                    break;
-                case ColumnType.SYMBOL:
-                    nullers.add(() ->
-                            {
-                                dataMem.putInt(SymbolTable.VALUE_IS_NULL);
-                                if (!symbolMapNullFlags.get(columnIndex)) {
-                                    symbolMapNullFlags.setQuick(columnIndex, true);
-                                    symbolMapNullFlagsChanged.setQuick(columnIndex, true);
-                                }
-                            }
-                    );
-                    break;
-                case ColumnType.GEOBYTE:
-                    nullers.add(() -> dataMem.putByte(GeoHashes.BYTE_NULL));
-                    break;
-                case ColumnType.GEOSHORT:
-                    nullers.add(() -> dataMem.putShort(GeoHashes.SHORT_NULL));
-                    break;
-                case ColumnType.GEOINT:
-                    nullers.add(() -> dataMem.putInt(GeoHashes.INT_NULL));
-                    break;
-                case ColumnType.GEOLONG:
-                    nullers.add(() -> dataMem.putLong(GeoHashes.NULL));
-                    break;
-                case ColumnType.LONG128:
-                    // fall through
-                case ColumnType.UUID:
-                    nullers.add(() -> dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL));
-                    break;
-                case ColumnType.DECIMAL8:
-                    nullers.add(() -> dataMem.putByte(Decimals.DECIMAL8_NULL));
-                    break;
-                case ColumnType.DECIMAL16:
-                    nullers.add(() -> dataMem.putShort(Decimals.DECIMAL16_NULL));
-                    break;
-                case ColumnType.DECIMAL32:
-                    nullers.add(() -> dataMem.putInt(Decimals.DECIMAL32_NULL));
-                    break;
-                case ColumnType.DECIMAL64:
-                    nullers.add(() -> dataMem.putLong(Decimals.DECIMAL64_NULL));
-                    break;
-                case ColumnType.DECIMAL128:
-                    nullers.add(() -> dataMem.putDecimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL));
-                    break;
-                case ColumnType.DECIMAL256:
-                    nullers.add(() -> dataMem.putDecimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL));
-                    break;
-                default:
-                    throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
-            }
+            // a non-persisted type never reaches a table column
+            throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
         }
     }
 
@@ -1996,7 +1926,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         if (columnFileSize > 0) {
             long address = TableUtils.mapRW(ff, fixedSizeColumn.getFd(), columnFileSize, MEM_TAG);
             try {
-                TableUtils.setNull(type, address, rowCount);
+                ColumnType.getTypeDriver(type).setNull(address, rowCount);
             } finally {
                 ff.munmap(address, columnFileSize, MEM_TAG);
             }

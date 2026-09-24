@@ -24,6 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.Numbers;
+import io.questdb.std.Vect;
+
 /**
  * Type driver for IPv4.
  */
@@ -32,5 +36,25 @@ public final class IPv4TypeDriver extends FixedSizeTypeDriver {
 
     private IPv4TypeDriver() {
         super(ColumnTypeTag.IPv4, 2);
+    }
+
+    @Override
+    public long getNullLong(int longIndex) {
+        return Numbers.IPv4_NULL;
+    }
+
+    @Override
+    public boolean hasNullSentinel() {
+        return true;
+    }
+
+    @Override
+    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
+        return () -> dataMem.putInt(Numbers.IPv4_NULL);
+    }
+
+    @Override
+    public void setNull(long addr, long count) {
+        Vect.setMemoryInt(addr, Numbers.IPv4_NULL, count);
     }
 }

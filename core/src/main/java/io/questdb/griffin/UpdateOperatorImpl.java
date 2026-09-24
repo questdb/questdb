@@ -329,11 +329,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             }
         } else {
             final long rowCount = toRow - fromRow;
-            TableUtils.setNull(
-                    columnType,
-                    dstAuxMem.appendAddressFor(rowCount << shl),
-                    rowCount
-            );
+            ColumnType.getTypeDriver(columnType).setNull(dstAuxMem.appendAddressFor(rowCount << shl), rowCount);
         }
     }
 

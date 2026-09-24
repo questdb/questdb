@@ -24,6 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.Numbers;
+import io.questdb.std.Vect;
+
 /**
  * Type driver for DATE.
  * <p>
@@ -35,5 +39,25 @@ public final class DateTypeDriver extends FixedSizeTypeDriver {
 
     private DateTypeDriver() {
         super(ColumnTypeTag.DATE, 3);
+    }
+
+    @Override
+    public long getNullLong(int longIndex) {
+        return Numbers.LONG_NULL;
+    }
+
+    @Override
+    public boolean hasNullSentinel() {
+        return true;
+    }
+
+    @Override
+    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
+        return () -> dataMem.putLong(Numbers.LONG_NULL);
+    }
+
+    @Override
+    public void setNull(long addr, long count) {
+        Vect.setMemoryLong(addr, Numbers.LONG_NULL, count);
     }
 }

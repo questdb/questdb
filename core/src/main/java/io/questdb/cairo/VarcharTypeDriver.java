@@ -534,6 +534,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         return VARCHAR_AUX_WIDTH_BYTES * row;
     }
 
+    @Override
+    public long getNullLong(int longIndex) {
+        return TableUtils.NULL_LEN;
+    }
+
     /**
      * VARCHAR; this driver also serves VARCHAR_SLICE, the transient in-memory slice of a varchar.
      */

@@ -24,6 +24,9 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.Vect;
+
 /**
  * Type driver for SHORT.
  */
@@ -32,5 +35,25 @@ public final class ShortTypeDriver extends FixedSizeTypeDriver {
 
     private ShortTypeDriver() {
         super(ColumnTypeTag.SHORT, 1);
+    }
+
+    @Override
+    public long getNullLong(int longIndex) {
+        return 0L;
+    }
+
+    @Override
+    public boolean hasNullSentinel() {
+        return false;
+    }
+
+    @Override
+    public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
+        return () -> dataMem.putShort((short) 0);
+    }
+
+    @Override
+    public void setNull(long addr, long count) {
+        Vect.setMemoryShort(addr, (short) 0, count);
     }
 }

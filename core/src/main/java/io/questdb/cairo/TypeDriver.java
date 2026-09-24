@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryA;
+
 /**
  * The root of the per-type driver hierarchy: one driver instance per column type tag, holding
  * what the engine must know about that type. A driver is fetched once per column, batch or
@@ -46,9 +48,35 @@ package io.questdb.cairo;
 public interface TypeDriver {
 
     /**
+     * The value of the n-th long of this type's NULL, for a value up to 32 bytes wide; the
+     * n-th long of the aux entry for a var-size type. Callers that fill a fixed-width NULL
+     * pattern read longs 0..3.
+     */
+    long getNullLong(int longIndex);
+
+    /**
      * The tag this driver serves. Exactly one driver instance exists per non-pseudo tag.
      */
     ColumnTypeTag getTag();
+
+    /**
+     * Whether the data vector can hold a NULL: false only for the types where every bit
+     * pattern is a value (BOOLEAN, BYTE, SHORT, CHAR), whose column tops read as leading
+     * default values rather than NULLs.
+     */
+    boolean hasNullSentinel();
+
+    /**
+     * Creates the appender that writes one NULL of this type at the current append position,
+     * for a writer's per-column null setters. Called once per column when the writer opens it.
+     */
+    Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem);
+
+    /**
+     * Fills {@code count} values of this type at {@code addr} with NULL in one native call.
+     * A no-op for var-size types, whose NULLs live in the aux vector.
+     */
+    void setNull(long addr, long count);
 
     /**
      * The tag's constant name, e.g. {@code GEOBYTE}; unlike {@link ColumnType#nameOf(int)}

@@ -37,6 +37,29 @@ import io.questdb.std.str.LPSZ;
 public interface ColumnTypeDriver extends TypeDriver {
 
     /**
+     * Var-size NULLs are encoded in the aux vector, so the appender is {@link #appendNull}.
+     */
+    @Override
+    default Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
+        return () -> appendNull(auxMem, dataMem);
+    }
+
+    /**
+     * Every var-size type encodes NULL.
+     */
+    @Override
+    default boolean hasNullSentinel() {
+        return true;
+    }
+
+    /**
+     * Var-size NULLs live in the aux vector; there is nothing to fill in the data vector.
+     */
+    @Override
+    default void setNull(long addr, long count) {
+    }
+
+    /**
      * Appends null encoding to the memory.
      *
      * @param auxMem  the aux memory (fixed part)

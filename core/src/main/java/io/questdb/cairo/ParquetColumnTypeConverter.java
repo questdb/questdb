@@ -218,7 +218,7 @@ final class ParquetColumnTypeConverter {
         final long elementSize = ColumnType.sizeOf(sourceType);
         final int argument1 = ColumnType.isDecimal(sourceType) ? ColumnType.getDecimalPrecision(sourceType) : 0;
         final int argument2 = ColumnType.isDecimal(sourceType) ? ColumnType.getDecimalScale(sourceType) : 0;
-        final int leadingNulls = ColumnType.isNoNullSentinelFixedType(sourceType) ? columnTop : 0;
+        final int leadingNulls = ColumnType.getTypeDriver(sourceType).hasNullSentinel() ? 0 : columnTop;
 
         for (int i = 0; i < rowCount; i++) {
             sink.clear();
@@ -260,7 +260,7 @@ final class ParquetColumnTypeConverter {
         final long elementSize = ColumnType.sizeOf(sourceType);
         final int argument1 = ColumnType.isDecimal(sourceType) ? ColumnType.getDecimalPrecision(sourceType) : 0;
         final int argument2 = ColumnType.isDecimal(sourceType) ? ColumnType.getDecimalScale(sourceType) : 0;
-        final int leadingNulls = ColumnType.isNoNullSentinelFixedType(sourceType) ? columnTop : 0;
+        final int leadingNulls = ColumnType.getTypeDriver(sourceType).hasNullSentinel() ? 0 : columnTop;
 
         for (int i = 0; i < rowCount; i++) {
             sink.clear();
@@ -527,7 +527,7 @@ final class ParquetColumnTypeConverter {
             } else if (columnDataAddress == 0) {
                 final long nullFixedSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
                 final long nullFixedBuffer = Unsafe.malloc(nullFixedSize, memoryTag);
-                TableUtils.setNull(columnType, nullFixedBuffer, rowGroupSize);
+                ColumnType.getTypeDriver(columnType).setNull(nullFixedBuffer, rowGroupSize);
                 columnDataAddress = nullFixedBuffer;
                 ownedBuffers.setQuick(slot, nullFixedBuffer);
                 ownedBuffers.setQuick(slot + 1, nullFixedSize);
