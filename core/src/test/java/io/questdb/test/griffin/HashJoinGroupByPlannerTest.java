@@ -636,8 +636,8 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     @Test
     public void testRightJoinBuildSizeBound() throws Exception {
         assertMemoryLeak(() -> {
-            Assert.assertEquals(32 * Numbers.SIZE_1MB, new DefaultCairoConfiguration(root).getSqlParallelHashJoinGroupByRightJoinMaxBuildSize());
-            Assert.assertEquals(32 * Numbers.SIZE_1MB, configuration.getSqlParallelHashJoinGroupByRightJoinMaxBuildSize());
+            Assert.assertEquals(256 * Numbers.SIZE_1MB, new DefaultCairoConfiguration(root).getSqlParallelHashJoinGroupByRightJoinMaxBuildSize());
+            Assert.assertEquals(256 * Numbers.SIZE_1MB, configuration.getSqlParallelHashJoinGroupByRightJoinMaxBuildSize());
             createTables();
             // r and p have 5 rows each. A build row is an 8-byte link plus, when the build has payload
             // columns, the 8-byte id of its row: 16 bytes whatever the number and width of the payload
