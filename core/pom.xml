@@ -143,8 +143,8 @@
                     </archive>
                     <excludes>
                         <!-- rust-maven-plugin copies the crate's [[bin]] targets (pm_inspect, pm_generate)
-                             next to libquestdbr; the build-rust-library profile deletes them at
-                             process-classes and this exclusion keeps them out of the jar regardless. -->
+                             next to libquestdbr; the build-rust-library profile deletes them right after
+                             the Rust build and this exclusion keeps them out of the jar regardless. -->
                         <exclude>io/questdb/bin/**/pm_*</exclude>
                     </excludes>
                 </configuration>
@@ -576,6 +576,29 @@
             </activation>
             <build>
                 <plugins>
+                    <!--
+                    Builds the Rust native library (libquestdbr) from source.
+                    The binary is placed in target/classes/io/questdb/bin/<platform>/
+                    where Os.java picks it up via the classpath. Skip with -DskipNative.
+                    -->
+                    <plugin>
+                        <groupId>org.questdb</groupId>
+                        <artifactId>rust-maven-plugin</artifactId>
+                        <version>1.2.0</version>
+                        <executions>
+                            <execution>
+                                <id>qdbr-build</id>
+                                <goals>
+                                    <goal>build</goal>
+                                </goals>
+                                <configuration>
+                                    <path>${qdbr.path}</path>
+                                    <release>${qdbr.release}</release>
+                                    <copyTo>${project.build.directory}/classes/io/questdb/bin/${platform.dir.name}</copyTo>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-antrun-plugin</artifactId>
@@ -601,10 +624,12 @@
                             </execution>
                             <!-- rust-maven-plugin 1.2.0 copies every [[bin]] target of the crate (pm_inspect,
                                  pm_generate) together with the cdylib into copyTo. Those CLI tools must not
-                                 ship in questdb.jar, so remove them once the plugin has run. -->
+                                 ship in questdb.jar, so remove them in the same compile phase: Maven runs
+                                 same-phase executions in POM declaration order, which is why this plugin
+                                 is declared after rust-maven-plugin. -->
                             <execution>
                                 <id>remove-rust-cli-binaries</id>
-                                <phase>process-classes</phase>
+                                <phase>compile</phase>
                                 <goals>
                                     <goal>run</goal>
                                 </goals>
@@ -616,29 +641,6 @@
                                             </fileset>
                                         </delete>
                                     </target>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                    <!--
-                    Builds the Rust native library (libquestdbr) from source.
-                    The binary is placed in target/classes/io/questdb/bin/<platform>/
-                    where Os.java picks it up via the classpath. Skip with -DskipNative.
-                    -->
-                    <plugin>
-                        <groupId>org.questdb</groupId>
-                        <artifactId>rust-maven-plugin</artifactId>
-                        <version>1.2.0</version>
-                        <executions>
-                            <execution>
-                                <id>qdbr-build</id>
-                                <goals>
-                                    <goal>build</goal>
-                                </goals>
-                                <configuration>
-                                    <path>${qdbr.path}</path>
-                                    <release>${qdbr.release}</release>
-                                    <copyTo>${project.build.directory}/classes/io/questdb/bin/${platform.dir.name}</copyTo>
                                 </configuration>
                             </execution>
                         </executions>

@@ -354,8 +354,8 @@ normal = profile(core_pom, "build-rust-library")
 normal_text = ET.tostring(normal, encoding="unicode")
 if "process-resources" not in normal_text:
     raise SystemExit("normal build does not remove stale Rust natives at process-resources")
-if "process-classes" not in normal_text or "**/pm_*" not in normal_text:
-    raise SystemExit("normal build does not remove the Rust CLI binaries at process-classes")
+if "remove-rust-cli-binaries" not in normal_text or "**/pm_*" not in normal_text:
+    raise SystemExit("normal build does not remove the Rust CLI binaries after the Rust build")
 
 jar_plugin = core_pom.find(".//m:build/m:plugins/m:plugin[m:artifactId='maven-jar-plugin']", namespace)
 if jar_plugin is None or "io/questdb/bin/**/pm_*" not in ET.tostring(jar_plugin, encoding="unicode"):
