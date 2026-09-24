@@ -386,6 +386,13 @@ public final class IntHashJoinBuild implements Closeable {
         return 1 << partitionBits;
     }
 
+    /** Rows of this partition of a parallel build, once the partitions are planned. */
+    public long getPartitionRowCount(int partition) {
+        assert frameCount > 0 && partition >= 0 && partition < 1 << partitionBits;
+        final long end = partition + 1 < 1 << partitionBits ? partitionStarts[partition + 1] : heap.getRowCount();
+        return end - partitionStarts[partition];
+    }
+
     /** Rows the frames of a parallel build kept, once every frame is partitioned. */
     public long getPartitionedRowCount() {
         final long stride = getBucketStride();

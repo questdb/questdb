@@ -63,20 +63,41 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
 
     @Test
     public void testConcurrentQueriesWithOwnerWorkStealing() throws Exception {
-        assertConcurrentQueries(null);
+        assertConcurrentQueries(null, false);
     }
 
     @Test
     public void testConcurrentQueriesWithLegacyWorkers() throws Exception {
-        assertConcurrentQueries(WorkerPoolMode.LEGACY);
+        assertConcurrentQueries(WorkerPoolMode.LEGACY, false);
     }
 
     @Test
     public void testConcurrentQueriesWithFiberWorkers() throws Exception {
-        assertConcurrentQueries(WorkerPoolMode.FIBER_HOST);
+        assertConcurrentQueries(WorkerPoolMode.FIBER_HOST, false);
     }
 
-    private void assertConcurrentQueries(WorkerPoolMode mode) throws Exception {
+    // The builds of INT and SYMBOL keys run in rounds of about 40 tasks, one per page frame of up to 31
+    // rows, then one per hash partition. Fiber workers batch round tasks by their rows, as they batch
+    // frames, so they must see each task's own row count rather than a probe frame's.
+    @Test
+    public void testConcurrentQueriesWithOwnerWorkStealingAndParallelBuild() throws Exception {
+        assertConcurrentQueries(null, true);
+    }
+
+    @Test
+    public void testConcurrentQueriesWithLegacyWorkersAndParallelBuild() throws Exception {
+        assertConcurrentQueries(WorkerPoolMode.LEGACY, true);
+    }
+
+    @Test
+    public void testConcurrentQueriesWithFiberWorkersAndParallelBuild() throws Exception {
+        assertConcurrentQueries(WorkerPoolMode.FIBER_HOST, true);
+    }
+
+    private void assertConcurrentQueries(WorkerPoolMode mode, boolean isParallelBuild) throws Exception {
+        if (isParallelBuild) {
+            HashJoinBuildMode.PARALLEL.applyProperties(node1.getConfigurationOverrides());
+        }
         assertMemoryLeak(() -> {
             TestWorkerPool pool = mode == null ? null : new TestWorkerPool(4, mode);
             TestUtils.execute(pool, (db, compiler, ignored) -> {
@@ -141,10 +162,13 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
                                     context.with(AllowAllSecurityContext.INSTANCE, null, null, -1, breaker);
                                     try (RecordCursorFactory factory = db.select(queries[query], context)) {
                                         AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
+                                        // The first two key shapes take the INT layout, which builds in rounds.
+                                        final boolean isRoundsBuild = isParallelBuild && query < 2 * intKeyQueries.length;
                                         for (int run = 0; run < 4; run++) {
                                             breaker.reset();
                                             boolean cancel = query % 3 == 0 && run == 1;
                                             try (RecordCursor cursor = factory.getCursor(context)) {
+                                                Assert.assertEquals(queries[query], isRoundsBuild, fused.getAtom().isBuiltInRounds());
                                                 acquired.await(20, TimeUnit.SECONDS);
                                                 if (cancel) {
                                                     breaker.cancel();
@@ -175,7 +199,8 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
                         }
                         TestUtils.joinThreads(owners);
                         if (failure.get() != null) {
-                            throw new AssertionError("mode=" + mode + ", format=" + format + ", threshold=" + threshold, failure.get());
+                            throw new AssertionError("mode=" + mode + ", parallelBuild=" + isParallelBuild + ", format=" + format
+                                    + ", threshold=" + threshold, failure.get());
                         }
                     }
                 }

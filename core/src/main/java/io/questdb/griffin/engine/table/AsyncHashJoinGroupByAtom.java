@@ -58,6 +58,7 @@ import io.questdb.griffin.engine.join.SymbolKeyTranslator;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -114,6 +115,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     // The INT layout's only probe key column, -1 when the key sinks stage the key instead.
     private final int probeKeyColumn;
     private final ObjList<HashJoinGroupByRecord> records = new ObjList<>();
+    // The rows each task of a parallel build's round processes, by which fiber workers batch tasks.
+    private final LongList roundTaskRowCounts = new LongList();
     private final long rowsPerPartition;
     private final ObjList<Slot> slots = new ObjList<>();
     // One shared translation cache per SYMBOL key column; empty when the key has none.
@@ -626,11 +629,19 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         intBuild.open(memoryTracker, circuitBreaker);
         final int frameCount = buildFrames.getFrameCount();
         intBuild.beginPartitioning(frameCount, buildFrames.getRowCount(), rowsPerPartition);
-        frameSequence.dispatchRoundAndAwait(PARTITION_FRAME, frameCount);
+        roundTaskRowCounts.clear();
+        for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+            roundTaskRowCounts.add(buildFrames.getFrameRowCount(frameIndex));
+        }
+        frameSequence.dispatchRoundAndAwait(PARTITION_FRAME, roundTaskRowCounts);
         // The kept rows are exact here, filtered builds included, so they may presize the tables.
         final long rowCount = intBuild.getPartitionedRowCount();
         final int partitionCount = intBuild.planPartitions(rowsPerPartition, getKeyCountHint(rowCount));
-        frameSequence.dispatchRoundAndAwait(BUILD_PARTITION, partitionCount);
+        roundTaskRowCounts.clear();
+        for (int partition = 0; partition < partitionCount; partition++) {
+            roundTaskRowCounts.add(intBuild.getPartitionRowCount(partition));
+        }
+        frameSequence.dispatchRoundAndAwait(BUILD_PARTITION, roundTaskRowCounts);
         frozen = intBuild.freezePartitioned(buildFrames);
         isBuiltInRounds = true;
         isBuildPartitioned = partitionCount > 1;
@@ -859,7 +870,15 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                 // heap order would walk the frames once per partition. Each frame copies the rows it
                 // kept instead, on the workers.
                 buildFrames.beginCopy(frozen, slots.size(), circuitBreaker);
-                frameSequence.dispatchRoundAndAwait(COPY_FRAME_PAYLOAD, buildFrames.getFrameCount());
+                roundTaskRowCounts.clear();
+                for (int frameIndex = 0, n = buildFrames.getFrameCount(); frameIndex < n; frameIndex++) {
+                    long rows = 0;
+                    for (int partition = 0, partitionCount = intBuild.getPartitionCount(); partition < partitionCount; partition++) {
+                        rows += intBuild.getSegmentRowCount(frameIndex, partition);
+                    }
+                    roundTaskRowCounts.add(rows);
+                }
+                frameSequence.dispatchRoundAndAwait(COPY_FRAME_PAYLOAD, roundTaskRowCounts);
                 buildFrames.publishCopy();
             } else {
                 buildFrames.copyPayload(frozen, circuitBreaker);

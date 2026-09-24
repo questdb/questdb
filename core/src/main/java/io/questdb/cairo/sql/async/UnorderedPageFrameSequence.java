@@ -90,6 +90,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private PageFrameMemoryRecord localRecord;
     // Set while a round of tasks other than the frames runs; see dispatchRoundAndAwait().
     private UnorderedPageFrameReducer roundReducer;
+    // The running round's task sizes, borrowed from the caller for the round.
+    private LongList roundTaskRowCounts;
     // Per-query native memory tracker captured from the owning SqlExecutionContext
     // at workload start. Null when no per-query limit is configured. Workers read
     // this off the task via task.getFrameSequence().getMemoryTracker() to charge
@@ -191,18 +193,22 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     }
 
     /**
-     * Dispatches {@code taskCount} tasks of a reducer other than the frames' one and waits for
-     * them, the way {@link #dispatchAndAwait()} dispatches the frames. An atom that prepares shared
-     * state on the workers runs such rounds from {@code init()}, or before the frames are
-     * dispatched. The reducer receives the task index where a frame reducer receives the frame
-     * index. Whether this returns or throws, no task of the round is still queued or running, so
-     * the caller may release what the round's tasks used.
+     * Dispatches a round of tasks of a reducer other than the frames' one and waits for them, the
+     * way {@link #dispatchAndAwait()} dispatches the frames. An atom that prepares shared state on
+     * the workers runs such rounds from {@code init()}, or before the frames are dispatched. The
+     * round has one task per entry of {@code taskRowCounts}, which holds the rows each task
+     * processes: while the round runs, {@link #getFrameRowCount(int)} answers from it, since the
+     * fiber dispatcher batches tasks by their rows as it batches frames. The reducer receives the
+     * task index where a frame reducer receives the frame index. Whether this returns or throws, no
+     * task of the round is still queued or running, so the caller may release what the round's
+     * tasks used.
      */
-    public void dispatchRoundAndAwait(UnorderedPageFrameReducer roundReducer, int taskCount) {
+    public void dispatchRoundAndAwait(UnorderedPageFrameReducer roundReducer, LongList taskRowCounts) {
         assert this.roundReducer == null && (queuedCount == 0 || doneLatch.done(queuedCount));
         this.roundReducer = roundReducer;
+        this.roundTaskRowCounts = taskRowCounts;
         try {
-            dispatchAndAwait(taskCount);
+            dispatchAndAwait(taskRowCounts.size());
         } catch (Throwable th) {
             // The dispatch loop can throw with tasks still queued; they must not outlive the round.
             try {
@@ -212,10 +218,12 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                 th.addSuppressed(drainFailure);
             }
             this.roundReducer = null;
+            this.roundTaskRowCounts = null;
             throw th;
         }
         // Every task counted down, so the next round or the frames start from a clean latch.
         this.roundReducer = null;
+        this.roundTaskRowCounts = null;
         doneLatch.reset();
         queuedCount = 0;
         reduceStartedCounter.set(0);
@@ -399,8 +407,10 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         return frameCount;
     }
 
+    /** Rows of the frame, or, while a round runs, of the round's task with this index. */
     public long getFrameRowCount(int frameIndex) {
-        return frameRowCounts.getQuick(frameIndex);
+        final LongList roundTaskRowCounts = this.roundTaskRowCounts;
+        return roundTaskRowCounts != null ? roundTaskRowCounts.getQuick(frameIndex) : frameRowCounts.getQuick(frameIndex);
     }
 
     public long getId() {
@@ -504,6 +514,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         frameCount = 0;
         queuedCount = 0;
         roundReducer = null;
+        roundTaskRowCounts = null;
         isReadyToDispatch = false;
         // Drop the borrowed tracker reference; the provider owns the native block.
         memoryTracker = null;
