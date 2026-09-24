@@ -27,8 +27,10 @@ package io.questdb.test.metrics;
 import io.questdb.DefaultServerConfiguration;
 import io.questdb.Metrics;
 import io.questdb.WorkerPoolManager;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -38,9 +40,11 @@ import io.questdb.metrics.MetricSnapshotVisitor;
 import io.questdb.metrics.MetricType;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.metrics.MetricsPersistenceJob;
+import io.questdb.metrics.MetricsRegistryImpl;
 import io.questdb.metrics.Target;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
@@ -267,6 +271,11 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDoesNotReapDroppedTableMetricsWhenScrapingEnabled() throws Exception {
+        assertDroppedTableMetricsReaping(true, false);
+    }
+
+    @Test
     public void testEvolvesCompatibleSchema() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -412,6 +421,11 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
                 Assert.assertTrue(metadata.getColumnIndexQuiet("precreated_only") > -1);
             }
         });
+    }
+
+    @Test
+    public void testReapsDroppedTableMetricsWithPersistenceOnly() throws Exception {
+        assertDroppedTableMetricsReaping(false, true);
     }
 
     @Test
@@ -582,6 +596,55 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
                             transient_metric
                             42
                             """);
+        });
+    }
+
+    private static void assertDroppedTableMetricsReaping(boolean isScrapeEnabled, boolean isExpectedReapEnabled) throws Exception {
+        assertMemoryLeak(() -> {
+            final Metrics metrics = new Metrics(true, isScrapeEnabled, new MetricsRegistryImpl());
+            final ObjList<Boolean> reapFlags = new ObjList<>();
+            metrics.getRegistry().addTarget(new Target() {
+                @Override
+                public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
+                }
+
+                @Override
+                public void snapshot(MetricSnapshotVisitor visitor) {
+                    reapFlags.add(visitor.isReapDroppedTableMetricsEnabled());
+                }
+            });
+
+            try (
+                    CairoEngine localEngine = new CairoEngine(new DefaultCairoConfiguration(temp.newFolder().getAbsolutePath()) {
+                        @Override
+                        public Metrics getMetrics() {
+                            return metrics;
+                        }
+                    });
+                    MetricsPersistenceJob job = new MetricsPersistenceJob(localEngine, new MetricsConfiguration() {
+                        @Override
+                        public boolean isEnabled() {
+                            return isScrapeEnabled;
+                        }
+
+                        @Override
+                        public boolean isPersistEnabled() {
+                            return true;
+                        }
+
+                        @Override
+                        public boolean isPersistParquetEnabled() {
+                            return false;
+                        }
+                    })
+            ) {
+                job.runSerially();
+                // Assert outside snapshot(), since runSerially() catches Throwable.
+                Assert.assertTrue("persistence must remain enabled", job.isEnabled());
+                Assert.assertEquals("discovery and sample snapshots", 2, reapFlags.size());
+                Assert.assertFalse("schema discovery must not reap", reapFlags.getQuick(0));
+                Assert.assertEquals("sample reap policy", isExpectedReapEnabled, reapFlags.getQuick(1).booleanValue());
+            }
         });
     }
 
