@@ -25,6 +25,12 @@ defaults are true, so a release commit and tag can already be remote before a
 later step fails. Do not run `release:perform`; it does not publish Maven
 Central and must not activate the Central profile.
 
+The release plugin's own dependency check rejects SNAPSHOT dependencies and
+plugins before it rewrites any POM. `preparationProfiles` also activates
+`release-preparation-safety`, but its `requireReleaseDeps` rule is inert
+during preparation: the project is still a SNAPSHOT while the preparation
+goals run, and `onlyWhenRelease` skips the rule for SNAPSHOT projects.
+
 After preparation, inspect the POM at the immutable tag. Stop before Central
 deployment if its client pin or any other external dependency is a SNAPSHOT.
 Do not repair the tag with `local-client`, a substituted branch jar, or a tag
@@ -62,12 +68,16 @@ root, publish the verified aggregate jar with:
 
 ```bash
 mvn -B -pl core -am deploy -DskipTests -Dmaven.test.skip=true -DskipNative \
-  -P build-web-console,include-rust-native-artifacts,maven-central-release
+  -P build-web-console,include-rust-native-artifacts,maven-central-release,release-preparation-safety
 ```
 
 Do not add `local-client`. The active-profile Central gate, staged native
 validation, and verify-phase core-jar check fail before Central publication if
-the dependency, provenance, or native inputs are wrong.
+the dependency, provenance, or native inputs are wrong. The tag's POM is a
+release version, so the `requireReleaseDeps` rule fires here: both the
+`maven-central-release` profile and `release-preparation-safety` carry it, and
+either rejects a SNAPSHOT client pin or any other SNAPSHOT dependency before
+Central publication.
 
 ## GitHub assets and AMIs
 

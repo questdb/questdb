@@ -21,7 +21,6 @@ RUN apt-get update \
 # 2) Install Rust
 ENV HOME=/root
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path --profile minimal
-ENV NO_RUST_PATH="$PATH"
 ENV PATH="$HOME/.cargo/bin:$PATH"
 RUN rustc --version --verbose
 

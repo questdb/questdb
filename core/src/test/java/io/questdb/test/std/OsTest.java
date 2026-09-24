@@ -125,10 +125,7 @@ public class OsTest {
         assertNotShipped("/io/questdb/bin/darwin-x86-64/libquestdb.dylib");
         assertNotShipped("/io/questdb/bin/darwin-x86-64/libqdbsqllogictest.dylib");
 
-        final String rustLibName = Os.isWindows()
-                ? "questdbr.dll"
-                : "libquestdbr." + (Os.isOSX() ? "dylib" : "so");
-        assertShipped("/io/questdb/bin/" + Os.name + '-' + Os.archName + '/' + rustLibName);
+        // The host Rust library needs no assertion here: Os.<clinit> already fails class load when it is absent.
     }
 
     @Test

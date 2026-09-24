@@ -141,6 +141,12 @@
                             <Build-Commit-Hash>${buildNumber}</Build-Commit-Hash>
                         </manifestEntries>
                     </archive>
+                    <excludes>
+                        <!-- rust-maven-plugin copies the crate's [[bin]] targets (pm_inspect, pm_generate)
+                             next to libquestdbr; the build-rust-library profile deletes them at
+                             process-classes and this exclusion keeps them out of the jar regardless. -->
+                        <exclude>io/questdb/bin/**/pm_*</exclude>
+                    </excludes>
                 </configuration>
             </plugin>
             <plugin>
@@ -326,6 +332,24 @@
                                             <profiles>include-rust-native-artifacts</profiles>
                                             <all>true</all>
                                         </requireActiveProfile>
+                                    </rules>
+                                </configuration>
+                            </execution>
+                            <!-- The tag's POM is a release version, so onlyWhenRelease makes this rule
+                                 fire on every Central deploy and reject a SNAPSHOT client pin or any
+                                 other SNAPSHOT dependency before publication. -->
+                            <execution>
+                                <id>require-release-dependencies-for-central</id>
+                                <phase>validate</phase>
+                                <goals>
+                                    <goal>enforce</goal>
+                                </goals>
+                                <configuration>
+                                    <rules>
+                                        <requireReleaseDeps>
+                                            <onlyWhenRelease>true</onlyWhenRelease>
+                                            <failWhenParentIsSnapshot>true</failWhenParentIsSnapshot>
+                                        </requireReleaseDeps>
                                     </rules>
                                 </configuration>
                             </execution>
@@ -546,6 +570,7 @@
             <id>build-rust-library</id>
             <activation>
                 <property>
+                    <!-- Defining the property with any value, including -DskipNative=false, disables the Rust build. -->
                     <name>!skipNative</name>
                 </property>
             </activation>
@@ -569,6 +594,25 @@
                                                 <include name="**/libquestdbr.so" />
                                                 <include name="**/libquestdbr.dylib" />
                                                 <include name="**/questdbr.dll" />
+                                            </fileset>
+                                        </delete>
+                                    </target>
+                                </configuration>
+                            </execution>
+                            <!-- rust-maven-plugin 1.2.0 copies every [[bin]] target of the crate (pm_inspect,
+                                 pm_generate) together with the cdylib into copyTo. Those CLI tools must not
+                                 ship in questdb.jar, so remove them once the plugin has run. -->
+                            <execution>
+                                <id>remove-rust-cli-binaries</id>
+                                <phase>process-classes</phase>
+                                <goals>
+                                    <goal>run</goal>
+                                </goals>
+                                <configuration>
+                                    <target>
+                                        <delete includeemptydirs="false">
+                                            <fileset dir="${project.build.outputDirectory}/io/questdb/bin">
+                                                <include name="**/pm_*" />
                                             </fileset>
                                         </delete>
                                     </target>
@@ -604,9 +648,6 @@
         </profile>
         <profile>
             <id>include-rust-native-artifacts</id>
-            <properties>
-                <is.rust.native.artifacts.aggregated>true</is.rust.native.artifacts.aggregated>
-            </properties>
             <build>
                 <plugins>
                     <plugin>

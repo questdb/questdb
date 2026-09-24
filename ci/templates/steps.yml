@@ -312,8 +312,10 @@ steps:
       SCCACHE_AZURE_CONNECTION_STRING: $(SCCACHE_AZURE_CONNECTION_STRING)
       CARGO_INCREMENTAL: 0
     timeoutInMinutes: 55
+    # succeeded() explicitly: see "Compile with Maven" above.
     condition: |
       and(
+        succeeded(),
         eq(variables['testset'], 'all'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true'),
         or(eq(variables['os'], 'Windows'), eq(variables['os'], 'macOS'))

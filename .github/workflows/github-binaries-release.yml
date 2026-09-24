@@ -186,7 +186,7 @@ jobs:
       - id: rust-metadata
         shell: bash
         run: |
-          echo "rust-version=$(tr '\n' ';' < .rust-version-windows)" >> "$GITHUB_OUTPUT"
+          echo "rust-version=$(tr -d '\r' < .rust-version-windows | tr '\n' ';')" >> "$GITHUB_OUTPUT"
           rm .rust-version-windows
       - id: upload
         uses: actions/upload-artifact@v6
@@ -292,18 +292,22 @@ jobs:
           fi
           grep -F 'include-rust-native-artifacts requires -DskipNative' aggregate-without-skipnative.log
           test ! -e cargo-invoked.log
-      - name: Reject a forged Central aggregate marker
+      - name: Reject Central deploy without the aggregate profile
         run: |
           set -euo pipefail
           set +e
-          mvn -B -pl core -DskipNative -Dis.rust.native.artifacts.aggregated=true -P maven-central-release validate > forged-central-marker.log 2>&1
+          mvn -B -pl core -DskipNative -P maven-central-release validate > central-without-aggregate.log 2>&1
           status=$?
           set -e
           if [[ "${status}" -eq 0 ]]; then
-            cat forged-central-marker.log >&2
+            cat central-without-aggregate.log >&2
             exit 1
           fi
-          grep -F 'Profile "include-rust-native-artifacts" is not activated.' forged-central-marker.log
+          grep -F 'Profile "include-rust-native-artifacts" is not activated.' central-without-aggregate.log
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@4d1965c9142484e48d40c19de54b5cba84953a06
+        with:
+          toolchain: nightly-2025-09-24
       - name: Regenerate THIRD_PARTY_LICENSES.txt
         run: bash ci/generate_third_party_licenses.sh
         env:
@@ -372,6 +376,9 @@ jobs:
           mapfile -t rust_libraries < <(find core/target/classes/io/questdb/bin -type f \( -name libquestdbr.so -o -name libquestdbr.dylib -o -name questdbr.dll \) | LC_ALL=C sort)
           test "${#rust_libraries[@]}" -eq 1
           test "${rust_libraries[0]}" = "core/target/classes/io/questdb/bin/linux-x86-64/libquestdbr.so"
+          # rust-maven-plugin also copies the crate's [[bin]] targets; the
+          # build-rust-library profile must have removed them again.
+          test -z "$(find core/target/classes/io/questdb/bin -type f -name 'pm_*')"
 
   package-windows:
     needs:
@@ -575,6 +582,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write
     steps:
       - uses: actions/checkout@v5
         with:
@@ -589,6 +597,14 @@ jobs:
           path: artifacts/windows
       - name: Upload or verify every GitHub release asset
         run: .github/scripts/publish-github-release-assets.sh "${GITHUB_REF_NAME}" artifacts/linux artifacts/windows
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The asset script publishes the draft with the Actions token, and GitHub
+      # does not start workflows from events caused by that token, so the
+      # release:published trigger of release_website.yml never fires. Dispatch
+      # the website rebuild explicitly instead.
+      - name: Trigger the questdb.io rebuild
+        run: gh workflow run release_website.yml --ref "${GITHUB_REF_NAME}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -614,7 +630,11 @@ jobs:
           curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
           sudo apt-get update && sudo apt-get install -y "packer=${PACKER_VERSION}-1" jq
-          packer version
+          # The runner image ships a newer Packer in /usr/local/bin, which
+          # precedes /usr/bin on PATH, so a bare "packer" would ignore the
+          # apt pin. Address the pinned binary explicitly.
+          /usr/bin/packer version | grep -F "Packer v${PACKER_VERSION}"
+          echo "PACKER_BIN=/usr/bin/packer" >> "${GITHUB_ENV}"
       - name: Refuse to replace an existing release AMI
         run: |
           AMI_REGIONS="$(.github/scripts/publish-ami-release.sh preflight "${GITHUB_REF_NAME}")"

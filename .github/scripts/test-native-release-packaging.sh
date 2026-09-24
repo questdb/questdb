@@ -107,6 +107,8 @@ with zipfile.ZipFile(jar_path, "w") as archive:
         data = (staged_root / path).read_bytes()
         if mode == "empty" and path.endswith("linux-x86-64/libquestdbr.so"):
             data = b""
+        if mode == "tampered" and path.endswith("linux-aarch64/libquestdbr.so"):
+            data = b"tampered-" + data
         archive.writestr(path, data)
     if mode == "renamed":
         archive.writestr(
@@ -145,6 +147,8 @@ name = "questdb-test/lib/" + pathlib.PurePosixPath(source).name
 payload = (staged_root / source).read_bytes()
 if mode == "empty":
     payload = b""
+if mode == "tampered":
+    payload = b"tampered-" + payload
 if mode == "wrong-name":
     name = "questdb-test/lib/libquestdbr-wrong.so"
 if mode == "wrong-path":
@@ -195,7 +199,7 @@ create_raw_inputs "${extra_raw}"
 printf 'extra\n' > "${extra_raw}/rust-linux-x64/unexpected.so"
 assert_failure stage-extra "${stage_script}" "${extra_raw}" "${temp_dir}/stage-extra"
 
-for mode in valid missing renamed extra duplicate empty; do
+for mode in valid missing renamed extra duplicate empty tampered; do
     jar_path="${temp_dir}/${mode}.jar"
     create_jar "${jar_path}" "${mode}" "${valid_stage}"
     if [[ "${mode}" == valid ]]; then
@@ -204,8 +208,10 @@ for mode in valid missing renamed extra duplicate empty; do
         assert_failure "jar-${mode}" "${jar_verifier}" "${jar_path}" "${valid_stage}"
     fi
 done
+grep -F 'checksum mismatch for Rust jar entry: io/questdb/bin/linux-aarch64/libquestdbr.so' "${temp_dir}/jar-tampered.out" > /dev/null \
+    || fail "jar verifier did not report the tampered Rust library as a checksum mismatch"
 
-for mode in valid empty wrong-name wrong-path duplicate; do
+for mode in valid empty wrong-name wrong-path duplicate tampered; do
     archive_path="${temp_dir}/runtime-${mode}.tar.gz"
     create_runtime_archive "${archive_path}" linux-x86-64 "${mode}" "${valid_stage}"
     if [[ "${mode}" == valid ]]; then
@@ -214,6 +220,8 @@ for mode in valid empty wrong-name wrong-path duplicate; do
         assert_failure "runtime-${mode}" "${runtime_verifier}" "${archive_path}" linux-x86-64 "${valid_stage}"
     fi
 done
+grep -F 'runtime checksum mismatch for questdb-test/lib/libquestdbr.so' "${temp_dir}/runtime-tampered.out" > /dev/null \
+    || fail "runtime verifier did not report the tampered Rust library as a checksum mismatch"
 
 create_incomplete_central_bundle() {
     local bundle_path="$1"
@@ -245,12 +253,16 @@ PY
 missing_sidecar_bundle="${temp_dir}/central-missing-sidecar.zip"
 create_incomplete_central_bundle "${missing_sidecar_bundle}" false
 assert_failure central-missing-sidecar \
-    "${central_bundle_verifier}" "${missing_sidecar_bundle}" "${temp_dir}/unused.jar" "${valid_stage}" --version 9.9.9
+    "${central_bundle_verifier}" "${missing_sidecar_bundle}" "${temp_dir}/valid.jar" "${valid_stage}" --version 9.9.9
+grep -F 'Central bundle entries differ' "${temp_dir}/central-missing-sidecar.out" > /dev/null \
+    || fail "Central verifier did not reject the bundle with missing sidecars through the allowlist check"
 
 duplicate_central_bundle="${temp_dir}/central-duplicate.zip"
 create_incomplete_central_bundle "${duplicate_central_bundle}" duplicate
 assert_failure central-duplicate-entry \
-    "${central_bundle_verifier}" "${duplicate_central_bundle}" "${temp_dir}/unused.jar" "${valid_stage}" --version 9.9.9
+    "${central_bundle_verifier}" "${duplicate_central_bundle}" "${temp_dir}/valid.jar" "${valid_stage}" --version 9.9.9
+grep -F 'Central bundle entries differ' "${temp_dir}/central-duplicate-entry.out" > /dev/null \
+    || fail "Central verifier did not reject the bundle with a duplicate entry through the allowlist check"
 
 valid_central_bundle="${temp_dir}/central-valid.zip"
 python3 - "${valid_central_bundle}" "${temp_dir}/valid.jar" <<'PY'
@@ -339,8 +351,15 @@ if properties is None or properties.findtext("m:rust.native.artifacts.directory"
     raise SystemExit("missing normalized native-artifact property")
 
 normal = profile(core_pom, "build-rust-library")
-if "process-resources" not in ET.tostring(normal, encoding="unicode"):
+normal_text = ET.tostring(normal, encoding="unicode")
+if "process-resources" not in normal_text:
     raise SystemExit("normal build does not remove stale Rust natives at process-resources")
+if "process-classes" not in normal_text or "**/pm_*" not in normal_text:
+    raise SystemExit("normal build does not remove the Rust CLI binaries at process-classes")
+
+jar_plugin = core_pom.find(".//m:build/m:plugins/m:plugin[m:artifactId='maven-jar-plugin']", namespace)
+if jar_plugin is None or "io/questdb/bin/**/pm_*" not in ET.tostring(jar_plugin, encoding="unicode"):
+    raise SystemExit("maven-jar-plugin does not exclude the Rust CLI binaries")
 
 aggregate = profile(core_pom, "include-rust-native-artifacts")
 aggregate_text = ET.tostring(aggregate, encoding="unicode")
@@ -352,7 +371,7 @@ if "maven-clean-plugin" in aggregate_text:
 
 central = profile(core_pom, "maven-central-release")
 central_text = ET.tostring(central, encoding="unicode")
-for required in ("requireActiveProfile", "include-rust-native-artifacts", "centralBaseUrl"):
+for required in ("requireActiveProfile", "include-rust-native-artifacts", "centralBaseUrl", "requireReleaseDeps", "onlyWhenRelease"):
     if required not in central_text:
         raise SystemExit(f"Central profile is missing {required}")
 
@@ -363,7 +382,7 @@ if "release-preparation-safety" not in release_profiles:
     raise SystemExit("release lifecycle must reject external SNAPSHOT dependencies before tagging")
 PY
 
-python3 - "${repo_dir}/.github/workflows/github-binaries-release.yml" "${repo_dir}/pkg/ami/marketplace/packer.json" "${repo_dir}/pkg/ami/marketplace/Makefile" <<'PY'
+python3 - "${repo_dir}/.github/workflows/github-binaries-release.yml" "${repo_dir}/pkg/ami/marketplace/packer.json" "${repo_dir}/pkg/ami/marketplace/Makefile" "${repo_dir}/.github/workflows/release_website.yml" <<'PY'
 import json
 import pathlib
 import sys
@@ -373,6 +392,7 @@ import yaml
 workflow_path = pathlib.Path(sys.argv[1])
 packer_path = pathlib.Path(sys.argv[2])
 makefile_path = pathlib.Path(sys.argv[3])
+website_workflow_path = pathlib.Path(sys.argv[4])
 workflow = workflow_path.read_text()
 workflow_document = yaml.load(workflow, Loader=yaml.BaseLoader)
 if not isinstance(workflow_document, dict):
@@ -392,7 +412,11 @@ for required in (
     "verify-rust-native-runtime-archive.sh",
     "Reject an aggregate build without -DskipNative",
     "Verify aggregate-to-normal transition",
-    "Reject a forged Central aggregate marker",
+    "Reject Central deploy without the aggregate profile",
+    "Trigger the questdb.io rebuild",
+    "gh workflow run release_website.yml",
+    "/usr/bin/packer version",
+    "PACKER_BIN=/usr/bin/packer",
     "test-native-release-packaging.sh",
     "RUN_MAVEN_LIFECYCLE_TESTS=1",
     "rust-native-libs",
@@ -436,6 +460,17 @@ github_checkout_index = next((index for index, step in enumerate(github_steps) i
 github_helper_index = next((index for index, step in enumerate(github_steps) if isinstance(step, dict) and "publish-github-release-assets.sh" in str(step.get("run", ""))), None)
 if github_checkout_index is None or github_helper_index is None or github_checkout_index >= github_helper_index:
     raise SystemExit("GitHub publication must check out the helper before invoking it")
+github_website_index = next((index for index, step in enumerate(github_steps) if isinstance(step, dict) and "gh workflow run release_website.yml" in str(step.get("run", ""))), None)
+if github_website_index is None or github_website_index <= github_helper_index:
+    raise SystemExit("GitHub publication must dispatch the questdb.io rebuild after publishing the release assets")
+github_permissions = jobs["publish-github"].get("permissions")
+if not isinstance(github_permissions, dict) or github_permissions.get("contents") != "write" or github_permissions.get("actions") != "write":
+    raise SystemExit("GitHub publication needs contents: write and actions: write to publish assets and dispatch the website rebuild")
+
+website_workflow = yaml.load(website_workflow_path.read_text(), Loader=yaml.BaseLoader)
+website_triggers = website_workflow.get("on") if isinstance(website_workflow, dict) else None
+if not isinstance(website_triggers, dict) or "workflow_dispatch" not in website_triggers:
+    raise SystemExit("release_website.yml has no workflow_dispatch trigger, so the Actions-token release publication cannot start it")
 
 ami_job = jobs["publish-ami"]
 ami_env = ami_job.get("env")
@@ -555,7 +590,8 @@ EOF
     [[ "$(grep -c '^edit$' "${call_log}")" == 1 ]] || fail "GitHub release was not finalized after uploads"
 
     run_github_fixture equal
-    [[ ! -s "${call_log}" || "$(cat "${call_log}")" == "edit" ]] || fail "checksum-equal GitHub assets were unexpectedly uploaded"
+    [[ "$(grep -c '^upload ' "${call_log}" || true)" == 0 ]] || fail "checksum-equal GitHub assets were unexpectedly uploaded"
+    [[ "$(grep -c '^edit$' "${call_log}" || true)" == 1 ]] || fail "checksum-equal GitHub release was not finalized exactly once"
 
     run_github_fixture mismatch
     [[ ! -s "${call_log}" ]] || fail "mismatched GitHub asset reached an external side effect"
@@ -615,6 +651,15 @@ EOF
     grep -F 'make install_aws_plugin' "${call_log}" > /dev/null || fail "AMI publication did not install the pinned plugin"
     grep -F 'make build_release AMI_REGIONS=eu-west-1,us-west-2 QUESTDB_VERSION=9.9.9 FORCE_DEREGISTER=false FORCE_DELETE_SNAPSHOT=false' "${call_log}" > /dev/null \
         || fail "AMI publication did not use non-destructive Packer arguments"
+    grep -F 'make install_aws_plugin packer=packer' "${call_log}" > /dev/null \
+        || fail "AMI publication did not fall back to the PATH Packer without PACKER_BIN"
+
+    : > "${call_log}"
+    PATH="${fake_bin}:/usr/bin:/bin" AWS_ACCESS_KEY_ID=fixture AWS_SECRET_ACCESS_KEY=fixture AWS_DEFAULT_REGION=eu-west-1 AMI_FIXTURE_MODE=absent AMI_FIXTURE_CALL_LOG="${call_log}" PACKER_BIN=/usr/bin/packer-fixture "${script_dir}/publish-ami-release.sh" publish 9.9.9 "${regions}"
+    grep -F 'make install_aws_plugin packer=/usr/bin/packer-fixture' "${call_log}" > /dev/null \
+        || fail "AMI publication did not install the plugin with the pinned Packer binary"
+    grep -F 'make build_release AMI_REGIONS=eu-west-1,us-west-2 QUESTDB_VERSION=9.9.9 FORCE_DEREGISTER=false FORCE_DELETE_SNAPSHOT=false packer=/usr/bin/packer-fixture' "${call_log}" > /dev/null \
+        || fail "AMI publication did not build with the pinned Packer binary"
 }
 
 verify_github_publication_recovery
@@ -701,10 +746,12 @@ EOF
     local normal_rust_count
     normal_rust_count="$(find "${lifecycle_root}/core/target/classes/io/questdb/bin" -type f \( -name 'libquestdbr.so' -o -name 'libquestdbr.dylib' -o -name 'questdbr.dll' \) | wc -l | tr -d ' ')"
     [[ "${normal_rust_count}" == 1 ]] || fail "normal compile did not transition to exactly one host Rust library"
+    [[ -z "$(find "${lifecycle_root}/core/target/classes/io/questdb/bin" -type f -name 'pm_*')" ]] \
+        || fail "normal compile left Rust CLI binaries (pm_*) in the packaged classpath"
 
-    assert_failure forged-central-marker bash -c "cd '${lifecycle_root}' && mvn -B -pl core -am validate -DskipNative -Dis.rust.native.artifacts.aggregated=true -P maven-central-release"
-    grep -F 'Profile "include-rust-native-artifacts" is not activated.' "${temp_dir}/forged-central-marker.out" > /dev/null \
-        || fail "forged Central marker did not fail through RequireActiveProfile"
+    assert_failure central-without-aggregate bash -c "cd '${lifecycle_root}' && mvn -B -pl core -am validate -DskipNative -P maven-central-release"
+    grep -F 'Profile "include-rust-native-artifacts" is not activated.' "${temp_dir}/central-without-aggregate.out" > /dev/null \
+        || fail "Central deploy without the aggregate profile did not fail through RequireActiveProfile"
 
     read -r fixture_project_version fixture_client_version < <(python3 - "${lifecycle_root}/pom.xml" "${lifecycle_root}/core/pom.xml" <<'PY'
 import sys
@@ -798,7 +845,7 @@ PY
             -DskipTests -Dmaven.test.skip=true -DskipNative -DskipPublishing=true \
             -Dcentral.base.url="http://127.0.0.1:${endpoint_port}" \
             -DoutputDirectory="${central_output}" \
-            -P build-web-console,include-rust-native-artifacts,maven-central-release
+            -P build-web-console,include-rust-native-artifacts,maven-central-release,release-preparation-safety
     ) > "${central_log}" 2>&1
     kill "${central_endpoint_pid}"
     wait "${central_endpoint_pid}" 2>/dev/null || true
@@ -856,19 +903,6 @@ PY
         "${repo_dir}/" "${probe_root}/"
     probe_project_version="${fixture_release_version}-fixture-SNAPSHOT"
     probe_snapshot_client_version="${fixture_release_client_version}-fixture-SNAPSHOT"
-    python3 - "${probe_root}" "${fixture_project_version}" "${probe_project_version}" "${fixture_client_version}" "${fixture_release_client_version}" <<'PY'
-from pathlib import Path
-import sys
-
-repository, project_version, probe_project_version, client_version, release_client_version = sys.argv[1:]
-for path in Path(repository).rglob('pom.xml'):
-    if 'java-questdb-client' in path.parts:
-        continue
-    text = path.read_text()
-    text = text.replace(project_version, probe_project_version)
-    text = text.replace(client_version, release_client_version)
-    path.write_text(text)
-PY
     probe_remote="${temp_dir}/release-prepare-remote.git"
     probe_receives="${temp_dir}/release-prepare-receives.log"
     git init --bare "${probe_remote}" > /dev/null
@@ -878,6 +912,26 @@ PY
 cat >> '${probe_receives}'
 EOF
     chmod +x "${probe_remote}/hooks/pre-receive"
+    # Point the root POM's SCM at the audited local remote before either probe
+    # runs, so neither the negative nor the safe release:prepare can reach GitHub.
+    python3 - "${probe_root}" "${probe_remote}" "${fixture_project_version}" "${probe_project_version}" "${fixture_client_version}" "${fixture_release_client_version}" <<'PY'
+from pathlib import Path
+import sys
+
+repository, remote, project_version, probe_project_version, client_version, release_client_version = sys.argv[1:]
+root = Path(repository) / 'pom.xml'
+root_text = root.read_text()
+root_text = root_text.replace('scm:git:https://github.com/questdb/questdb.git', f'scm:git:file://{remote}')
+root_text = root_text.replace('https://github.com/questdb/questdb', f'file://{remote}')
+root.write_text(root_text)
+for path in Path(repository).rglob('pom.xml'):
+    if 'java-questdb-client' in path.parts:
+        continue
+    text = path.read_text()
+    text = text.replace(project_version, probe_project_version)
+    text = text.replace(client_version, release_client_version)
+    path.write_text(text)
+PY
     (
         cd "${probe_root}"
         git init -b master > /dev/null
@@ -905,7 +959,8 @@ PY
     : > "${probe_receives}"
     probe_head_before="$(git -C "${probe_root}" rev-parse HEAD)"
     assert_failure release-prepare-snapshot bash -c "cd '${probe_root}' && mvn -B -pl core -am release:prepare -DpreparationGoals=validate -DautoVersionSubmodules=true"
-    grep -qi 'snapshot' "${temp_dir}/release-prepare-snapshot.out" || fail "release:prepare did not reject the external snapshot client"
+    grep -F "Can't release project due to non released dependencies" "${temp_dir}/release-prepare-snapshot.out" > /dev/null \
+        || fail "release:prepare did not reject the external snapshot client"
     [[ "$(git -C "${probe_root}" rev-parse HEAD)" == "${probe_head_before}" ]] || fail "snapshot release:prepare created a local release commit"
     git -C "${probe_root}" diff --quiet || fail "snapshot release:prepare modified a tracked file"
     [[ -z "$(git -C "${probe_root}" tag -l)" ]] || fail "snapshot release:prepare created a local tag"
@@ -913,16 +968,11 @@ PY
     git -C "${probe_root}" clean -fd > /dev/null
     printf 'snapshot release:prepare negative probe passed\n'
 
-    python3 - "${probe_root}" "${probe_remote}" "${probe_snapshot_client_version}" "${fixture_release_client_version}" <<'PY'
+    python3 - "${probe_root}" "${probe_snapshot_client_version}" "${fixture_release_client_version}" <<'PY'
 from pathlib import Path
 import sys
 
-repository, remote, snapshot_client_version, release_client_version = sys.argv[1:]
-root = Path(repository) / 'pom.xml'
-root_text = root.read_text()
-root_text = root_text.replace('scm:git:https://github.com/questdb/questdb.git', f'scm:git:file://{remote}')
-root_text = root_text.replace('https://github.com/questdb/questdb', f'file://{remote}')
-root.write_text(root_text)
+repository, snapshot_client_version, release_client_version = sys.argv[1:]
 for path in Path(repository).rglob('pom.xml'):
     if 'java-questdb-client' in path.parts:
         continue

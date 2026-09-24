@@ -58,14 +58,17 @@ case "${command}" in
             echo "AMI regions must be supplied after a successful preflight" >&2
             exit 1
         fi
+        # PACKER_BIN points at the apt-pinned binary; the runner image ships a
+        # newer Packer earlier on PATH, so a bare "packer" would ignore the pin.
         (
             cd "${repo_dir}/pkg/ami/marketplace"
-            make install_aws_plugin
+            make install_aws_plugin packer="${PACKER_BIN:-packer}"
             make build_release \
                 AMI_REGIONS="${ami_regions}" \
                 QUESTDB_VERSION="${release_version}" \
                 FORCE_DEREGISTER=false \
-                FORCE_DELETE_SNAPSHOT=false
+                FORCE_DELETE_SNAPSHOT=false \
+                packer="${PACKER_BIN:-packer}"
         )
         ;;
     *) usage ;;
