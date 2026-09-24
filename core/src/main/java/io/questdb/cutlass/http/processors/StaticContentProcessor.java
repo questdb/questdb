@@ -175,11 +175,17 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
         LOG.debug().$("resumeSend").$();
         StaticContentProcessorState state = LV.get(context);
 
-        if (state == null || state.fd == -1) {
+        if (state != null && state.textStatusCode != 0) {
+            // The simple response may still need to build its body after a header send stalls.
+            context.simpleResponse().sendStatusTextContent(state.textStatusCode);
             return;
         }
 
         context.resumeResponseSend();
+
+        if (state == null || state.fd == -1) {
+            return;
+        }
 
         final HttpRawSocket socket = context.getRawResponseSocket();
         long address = socket.getBufferAddress();
@@ -197,7 +203,18 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
     }
 
     private static void sendStatusTextContent(HttpConnectionContext context, int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        context.simpleResponse().sendStatusTextContent(code);
+        sendStatusTextContent(context, code, null);
+    }
+
+    private static void sendStatusTextContent(HttpConnectionContext context, int code, CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        StaticContentProcessorState state = LV.get(context);
+        if (state == null) {
+            //noinspection resource
+            LV.set(context, state = new StaticContentProcessorState());
+        }
+        state.clear();
+        state.textStatusCode = code;
+        context.simpleResponse().sendStatusTextContent(code, header);
     }
 
     private void send(HttpConnectionContext context, LPSZ path, boolean asAttachment) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -280,7 +297,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
             if (lo >= length || lo > hi) {
                 rangeHeaderSink.clear();
                 rangeHeaderSink.put("Content-Range: bytes */").put(length);
-                context.simpleResponse().sendStatusTextContent(416, rangeHeaderSink);
+                sendStatusTextContent(context, 416, rangeHeaderSink);
             } else {
                 state.bytesSent = lo;
                 state.sendMax = hi >= length ? length : hi + 1;

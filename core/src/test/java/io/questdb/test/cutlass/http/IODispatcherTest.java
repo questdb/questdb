@@ -5848,6 +5848,72 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testSCPRangeNotSatisfiableSlowReader() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean hasStalled = new AtomicBoolean();
+            final String statusPrefix = "HTTP/1.1 416 ";
+            final NetworkFacade nf = new NetworkFacadeImpl() {
+                @Override
+                public int sendRaw(long fd, long buffer, int bufferLen) {
+                    if (bufferLen >= statusPrefix.length()
+                            && Utf8s.equalsAscii(statusPrefix, buffer, buffer + statusPrefix.length())
+                            && hasStalled.compareAndSet(false, true)) {
+                        return 0;
+                    }
+                    return super.sendRaw(fd, buffer, bufferLen);
+                }
+            };
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, nf, root, 1024, false, false);
+            final WorkerPool workerPool = new TestWorkerPool(1);
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE);
+                    Path path = new Path().of(root).concat("questdb-range.txt")
+            ) {
+                httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
+                writeAsciiFile(path, "0123456789".repeat(10), 122_299_092L);
+                try {
+                    workerPool.start(LOG);
+                    new SendAndReceiveRequestBuilder().executeMany(client -> {
+                        final String partialResponse = """
+                                HTTP/1.1 206 Partial content\r
+                                Server: questDB/1.0\r
+                                Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                Content-Length: 1\r
+                                Content-Type: text/plain\r
+                                Accept-Ranges: bytes\r
+                                Content-Range: bytes 0-0/100\r
+                                ETag: "122299092"\r
+                                \r
+                                0""";
+                        // Reuse the connection so the first response clears the static file state.
+                        client.execute(rangeRequest("bytes=0-0", null), partialResponse);
+                        client.execute(rangeRequest("bytes=100-", null), """
+                                HTTP/1.1 416 Request range not satisfiable\r
+                                Server: questDB/1.0\r
+                                Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                Transfer-Encoding: chunked\r
+                                Content-Type: text/plain; charset=utf-8\r
+                                Content-Range: bytes */100\r
+                                \r
+                                1f\r
+                                Request range not satisfiable\r
+                                \r
+                                00\r
+                                \r
+                                """);
+                        Assert.assertTrue("the 416 header send must stall", hasStalled.get());
+                        client.execute(rangeRequest("bytes=0-0", null), partialResponse);
+                    });
+                } finally {
+                    workerPool.halt();
+                    TestUtils.remove(path.$());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSCPRangeRequests() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = root;
@@ -6009,6 +6075,113 @@ public class IODispatcherTest extends AbstractTest {
                         TestUtils.remove(path.$());
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testSCPResponsesResumeAfterPartialSends() throws Exception {
+        getSimpleTester().withForceSendFragmentationChunkSize(1).run(configuration, (_, _) -> {
+            try (Path path = new Path().of(root).concat("questdb-range.txt")) {
+                final String content = "0123456789".repeat(10);
+                writeAsciiFile(path, content, 122_299_092L);
+                // Read one byte at a time so the client cannot discard unexpected trailing bytes.
+                final NetworkFacade clientNetwork = new NetworkFacadeImpl() {
+                    @Override
+                    public int recvRaw(long fd, long buffer, int bufferLen) {
+                        return super.recvRaw(fd, buffer, Math.min(bufferLen, 1));
+                    }
+                };
+                new SendAndReceiveRequestBuilder().withNetworkFacade(clientNetwork).executeMany(client -> {
+                    final String responseHeaders = """
+                            Server: questDB/1.0\r
+                            Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                            """;
+                    final String textHeaders = """
+                            Transfer-Encoding: chunked\r
+                            Content-Type: text/plain; charset=utf-8\r
+                            """;
+                    final String rangeErrorBody = """
+                            \r
+                            1f\r
+                            Request range not satisfiable\r
+                            \r
+                            00\r
+                            \r
+                            """;
+
+                    // Header-only responses must resume even before the connection has file state.
+                    client.execute("""
+                            GET /?test=1 HTTP/1.1\r
+                            Host: localhost:9001\r
+                            \r
+                            """, "HTTP/1.1 301 Moved Permanently\r\n" + responseHeaders + """
+                            Location: /index.html?test=1\r
+                            \r
+                            \r
+                            """);
+                    client.execute("""
+                            GET /questdb-range.txt HTTP/1.1\r
+                            Host: localhost:9001\r
+                            If-None-Match: "122299092"\r
+                            \r
+                            """, "HTTP/1.1 304 Not Modified\r\n" + responseHeaders + "\r\n");
+                    client.execute(
+                            rangeRequest("bytes=invalid", null),
+                            "HTTP/1.1 416 Request range not satisfiable\r\n" + responseHeaders + textHeaders + rangeErrorBody
+                    );
+                    client.execute("""
+                            GET /questdb-range.txt HTTP/1.1\r
+                            Host: localhost:9001\r
+                            If-None-Match: "invalid"\r
+                            \r
+                            """, "HTTP/1.1 400 Bad request\r\n" + responseHeaders + textHeaders + """
+                            \r
+                            0d\r
+                            Bad request\r
+                            \r
+                            00\r
+                            \r
+                            """);
+                    client.execute("""
+                            GET /missing.txt HTTP/1.1\r
+                            Host: localhost:9001\r
+                            \r
+                            """, "HTTP/1.1 404 Not Found\r\n" + responseHeaders + textHeaders + """
+                            \r
+                            0b\r
+                            Not Found\r
+                            \r
+                            00\r
+                            \r
+                            """);
+                    final String partialResponse = "HTTP/1.1 206 Partial content\r\n" + responseHeaders + """
+                            Content-Length: 1\r
+                            Content-Type: text/plain\r
+                            Accept-Ranges: bytes\r
+                            Content-Range: bytes 0-0/100\r
+                            ETag: "122299092"\r
+                            \r
+                            0""";
+                    client.execute(rangeRequest("bytes=0-0", null), partialResponse);
+                    client.execute(
+                            rangeRequest("bytes=100-", null),
+                            "HTTP/1.1 416 Request range not satisfiable\r\n" + responseHeaders + textHeaders
+                                    + "Content-Range: bytes */100\r\n" + rangeErrorBody
+                    );
+                    // File responses must still resume, and an error must not survive request reset.
+                    client.execute("""
+                            GET /questdb-range.txt HTTP/1.1\r
+                            Host: localhost:9001\r
+                            \r
+                            """, "HTTP/1.1 200 OK\r\n" + responseHeaders + """
+                            Content-Length: 100\r
+                            Content-Type: text/plain\r
+                            ETag: "122299092"\r
+                            \r
+                            """ + content);
+                    client.execute(rangeRequest("bytes=0-0", null), partialResponse);
+                });
             }
         });
     }
