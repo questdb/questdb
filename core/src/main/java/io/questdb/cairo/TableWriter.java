@@ -8333,6 +8333,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Whether every physical partition of the active logical partition is read-only. No commit can
+     * land rows in such a floor: the O3 read-only skip drops them. Non-WAL in-order rows become no-op
+     * rows, and WAL in-order rows are routed to that same O3 skip by the isLastPartitionReadOnly()
+     * gates. The floor's partitions sit at the tail, since it is the floor of the max timestamp.
+     */
+    private boolean isActivePartitionFloorReadOnly(long activePartitionFloor) {
+        boolean hasFloorPartition = false;
+        for (int i = txWriter.getPartitionCount() - 1; i > -1; i--) {
+            if (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(i)) != activePartitionFloor) {
+                break;
+            }
+            if (!txWriter.isPartitionReadOnly(i)) {
+                return false;
+            }
+            hasFloorPartition = true;
+        }
+        return hasFloorPartition;
+    }
+
     private boolean isEmptyTable() {
         return txWriter.getPartitionCount() == 0 && txWriter.getLagRowCount() == 0;
     }
@@ -10098,8 +10118,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long activePartitionFloor = activeTimestamp != Long.MIN_VALUE
                 ? txWriter.getLogicalPartitionTimestamp(activeTimestamp)
                 : Long.MIN_VALUE;
+        // A frozen active floor took none of this commit's rows, so the commit is not activity
+        // there. Restamping it would restart the IDLE window of a partition that did not change.
         if (maxTimestampSinceLastCommit != Long.MIN_VALUE
-                && txWriter.getLogicalPartitionTimestamp(maxTimestampSinceLastCommit) == activePartitionFloor) {
+                && txWriter.getLogicalPartitionTimestamp(maxTimestampSinceLastCommit) == activePartitionFloor
+                && !isActivePartitionFloorReadOnly(activePartitionFloor)) {
             txWriter.setActivePartitionLastCommitMicros(commitMicros);
         }
     }
@@ -10231,6 +10254,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int pCount = 0;
         int partitionParallelism = pressureControl.getMemoryPressureRegulationValue();
         long replaceMaxTimestamp = Long.MIN_VALUE;
+        // Highest sorted row handed to a writable partition. Rows above it were dropped by the
+        // read-only skip.
+        long o3WrittenRowHi = rowLo - 1;
         long partitionTimestamp = o3TimestampMin;
         final long minO3PartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3TimestampMin);
         long maxO3PartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3TimestampMax);
@@ -10387,6 +10413,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$();
                         continue;
                     }
+                    o3WrittenRowHi = srcOooHi;
                     final O3Basket o3Basket = o3BasketPool.next();
                     o3Basket.checkCapacity(configuration, columnCount, indexCount);
                     AtomicInteger columnCounter = o3ColumnCounters.next();
@@ -10579,8 +10606,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // at this point we should know the last partition row count
             if (!isCommitReplaceMode()) {
-                partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(o3TimestampMax));
-                long committedMaxTimestamp = Math.max(txWriter.getMaxTimestamp(), o3TimestampMax);
+                long o3WrittenTimestampMax = o3TimestampMax;
+                if (o3WrittenRowHi < srcOooMax - 1) {
+                    // The read-only skip dropped the batch's top rows. They are not in the table, so
+                    // they must not raise the max timestamp or the active partition's bounds.
+                    o3WrittenTimestampMax = o3WrittenRowHi < rowLo
+                            ? Long.MIN_VALUE
+                            : getTimestampIndexValue(sortedTimestampsAddr, o3WrittenRowHi);
+                }
+                if (o3WrittenTimestampMax != Long.MIN_VALUE) {
+                    partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(o3WrittenTimestampMax));
+                }
+                long committedMaxTimestamp = Math.max(txWriter.getMaxTimestamp(), o3WrittenTimestampMax);
                 // Committed data left on disk outside the O3 batch may have a higher timestamp than the
                 // O3 batch commit boundary; keep the writer's maxTimestamp consistent with what is on disk.
                 committedMaxTimestamp = Math.max(committedMaxTimestamp, committedDataMaxTimestamp);
