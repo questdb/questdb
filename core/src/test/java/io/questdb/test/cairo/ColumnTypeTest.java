@@ -105,6 +105,7 @@ public class ColumnTypeTest {
             "UNDEFINED", "CURSOR", "VAR_ARG", "RECORD", "GEOHASH", "DECIMAL",
             "REGCLASS", "REGPROCEDURE", "ARRAY_STRING", "PARAMETER", "INTERVAL", "NULL"
     );
+
     public short getExpectedTag(int precision) {
         int size = Decimals.getStorageSizePow2(precision);
         switch (size) {

@@ -428,13 +428,20 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         } else {
             // every fixed-size type merges by width alone
             switch (ColumnType.pow2SizeOf(columnType)) {
-                case 0 -> Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
-                case 1 -> Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
-                case 2 -> Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
-                case 3 -> Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
-                case 4 -> Vect.mergeShuffle128Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
-                case 5 -> Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
-                default -> throw CairoException.critical(0).put("cannot merge column of type ").put(ColumnType.nameOf(columnType));
+                case 0 ->
+                        Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                case 1 ->
+                        Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                case 2 ->
+                        Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                case 3 ->
+                        Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                case 4 ->
+                        Vect.mergeShuffle128Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                case 5 ->
+                        Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                default ->
+                        throw CairoException.critical(0).put("cannot merge column of type ").put(ColumnType.nameOf(columnType));
             }
         }
     }
