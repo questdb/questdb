@@ -25,16 +25,19 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewRefreshTask;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -56,6 +59,64 @@ import java.util.concurrent.atomic.AtomicReference;
  * ACTIVE while doing so.
  */
 public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
+
+    @Test
+    public void testBaseDropDuringRefreshDefersExpiryPreflight() throws Exception {
+        // DROP removes the base's name before it invalidates the base's live views. A refresh that starts in
+        // between cannot resolve the base, so the expiry preflight defers it, and the drop invalidates the
+        // view right afterwards. The worker then acknowledges the base notification as it does after any
+        // refresh, which reopens event-driven refresh for that base name: a table later created under the
+        // same name gets its commits queued again.
+        assertMemoryLeak(() -> {
+            createExpirySourceAndDependents();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES ('2026-01-01T00:00:00Z', 'a', 1.0)");
+                drainWalAndMatViewQueues();
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance dep = engine.getLiveViewRegistry().getViewInstance("dep");
+
+                // A second commit leaves dep behind its source and queues a refresh task for source.
+                execute("INSERT INTO base VALUES ('2026-01-01T00:01:00Z', 'a', 3.0)");
+                drainWalAndMatViewQueues();
+
+                // The hook fires inside DROP, after the name is gone and before the live views are
+                // invalidated. It also fires at other mint points, so it runs the refresh only once, and
+                // only inside that window.
+                final AtomicBoolean isRefreshRun = new AtomicBoolean();
+                final AtomicReference<Throwable> escaped = new AtomicReference<>();
+                CairoEngine.setRoleSwitchMintObserver(() -> {
+                    if (engine.getTableTokenIfExists("source") == null && isRefreshRun.compareAndSet(false, true)) {
+                        try {
+                            job.processNotificationsForTest();
+                        } catch (Throwable th) {
+                            escaped.set(th);
+                        }
+                    }
+                });
+                try {
+                    execute("DROP MATERIALIZED VIEW source");
+                } finally {
+                    CairoEngine.setRoleSwitchMintObserver(null);
+                }
+                Assert.assertTrue("the refresh must run inside the drop window", isRefreshRun.get());
+                Assert.assertNull("the refresh must not throw out of the job", escaped.get());
+                Assert.assertTrue(dep.isInvalid());
+                Assert.assertEquals(0, dep.getRefreshFaultCount());
+
+                final LiveViewRefreshTask task = new LiveViewRefreshTask();
+                while (engine.getLiveViewStateStore().tryDequeueRefreshTask(task)) {
+                    task.clear();
+                }
+                execute("CREATE MATERIALIZED VIEW source AS (SELECT * FROM base)");
+                drainWalAndMatViewQueues();
+                boolean isSourceQueued = false;
+                while (engine.getLiveViewStateStore().tryDequeueRefreshTask(task)) {
+                    isSourceQueued |= "source".equals(task.baseTableToken.getTableName());
+                }
+                Assert.assertTrue("a commit to the recreated source must queue a refresh task", isSourceQueued);
+            }
+        });
+    }
 
     @Test
     public void testExpiryPolicyOnMatViewBaseInvalidatesLiveViewOnNextTurn() throws Exception {

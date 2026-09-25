@@ -9298,7 +9298,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final LiveViewDefinition definition = instance.getDefinition();
         final TableToken baseToken = engine.getTableTokenIfExists(definition.getBaseTableName());
         if (baseToken == null) {
-            throw CairoException.tableDoesNotExist(definition.getBaseTableName());
+            // DROP and RENAME of the base remove its name before they invalidate its live views, so a
+            // refresh can start in between. It defers and leaves the view to that invalidation. This call
+            // runs outside the refresh failure handling, so it has to return normally: the caller then
+            // acknowledges the base notification with notifyBaseRefreshed, which keeps event-driven refresh
+            // open for this base name.
+            return EXPIRY_PREFLIGHT_DEFERRED;
         }
         final MetadataCache.ExpiryPolicyInfo policy;
         if (metadataCache.isExpiryPolicyUpdatePending(baseToken)) {
