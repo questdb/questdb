@@ -1764,6 +1764,32 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpdateNonWalTableWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table up (ts timestamp, x int) timestamp(ts) partition by DAY BYPASS WAL");
+            execute("insert into up values ('2024-01-01T00:00:00', 1), ('2024-01-02T00:00:00', 2)");
+            execute("alter table up convert partition to parquet list '2024-01-01'");
+
+            // Non-WAL has no suspension to prevent: an UPDATE restricted to native partitions applies.
+            execute("update up set x = 10 where ts = '2024-01-02T00:00:00'");
+
+            // An UPDATE reaching the parquet partition fails when applied and is rolled back.
+            CairoException ex = Assert.assertThrows(CairoException.class, () -> execute("update up set x = 20"));
+            TestUtils.assertContains(ex.getFlyweightMessage(), "cannot update parquet-format partition [table=up");
+
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tx
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-02T00:00:00.000000Z\t10
+                            """);
+        });
+    }
+
+    @Test
     public void testUpdateOnAlteredTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table up as" +
@@ -1855,9 +1881,9 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUpdateRejectsTableWithParquetPartition() throws Exception {
+    public void testUpdateRejectsWalTableWithParquetPartition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table up (ts timestamp, x int) timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
+            execute("create table up (ts timestamp, x int) timestamp(ts) partition by DAY WAL");
             execute("insert into up values ('2024-01-01T00:00:00', 1), ('2024-01-02T00:00:00', 2)");
             execute("alter table up convert partition to parquet list '2024-01-01'");
             drainWalQueue();
@@ -1874,10 +1900,8 @@ public class UpdateTest extends AbstractCairoTest {
                     7,
                     "cannot update table with parquet partitions [table=up, partition=2024-01-01]"
             );
-            if (walEnabled) {
-                drainWalQueue();
-                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("up")));
-            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("up")));
             assertQuery("up")
                     .noLeakCheck()
                     .expectSize()
@@ -1892,6 +1916,7 @@ public class UpdateTest extends AbstractCairoTest {
             execute("alter table up convert partition to native list '2024-01-01'");
             drainWalQueue();
             update("update up set x = 10");
+            drainWalQueue();
             assertQuery("up")
                     .noLeakCheck()
                     .expectSize()

@@ -972,10 +972,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Rejects UPDATE on a table that has a parquet-format partition, including partitions in cold
+     * Rejects UPDATE on a WAL table that has a parquet-format partition, including partitions in cold
      * storage. Parquet partitions are read-only; an UPDATE reaching one fails when applied, which on
      * a WAL table suspends the table because an acknowledged UPDATE can never be skipped. Rejecting
      * the statement at compile time keeps the table healthy and gives the user an immediate error.
+     * <p>
+     * Only called for WAL tables. A non-WAL UPDATE executes synchronously: {@code UpdateOperatorImpl}
+     * rejects it only when it reaches a parquet partition, and rolls it back, so an UPDATE restricted
+     * to native partitions keeps working there.
      * <p>
      * Skipped on the WAL apply path: an UPDATE already sequenced keeps its apply-time semantics,
      * which {@code UpdateOperatorImpl} still enforces per updated partition.
@@ -3457,7 +3461,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     optimiser.optimiseUpdate(queryModel, executionContext, metadata, this);
                     // After optimiseUpdate(), which authorizes the statement, so an unauthorized
                     // user sees the permission failure rather than the partition layout.
-                    rejectUpdateOnParquetPartitions(executionContext, tableToken, queryModel.getModelPosition());
+                    if (metadata.isWalEnabled()) {
+                        rejectUpdateOnParquetPartitions(executionContext, tableToken, queryModel.getModelPosition());
+                    }
                     return model;
                 }
             default:
