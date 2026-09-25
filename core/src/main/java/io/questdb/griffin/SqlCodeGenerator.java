@@ -1436,6 +1436,37 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
+    /**
+     * The memoizing wrapper for a virtual column function of this type, or the function itself
+     * for a type without one (the geohashes, BINARY, LONG128, INTERVAL and the non-column tags).
+     */
+    private static Function memoized(Function function) {
+        return switch (ColumnTypeTag.of(function.getType())) {
+            case LONG -> new LongFunctionMemoizer(function);
+            case INT -> new IntFunctionMemoizer(function);
+            case TIMESTAMP -> new TimestampFunctionMemoizer(function);
+            case DOUBLE -> new DoubleFunctionMemoizer(function);
+            case SHORT -> new ShortFunctionMemoizer(function);
+            case BOOLEAN -> new BooleanFunctionMemoizer(function);
+            case BYTE -> new ByteFunctionMemoizer(function);
+            case CHAR -> new CharFunctionMemoizer(function);
+            case DATE -> new DateFunctionMemoizer(function);
+            case FLOAT -> new FloatFunctionMemoizer(function);
+            case IPv4 -> new IPv4FunctionMemoizer(function);
+            case UUID -> new UuidFunctionMemoizer(function);
+            case LONG256 -> new Long256FunctionMemoizer(function);
+            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 ->
+                    new DecimalFunctionMemoizer(function);
+            case ARRAY -> new ArrayFunctionMemoizer(function);
+            case STRING -> new StrFunctionMemoizer(function);
+            case VARCHAR, VARCHAR_SLICE -> new VarcharFunctionMemoizer(function);
+            case SYMBOL -> new SymbolFunctionMemoizer(function);
+            // other types do not have memoization yet
+            case UNDEFINED, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128,
+                 DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, NULL, UNKNOWN -> function;
+        };
+    }
+
     private static void prepareMergeUnionAllFactory(RecordCursorFactory factory) {
         if (factory instanceof MergeUnionAllRecordCursorFactory mergeFactory) {
             mergeFactory.prepareCursor();
@@ -1681,14 +1712,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // types fall back to the recordAt path -- MapValue lacks symmetric put APIs
     // for those.
     private static boolean isFixedSizePrevSlotEligible(int srcTag) {
-        return switch (srcTag) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.CHAR, ColumnType.DATE, ColumnType.DECIMAL128,
-                 ColumnType.DECIMAL16, ColumnType.DECIMAL256, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
-                 ColumnType.DECIMAL8, ColumnType.DOUBLE, ColumnType.FLOAT, ColumnType.GEOBYTE, ColumnType.GEOINT,
-                 ColumnType.GEOLONG, ColumnType.GEOSHORT, ColumnType.INT, ColumnType.IPv4, ColumnType.LONG,
-                 ColumnType.LONG128, ColumnType.LONG256, ColumnType.SHORT, ColumnType.SYMBOL,
-                 ColumnType.TIMESTAMP -> true;
-            default -> false;
+        return switch (ColumnTypeTag.of(srcTag)) {
+            case BOOLEAN, BYTE, CHAR, DATE, DECIMAL128, DECIMAL16, DECIMAL256, DECIMAL32, DECIMAL64, DECIMAL8, DOUBLE,
+                 FLOAT, GEOBYTE, GEOINT, GEOLONG, GEOSHORT, INT, IPv4, LONG, LONG128, LONG256, SHORT, SYMBOL,
+                 TIMESTAMP -> true;
+            case UNDEFINED, STRING, BINARY, UUID, CURSOR, VAR_ARG, RECORD, GEOHASH, VARCHAR, ARRAY, DECIMAL, REGCLASS,
+                 REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> false;
         };
     }
 
@@ -1701,6 +1730,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return model.getTableNameExpr() == null
                 && model.getNestedModel() == null
                 && model.getHorizonJoinContext().getAlias() != null;
+    }
+
+    /**
+     * Whether a column of this type can be a {@code LATEST ON} key; the error message in
+     * {@link #prepareLatestByColumnIndexes} lists the same set for the user.
+     */
+    private static boolean isLatestOnKeyType(int columnType) {
+        return switch (ColumnTypeTag.of(columnType)) {
+            case BOOLEAN, BYTE, CHAR, SHORT, INT, IPv4, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG256, STRING, VARCHAR,
+                 VARCHAR_SLICE, SYMBOL, UUID, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, LONG128 -> true;
+            case UNDEFINED, BINARY, CURSOR, VAR_ARG, RECORD, GEOHASH, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
+                 DECIMAL128, DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, NULL,
+                 UNKNOWN -> false;
+        };
     }
 
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
@@ -10302,69 +10345,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     Function function = functions.getQuick(i);
                     if (function != null && !function.isConstant()
                             && (model.getRefCount(columns.getQuick(i).getAlias()) > 1 || function.shouldMemoize())) {
-                        switch (ColumnType.tagOf(function.getType())) {
-                            case ColumnType.LONG:
-                                functions.set(i, new LongFunctionMemoizer(function));
-                                break;
-                            case ColumnType.INT:
-                                functions.set(i, new IntFunctionMemoizer(function));
-                                break;
-                            case ColumnType.TIMESTAMP:
-                                functions.set(i, new TimestampFunctionMemoizer(function));
-                                break;
-                            case ColumnType.DOUBLE:
-                                functions.set(i, new DoubleFunctionMemoizer(function));
-                                break;
-                            case ColumnType.SHORT:
-                                functions.set(i, new ShortFunctionMemoizer(function));
-                                break;
-                            case ColumnType.BOOLEAN:
-                                functions.set(i, new BooleanFunctionMemoizer(function));
-                                break;
-                            case ColumnType.BYTE:
-                                functions.set(i, new ByteFunctionMemoizer(function));
-                                break;
-                            case ColumnType.CHAR:
-                                functions.set(i, new CharFunctionMemoizer(function));
-                                break;
-                            case ColumnType.DATE:
-                                functions.set(i, new DateFunctionMemoizer(function));
-                                break;
-                            case ColumnType.FLOAT:
-                                functions.set(i, new FloatFunctionMemoizer(function));
-                                break;
-                            case ColumnType.IPv4:
-                                functions.set(i, new IPv4FunctionMemoizer(function));
-                                break;
-                            case ColumnType.UUID:
-                                functions.set(i, new UuidFunctionMemoizer(function));
-                                break;
-                            case ColumnType.LONG256:
-                                functions.set(i, new Long256FunctionMemoizer(function));
-                                break;
-                            case ColumnType.DECIMAL8:
-                            case ColumnType.DECIMAL16:
-                            case ColumnType.DECIMAL32:
-                            case ColumnType.DECIMAL64:
-                            case ColumnType.DECIMAL128:
-                            case ColumnType.DECIMAL256:
-                                functions.set(i, new DecimalFunctionMemoizer(function));
-                                break;
-                            case ColumnType.ARRAY:
-                                functions.set(i, new ArrayFunctionMemoizer(function));
-                                break;
-                            case ColumnType.STRING:
-                                functions.set(i, new StrFunctionMemoizer(function));
-                                break;
-                            case ColumnType.VARCHAR:
-                            case ColumnType.VARCHAR_SLICE:
-                                functions.set(i, new VarcharFunctionMemoizer(function));
-                                break;
-                            case ColumnType.SYMBOL:
-                                functions.set(i, new SymbolFunctionMemoizer(function));
-                                break;
-                            // other types do not have memoization yet
-                        }
+                        functions.set(i, memoized(function));
                     }
                 }
             }
@@ -13364,44 +13345,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 // check the type of the column, not all are supported
                 int columnType = myMeta.getColumnType(index);
-                switch (tagOf(columnType)) {
-                    case BOOLEAN:
-                    case BYTE:
-                    case CHAR:
-                    case SHORT:
-                    case INT:
-                    case IPv4:
-                    case LONG:
-                    case DATE:
-                    case TIMESTAMP:
-                    case FLOAT:
-                    case DOUBLE:
-                    case LONG256:
-                    case STRING:
-                    case VARCHAR:
-                    case VARCHAR_SLICE:
-                    case SYMBOL:
-                    case UUID:
-                    case GEOBYTE:
-                    case GEOSHORT:
-                    case GEOINT:
-                    case GEOLONG:
-                    case LONG128:
-                        // we are reusing collections which leads to confusing naming for this method
-                        // keyTypes are types of columns we collect 'latest by' for
-                        keyTypes.add(columnType);
-                        // listColumnFilterA are indexes of columns we collect 'latest by' for
-                        listColumnFilterA.add(index + 1);
-                        break;
-
-                    default:
-                        throw SqlException
-                                .position(latestByNode.position)
-                                .put(latestByNode.token)
-                                .put(" (")
-                                .put(ColumnType.nameOf(columnType))
-                                .put("): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON");
+                if (!isLatestOnKeyType(columnType)) {
+                    throw SqlException
+                            .position(latestByNode.position)
+                            .put(latestByNode.token)
+                            .put(" (")
+                            .put(ColumnType.nameOf(columnType))
+                            .put("): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON");
                 }
+                // we are reusing collections which leads to confusing naming for this method
+                // keyTypes are types of columns we collect 'latest by' for
+                keyTypes.add(columnType);
+                // listColumnFilterA are indexes of columns we collect 'latest by' for
+                listColumnFilterA.add(index + 1);
             }
         }
         return latestByColumnCount;
