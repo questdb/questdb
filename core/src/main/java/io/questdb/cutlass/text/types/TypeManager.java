@@ -26,6 +26,7 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
@@ -134,50 +135,37 @@ public class TypeManager implements Mutable {
     }
 
     public TypeAdapter getTypeAdapter(int columnType) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BYTE:
-                return ByteAdapter.INSTANCE;
-            case ColumnType.SHORT:
-                return ShortAdapter.INSTANCE;
-            case ColumnType.CHAR:
-                return CharAdapter.INSTANCE;
-            case ColumnType.INT:
-                return IntAdapter.INSTANCE;
-            case ColumnType.LONG:
-                return LongAdapter.INSTANCE;
-            case ColumnType.BOOLEAN:
-                return BooleanAdapter.INSTANCE;
-            case ColumnType.FLOAT:
-                return FloatAdapter.INSTANCE;
-            case ColumnType.DOUBLE:
-                return DoubleAdapter.INSTANCE;
-            case ColumnType.STRING:
-                return stringAdapter;
-            case ColumnType.SYMBOL:
-                return nextSymbolAdapter(false);
-            case ColumnType.LONG256:
-                return Long256Adapter.INSTANCE;
-            case ColumnType.UUID:
-                return UuidAdapter.INSTANCE;
-            case ColumnType.IPv4:
-                return IPv4Adapter.INSTANCE;
-            case ColumnType.VARCHAR:
-                return varcharAdapter;
-            case ColumnType.GEOBYTE:
-            case ColumnType.GEOSHORT:
-            case ColumnType.GEOINT:
-            case ColumnType.GEOLONG:
+        return switch (ColumnTypeTag.of(columnType)) {
+            case BYTE -> ByteAdapter.INSTANCE;
+            case SHORT -> ShortAdapter.INSTANCE;
+            case CHAR -> CharAdapter.INSTANCE;
+            case INT -> IntAdapter.INSTANCE;
+            case LONG -> LongAdapter.INSTANCE;
+            case BOOLEAN -> BooleanAdapter.INSTANCE;
+            case FLOAT -> FloatAdapter.INSTANCE;
+            case DOUBLE -> DoubleAdapter.INSTANCE;
+            case STRING -> stringAdapter;
+            case SYMBOL -> nextSymbolAdapter(false);
+            case LONG256 -> Long256Adapter.INSTANCE;
+            case UUID -> UuidAdapter.INSTANCE;
+            case IPv4 -> IPv4Adapter.INSTANCE;
+            case VARCHAR -> varcharAdapter;
+            case GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> {
+                // keyed by the encoded type: a geohash without bits has no adapter
                 GeoHashAdapter adapter = GeoHashAdapter.getInstance(columnType);
                 if (adapter != null) {
-                    return adapter;
+                    yield adapter;
                 }
-            default:
-                // the bare DECIMAL tag is a surrogate, it has no storage size
-                if (ColumnType.isDecimalType(ColumnType.tagOf(columnType))) {
-                    return nextDecimalAdapter(columnType);
-                }
-                throw CairoException.nonCritical().put("no adapter for type [id=").put(columnType).put(", name=").put(ColumnType.nameOf(columnType)).put(']');
-        }
+                throw noAdapter(columnType);
+            }
+            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> nextDecimalAdapter(columnType);
+            // DATE and TIMESTAMP take a format-specific adapter from TextMetadataParser; BINARY, ARRAY,
+            // INTERVAL, LONG128 and NULL have no text form; the bare DECIMAL tag is a surrogate with no
+            // storage size; the other pseudo tags never name a column
+            case DATE, TIMESTAMP, BINARY, LONG128, ARRAY, INTERVAL, NULL, UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH,
+                 DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, VARCHAR_SLICE, UNKNOWN ->
+                    throw noAdapter(columnType);
+        };
     }
 
     public DateUtf8Adapter nextDateAdapter() {
@@ -204,6 +192,10 @@ public class TypeManager implements Mutable {
         TimestampAdapter adapter = timestampAdapterPool.next();
         adapter.of(format, locale, pattern);
         return adapter;
+    }
+
+    private static CairoException noAdapter(int columnType) {
+        return CairoException.nonCritical().put("no adapter for type [id=").put(columnType).put(", name=").put(ColumnType.nameOf(columnType)).put(']');
     }
 
     private static boolean requiresNanosecondPrecision(CharSequence pattern) {
