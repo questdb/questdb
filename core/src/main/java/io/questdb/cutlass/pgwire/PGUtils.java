@@ -25,6 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
@@ -100,128 +101,136 @@ public final class PGUtils {
             long maxBlobSize,
             int resumePoint
     ) throws PGMessageProcessingException {
-        final short typeTag = ColumnType.tagOf(columnType);
-        switch (typeTag) {
-            case ColumnType.NULL:
-                return Integer.BYTES;
-            case ColumnType.BOOLEAN:
-                return Integer.BYTES + Byte.BYTES;
-            case ColumnType.BYTE:
-            case ColumnType.SHORT:
-                return Integer.BYTES + Short.BYTES;
-            case ColumnType.CHAR:
+        return switch (ColumnTypeTag.of(columnType)) {
+            case NULL -> Integer.BYTES;
+            case BOOLEAN -> Integer.BYTES + Byte.BYTES;
+            case BYTE, SHORT -> Integer.BYTES + Short.BYTES;
+            case CHAR -> {
                 final char charValue = record.getChar(columnIndex);
-                return charValue == 0 ? Integer.BYTES : Integer.BYTES + Chars.charBytes(charValue);
-            case ColumnType.IPv4:
+                yield charValue == 0 ? Integer.BYTES : Integer.BYTES + Chars.charBytes(charValue);
+            }
+            case IPv4 -> {
                 final int ipValue = record.getIPv4(columnIndex);
-                return ipValue != Numbers.IPv4_NULL ? Integer.BYTES + Numbers.sinkSizeIPv4(ipValue) : Integer.BYTES;
-            case ColumnType.INT:
+                yield ipValue != Numbers.IPv4_NULL ? Integer.BYTES + Numbers.sinkSizeIPv4(ipValue) : Integer.BYTES;
+            }
+            case INT -> {
                 final int value = record.getInt(columnIndex);
-                return value != Numbers.INT_NULL ? Integer.BYTES + Integer.BYTES : Integer.BYTES;
-            case ColumnType.LONG:
+                yield value != Numbers.INT_NULL ? Integer.BYTES + Integer.BYTES : Integer.BYTES;
+            }
+            case LONG -> {
                 final long longValue = record.getLong(columnIndex);
-                return longValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
-            case ColumnType.DATE:
+                yield longValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
+            }
+            case DATE -> {
                 final long dateValue = record.getDate(columnIndex);
-                return dateValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
-            case ColumnType.TIMESTAMP:
+                yield dateValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
+            }
+            case TIMESTAMP -> {
                 final long tsValue = record.getTimestamp(columnIndex);
-                return tsValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
-            case ColumnType.FLOAT:
+                yield tsValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
+            }
+            case FLOAT -> {
                 final float floatValue = record.getFloat(columnIndex);
-                return Float.isNaN(floatValue) ? Integer.BYTES : Integer.BYTES + Float.BYTES;
-            case ColumnType.DOUBLE:
+                yield Float.isNaN(floatValue) ? Integer.BYTES : Integer.BYTES + Float.BYTES;
+            }
+            case DOUBLE -> {
                 final double doubleValue = record.getDouble(columnIndex);
-                return Double.isNaN(doubleValue) ? Integer.BYTES : Integer.BYTES + Double.BYTES;
-            case ColumnType.DECIMAL8:
+                yield Double.isNaN(doubleValue) ? Integer.BYTES : Integer.BYTES + Double.BYTES;
+            }
+            case DECIMAL8 -> {
                 final byte decimal8 = record.getDecimal8(columnIndex);
-                return decimal8 == Decimals.DECIMAL8_NULL
+                yield decimal8 == Decimals.DECIMAL8_NULL
                         ? Integer.BYTES
                         : calculateDecimalBinSize(decimal8, ColumnType.getDecimalScale(columnType));
-            case ColumnType.DECIMAL16:
+            }
+            case DECIMAL16 -> {
                 final short decimal16 = record.getDecimal16(columnIndex);
-                return decimal16 == Decimals.DECIMAL16_NULL
+                yield decimal16 == Decimals.DECIMAL16_NULL
                         ? Integer.BYTES
                         : calculateDecimalBinSize(decimal16, ColumnType.getDecimalScale(columnType));
-            case ColumnType.DECIMAL32:
+            }
+            case DECIMAL32 -> {
                 final int decimal32 = record.getDecimal32(columnIndex);
-                return decimal32 == Decimals.DECIMAL32_NULL
+                yield decimal32 == Decimals.DECIMAL32_NULL
                         ? Integer.BYTES
                         : calculateDecimalBinSize(decimal32, ColumnType.getDecimalScale(columnType));
-            case ColumnType.DECIMAL64:
+            }
+            case DECIMAL64 -> {
                 final long decimal64 = record.getDecimal64(columnIndex);
-                return decimal64 == Decimals.DECIMAL64_NULL
+                yield decimal64 == Decimals.DECIMAL64_NULL
                         ? Integer.BYTES
                         : calculateDecimalBinSize(decimal64, ColumnType.getDecimalScale(columnType));
-            case ColumnType.DECIMAL128:
+            }
+            case DECIMAL128 -> {
                 final Decimal128 decimal128 = sqlExecutionContext.getDecimal128();
                 record.getDecimal128(columnIndex, decimal128);
-                return calculateDecimalBinSize(
+                yield calculateDecimalBinSize(
                         decimal128,
                         ColumnType.getDecimalPrecision(columnType),
                         ColumnType.getDecimalScale(columnType)
                 );
-            case ColumnType.DECIMAL256:
+            }
+            case DECIMAL256 -> {
                 final Decimal256 decimal256 = sqlExecutionContext.getDecimal256();
                 record.getDecimal256(columnIndex, decimal256);
-                return calculateDecimalBinSize(
+                yield calculateDecimalBinSize(
                         decimal256,
                         ColumnType.getDecimalPrecision(columnType),
                         ColumnType.getDecimalScale(columnType)
                 );
-            case ColumnType.UUID:
+            }
+            case UUID -> {
                 final long lo = record.getLong128Lo(columnIndex);
                 final long hi = record.getLong128Hi(columnIndex);
-                return Uuid.isNull(lo, hi) ? Integer.BYTES : Integer.BYTES + Long.BYTES * 2;
-            case ColumnType.LONG256:
+                yield Uuid.isNull(lo, hi) ? Integer.BYTES : Integer.BYTES + Long.BYTES * 2;
+            }
+            case LONG256 -> {
                 final Long256 long256Value = record.getLong256A(columnIndex);
-                return Long256Impl.isNull(long256Value) ? Integer.BYTES : Integer.BYTES + Numbers.hexDigitsLong256(long256Value);
-            case ColumnType.GEOBYTE:
-                return geoHashBytes(record.getGeoByte(columnIndex), geohashSize);
-            case ColumnType.GEOSHORT:
-                return geoHashBytes(record.getGeoShort(columnIndex), geohashSize);
-            case ColumnType.GEOINT:
-                return geoHashBytes(record.getGeoInt(columnIndex), geohashSize);
-            case ColumnType.GEOLONG:
-                return geoHashBytes(record.getGeoLong(columnIndex), geohashSize);
-            case ColumnType.VARCHAR:
+                yield Long256Impl.isNull(long256Value) ? Integer.BYTES : Integer.BYTES + Numbers.hexDigitsLong256(long256Value);
+            }
+            case GEOBYTE -> geoHashBytes(record.getGeoByte(columnIndex), geohashSize);
+            case GEOSHORT -> geoHashBytes(record.getGeoShort(columnIndex), geohashSize);
+            case GEOINT -> geoHashBytes(record.getGeoInt(columnIndex), geohashSize);
+            case GEOLONG -> geoHashBytes(record.getGeoLong(columnIndex), geohashSize);
+            case VARCHAR -> {
                 final Utf8Sequence vcValue = record.getVarcharA(columnIndex);
                 if (vcValue == null) {
-                    return Integer.BYTES;
+                    yield Integer.BYTES;
                 }
                 // resumePoint == -1 means header not sent yet, include it
                 // resumePoint >= 0 is the byte offset of already sent data
                 int vcResumePoint = Math.max(0, resumePoint);
                 int vcRemaining = vcValue.size() - vcResumePoint;
-                return resumePoint == -1 ? Integer.BYTES + vcRemaining : vcRemaining;
-            case ColumnType.ARRAY_STRING:
-                // ARRAY_STRING goes out through outColString() under either format code
-            case ColumnType.STRING:
+                yield resumePoint == -1 ? Integer.BYTES + vcRemaining : vcRemaining;
+            }
+            // ARRAY_STRING goes out through outColString() under either format code
+            case ARRAY_STRING, STRING -> {
                 final CharSequence strValue = record.getStrA(columnIndex);
-                return strValue == null ? Integer.BYTES : Integer.BYTES + Utf8s.utf8Bytes(strValue);
-            case ColumnType.SYMBOL:
+                yield strValue == null ? Integer.BYTES : Integer.BYTES + Utf8s.utf8Bytes(strValue);
+            }
+            case SYMBOL -> {
                 final CharSequence symValue = record.getSymA(columnIndex);
-                return symValue == null ? Integer.BYTES : Integer.BYTES + Utf8s.utf8Bytes(symValue);
-            case ColumnType.BINARY:
+                yield symValue == null ? Integer.BYTES : Integer.BYTES + Utf8s.utf8Bytes(symValue);
+            }
+            case BINARY -> {
                 BinarySequence sequence = record.getBin(columnIndex);
                 if (sequence == null) {
-                    return Integer.BYTES;
-                } else {
-                    long blobSize = sequence.length();
-                    if (blobSize < maxBlobSize) {
-                        return Integer.BYTES + blobSize;
-                    } else {
-                        throw PGMessageProcessingException.instance(pipelineEntry)
-                                .put("blob is too large [blobSize=").put(blobSize)
-                                .put(", maxBlobSize=").put(maxBlobSize)
-                                .put(", columnIndex=").put(columnIndex)
-                                .put(']');
-                    }
+                    yield Integer.BYTES;
                 }
-            case ColumnType.ARRAY:
+                long blobSize = sequence.length();
+                if (blobSize < maxBlobSize) {
+                    yield Integer.BYTES + blobSize;
+                }
+                throw PGMessageProcessingException.instance(pipelineEntry)
+                        .put("blob is too large [blobSize=").put(blobSize)
+                        .put(", maxBlobSize=").put(maxBlobSize)
+                        .put(", columnIndex=").put(columnIndex)
+                        .put(']');
+            }
+            case ARRAY -> {
                 ArrayView array = record.getArray(columnIndex, columnType);
                 if (array.isNull()) {
-                    return Integer.BYTES; // size field (will be -1 for NULL)
+                    yield Integer.BYTES; // size field (will be -1 for NULL)
                 }
                 final short elemType = ColumnType.decodeArrayElementType(columnType);
                 if (elemType != ColumnType.DOUBLE) {
@@ -229,7 +238,7 @@ public final class PGUtils {
                     // below assumes them too. Report "cannot size" so
                     // calculateRecordTailSize() rewinds the row instead of patching a wrong length,
                     // and let outColBinArr() reject the request with a message the client can act on.
-                    return -1;
+                    yield -1;
                 }
 
                 int actualResumePoint = Math.max(0, resumePoint);
@@ -241,19 +250,20 @@ public final class PGUtils {
 
                 // add remaining elements
                 size += calculateArrayResumeColBinSize(notNullCount, remainingElements - notNullCount);
-                return size;
-            case ColumnType.INTERVAL:
-                // This method has to be EXACT, not an upper bound: calculateRecordTailSize() patches
-                // its result into a DataRow length prefix. An interval's size depends on the rendered
-                // timestamps, so it cannot be sized without doing the work. Report "cannot size" and
-                // give up mid-record resume for this row; the whole-row rewind still delivers it.
-                return -1;
-            default:
-                // never assert here: this runs inside outRecord()'s NoSpaceLeftInResponseBufferException
-                // handler, where a thrown AssertionError would replace the in-flight exception and
-                // derail the rewind. outRecord()'s default arm reports the unsupported type instead.
-                return -1;
-        }
+                yield size;
+            }
+            // This method has to be EXACT, not an upper bound: calculateRecordTailSize() patches
+            // its result into a DataRow length prefix. An interval's size depends on the rendered
+            // timestamps, so it cannot be sized without doing the work. Report "cannot size" and
+            // give up mid-record resume for this row; the whole-row rewind still delivers it.
+            case INTERVAL -> -1;
+            // LONG128 and the pseudo tags have no pgwire representation. Never throw here: this
+            // runs inside outRecord()'s NoSpaceLeftInResponseBufferException handler, where a
+            // thrown AssertionError would replace the in-flight exception and derail the rewind.
+            // outRecord()'s unsupported arm reports the type instead.
+            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, DECIMAL, REGCLASS, REGPROCEDURE, PARAMETER,
+                 VARCHAR_SLICE, UNKNOWN -> -1;
+        };
     }
 
     public static int countNotNull(ArrayView array, int resumePoint) {
@@ -290,68 +300,63 @@ public final class PGUtils {
             int columnType
     ) {
         // matches calculateColumnBinSize(), which also derives the tag from the full column type
-        final int typeTag = ColumnType.tagOf(columnType);
-        return switch (typeTag) {
-            case ColumnType.NULL -> Integer.BYTES;
-            case ColumnType.BOOLEAN -> Integer.BYTES + Byte.BYTES;
-            case ColumnType.BYTE -> Integer.BYTES + MAX_BYTE_TEXT_LEN;
-            case ColumnType.SHORT -> Integer.BYTES + MAX_SHORT_TEXT_LEN;
-            case ColumnType.CHAR -> Integer.BYTES + MAX_CHAR_TEXT_LEN;
-            case ColumnType.IPv4 -> Integer.BYTES + MAX_IPv4_TEXT_LEN;
-            case ColumnType.INT -> Integer.BYTES + MAX_INT_TEXT_LEN;
-            case ColumnType.LONG -> Integer.BYTES + MAX_LONG_TEXT_LEN;
-            case ColumnType.DATE -> Integer.BYTES + MAX_DATE_TEXT_LEN;
-            case ColumnType.TIMESTAMP -> Integer.BYTES + MAX_TIMESTAMP_TEXT_LEN;
-            case ColumnType.FLOAT -> Integer.BYTES + MAX_FLOAT_TEXT_LEN;
-            case ColumnType.DOUBLE -> Integer.BYTES + MAX_DOUBLE_TEXT_LEN;
+        return switch (ColumnTypeTag.of(columnType)) {
+            case NULL -> Integer.BYTES;
+            case BOOLEAN -> Integer.BYTES + Byte.BYTES;
+            case BYTE -> Integer.BYTES + MAX_BYTE_TEXT_LEN;
+            case SHORT -> Integer.BYTES + MAX_SHORT_TEXT_LEN;
+            case CHAR -> Integer.BYTES + MAX_CHAR_TEXT_LEN;
+            case IPv4 -> Integer.BYTES + MAX_IPv4_TEXT_LEN;
+            case INT -> Integer.BYTES + MAX_INT_TEXT_LEN;
+            case LONG -> Integer.BYTES + MAX_LONG_TEXT_LEN;
+            case DATE -> Integer.BYTES + MAX_DATE_TEXT_LEN;
+            case TIMESTAMP -> Integer.BYTES + MAX_TIMESTAMP_TEXT_LEN;
+            case FLOAT -> Integer.BYTES + MAX_FLOAT_TEXT_LEN;
+            case DOUBLE -> Integer.BYTES + MAX_DOUBLE_TEXT_LEN;
             // Reserve bytes for an optional sign, decimal point, and leading zero.
-            case ColumnType.DECIMAL8,
-                 ColumnType.DECIMAL16,
-                 ColumnType.DECIMAL32,
-                 ColumnType.DECIMAL64,
-                 ColumnType.DECIMAL128,
-                 ColumnType.DECIMAL256 -> Integer.BYTES + ColumnType.getDecimalPrecision(columnType) + 3L;
-            case ColumnType.UUID -> Integer.BYTES + MAX_UUID_TEXT_LEN;
-            case ColumnType.LONG256 -> Integer.BYTES + MAX_LONG256_TEXT_LEN;
-            case ColumnType.GEOBYTE -> Integer.BYTES + MAX_GEOBYTE_TEXT_LEN;
-            case ColumnType.GEOSHORT -> Integer.BYTES + MAX_GEOSHORT_TEXT_LEN;
-            case ColumnType.GEOINT -> Integer.BYTES + MAX_GEOINT_TEXT_LEN;
-            case ColumnType.GEOLONG -> Integer.BYTES + MAX_GEOLONG_TEXT_LEN;
-            case ColumnType.VARCHAR -> {
+            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 ->
+                    Integer.BYTES + ColumnType.getDecimalPrecision(columnType) + 3L;
+            case UUID -> Integer.BYTES + MAX_UUID_TEXT_LEN;
+            case LONG256 -> Integer.BYTES + MAX_LONG256_TEXT_LEN;
+            case GEOBYTE -> Integer.BYTES + MAX_GEOBYTE_TEXT_LEN;
+            case GEOSHORT -> Integer.BYTES + MAX_GEOSHORT_TEXT_LEN;
+            case GEOINT -> Integer.BYTES + MAX_GEOINT_TEXT_LEN;
+            case GEOLONG -> Integer.BYTES + MAX_GEOLONG_TEXT_LEN;
+            case VARCHAR -> {
                 final Utf8Sequence vcValue = record.getVarcharA(columnIndex);
                 yield vcValue == null ? Integer.BYTES : Integer.BYTES + vcValue.size();
             }
-            case ColumnType.STRING -> {
+            case STRING -> {
                 final CharSequence strValue = record.getStrA(columnIndex);
                 // take a rough upper estimate based on the string length
                 yield strValue == null ? Integer.BYTES : Integer.BYTES + 3L * strValue.length();
             }
-            case ColumnType.SYMBOL -> {
+            case SYMBOL -> {
                 final CharSequence symValue = record.getSymA(columnIndex);
                 // take a rough upper estimate based on the string length
                 yield symValue == null ? Integer.BYTES : Integer.BYTES + 3L * symValue.length();
             }
-            case ColumnType.BINARY -> {
+            case BINARY -> {
                 BinarySequence sequence = record.getBin(columnIndex);
                 yield sequence == null ? Integer.BYTES : Integer.BYTES + sequence.length();
             }
             // ARRAY sits last, as it does in calculateColumnBinSize()
-            case ColumnType.ARRAY -> {
+            case ARRAY -> {
                 final ArrayView array = record.getArray(columnIndex, columnType);
                 if (array.isNull()) {
                     yield Integer.BYTES;
                 }
                 yield Integer.BYTES + arrayTxtSize(array);
             }
-            case ColumnType.INTERVAL -> Integer.BYTES + MAX_INTERVAL_TEXT_LEN;
-            // NOTE: no ARRAY_STRING arm - txtAndBinSizesCanBeDifferent() reports it as same-sized
-            // in both formats, so it is sized by calculateColumnBinSize() and never reaches here.
-            default ->
-                // an unknown type must not raise here: this runs inside outRecord()'s
-                // NoSpaceLeftInResponseBufferException handler, where a thrown AssertionError
-                // replaces the in-flight exception and derails the rewind. outRecord()'s own
-                // default arm is what reports an unsupported type to the client.
-                    -1;
+            case INTERVAL -> Integer.BYTES + MAX_INTERVAL_TEXT_LEN;
+            // ARRAY_STRING: txtAndBinSizesCanBeDifferent() reports it as same-sized in both
+            // formats, so calculateColumnBinSize() sizes it and it never reaches here.
+            // LONG128 and the pseudo tags must not raise here: this runs inside outRecord()'s
+            // NoSpaceLeftInResponseBufferException handler, where a thrown AssertionError
+            // replaces the in-flight exception and derails the rewind. outRecord()'s own
+            // unsupported arm is what reports an unsupported type to the client.
+            case ARRAY_STRING, UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, DECIMAL, REGCLASS, REGPROCEDURE,
+                 PARAMETER, VARCHAR_SLICE, UNKNOWN -> -1;
         };
     }
 
