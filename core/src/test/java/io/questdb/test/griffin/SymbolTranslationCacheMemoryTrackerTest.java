@@ -65,6 +65,7 @@ import io.questdb.griffin.engine.table.MultiHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
+import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -85,10 +86,12 @@ import java.util.concurrent.CountDownLatch;
  * Verifies that every owner of a {@link SymbolTranslatingRecord} binds the per-query memory
  * tracker to it, so that the translation caches count toward the per-query memory limit.
  * <p>
- * Each query translates 40,000 distinct symbols, none of which the other side of the join
- * holds, so a translation cache grows to 1 MiB (131,072 slots of 8 bytes) and briefly holds
- * 1.5 MiB while it rehashes from 512 KiB. The join's own tracked structures do not grow with
- * the translated symbols:
+ * Each query translates 40,000 distinct symbols, so a translation cache grows to 1 MiB
+ * (131,072 slots of 8 bytes) and briefly holds 1.5 MiB while it rehashes from 512 KiB. The other
+ * side of the join holds none of these symbols in the hash join tables, and only the symbol '1'
+ * in the time-series and HORIZON tables; the cache stores a miss just as it stores a hit, so it
+ * grows the same either way. The join's own tracked structures do not grow with the translated
+ * symbols:
  * <ul>
  *   <li>the time-series and HORIZON joins read a one-row slave, so their maps hold one key;</li>
  *   <li>the hash joins translate every build-side symbol to VALUE_NOT_FOUND, so their join key
@@ -97,15 +100,18 @@ import java.util.concurrent.CountDownLatch;
  * For each query, the helper first drains the cursor with translation caching disabled and
  * expects no breach, which shows that nothing but the cache growth can cross the 1 MiB limit.
  * It then drains the cursor with caching enabled and expects a breach at a
- * {@link MemoryTag#NATIVE_JOIN_MAP} allocation; for these queries, only the translation caches
- * allocate under that tag at execution time. Without the tracker binding the caches escape the
- * limit, the query completes and trips {@code Assert.fail}.
+ * {@link MemoryTag#NATIVE_JOIN_MAP} allocation. For these queries, only the translation caches
+ * allocate under that tag once the query compiles, both when a cursor opens and when it runs.
+ * Without the tracker binding the caches escape the limit, the query completes and trips
+ * {@code Assert.fail}.
  * <p>
  * An async HORIZON atom binds the tracker to its owner record and, separately, to each
  * per-worker record, and a query uses the record of whichever thread reduces the page frame.
  * The owner pass runs without a worker pool, so the query owner reduces every frame. The worker
  * pass gates the owner with {@link SlotGatedWorkStealingStrategy} until a worker takes a slot,
- * and the master table fits a single page frame, so a worker reduces the whole table.
+ * and the master table fits a single page frame, so the worker that takes the slot reduces the
+ * whole table. With a second frame, the owner could steal part of the table once the gate opens,
+ * and the owner record would then share the translations with the per-worker record.
  * <p>
  * The open-failure tests check that a breach while a join opens its translation caches frees
  * each child cursor exactly once. A failed open leaves the child cursors to the catch block
@@ -158,10 +164,9 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
         // it after the test. Queries without a latch run under the plain adaptive strategy.
         factoryProvider = SlotGatedWorkStealingStrategy.newFactoryProvider();
         // The test configuration splits the master table into 4 page frames of 10,000 rows, one per
-        // worker. A single frame means a single reduce task, so the worker that takes the gated
-        // slot translates all 40,000 symbols and leaves the owner nothing to steal.
-        // TestUtils.execute() creates the context, which reads the minimum frame size, after this
-        // call.
+        // worker. This minimum frame size keeps the table in the single frame that the class javadoc
+        // asks for. TestUtils.execute() creates the context, which reads the minimum frame size,
+        // after this call.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 100_000);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
@@ -209,7 +214,6 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createHashJoinTables(engine, sqlExecutionContext);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                // the compiler pool resets the flag when the compiler returns to the pool
                 compiler.setFullFatJoins(true);
                 assertHashJoins(
                         compiler,
@@ -379,7 +383,7 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
             // With caching disabled the caches keep their initial 256 bytes, so the query must fit the limit.
             setProperty(PropertyKey.CAIRO_SQL_JOIN_SYMBOL_TRANSLATION_CACHE_CAPACITY, 0);
             try {
-                openAndDrain(factory, sqlExecutionContext, workerLocks, query);
+                openAndDrain(factory, sqlExecutionContext, workerLocks, query, false);
             } catch (CairoException e) {
                 throw new AssertionError("breach with translation caching disabled: " + query + ", " + e.getFlyweightMessage(), e);
             } finally {
@@ -389,12 +393,11 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
             // Reusing the factory checks that each open binds the tracker before the caches reopen.
             for (int i = 0; i < 2; i++) {
                 try {
-                    openAndDrain(factory, sqlExecutionContext, workerLocks, query);
+                    openAndDrain(factory, sqlExecutionContext, workerLocks, query, true);
                     Assert.fail("expected a per-query memory breach at iteration " + i + ": " + query);
                 } catch (CairoException e) {
                     Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
                     TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
-                    // for these queries, only the translation caches allocate under NATIVE_JOIN_MAP at execution time
                     TestUtils.assertContains(e.getFlyweightMessage(), "memoryTag=" + MemoryTag.NATIVE_JOIN_MAP + ']');
                 }
             }
@@ -612,7 +615,7 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
                 } catch (CairoException e) {
                     final CharSequence message = e.getFlyweightMessage();
                     Assert.assertTrue("expected isOutOfMemory(), got: " + message, e.isOutOfMemory());
-                    // for these queries, only the translation caches allocate under NATIVE_JOIN_MAP at open time
+                    // a NATIVE_JOIN_MAP breach is a translation cache breach, see the class javadoc
                     isCacheBreachSeen |= Chars.contains(message, "memoryTag=" + MemoryTag.NATIVE_JOIN_MAP + ']');
                     master.assertCursorsClosedOnce(query, message);
                     if (slave != null) {
@@ -628,19 +631,19 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
             // The failed opens leave the factory reusable.
             setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, QUERY_MEMORY_LIMIT);
             try (RecordCursor reusedCursor = factory.getCursor(sqlExecutionContext)) {
-                drain(reusedCursor);
+                TestUtils.drainCursor(reusedCursor);
             }
             master.assertCursorsClosedOnce(query, "after a successful run");
+            master.assertCursorsOpened(query);
             if (slave != null) {
                 slave.assertCursorsClosedOnce(query, "after a successful run");
+                slave.assertCursorsOpened(query);
             }
             return master;
         }
     }
 
     private static void assertSingleMasterFrame(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception {
-        // With a second frame, the owner could steal part of the master table once the gate opens,
-        // and the owner record would then share the translations with the per-worker record.
         try (
                 RecordCursorFactory factory = compiler.compile("m", sqlExecutionContext).getRecordCursorFactory();
                 PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)
@@ -709,12 +712,6 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
         );
     }
 
-    private static void drain(RecordCursor cursor) {
-        //noinspection StatementWithEmptyBody
-        while (cursor.hasNext()) {
-        }
-    }
-
     private static RecordCursorFactory findFactory(
             RecordCursorFactory factory,
             Class<? extends RecordCursorFactory> expectedFactory,
@@ -731,17 +728,19 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
 
     /**
      * Opens a cursor and drains it. Given per-worker locks, it holds the query owner off until a
-     * worker takes a slot, and then checks that a worker did.
+     * worker takes a slot, and then checks that a worker did. It runs the check after a successful
+     * drain and after an expected breach, and lets an unexpected breach reach the caller unchanged.
      */
     private static void openAndDrain(
             RecordCursorFactory factory,
             SqlExecutionContext sqlExecutionContext,
             @Nullable PerWorkerLocks workerLocks,
-            String query
+            String query,
+            boolean isBreachExpected
     ) throws SqlException {
         if (workerLocks == null) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                drain(cursor);
+                TestUtils.drainCursor(cursor);
             }
             return;
         }
@@ -749,13 +748,18 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
         final CountDownLatch acquired = new CountDownLatch(1);
         workerLocks.setTestAcquireLatch(acquired);
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            drain(cursor);
+            TestUtils.drainCursor(cursor);
+        } catch (CairoException e) {
+            // A latch that still stands means that the owner reduced the frame itself, so an
+            // expected breach would say nothing about the per-worker records.
+            if (isBreachExpected && acquired.getCount() != 0) {
+                throw new AssertionError("no worker acquired a slot: " + query, e);
+            }
+            throw e;
         } finally {
             workerLocks.setTestAcquireLatch(null);
-            // The check runs on the breach path too: a latch that still stands means that the owner
-            // reduced the frame itself, so a breach would say nothing about the per-worker records.
-            Assert.assertEquals("no worker acquired a slot: " + query, 0, acquired.getCount());
         }
+        Assert.assertEquals("no worker acquired a slot: " + query, 0, acquired.getCount());
     }
 
     // Reads a numeric attribute, such as "used=", from a per-query memory limit breach message.
@@ -779,9 +783,9 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
     }
 
     /**
-     * Forwards every call to the cursor of the wrapped child factory, and counts the opens, the
-     * close() calls and the random access reads. It forwards each close() call, so the child
-     * cursor sees exactly the calls that the join makes.
+     * Forwards every RecordCursor call, the default methods included, to the cursor of the wrapped
+     * child factory, and counts the opens, the close() calls and the random access reads. It
+     * forwards each close() call, so the child cursor sees exactly the calls that the join makes.
      */
     private static class CloseCountingCursor implements RecordCursor {
         private RecordCursor base;
@@ -831,6 +835,11 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
         }
 
         @Override
+        public void longTopK(DirectLongLongSortedList list, int columnIndex) {
+            base.longTopK(list, columnIndex);
+        }
+
+        @Override
         public SymbolTable newSymbolTable(int columnIndex) {
             return base.newSymbolTable(columnIndex);
         }
@@ -844,6 +853,11 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
         public void recordAt(Record record, long atRowId) {
             recordAtCount++;
             base.recordAt(record, atRowId);
+        }
+
+        @Override
+        public void resumeTimer() {
+            base.resumeTimer();
         }
 
         @Override
@@ -869,6 +883,11 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
         @Override
         public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
             base.skipRows(rowCount, maxRowsAfterSkip);
+        }
+
+        @Override
+        public void suspendTimer() {
+            base.suspendTimer();
         }
 
         @Override
@@ -933,6 +952,12 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
                     cursor.openCount,
                     cursor.closeCount
             );
+        }
+
+        // Without an open, the close check above passes at 0 == 0, and a join that stopped
+        // reading the replaced field would go unchecked.
+        void assertCursorsOpened(String query) {
+            Assert.assertTrue("the join opened no cursor of the wrapped child factory: " + query, cursor.openCount > 0);
         }
 
         int getRecordAtCount() {

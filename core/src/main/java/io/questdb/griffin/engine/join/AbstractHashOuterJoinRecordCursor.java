@@ -156,11 +156,11 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
         }
     }
 
-    protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
-        this.masterCursor = masterCursor;
-        this.slaveCursor = slaveCursor;
-    }
+    // A subclass opens its own state and calls ofWithoutAdopt() before it adopts the cursors into
+    // masterCursor and slaveCursor, which it does last. When of() throws, the factory's getCursor()
+    // catch frees the child cursors and then closes this cursor, so a cursor that had already adopted
+    // them would free them twice.
+    protected abstract void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException;
 
     // Sets up the per-run join state from the master/slave cursors without adopting them into the owned
     // fields, letting a filtered subclass run its throwing filter.init() and adopt the cursors last.
