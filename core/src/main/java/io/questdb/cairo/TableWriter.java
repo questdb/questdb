@@ -3739,7 +3739,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         }
-        commitWalLag();
         commitSeqTxn(seqTxn);
     }
 
@@ -5769,42 +5768,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long currentTableTxn = txWriter.getTxn();
         publishPendingPostingSealPurges(currentTableTxn);
         publishDeferredPostingSealPurges(currentTableTxn, false);
-    }
-
-    private void commitWalLag() {
-        if (txWriter.getLagTxnCount() == 0) {
-            return;
-        }
-        final long appliedSeqTxn = getAppliedSeqTxn();
-        final int lagRows = txWriter.getLagRowCount();
-        walApplySeqTxn = appliedSeqTxn;
-        try {
-            // Keep accepted lag rows when an administrative skip advances past them.
-            if (lagRows > 0) {
-                txWriter.beginPartitionSizeUpdate();
-                o3OpenColumns();
-                o3TimestampMem.jumpTo(0);
-                o3RowCount = 0;
-                dispatchColumnTasks(txWriter.getTransientRowCount(), IGNORE, lagRows, IGNORE, IGNORE, cthO3MoveUncommittedRef);
-                o3Columns = o3MemColumns1;
-                o3MasterRef = masterRef - lagRows * 2L + 1;
-            }
-            txWriter.setLagTxnCount(0);
-            txWriter.setLagRowCount(0);
-            txWriter.setLagOrdered(true);
-            txWriter.setLagMinTimestamp(Long.MAX_VALUE);
-            txWriter.setLagMaxTimestamp(Long.MIN_VALUE);
-            txWriter.setSeqTxn(appliedSeqTxn);
-            if (lagRows > 0) {
-                o3Commit(0);
-            }
-            commit00();
-        } catch (Throwable e) {
-            distressed = true;
-            throw e;
-        } finally {
-            walApplySeqTxn = -1;
-        }
     }
 
     private void configureAppendPosition() {
