@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.GeoHashes;
@@ -2168,8 +2169,8 @@ public class PostingIndexWriter implements IndexWriter {
             // Linear-prediction FoR gives O(1) random access with same compression as delta.
             return CoveringCompressor.compressLongsLinearPred(rawBuf, valueCount, destBuf, longWorkspaceAddr);
         }
-        return switch (ColumnType.tagOf(colType)) {
-            case ColumnType.DOUBLE -> {
+        return switch (CoveringCompressor.codecKind(colType)) {
+            case CoveringCompressor.CODEC_DOUBLE -> {
                 int alpSize = CoveringCompressor.compressDoubles(rawBuf, valueCount, 3, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
                 // The raw layout is never wider than CoveringCompressor.maxCompressedSize, which
                 // validateSidecarBlockSize already held to Integer.MAX_VALUE, so the narrowing is safe.
@@ -2181,7 +2182,7 @@ public class PostingIndexWriter implements IndexWriter {
                 Unsafe.copyMemory(rawBuf, destBuf + 4, (long) valueCount * Double.BYTES);
                 yield rawSize;
             }
-            case ColumnType.FLOAT -> {
+            case CoveringCompressor.CODEC_FLOAT -> {
                 int alpSize = CoveringCompressor.compressFloats(rawBuf, valueCount, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
                 int rawSize = (int) (4L + (long) valueCount * Float.BYTES);
                 if (alpSize <= rawSize) {
@@ -2191,21 +2192,20 @@ public class PostingIndexWriter implements IndexWriter {
                 Unsafe.copyMemory(rawBuf, destBuf + 4, (long) valueCount * Float.BYTES);
                 yield rawSize;
             }
-            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG, ColumnType.DECIMAL64 ->
-                    CoveringCompressor.compressLongs(rawBuf, valueCount, destBuf);
-            case ColumnType.GEOINT, ColumnType.INT, ColumnType.IPv4, ColumnType.SYMBOL,
-                 ColumnType.DECIMAL32 ->
+            case CoveringCompressor.CODEC_LONG -> CoveringCompressor.compressLongs(rawBuf, valueCount, destBuf);
+            case CoveringCompressor.CODEC_INT ->
                     CoveringCompressor.compressInts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
-            case ColumnType.CHAR, ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
+            case CoveringCompressor.CODEC_SHORT ->
                     CoveringCompressor.compressShorts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
-            case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
+            case CoveringCompressor.CODEC_BYTE ->
                     CoveringCompressor.compressBytes(rawBuf, valueCount, destBuf, longWorkspaceAddr);
-            default -> {
-                // Raw copy for remaining fixed-width types: LONG128, UUID, LONG256, DECIMAL128/256
+            case CoveringCompressor.CODEC_RAW -> {
+                // Raw copy for the 16- and 32-byte types: LONG128, UUID, LONG256, DECIMAL128/256
                 Unsafe.putInt(destBuf, valueCount);
                 Unsafe.copyMemory(rawBuf, destBuf + 4, (long) valueCount << shift);
                 yield (int) (4L + ((long) valueCount << shift));
             }
+            default -> throw new AssertionError("compressSidecarBlock: unknown codec kind for column type " + colType);
         };
     }
 
@@ -2318,111 +2318,17 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
-    private static void writeNullSentinel(MemoryMARW mem, int valueSize, int colType) {
-        switch (ColumnType.tagOf(colType)) {
-            case ColumnType.DOUBLE -> mem.putLong(Double.doubleToLongBits(Double.NaN));
-            case ColumnType.FLOAT -> mem.putInt(Float.floatToIntBits(Float.NaN));
-            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.DECIMAL64 ->
-                    mem.putLong(Numbers.LONG_NULL);
-            case ColumnType.GEOLONG -> mem.putLong(GeoHashes.NULL);
-            case ColumnType.INT, ColumnType.SYMBOL, ColumnType.DECIMAL32 -> mem.putInt(Numbers.INT_NULL);
-            case ColumnType.IPv4 -> mem.putInt(Numbers.IPv4_NULL);
-            case ColumnType.GEOINT -> mem.putInt(GeoHashes.INT_NULL);
-            case ColumnType.CHAR, ColumnType.SHORT -> mem.putShort((short) 0);
-            case ColumnType.DECIMAL16 -> mem.putShort(Decimals.DECIMAL16_NULL);
-            case ColumnType.GEOSHORT -> mem.putShort(GeoHashes.SHORT_NULL);
-            case ColumnType.BYTE, ColumnType.BOOLEAN -> mem.putByte((byte) 0);
-            case ColumnType.DECIMAL8 -> mem.putByte(Decimals.DECIMAL8_NULL);
-            case ColumnType.GEOBYTE -> mem.putByte(GeoHashes.BYTE_NULL);
-            case ColumnType.UUID -> {
-                mem.putLong(Numbers.LONG_NULL);
-                mem.putLong(Numbers.LONG_NULL);
-            }
-            case ColumnType.DECIMAL128 -> {
-                mem.putLong(Decimals.DECIMAL128_HI_NULL);
-                mem.putLong(Decimals.DECIMAL128_LO_NULL);
-            }
-            case ColumnType.LONG256 -> {
-                for (int i = 0; i < 4; i++) mem.putLong(Numbers.LONG_NULL);
-            }
-            case ColumnType.DECIMAL256 -> {
-                mem.putLong(Decimals.DECIMAL256_HH_NULL);
-                mem.putLong(Decimals.DECIMAL256_HL_NULL);
-                mem.putLong(Decimals.DECIMAL256_LH_NULL);
-                mem.putLong(Decimals.DECIMAL256_LL_NULL);
-            }
-            default -> {
-                // Generic fallback: write zero bytes for the value size
-                for (int i = 0; i < valueSize; i++) mem.putByte((byte) 0);
-            }
+    /**
+     * Writes one NULL of the column's type at the append position: the type driver's storage
+     * NULL, except LONG128, which this path has always written as zeros (PB1,
+     * pre-existing-bugs.md; the address path writes LONG_NULL twice). Kept as is.
+     */
+    private static void writeNullSentinel(MemoryMARW mem, int valueSize, int colType, TypeDriver driver) {
+        if (ColumnType.tagOf(colType) == ColumnType.LONG128) {
+            for (int i = 0; i < valueSize; i++) mem.putByte((byte) 0);
+            return;
         }
-    }
-
-    private static void writeNullSentinel(long addr, int valueSize, int columnType) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.DOUBLE -> {
-                Unsafe.putDouble(addr, Double.NaN);
-                return;
-            }
-            case ColumnType.FLOAT -> {
-                Unsafe.putFloat(addr, Float.NaN);
-                return;
-            }
-            case ColumnType.GEOBYTE -> {
-                Unsafe.putByte(addr, GeoHashes.BYTE_NULL);
-                return;
-            }
-            case ColumnType.GEOSHORT -> {
-                Unsafe.putShort(addr, GeoHashes.SHORT_NULL);
-                return;
-            }
-            case ColumnType.GEOINT -> {
-                Unsafe.putInt(addr, GeoHashes.INT_NULL);
-                return;
-            }
-            case ColumnType.IPv4 -> {
-                Unsafe.putInt(addr, Numbers.IPv4_NULL);
-                return;
-            }
-            case ColumnType.GEOLONG -> {
-                Unsafe.putLong(addr, GeoHashes.NULL);
-                return;
-            }
-            case ColumnType.INT, ColumnType.SYMBOL, ColumnType.DECIMAL32 -> {
-                Unsafe.putInt(addr, Numbers.INT_NULL);
-                return;
-            }
-            case ColumnType.DECIMAL16 -> {
-                Unsafe.putShort(addr, Decimals.DECIMAL16_NULL);
-                return;
-            }
-            case ColumnType.DECIMAL8 -> {
-                Unsafe.putByte(addr, Decimals.DECIMAL8_NULL);
-                return;
-            }
-            case ColumnType.DECIMAL128 -> {
-                Unsafe.putLong(addr, Decimals.DECIMAL128_HI_NULL);
-                Unsafe.putLong(addr + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
-                return;
-            }
-            case ColumnType.DECIMAL256 -> {
-                Unsafe.putLong(addr, Decimals.DECIMAL256_HH_NULL);
-                Unsafe.putLong(addr + Long.BYTES, Decimals.DECIMAL256_HL_NULL);
-                Unsafe.putLong(addr + 2 * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
-                Unsafe.putLong(addr + 3 * Long.BYTES, Decimals.DECIMAL256_LL_NULL);
-                return;
-            }
-            default -> {
-            }
-        }
-        // Generic null sentinel by size for types not handled by the switch above.
-        // Falls through for: BYTE, BOOLEAN, CHAR, SHORT (NULL == 0), and for
-        // LONG/TIMESTAMP/DATE/DECIMAL64/UUID/LONG256 where every 8-byte slot
-        // is Long.MIN_VALUE (covered by the overlay loop below).
-        Unsafe.setMemory(addr, valueSize, (byte) 0);
-        for (int off = 0; off + Long.BYTES <= valueSize; off += Long.BYTES) {
-            Unsafe.putLong(addr + off, Long.MIN_VALUE);
-        }
+        driver.setNull(mem.appendAddressFor(valueSize), 1);
     }
 
     private static void writeVarOffset(MemoryMARW mem, long offsetsStart, int ordinal, long value, boolean longOffsets) {
@@ -7189,6 +7095,8 @@ public class PostingIndexWriter implements IndexWriter {
     ) {
         int valueSize = 1 << shift;
         int keyOffsetsSize = ks * Long.BYTES;
+        // once per column: the storage NULL for rows above the column top
+        final TypeDriver driver = ColumnType.getTypeDriver(colType);
 
         long keyOffsetsPos = mem.getAppendOffset();
         for (int j = 0; j < ks; j++) {
@@ -7226,14 +7134,14 @@ public class PostingIndexWriter implements IndexWriter {
             for (int i = 0; i < count; i++) {
                 long rowId = Unsafe.getLong(keyBuffer + (long) i * Long.BYTES);
                 if (rowId < colTop) {
-                    writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
+                    driver.setNull(sidecarBuf + rawOffset, 1);
                 } else {
                     long srcOffset = (rowId - colTop) << shift;
                     long addr = getCoveredDataReadAddr(c, srcOffset, valueSize);
                     if (addr != 0) {
                         Unsafe.copyMemory(addr, sidecarBuf + rawOffset, valueSize);
                     } else {
-                        writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
+                        driver.setNull(sidecarBuf + rawOffset, 1);
                     }
                 }
                 rawOffset += valueSize;
@@ -7263,6 +7171,8 @@ public class PostingIndexWriter implements IndexWriter {
             long sidecarBuf, long longWorkspaceAddr, long exceptionWorkspaceAddr
     ) {
         int valueSize = 1 << shift;
+        // once per column: the storage NULL for rows above the column top
+        final TypeDriver driver = ColumnType.getTypeDriver(colType);
 
         // Per-key compressed layout: [key_offsets: ks x 8B][key_0_block][key_1_block]...
         int keyOffsetsSize = ks * Long.BYTES;
@@ -7301,14 +7211,14 @@ public class PostingIndexWriter implements IndexWriter {
                     long rowId = Unsafe.getLong(
                             mergedValuesAddr + (keyOff + i) * Long.BYTES);
                     if (rowId < colTop) {
-                        writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
+                        driver.setNull(sidecarBuf + rawOffset, 1);
                     } else {
                         long srcOffset = (rowId - colTop) << shift;
                         long addr = getCoveredDataReadAddr(c, srcOffset, valueSize);
                         if (addr != 0) {
                             Unsafe.copyMemory(addr, sidecarBuf + rawOffset, valueSize);
                         } else {
-                            writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
+                            driver.setNull(sidecarBuf + rawOffset, 1);
                         }
                     }
                     rawOffset += valueSize;
@@ -7553,6 +7463,8 @@ public class PostingIndexWriter implements IndexWriter {
             } else {
                 int shift = coveredColumnShifts.getQuick(c);
                 int valueSize = 1 << shift;
+                // once per column: the storage NULL for rows above the column top
+                final TypeDriver driver = ColumnType.getTypeDriver(colType);
 
                 mem.putInt(totalValues);
 
@@ -7565,14 +7477,14 @@ public class PostingIndexWriter implements IndexWriter {
                         long spillAddr = Unsafe.getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
                         for (int i = 0; i < spillCount; i++) {
                             long rowId = Unsafe.getLong(spillAddr + (long) i * Long.BYTES);
-                            writeSidecarValueSafe(mem, c, colTop, rowId, shift, valueSize, colType);
+                            writeSidecarValueSafe(mem, c, colTop, rowId, shift, valueSize, colType, driver);
                         }
                     }
 
                     long keyValuesAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
                     for (int i = 0; i < pendingCount; i++) {
                         long rowId = Unsafe.getLong(keyValuesAddr + (long) i * Long.BYTES);
-                        writeSidecarValueSafe(mem, c, colTop, rowId, shift, valueSize, colType);
+                        writeSidecarValueSafe(mem, c, colTop, rowId, shift, valueSize, colType, driver);
                     }
                 }
             }
@@ -7646,16 +7558,17 @@ public class PostingIndexWriter implements IndexWriter {
             long rowId,
             int shift,
             int valueSize,
-            int colType
+            int colType,
+            TypeDriver driver
     ) {
         if (rowId < colTop) {
-            writeNullSentinel(mem, valueSize, colType);
+            writeNullSentinel(mem, valueSize, colType, driver);
         } else {
             long srcOffset = (rowId - colTop) << shift;
             if (coveredColumnNames.size() > 0 || coveredColumnAddrs.size() > 0) {
                 long addr = getCoveredDataReadAddr(covIdx, srcOffset, valueSize);
                 if (addr == 0) {
-                    writeNullSentinel(mem, valueSize, colType);
+                    writeNullSentinel(mem, valueSize, colType, driver);
                     return;
                 }
                 putFixedValue(mem, addr, valueSize);

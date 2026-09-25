@@ -3425,22 +3425,24 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 colCacheCapacities[includeIdx] = (int) needed;
             }
             ensureDecodeWorkspaceCapacity(count);
-            switch (ColumnType.tagOf(colType)) {
-                case ColumnType.DOUBLE ->
+            // the same relation the writer compressed with (CoveringCompressor.codecKind)
+            switch (CoveringCompressor.codecKind(colType)) {
+                case CoveringCompressor.CODEC_DOUBLE ->
                         CoveringCompressor.decompressDoublesToAddr(blockAddr, colCacheAddrs[includeIdx], decodeWorkspaceAddr);
-                case ColumnType.FLOAT ->
+                case CoveringCompressor.CODEC_FLOAT ->
                         CoveringCompressor.decompressFloatsToAddr(blockAddr, colCacheAddrs[includeIdx], decodeWorkspaceAddr);
-                case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG, ColumnType.DECIMAL64 ->
+                case CoveringCompressor.CODEC_LONG ->
                         CoveringCompressor.decompressLongsToAddr(blockAddr, colCacheAddrs[includeIdx], decodeWorkspaceAddr);
-                case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL, ColumnType.DECIMAL32 ->
+                case CoveringCompressor.CODEC_INT ->
                         CoveringCompressor.decompressIntsToAddr(blockAddr, colCacheAddrs[includeIdx], decodeWorkspaceAddr);
-                case ColumnType.SHORT, ColumnType.CHAR, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
+                case CoveringCompressor.CODEC_SHORT ->
                         CoveringCompressor.decompressShortsToAddr(blockAddr, colCacheAddrs[includeIdx], decodeWorkspaceAddr);
-                case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
+                case CoveringCompressor.CODEC_BYTE ->
                         CoveringCompressor.decompressBytesToAddr(blockAddr, colCacheAddrs[includeIdx], decodeWorkspaceAddr);
-                case ColumnType.LONG128, ColumnType.UUID, ColumnType.DECIMAL128, ColumnType.LONG256,
-                     ColumnType.DECIMAL256 ->
+                case CoveringCompressor.CODEC_RAW ->
                         Unsafe.copyMemory(blockAddr + 4, colCacheAddrs[includeIdx], (long) count * elemSize);
+                default ->
+                        throw new AssertionError("ensureColumnDecoded: unknown codec kind for column type " + colType);
             }
             colCacheBlockAddrs[includeIdx] = blockAddr;
             return true;
