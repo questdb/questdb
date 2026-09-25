@@ -24,7 +24,11 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.engine.functions.columns.BinColumn;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.NullBinConstant;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
@@ -41,6 +45,14 @@ public class BinaryTypeDriver extends StringTypeDriver {
     }
 
     /**
+     * Overrides the inherited STRING constant.
+     */
+    @Override
+    public ConstantFunction getNullConstant(int columnType) {
+        return NullBinConstant.INSTANCE;
+    }
+
+    /**
      * Overrides the inherited STRING value: a NULL binary's aux entry is one NULL_LEN long.
      */
     @Override
@@ -51,6 +63,14 @@ public class BinaryTypeDriver extends StringTypeDriver {
     @Override
     public ColumnTypeTag getTag() {
         return ColumnTypeTag.BINARY;
+    }
+
+    /**
+     * Overrides the inherited STRING column function.
+     */
+    @Override
+    public Function newColumnFunction(int columnIndex, int columnType) {
+        return BinColumn.newInstance(columnIndex);
     }
 
     @Override

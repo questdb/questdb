@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -37,6 +38,9 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.engine.functions.columns.ArrayColumn;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
@@ -546,6 +550,14 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return getAuxVectorOffsetStatic(row);
     }
 
+    /**
+     * Typed by the encoded dimensionality; {@link Constants} caches the common DOUBLE arrays.
+     */
+    @Override
+    public ConstantFunction getNullConstant(int columnType) {
+        return Constants.getNullArrayConstant(columnType);
+    }
+
     @Override
     public long getNullLong(int longIndex) {
         return TableUtils.NULL_LEN;
@@ -554,6 +566,11 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     @Override
     public ColumnTypeTag getTag() {
         return ColumnTypeTag.ARRAY;
+    }
+
+    @Override
+    public Function newColumnFunction(int columnIndex, int columnType) {
+        return new ArrayColumn(columnIndex, columnType);
     }
 
     @Override

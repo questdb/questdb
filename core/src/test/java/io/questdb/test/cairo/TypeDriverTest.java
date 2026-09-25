@@ -37,9 +37,37 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampTypeDriver;
 import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.Constants;
+import io.questdb.griffin.engine.functions.constants.DateConstant;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
+import io.questdb.griffin.engine.functions.constants.FloatConstant;
+import io.questdb.griffin.engine.functions.constants.GeoByteConstant;
+import io.questdb.griffin.engine.functions.constants.GeoIntConstant;
+import io.questdb.griffin.engine.functions.constants.GeoLongConstant;
+import io.questdb.griffin.engine.functions.constants.GeoShortConstant;
+import io.questdb.griffin.engine.functions.constants.IPv4Constant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.constants.IntervalConstant;
+import io.questdb.griffin.engine.functions.constants.Long128Constant;
+import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.NullArrayConstant;
+import io.questdb.griffin.engine.functions.constants.NullBinConstant;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.SymbolConstant;
+import io.questdb.griffin.engine.functions.constants.UuidConstant;
+import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -184,6 +212,205 @@ public class TypeDriverTest {
             } finally {
                 Unsafe.free(buf, 32, MemoryTag.NATIVE_DEFAULT);
             }
+        }
+    }
+
+    @Test
+    public void testColumnFunctionsPerType() {
+        // the classes FunctionParser.createColumn and GroupByUtils.createColumnFunction used to name
+        final Object[][] expected = {
+                {ColumnType.BOOLEAN, "BooleanColumn"},
+                {ColumnType.BYTE, "ByteColumn"},
+                {ColumnType.SHORT, "ShortColumn"},
+                {ColumnType.CHAR, "CharColumn"},
+                {ColumnType.INT, "IntColumn"},
+                {ColumnType.LONG, "LongColumn"},
+                {ColumnType.DATE, "DateColumn"},
+                {ColumnType.TIMESTAMP_MICRO, "TimestampColumn"},
+                {ColumnType.TIMESTAMP_NANO, "TimestampColumn"},
+                {ColumnType.FLOAT, "FloatColumn"},
+                {ColumnType.DOUBLE, "DoubleColumn"},
+                {ColumnType.STRING, "StrColumn"},
+                {ColumnType.LONG256, "Long256Column"},
+                {ColumnType.getGeoHashTypeWithBits(5), "GeoByteColumn"},
+                {ColumnType.getGeoHashTypeWithBits(12), "GeoShortColumn"},
+                {ColumnType.getGeoHashTypeWithBits(30), "GeoIntColumn"},
+                {ColumnType.getGeoHashTypeWithBits(60), "GeoLongColumn"},
+                {ColumnType.BINARY, "BinColumn"},
+                {ColumnType.UUID, "UuidColumn"},
+                {ColumnType.LONG128, "Long128Column"},
+                {ColumnType.IPv4, "IPv4Column"},
+                {ColumnType.VARCHAR, "VarcharColumn"},
+                {ColumnType.VARCHAR_SLICE, "VarcharColumn"},
+                {ColumnType.encodeArrayType(ColumnType.DOUBLE, 2), "ArrayColumn"},
+                {ColumnType.getDecimalType(2, 1), "DecimalColumn"},
+                {ColumnType.getDecimalType(4, 1), "DecimalColumn"},
+                {ColumnType.getDecimalType(9, 2), "DecimalColumn"},
+                {ColumnType.getDecimalType(18, 3), "DecimalColumn"},
+                {ColumnType.getDecimalType(38, 4), "DecimalColumn"},
+                {ColumnType.getDecimalType(76, 5), "DecimalColumn"},
+                {ColumnType.INTERVAL_TIMESTAMP_MICRO, "IntervalColumn"},
+                {ColumnType.INTERVAL_TIMESTAMP_NANO, "IntervalColumn"},
+                {ColumnType.INTERVAL_RAW, "IntervalColumn"},
+        };
+        final Set<ColumnTypeTag> covered = EnumSet.noneOf(ColumnTypeTag.class);
+        for (Object[] row : expected) {
+            final int type = ((Number) row[0]).intValue();
+            final String name = ColumnType.nameOf(type);
+            for (int index : new int[]{0, 3, 1000}) {
+                final Function func = ColumnType.getTypeDriver(type).newColumnFunction(index, type);
+                Assert.assertEquals(name, row[1], func.getClass().getSimpleName());
+                // IntervalColumn is the one column function that does not implement ColumnFunction
+                if (func instanceof ColumnFunction columnFunction) {
+                    Assert.assertEquals(name, index, columnFunction.getColumnIndex());
+                }
+                final int expectedType = ColumnType.tagOf(type) == ColumnType.VARCHAR_SLICE ? ColumnType.VARCHAR : type;
+                Assert.assertEquals(name, expectedType, func.getType());
+            }
+            covered.add(ColumnTypeTag.of(type));
+        }
+        try {
+            ColumnType.getTypeDriver(ColumnType.SYMBOL).newColumnFunction(0, ColumnType.SYMBOL);
+            Assert.fail("SYMBOL column functions need the symbol table; the callers build them");
+        } catch (UnsupportedOperationException ignore) {
+        }
+        covered.add(ColumnTypeTag.SYMBOL);
+        for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
+            final ColumnTypeTag enumTag = ColumnTypeTag.of(tag);
+            Assert.assertTrue(enumTag.name(), PSEUDO_TAGS.contains(enumTag) || covered.contains(enumTag));
+        }
+    }
+
+    @Test
+    public void testNullAsLongIsTheDeletedLongNullUtilsTable() {
+        // the values the deleted LongNullUtils table held, per tag; a widening read of the storage NULL
+        Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.BOOLEAN).getNullAsLong());
+        Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.BYTE).getNullAsLong());
+        Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.SHORT).getNullAsLong());
+        Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.CHAR).getNullAsLong());
+        Assert.assertEquals(Numbers.INT_NULL, ColumnType.getTypeDriver(ColumnType.INT).getNullAsLong());
+        Assert.assertEquals(Numbers.LONG_NULL, ColumnType.getTypeDriver(ColumnType.LONG).getNullAsLong());
+        Assert.assertEquals(Numbers.LONG_NULL, ColumnType.getTypeDriver(ColumnType.DATE).getNullAsLong());
+        Assert.assertEquals(Numbers.LONG_NULL, ColumnType.getTypeDriver(ColumnType.TIMESTAMP).getNullAsLong());
+        Assert.assertEquals(Float.floatToIntBits(Float.NaN), ColumnType.getTypeDriver(ColumnType.FLOAT).getNullAsLong());
+        Assert.assertEquals(Double.doubleToLongBits(Double.NaN), ColumnType.getTypeDriver(ColumnType.DOUBLE).getNullAsLong());
+        // the query engine has always parked a missing SYMBOL as INT_NULL, not as VALUE_IS_NULL
+        Assert.assertEquals(Numbers.INT_NULL, ColumnType.getTypeDriver(ColumnType.SYMBOL).getNullAsLong());
+        Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.LONG256).getNullAsLong());
+        Assert.assertEquals(GeoHashes.NULL, ColumnType.getTypeDriver(ColumnType.GEOBYTE).getNullAsLong());
+        Assert.assertEquals(GeoHashes.NULL, ColumnType.getTypeDriver(ColumnType.GEOSHORT).getNullAsLong());
+        Assert.assertEquals(GeoHashes.NULL, ColumnType.getTypeDriver(ColumnType.GEOINT).getNullAsLong());
+        Assert.assertEquals(GeoHashes.NULL, ColumnType.getTypeDriver(ColumnType.GEOLONG).getNullAsLong());
+        Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.UUID).getNullAsLong());
+        Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.LONG128).getNullAsLong());
+        Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.IPv4).getNullAsLong());
+        Assert.assertEquals(Decimals.DECIMAL8_NULL, ColumnType.getTypeDriver(ColumnType.DECIMAL8).getNullAsLong());
+        Assert.assertEquals(Decimals.DECIMAL16_NULL, ColumnType.getTypeDriver(ColumnType.DECIMAL16).getNullAsLong());
+        Assert.assertEquals(Decimals.DECIMAL32_NULL, ColumnType.getTypeDriver(ColumnType.DECIMAL32).getNullAsLong());
+        Assert.assertEquals(Decimals.DECIMAL64_NULL, ColumnType.getTypeDriver(ColumnType.DECIMAL64).getNullAsLong());
+        Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.DECIMAL128).getNullAsLong());
+        Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.DECIMAL256).getNullAsLong());
+        Assert.assertEquals(0L, ColumnType.getTypeDriver(ColumnType.INTERVAL).getNullAsLong());
+        for (int tag : new int[]{ColumnType.STRING, ColumnType.BINARY, ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE, ColumnType.ARRAY}) {
+            Assert.assertEquals(ColumnType.nameOf(tag), 0L, ColumnType.getTypeDriver(tag).getNullAsLong());
+        }
+        // and, for every fixed driver, it is the low width bytes of the storage NULL, sign-extended
+        for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
+            if (PSEUDO_TAGS.contains(ColumnTypeTag.of(tag)) || ColumnType.isVarSize(tag)) {
+                continue;
+            }
+            final FixedSizeTypeDriver driver = (FixedSizeTypeDriver) ColumnType.getTypeDriver(tag);
+            final long expected = switch (driver.getPow2Width()) {
+                case 0 -> (byte) driver.getNullLong(0);
+                case 1 -> (short) driver.getNullLong(0);
+                case 2 -> (int) driver.getNullLong(0);
+                case 3 -> driver.getNullLong(0);
+                default -> 0L;
+            };
+            if (tag != ColumnType.SYMBOL) {
+                Assert.assertEquals(ColumnType.nameOf(tag), expected, driver.getNullAsLong());
+            }
+        }
+    }
+
+    @Test
+    public void testNullConstantsAreTheDeletedPreFill() {
+        // the instances the deleted Constants.nullConstants pre-fill held, per tag
+        final Object[][] expected = {
+                {ColumnType.BOOLEAN, BooleanConstant.FALSE},
+                {ColumnType.BYTE, ByteConstant.ZERO},
+                {ColumnType.SHORT, ShortConstant.ZERO},
+                {ColumnType.CHAR, CharConstant.ZERO},
+                {ColumnType.INT, IntConstant.NULL},
+                {ColumnType.LONG, LongConstant.NULL},
+                {ColumnType.DATE, DateConstant.NULL},
+                {ColumnType.TIMESTAMP_MICRO, ColumnType.getTimestampDriver(ColumnType.TIMESTAMP_MICRO).getTimestampConstantNull()},
+                {ColumnType.TIMESTAMP_NANO, ColumnType.getTimestampDriver(ColumnType.TIMESTAMP_NANO).getTimestampConstantNull()},
+                {ColumnType.FLOAT, FloatConstant.NULL},
+                {ColumnType.DOUBLE, DoubleConstant.NULL},
+                {ColumnType.STRING, StrConstant.NULL},
+                {ColumnType.SYMBOL, SymbolConstant.NULL},
+                {ColumnType.LONG256, Long256NullConstant.INSTANCE},
+                {ColumnType.GEOBYTE, GeoByteConstant.NULL},
+                {ColumnType.GEOSHORT, GeoShortConstant.NULL},
+                {ColumnType.GEOINT, GeoIntConstant.NULL},
+                {ColumnType.GEOLONG, GeoLongConstant.NULL},
+                {ColumnType.BINARY, NullBinConstant.INSTANCE},
+                {ColumnType.UUID, UuidConstant.NULL},
+                {ColumnType.LONG128, Long128Constant.NULL},
+                {ColumnType.IPv4, IPv4Constant.NULL},
+                {ColumnType.VARCHAR, VarcharConstant.NULL},
+                {ColumnType.INTERVAL, IntervalConstant.RAW_NULL},
+                {ColumnType.INTERVAL_RAW, IntervalConstant.RAW_NULL},
+                {ColumnType.INTERVAL_TIMESTAMP_MICRO, IntervalConstant.TIMESTAMP_MICRO_NULL},
+                {ColumnType.INTERVAL_TIMESTAMP_NANO, IntervalConstant.TIMESTAMP_NANO_NULL},
+                // pseudo tags, and VARCHAR_SLICE, have always yielded the untyped NULL
+                {ColumnType.UNDEFINED, NullConstant.NULL},
+                {ColumnType.CURSOR, NullConstant.NULL},
+                {ColumnType.VAR_ARG, NullConstant.NULL},
+                {ColumnType.RECORD, NullConstant.NULL},
+                {ColumnType.GEOHASH, NullConstant.NULL},
+                {ColumnType.DECIMAL, NullConstant.NULL},
+                {ColumnType.REGCLASS, NullConstant.NULL},
+                {ColumnType.REGPROCEDURE, NullConstant.NULL},
+                {ColumnType.ARRAY_STRING, NullConstant.NULL},
+                {ColumnType.PARAMETER, NullConstant.NULL},
+                {ColumnType.VARCHAR_SLICE, NullConstant.NULL},
+                {ColumnType.NULL, NullConstant.NULL},
+        };
+        final Set<ColumnTypeTag> covered = EnumSet.noneOf(ColumnTypeTag.class);
+        for (Object[] row : expected) {
+            final int type = ((Number) row[0]).intValue();
+            Assert.assertSame(ColumnType.nameOf(type), row[1], Constants.getNullConstant(type));
+            covered.add(ColumnTypeTag.of(type));
+        }
+        // encoded types: typed NULLs, cached where they always were
+        for (int bits = 1; bits <= ColumnType.GEOLONG_MAX_BITS; bits++) {
+            final int type = ColumnType.getGeoHashTypeWithBits(bits);
+            final ConstantFunction c = Constants.getNullConstant(type);
+            Assert.assertSame("bits " + bits, c, Constants.getNullConstant(type));
+            Assert.assertEquals("bits " + bits, type, c.getType());
+            Assert.assertTrue("bits " + bits, c.isNullConstant());
+        }
+        for (int dims = 1; dims <= 12; dims++) {
+            final int type = ColumnType.encodeArrayType(ColumnType.DOUBLE, dims);
+            final ConstantFunction c = Constants.getNullConstant(type);
+            Assert.assertEquals("dims " + dims, type, c.getType());
+            Assert.assertTrue("dims " + dims, c instanceof NullArrayConstant);
+            if (dims <= 10) {
+                Assert.assertSame("dims " + dims, c, Constants.getNullConstant(type));
+            }
+        }
+        for (int[] ps : new int[][]{{2, 1}, {4, 1}, {9, 2}, {18, 3}, {38, 4}, {76, 5}}) {
+            final int type = ColumnType.getDecimalType(ps[0], ps[1]);
+            final ConstantFunction c = Constants.getNullConstant(type);
+            Assert.assertEquals(ColumnType.nameOf(type), type, c.getType());
+            Assert.assertTrue(ColumnType.nameOf(type), c.isNullConstant());
+            covered.add(ColumnTypeTag.of(type));
+        }
+        covered.add(ColumnTypeTag.ARRAY);
+        for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
+            Assert.assertTrue(ColumnTypeTag.of(tag).name(), covered.contains(ColumnTypeTag.of(tag)));
         }
     }
 

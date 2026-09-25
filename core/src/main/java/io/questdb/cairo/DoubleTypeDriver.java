@@ -24,7 +24,11 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.engine.functions.columns.DoubleColumn;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.Vect;
 
 /**
@@ -38,6 +42,11 @@ public final class DoubleTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public ConstantFunction getNullConstant(int columnType) {
+        return DoubleConstant.NULL;
+    }
+
+    @Override
     public long getNullLong(int longIndex) {
         return Double.doubleToLongBits(Double.NaN);
     }
@@ -45,6 +54,11 @@ public final class DoubleTypeDriver extends FixedSizeTypeDriver {
     @Override
     public boolean hasNullSentinel() {
         return true;
+    }
+
+    @Override
+    public Function newColumnFunction(int columnIndex, int columnType) {
+        return DoubleColumn.newInstance(columnIndex);
     }
 
     @Override

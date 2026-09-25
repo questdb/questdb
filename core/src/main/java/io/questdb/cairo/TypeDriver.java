@@ -24,7 +24,9 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 
 /**
  * The root of the per-type driver hierarchy: one driver instance per column type tag, holding
@@ -46,6 +48,23 @@ import io.questdb.cairo.vm.api.MemoryA;
  * have no driver.
  */
 public interface TypeDriver {
+
+    /**
+     * This type's NULL as a widening fixed-width read returns it: the storage NULL of a type
+     * up to 8 bytes wide, sign-extended to a long; 0 for wider types and for var-size types,
+     * whose NULL is not a single word. Query-engine buffers that park one value per column in
+     * a long slot use it for a column that has no data.
+     */
+    long getNullAsLong();
+
+    /**
+     * The constant function that yields this type's NULL, typed as {@code columnType}; the
+     * query engine uses it for {@code cast(null as T)}, a CASE without ELSE, an outer join's
+     * missing side and any other place that needs a NULL of a known type. Encoded types
+     * (timestamp precision, geohash bits, decimal precision and scale, array dimensions) read
+     * their parameters from {@code columnType}. Called once per query, never per row.
+     */
+    ConstantFunction getNullConstant(int columnType);
 
     /**
      * The value of the n-th long of this type's NULL, for a value up to 32 bytes wide; the
@@ -70,6 +89,13 @@ public interface TypeDriver {
      * Creates the appender that writes one NULL of this type at the current append position,
      * for a writer's per-column null setters. Called once per column when the writer opens it.
      */
+    /**
+     * The function that reads column {@code columnIndex} of this type from a record, typed as
+     * {@code columnType}. SYMBOL is the exception: its column function needs the symbol table,
+     * so callers build it themselves and the SYMBOL driver throws.
+     */
+    Function newColumnFunction(int columnIndex, int columnType);
+
     Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem);
 
     /**
