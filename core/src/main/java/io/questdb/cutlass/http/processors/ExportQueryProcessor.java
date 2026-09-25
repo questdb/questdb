@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.PartitionBy;
@@ -283,6 +284,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         }
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
+                    computeColumnOpcodes(state);
                     doResumeSend(context);
                 } catch (CairoException e) {
                     if (state.isQueryCacheable()) {
@@ -382,6 +384,29 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             }
             throw ServerDisconnectException.INSTANCE;
         }
+    }
+
+    private static void computeColumnOpcodes(ExportQueryProcessorState state) {
+        state.columnOpcodes.clear();
+        for (int i = 0, n = state.metadata.getColumnCount(); i < n; i++) {
+            state.columnOpcodes.add(csvOpcode(state.metadata.getColumnType(i)));
+        }
+    }
+
+    /**
+     * Picks the {@link #putValue} arm for a column, once per export rather than per cell. Every
+     * tag is named, so adding one makes javac stop here. LONG128 keeps its arm, which throws.
+     */
+    private static int csvOpcode(int columnType) {
+        return switch (ColumnTypeTag.of(columnType)) {
+            case BOOLEAN, BYTE, DOUBLE, FLOAT, INT, LONG, DATE, TIMESTAMP, SHORT, CHAR, NULL, BINARY, RECORD, STRING,
+                 VARCHAR, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, UUID, LONG128, IPv4, INTERVAL, ARRAY,
+                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> ColumnType.tagOf(columnType);
+            // PB8: the unlabelled default of putValue() was `assert false`, which writes an empty
+            // cell in production. The pseudo tags keep that rendering through the NULL arm.
+            case UNDEFINED, CURSOR, VAR_ARG, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+                 VARCHAR_SLICE, UNKNOWN -> ColumnType.NULL;
+        };
     }
 
     private static boolean isExpUrl(Utf8Sequence tok) {
@@ -1211,7 +1236,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         final int columnType = state.metadata.getColumnType(state.columnIndex);
         final int columnIndex = state.columnIndex;
         final Record rec = state.record;
-        switch (ColumnType.tagOf(columnType)) {
+        switch (state.columnOpcodes.getQuick(columnIndex)) {
             case ColumnType.BOOLEAN:
                 response.put(rec.getBool(columnIndex));
                 break;
@@ -1266,6 +1291,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             case ColumnType.NULL:
             case ColumnType.BINARY:
             case ColumnType.RECORD:
+                // an empty cell; csvOpcode() sends the pseudo tags here too (PB8)
                 break;
             case ColumnType.STRING:
                 putStringOrNull(response, rec.getStrA(columnIndex));
@@ -1326,6 +1352,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 putDecimal256StringValue(response, decimal256, columnType);
                 break;
             default:
+                // unreachable: csvOpcode() yields only the labels above
                 assert false;
         }
     }
