@@ -219,29 +219,31 @@ public class RndSymbolFunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testValueAndValueBAreIndependent() throws Exception {
         // A consumer that resolves two keys through one dictionary holds the A and B views at
         // once; valueBOf() must not reuse the A view.
-        final ObjList<Function> args = new ObjList<>();
-        args.add(IntConstant.newInstance(2));
-        args.add(IntConstant.newInstance(8));
-        args.add(IntConstant.newInstance(8));
-        args.add(IntConstant.newInstance(0));
-        final IntList argPositions = new IntList();
-        argPositions.add(0);
-        argPositions.add(0);
-        argPositions.add(0);
-        argPositions.add(0);
-        try (Function func = new RndSymbolFunctionFactory().newInstance(0, args, argPositions, configuration, sqlExecutionContext)) {
-            func.init(null, sqlExecutionContext);
-            final SymbolTable table = (SymbolFunction) func;
-            final String expected0 = Chars.toString(table.valueOf(0));
-            final String expected1 = Chars.toString(table.valueOf(1));
-            Assert.assertNotEquals(expected0, expected1);
+        assertMemoryLeak(() -> {
+            final ObjList<Function> args = new ObjList<>();
+            args.add(IntConstant.newInstance(2));
+            args.add(IntConstant.newInstance(8));
+            args.add(IntConstant.newInstance(8));
+            args.add(IntConstant.newInstance(0));
+            final IntList argPositions = new IntList();
+            argPositions.add(0);
+            argPositions.add(0);
+            argPositions.add(0);
+            argPositions.add(0);
+            try (Function func = new RndSymbolFunctionFactory().newInstance(0, args, argPositions, configuration, sqlExecutionContext)) {
+                func.init(null, sqlExecutionContext);
+                final SymbolTable table = (SymbolFunction) func;
+                final String expected0 = Chars.toString(table.valueOf(0));
+                final String expected1 = Chars.toString(table.valueOf(1));
+                Assert.assertNotEquals(expected0, expected1);
 
-            final CharSequence a = table.valueOf(0);
-            final CharSequence b = table.valueBOf(1);
-            TestUtils.assertEquals(expected0, a);
-            TestUtils.assertEquals(expected1, b);
-            Assert.assertNull(table.valueBOf(SymbolTable.VALUE_IS_NULL));
-        }
+                final CharSequence a = table.valueOf(0);
+                final CharSequence b = table.valueBOf(1);
+                TestUtils.assertEquals(expected0, a);
+                TestUtils.assertEquals(expected1, b);
+                Assert.assertNull(table.valueBOf(SymbolTable.VALUE_IS_NULL));
+            }
+        });
     }
 
     @Test

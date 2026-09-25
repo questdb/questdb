@@ -1051,7 +1051,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
             execute("INSERT INTO base VALUES ('seed', NULL, '2026-01-01T00:00:00.000000Z')");
             drainWalQueue();
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT a, b, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+                    "SELECT a, b, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
