@@ -1855,6 +1855,56 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpdateRejectsTableWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table up (ts timestamp, x int) timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
+            execute("insert into up values ('2024-01-01T00:00:00', 1), ('2024-01-02T00:00:00', 2)");
+            execute("alter table up convert partition to parquet list '2024-01-01'");
+            drainWalQueue();
+
+            // Rejected at compile time, even when the filter targets only the native partition:
+            // the table has a read-only parquet partition.
+            assertExceptionNoLeakCheck(
+                    "update up set x = 10 where ts = '2024-01-02T00:00:00'",
+                    7,
+                    "cannot update table with parquet partitions [table=up, partition=2024-01-01]"
+            );
+            assertExceptionNoLeakCheck(
+                    "update up set x = 10",
+                    7,
+                    "cannot update table with parquet partitions [table=up, partition=2024-01-01]"
+            );
+            if (walEnabled) {
+                drainWalQueue();
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("up")));
+            }
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tx
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-02T00:00:00.000000Z\t2
+                            """);
+
+            // Once no parquet partition is left, UPDATE is accepted again.
+            execute("alter table up convert partition to native list '2024-01-01'");
+            drainWalQueue();
+            update("update up set x = 10");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tx
+                            2024-01-01T00:00:00.000000Z\t10
+                            2024-01-02T00:00:00.000000Z\t10
+                            """);
+        });
+    }
+
+    @Test
     public void testUpdateRenamedSymbol() throws Exception {
         Assume.assumeTrue(walEnabled);
         assertMemoryLeak(() -> {

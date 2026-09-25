@@ -53,6 +53,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.VacuumColumnVersions;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -142,6 +143,7 @@ import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -875,6 +877,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return null;
     }
 
+    private static CharSequence formatPartitionName(TableReader reader, long partitionTimestamp) {
+        final StringSink sink = Misc.getThreadLocalSink();
+        PartitionBy.setSinkForPartition(sink, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(), partitionTimestamp);
+        return sink;
+    }
+
     private static boolean isIPv4UpdateCast(int from, int to) {
         return (from == ColumnType.STRING && to == ColumnType.IPv4)
                 || (from == ColumnType.IPv4 && to == ColumnType.STRING)
@@ -882,8 +890,118 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 || (from == ColumnType.IPv4 && to == ColumnType.VARCHAR);
     }
 
+    /**
+     * The compile-time partition layout checks (reject*On*Partitions) only gate statements a user
+     * submits. They are skipped when:
+     * <ul>
+     *     <li>the statement is re-compiled to apply a WAL transaction (non-structural ALTERs such as
+     *     ADD INDEX, and UPDATE, travel the WAL as SQL text, on the primary and on every replica).
+     *     The transaction was already acknowledged; the apply-time check reports the failure;</li>
+     *     <li>the node is read-only. The statement is refused by the read-only gate anyway, and
+     *     "replica access is read-only" is the error the user must see.</li>
+     * </ul>
+     */
+    private static boolean isPartitionLayoutCheckSkipped(SqlExecutionContext executionContext) {
+        return executionContext.isWalApplication() || executionContext.getCairoEngine().isReadOnlyMode();
+    }
+
     private static boolean isTimestampUpdateCast(int from, int to) {
         return ColumnType.isTimestamp(to) && ColumnType.isConvertibleFrom(from, to);
+    }
+
+    /**
+     * Rejects ALTER ... ADD INDEX on a table that has a remotely-served (cold storage) partition.
+     * Such a partition has no local data file to build the index from, so the ADD INDEX would fail
+     * when applied - and on a WAL table that failure suspends the table. Rejecting the statement at
+     * compile time keeps the table healthy and gives the user an immediate error.
+     */
+    private static void rejectAddIndexOnColdPartitions(
+            SqlExecutionContext executionContext,
+            TableToken tableToken,
+            int position
+    ) throws SqlException {
+        if (isPartitionLayoutCheckSkipped(executionContext)) {
+            return;
+        }
+        try (TableReader reader = executionContext.getReader(tableToken)) {
+            final TxReader txFile = reader.getTxFile();
+            for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
+                if (txFile.isPartitionRemotelyServed(i)) {
+                    throw SqlException.position(position)
+                            .put("cannot add index, table has partitions in cold storage [table=").put(tableToken.getTableName())
+                            .put(", partition=").put(formatPartitionName(reader, txFile.getPartitionTimestampByIndex(i)))
+                            .put("]; an index cannot be built over partitions whose data is only in remote storage");
+                }
+            }
+        }
+    }
+
+    /**
+     * Rejects ALTER ... ALTER COLUMN ... TYPE on a table that has a read-only partition, which
+     * includes every partition in cold storage. A type change rewrites the column in every
+     * partition, and conversions such as the one to SYMBOL first have to decode a parquet partition
+     * back to native; neither is possible for a read-only partition, so {@code TableWriter} refuses
+     * the change when it is applied - and on a WAL table that failure suspends the table. Rejecting
+     * the statement at compile time keeps the table healthy and gives the user an immediate error.
+     */
+    private static void rejectChangeColumnTypeOnReadOnlyPartitions(
+            SqlExecutionContext executionContext,
+            TableToken tableToken,
+            int position
+    ) throws SqlException {
+        if (isPartitionLayoutCheckSkipped(executionContext)) {
+            return;
+        }
+        try (TableReader reader = executionContext.getReader(tableToken)) {
+            final TxReader txFile = reader.getTxFile();
+            for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
+                if (txFile.isPartitionReadOnly(i)) {
+                    final boolean isCold = txFile.isPartitionRemotelyServed(i);
+                    throw SqlException.position(position)
+                            .put(isCold
+                                    ? "cannot change column type, table has partitions in cold storage [table="
+                                    : "cannot change column type, table has read-only partitions [table=")
+                            .put(tableToken.getTableName())
+                            .put(", partition=").put(formatPartitionName(reader, txFile.getPartitionTimestampByIndex(i)))
+                            .put(isCold
+                                    ? "]; column data of partitions in cold storage cannot be rewritten"
+                                    : "]; column data of read-only partitions cannot be rewritten");
+                }
+            }
+        }
+    }
+
+    /**
+     * Rejects UPDATE on a table that has a parquet-format partition, including partitions in cold
+     * storage. Parquet partitions are read-only; an UPDATE reaching one fails when applied, which on
+     * a WAL table suspends the table because an acknowledged UPDATE can never be skipped. Rejecting
+     * the statement at compile time keeps the table healthy and gives the user an immediate error.
+     * <p>
+     * Skipped on the WAL apply path: an UPDATE already sequenced keeps its apply-time semantics,
+     * which {@code UpdateOperatorImpl} still enforces per updated partition.
+     */
+    private static void rejectUpdateOnParquetPartitions(
+            SqlExecutionContext executionContext,
+            TableToken tableToken,
+            int position
+    ) throws SqlException {
+        if (isPartitionLayoutCheckSkipped(executionContext)) {
+            return;
+        }
+        try (TableReader reader = executionContext.getReader(tableToken)) {
+            if (!reader.hasParquetPartitions()) {
+                return;
+            }
+            final TxReader txFile = reader.getTxFile();
+            for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
+                if (txFile.isPartitionParquet(i)) {
+                    throw SqlException.position(position)
+                            .put("cannot update table with parquet partitions [table=").put(tableToken.getTableName())
+                            .put(", partition=").put(formatPartitionName(reader, txFile.getPartitionTimestampByIndex(i)))
+                            .put("]; parquet partitions, including partitions in cold storage, are read-only");
+                }
+            }
+        }
     }
 
     /**
@@ -1237,6 +1355,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         executionContext.getSecurityContext().authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
+        rejectChangeColumnTypeOnReadOnlyPartitions(executionContext, tableToken, tableNamePosition);
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -1396,6 +1515,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         columnNames.clear();
         columnNames.add(columnName);
         executionContext.getSecurityContext().authorizeAlterTableAddIndex(tableToken, columnNames);
+        rejectAddIndexOnColdPartitions(executionContext, tableToken, tableNamePosition);
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -3335,6 +3455,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         functionParser.resetCursorFunctionInstantiated();
                     }
                     optimiser.optimiseUpdate(queryModel, executionContext, metadata, this);
+                    // After optimiseUpdate(), which authorizes the statement, so an unauthorized
+                    // user sees the permission failure rather than the partition layout.
+                    rejectUpdateOnParquetPartitions(executionContext, tableToken, queryModel.getModelPosition());
                     return model;
                 }
             default:

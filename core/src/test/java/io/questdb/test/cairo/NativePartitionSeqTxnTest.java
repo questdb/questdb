@@ -33,10 +33,16 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
@@ -243,17 +249,30 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
             execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1), ('2024-01-02T00:00:00', 2)");
 
-            try (TableWriter writer = getWriter("t")) {
-                TxWriter tx = writer.getTxWriter();
-                tx.setPartitionReadOnlyByTimestamp(tx.getPartitionTimestampByIndex(0), true);
-                writer.bumpPartitionTableVersion();
-                writer.commit();
+            final String alterSql = "ALTER TABLE t ALTER COLUMN x TYPE LONG";
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                // Compiled while no partition is read-only, so the compile-time rejection does not
+                // fire; the apply-time check in TableWriter must.
+                final CompiledQuery cq = compiler.compile(alterSql, sqlExecutionContext);
+
+                try (TableWriter writer = getWriter("t")) {
+                    TxWriter tx = writer.getTxWriter();
+                    tx.setPartitionReadOnlyByTimestamp(tx.getPartitionTimestampByIndex(0), true);
+                    writer.bumpPartitionTableVersion();
+                    writer.commit();
+                }
+
+                CairoException ex = Assert.assertThrows(CairoException.class, () -> {
+                    try (OperationFuture fut = cq.execute(null)) {
+                        fut.await();
+                    }
+                });
+                TestUtils.assertContains(ex.getFlyweightMessage(), "cannot change column type, partition is read-only");
             }
 
-            CairoException ex = Assert.assertThrows(
-                    CairoException.class,
-                    () -> execute("ALTER TABLE t ALTER COLUMN x TYPE LONG"));
-            TestUtils.assertContains(ex.getFlyweightMessage(), "cannot change column type, partition is read-only");
+            // A fresh compile rejects the ALTER up front.
+            SqlException ex = Assert.assertThrows(SqlException.class, () -> execute(alterSql));
+            TestUtils.assertContains(ex.getFlyweightMessage(), "cannot change column type, table has read-only partitions [table=t, partition=2024-01-01]");
 
             // the ALTER was rejected before any rewrite; the data still reads back unchanged
             assertQuery("SELECT * FROM t ORDER BY ts")
@@ -980,17 +999,29 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1), ('2024-01-02T00:00:00', 2)");
-            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
 
-            try (TableReader reader = getReader("t")) {
-                Assert.assertTrue(reader.getTxFile().isPartitionParquet(0));
+            final String updateSql = "UPDATE t SET x = 10 WHERE ts = '2024-01-01T00:00:00'";
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                // Compiled while the partition is still native, so the compile-time rejection of
+                // tables with parquet partitions does not fire; the apply-time check must.
+                final CompiledQuery cc = compiler.compile(updateSql, sqlExecutionContext);
+                try (UpdateOperation op = cc.getUpdateOperation()) {
+                    execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                    try (TableReader reader = getReader("t")) {
+                        Assert.assertTrue(reader.getTxFile().isPartitionParquet(0));
+                    }
+
+                    op.withContext(sqlExecutionContext);
+                    try (TableWriterAPI writer = engine.getTableWriterAPI(op.getTableToken(), "test")) {
+                        CairoException ex = Assert.assertThrows(CairoException.class, () -> writer.apply(op));
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "cannot update parquet-format partition");
+                    }
+                }
             }
 
-            CairoException ex = Assert.assertThrows(
-                    CairoException.class,
-                    () -> execute("UPDATE t SET x = 10 WHERE ts = '2024-01-01T00:00:00'")
-            );
-            TestUtils.assertContains(ex.getFlyweightMessage(), "cannot update parquet-format partition");
+            // A fresh compile rejects the UPDATE up front.
+            SqlException ex = Assert.assertThrows(SqlException.class, () -> execute(updateSql));
+            TestUtils.assertContains(ex.getFlyweightMessage(), "cannot update table with parquet partitions [table=t, partition=2024-01-01]");
         });
     }
 
