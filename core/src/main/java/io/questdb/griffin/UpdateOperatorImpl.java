@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.IndexBuilder;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableToken;
@@ -67,6 +68,8 @@ import static io.questdb.cairo.TableUtils.iFile;
 
 public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     private static final Log LOG = LogFactory.getLog(UpdateOperatorImpl.class);
+    // the opcode of a column type appendRowUpdate() cannot write; it rejects the update at the first row
+    private static final int UPDATE_NONE = -1;
     private final long dataAppendPageSize;
     private final ObjList<MemoryCMARW> dstColumns = new ObjList<>();
     private final FilesFacade ff;
@@ -77,6 +80,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     private final ObjList<MemoryCMR> srcColumns = new ObjList<>();
     private final TableWriter tableWriter;
     private final IntList updateColumnIndexes = new IntList();
+    // per affected column: the updateOpcode() of the table column type
+    private final IntList updateColumnOpcodes = new IntList();
     private IndexBuilder indexBuilder;
 
     public UpdateOperatorImpl(
@@ -137,11 +142,13 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
 
                 // Build index column map from table to update to values returned from the update statement row cursors
                 updateColumnIndexes.clear();
+                updateColumnOpcodes.clear();
                 for (int i = 0; i < affectedColumnCount; i++) {
                     CharSequence columnName = updateMetadata.getColumnName(i);
                     int tableColumnIndex = tableMetadata.getColumnIndex(columnName);
                     assert tableColumnIndex >= 0;
                     updateColumnIndexes.add(tableColumnIndex);
+                    updateColumnOpcodes.add(updateOpcode(tableMetadata.getColumnType(tableColumnIndex)));
                 }
 
                 // Create update memory list of all columns to be updated
@@ -333,6 +340,21 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         }
     }
 
+    /**
+     * The arm of {@link #appendRowUpdate} for a table column of this type: the type tag when there is
+     * one, {@link #UPDATE_NONE} for a type UPDATE does not write.
+     */
+    private static int updateOpcode(int columnType) {
+        final ColumnTypeTag tag = ColumnTypeTag.of(columnType);
+        return switch (tag) {
+            case INT, IPv4, FLOAT, LONG, TIMESTAMP, DATE, DOUBLE, SHORT, CHAR, BYTE, BOOLEAN, GEOBYTE, GEOSHORT, GEOINT,
+                 GEOLONG, SYMBOL, STRING, VARCHAR, BINARY, LONG128, UUID, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32,
+                 DECIMAL64, DECIMAL128, DECIMAL256 -> tag.code();
+            case UNDEFINED, LONG256, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING,
+                 PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> UPDATE_NONE;
+        };
+    }
+
     private static void updateEffectiveColumnTops(
             TableWriter tableWriter,
             int partitionIndex,
@@ -388,7 +410,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                         toType
                 );
             }
-            switch (ColumnType.tagOf(toType)) {
+            switch (updateColumnOpcodes.get(i)) {
                 case ColumnType.INT:
                     dstFixMem.putInt(masterRecord.getInt(i));
                     break;
@@ -491,10 +513,12 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     );
                     break;
                 }
-                default:
+                case UPDATE_NONE:
                     throw CairoException.nonCritical()
                             .put("Column type ").put(ColumnType.nameOf(toType))
                             .put(" not supported for updates");
+                default:
+                    throw new IllegalStateException("no update arm [type=" + ColumnType.nameOf(toType) + "]");
             }
         }
     }

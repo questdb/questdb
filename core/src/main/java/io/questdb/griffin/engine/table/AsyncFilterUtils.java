@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
@@ -158,66 +159,89 @@ public class AsyncFilterUtils {
         // Smaller types occupy the first 8 bytes; the second 8 bytes are
         // padding.
         final int columnType = function.getType();
-        final int columnTypeTag = ColumnType.tagOf(columnType);
-        switch (columnTypeTag) {
-            case ColumnType.BOOLEAN:
+        // Every arm writes the slot's leading 8 bytes and yields whether the padding word follows;
+        // UUID fills all 16 bytes itself.
+        final boolean isPadded = switch (ColumnTypeTag.of(columnType)) {
+            case BOOLEAN -> {
                 bindVarMemory.putLong(function.getBool(null) ? 1 : 0);
-                break;
-            case ColumnType.BYTE:
+                yield true;
+            }
+            case BYTE -> {
                 bindVarMemory.putLong(function.getByte(null));
-                break;
-            case ColumnType.GEOBYTE:
+                yield true;
+            }
+            case GEOBYTE -> {
                 bindVarMemory.putLong(function.getGeoByte(null));
-                break;
-            case ColumnType.SHORT:
+                yield true;
+            }
+            case SHORT -> {
                 bindVarMemory.putLong(function.getShort(null));
-                break;
-            case ColumnType.GEOSHORT:
+                yield true;
+            }
+            case GEOSHORT -> {
                 bindVarMemory.putLong(function.getGeoShort(null));
-                break;
-            case ColumnType.CHAR:
+                yield true;
+            }
+            case CHAR -> {
                 bindVarMemory.putLong(function.getChar(null));
-                break;
-            case ColumnType.INT:
+                yield true;
+            }
+            case INT -> {
                 bindVarMemory.putLong(function.getInt(null));
-                break;
-            case ColumnType.IPv4:
+                yield true;
+            }
+            case IPv4 -> {
                 bindVarMemory.putLong(function.getIPv4(null));
-                break;
-            case ColumnType.GEOINT:
+                yield true;
+            }
+            case GEOINT -> {
                 bindVarMemory.putLong(function.getGeoInt(null));
-                break;
-            case ColumnType.SYMBOL:
+                yield true;
+            }
+            case SYMBOL -> {
                 assert function instanceof CompiledFilterSymbolBindVariable;
                 function.init(symbolTableSource, executionContext);
                 bindVarMemory.putLong(function.getInt(null));
-                break;
-            case ColumnType.FLOAT:
+                yield true;
+            }
+            case FLOAT -> {
                 bindVarMemory.putFloat(function.getFloat(null));
                 bindVarMemory.putFloat(Float.NaN);
-                break;
-            case ColumnType.LONG:
+                yield true;
+            }
+            case LONG -> {
                 bindVarMemory.putLong(function.getLong(null));
-                break;
-            case ColumnType.GEOLONG:
+                yield true;
+            }
+            case GEOLONG -> {
                 bindVarMemory.putLong(function.getGeoLong(null));
-                break;
-            case ColumnType.DATE:
+                yield true;
+            }
+            case DATE -> {
                 bindVarMemory.putLong(function.getDate(null));
-                break;
-            case ColumnType.TIMESTAMP:
+                yield true;
+            }
+            case TIMESTAMP -> {
                 bindVarMemory.putLong(function.getTimestamp(null));
-                break;
-            case ColumnType.DOUBLE:
+                yield true;
+            }
+            case DOUBLE -> {
                 bindVarMemory.putDouble(function.getDouble(null));
-                break;
-            case ColumnType.UUID:
+                yield true;
+            }
+            case UUID -> {
                 bindVarMemory.putLong128(function.getLong128Lo(null), function.getLong128Hi(null));
-                return;
-            default:
-                throw SqlException.position(0).put("unsupported bind variable type: ").put(ColumnType.nameOf(columnTypeTag));
+                yield false;
+            }
+            case UNDEFINED, STRING, LONG256, BINARY, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, VARCHAR, ARRAY,
+                 DECIMAL8,
+                 DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING,
+                 PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN ->
+                    throw SqlException.position(0).put("unsupported bind variable type: ").put(ColumnType.nameOf(ColumnType.tagOf(columnType)));
+        };
+        if (isPadded) {
+            // Pad every non-UUID slot to a fixed 16-byte stride.
+            bindVarMemory.putLong(0L);
         }
-        // Pad every non-UUID slot to a fixed 16-byte stride.
-        bindVarMemory.putLong(0L);
     }
 }
