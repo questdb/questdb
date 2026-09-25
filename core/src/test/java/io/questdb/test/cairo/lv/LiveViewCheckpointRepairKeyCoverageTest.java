@@ -322,7 +322,7 @@ public class LiveViewCheckpointRepairKeyCoverageTest extends AbstractLiveViewTes
                     functions.getRootRef(0, functionRootRef);
                     functionRoot.of(dir, functionRootRef);
                     functionRoot.getPartitionMapRootRef(partitionMapRoot);
-                    partitions.iterateAll(partitionMapRoot, partition -> keys.add(hex(partition.getKey())));
+                    partitions.iterateAll(partitionMapRoot, partition -> keys.add(hex(partition.copyKeyForTest())));
                     out.add((entry.maxTimestamp - epoch) / 1_000_000L + "=" + keys.size());
                 });
             }

@@ -321,18 +321,27 @@ public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
         return lastSegmentBytes;
     }
 
+    /**
+     * Stages one partition. The {@code keyLength} key bytes at {@code keyAddress} are
+     * copied before this returns.
+     */
     public void putPartition(
-            @NotNull byte[] key,
+            long keyAddress,
+            int keyLength,
             @NotNull byte[] scalarState,
             @NotNull LiveViewCheckpointStatePageRef[] statePageRefs
     ) {
         ensureInitialized();
-        mutations.put(key, scalarState, statePageRefs);
+        mutations.put(keyAddress, keyLength, scalarState, statePageRefs);
     }
 
-    public void removePartition(@NotNull byte[] key) {
+    /**
+     * Stages the removal of one partition. The {@code keyLength} key bytes at
+     * {@code keyAddress} are copied before this returns.
+     */
+    public void removePartition(long keyAddress, int keyLength) {
         ensureInitialized();
-        mutations.remove(key);
+        mutations.remove(keyAddress, keyLength);
     }
 
     public void setScalarStateRef(@NotNull LiveViewCheckpointStatePageRef ref) {

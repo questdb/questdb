@@ -32,19 +32,17 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.CharSequenceHashSet;
-import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectString;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -130,19 +128,25 @@ import org.jetbrains.annotations.Nullable;
  * scan is a key whose rows the repair would not correct.
  */
 public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCursor.RowDrain, QuietCloseable {
+    // The widest key domain whose tables clear() keeps for the next repair. Every clear
+    // sweeps the whole of each key table, and one worker's replay is cleared at least twice
+    // per segment of every repair it runs, keyed or not - so a table a wide domain grew
+    // would charge every later clear for that domain. Past this, clear() starts the tables
+    // over, the way the change set restores its per-transaction key cache: Q's native slot
+    // table and key storage are freed, and the stored-key set is replaced. Arming a domain
+    // this wide regrows them in a logarithmic number of steps, none of them per key.
+    private static final int MAX_RETAINED_KEYS = 1024;
     // The reader-local base symbol keys the indexed scan follows, in the order it takes
     // them. Never holds a duplicate: two cursors over one key would each yield its rows.
     private final IntList baseSymbolKeys = new IntList();
-    private final MemoryCARW keyBuffer;
-    // Q's logical values, kept because the view's symbol map is only reachable once the
-    // merge's own cursor is open - the two tables keep separate maps over the same strings.
-    private final CharSequenceHashSet logicalKeys = new CharSequenceHashSet();
     // Q in the encoding a checkpoint partition map keys an entry by, which is what lets
     // the boundary roots this repair re-versions keep every key outside it exactly as the
-    // old root wrote it.
+    // old root wrote it. It also carries Q's logical values: the view's symbol map is only
+    // reachable once the merge's own cursor is open - the two tables keep separate maps
+    // over the same strings - and bindStoredRows decodes each value back out of its key.
     private final LiveViewCheckpointOutputKeyDomain outputKeys = new LiveViewCheckpointOutputKeyDomain();
-    // Q resolved against the VIEW's own symbol map, which is what its stored rows carry.
-    private final IntHashSet storedSymbolKeys = new IntHashSet();
+    // Frames one of Q's values in place for the view's symbol map to resolve.
+    private final DirectString storedKeyValue = new DirectString();
     private boolean armed;
     private int baseKeyColumnIndex = -1;
     private RecordToRowCopier copier;
@@ -165,12 +169,11 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
     private int storedKeyColumnIndex = -1;
     private Record storedRecord;
     private RecordCursor storedRowCursor;
+    // Q resolved against the VIEW's own symbol map, which is what its stored rows carry.
+    // Replaced rather than cleared after a wide domain - see MAX_RETAINED_KEYS.
+    private IntHashSet storedSymbolKeys = new IntHashSet();
     private int storedTimestampIndex = -1;
     private WalWriter walWriter;
-
-    public LiveViewCheckpointKeyedReplay() {
-        this.keyBuffer = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-    }
 
     /**
      * Arms this repair with one segment's key domain.
@@ -241,11 +244,10 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
                 return false;
             }
             baseSymbolKeys.add(baseKey);
-            addOutputKey(key);
             // Copied rather than referenced: the change set these come from is refilled by
             // the next repair this worker classifies, and the merge resolves them against
             // the view's map after the replay has begun.
-            logicalKeys.add(Chars.toString(key));
+            addOutputKey(key);
         }
         armed = true;
         return true;
@@ -315,8 +317,19 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
         if (hasNullKey) {
             storedSymbolKeys.add(SymbolTable.VALUE_IS_NULL);
         }
-        for (int i = 0, n = logicalKeys.size(); i < n; i++) {
-            final int storedKey = storedSymbols.keyOf(logicalKeys.get(i));
+        for (int slot = 0, n = outputKeys.getSlotCount(); slot < n; slot++) {
+            if (!outputKeys.isSlotUsed(slot)) {
+                continue;
+            }
+            // The STRING image addOutputKey wrote: a character count, then that many
+            // UTF-16 units. The null key's count is -1, and hasNullKey above carries it.
+            final long keyAddress = outputKeys.getKeyAddress(slot);
+            final int charCount = Unsafe.getInt(keyAddress);
+            if (charCount < 0) {
+                continue;
+            }
+            assert outputKeys.getKeyLength(slot) == Integer.BYTES + charCount * Character.BYTES;
+            final int storedKey = storedSymbols.keyOf(storedKeyValue.of(keyAddress + Integer.BYTES, charCount));
             if (storedKey != SymbolTable.VALUE_NOT_FOUND) {
                 // A key the view has never stored has no row for the merge to drop. That
                 // is what a correction introducing a key looks like, and it is not an
@@ -324,6 +337,7 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
                 storedSymbolKeys.add(storedKey);
             }
         }
+        storedKeyValue.clear();
         this.storedRowCursor = storedRowCursor;
         this.storedRecord = storedRowCursor.getRecord();
         this.storedTimestampIndex = storedTimestampIndex;
@@ -348,9 +362,17 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
         hasNullKey = false;
         baseKeyColumnIndex = -1;
         baseSymbolKeys.clear();
-        storedSymbolKeys.clear();
-        logicalKeys.clear();
-        outputKeys.clear();
+        // outputKeys holds the whole domain the last arm resolved, null key included, and
+        // the stored-key set holds no more members than it. Starting both over whenever it
+        // exceeds the bound keeps each of them sized for at most MAX_RETAINED_KEYS keys
+        // between repairs.
+        if (outputKeys.size() > MAX_RETAINED_KEYS) {
+            storedSymbolKeys = new IntHashSet();
+            outputKeys.restoreInitialCapacity();
+        } else {
+            storedSymbolKeys.clear();
+            outputKeys.clear();
+        }
         mergedRows = 0;
         mergedMinTs = Numbers.LONG_NULL;
         mergedMaxTs = Numbers.LONG_NULL;
@@ -361,8 +383,10 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
     @Override
     public void close() {
         closeStoredRows();
+        // Ahead of clear(), which may allocate a fresh stored-key set: nothing it throws
+        // may strand Q's native storage.
+        Misc.free(outputKeys);
         clear();
-        Misc.free(keyBuffer);
     }
 
     /**
@@ -563,22 +587,19 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
     }
 
     private void addOutputKey(@Nullable CharSequence value) {
-        keyBuffer.jumpTo(0);
         // The one encoding both sides have to be comparable in: a live-view partition-by
         // RecordSink rewrites a SYMBOL partition column as its resolved STRING, so this is
         // the byte image LiveViewSnapshotKeyCodec writes off a window function's own map
-        // record for the same key.
-        keyBuffer.putStr(value);
-        final long length = keyBuffer.getAppendOffset();
-        if (length > Integer.MAX_VALUE) {
-            throw CairoException.critical(0)
-                    .put("live view keyed replay partition key is too long, length=").put(length);
+        // record for the same key. Encoded straight into Q's own storage, and dropped
+        // rather than left half-written there if the encoding fails to allocate.
+        final MemoryA sink = outputKeys.beginKey();
+        try {
+            sink.putStr(value);
+        } catch (Throwable th) {
+            outputKeys.abortKey();
+            throw th;
         }
-        final byte[] key = new byte[(int) length];
-        for (int i = 0; i < key.length; i++) {
-            key[i] = keyBuffer.getByte(i);
-        }
-        outputKeys.add(key);
+        outputKeys.commitKey();
     }
 
     /**

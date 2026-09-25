@@ -153,7 +153,8 @@ public class LiveViewCheckpointRedirectRefsTest extends AbstractLiveViewTest {
                         for (int i = 0; i < count; i++) {
                             refs[i].of(partition + 1L, i * 64L, 32, 64, 1, 0, 1, 0);
                         }
-                        builder.putPartition(
+                        LiveViewCheckpointTestKeys.putPartition(
+                                builder,
                                 new byte[]{(byte) partition, (byte) (partition >>> 8)},
                                 new byte[]{1, 2, 3, 4},
                                 refs

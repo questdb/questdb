@@ -4754,7 +4754,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
-                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
 
@@ -4847,7 +4847,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
-                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
 
@@ -4899,7 +4899,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
-                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
 
@@ -8184,7 +8184,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
             final TableToken lvToken = instance.getLiveViewToken();
@@ -8265,7 +8265,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "2026-04-01T00:00:01.000000Z\t2\t2\n" +
                     "2026-04-01T00:00:02.000000Z\t3\t3\n";
             // The oracle: the view's own SELECT recomputed from the base table.
-            assertQuery("SELECT ts::VARCHAR AS ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base ORDER BY 1")
+            assertQuery("SELECT ts::VARCHAR AS ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base ORDER BY 1")
                     .noLeakCheck().expectSize().returns(expected);
             // The view must hold exactly that. With the defect it holds
             // (00:00:00, 1, 1), (00:00:00, 1, 1), (00:00:01, 2, 2) - the stale slot's row
@@ -8312,7 +8312,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
             final TableToken lvToken = instance.getLiveViewToken();
@@ -8385,7 +8385,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "2026-04-01T00:00:02.000000Z\t3\t3\n" +
                     "2026-04-01T00:00:03.000000Z\t4\t4\n";
             // The oracle: the view's own SELECT recomputed from the base table.
-            assertQuery("SELECT ts::VARCHAR AS ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base ORDER BY 1")
+            assertQuery("SELECT ts::VARCHAR AS ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base ORDER BY 1")
                     .noLeakCheck().expectSize().returns(expected);
             // The view must hold exactly that. Without flushLead's guard it holds
             // (00:00:00, 1, 1), (00:00:00, 1, 1), (00:00:01, 2, 2), (00:00:03, 4, 4) - the stale
@@ -8434,7 +8434,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
             final TableToken lvToken = instance.getLiveViewToken();
@@ -8519,7 +8519,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "2026-04-01T00:00:02.000000Z\t3\t3\n" +
                     "2026-04-01T00:00:03.000000Z\t4\t4\n";
             // The oracle: the view's own SELECT recomputed from the base table.
-            assertQuery("SELECT ts::VARCHAR AS ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base ORDER BY 1")
+            assertQuery("SELECT ts::VARCHAR AS ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base ORDER BY 1")
                     .noLeakCheck().expectSize().returns(expected);
             // Once the backlog lands the view must hold exactly that, and must still present
             // itself as an ascending designated-timestamp result.

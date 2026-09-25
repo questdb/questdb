@@ -87,6 +87,22 @@ public class LiveViewNoGcSourceHygieneTest {
             "\\b(?:CharSequence[A-Za-z]*(?:Set|Map|List)|String|StringSink)\\b"
                     + "|\\bChars\\s*\\.\\s*toString\\s*\\(|\\.\\s*toString\\s*\\("
     );
+    /**
+     * A heap array declared under a partition-key name: a field, parameter, local or method
+     * of type {@code byte[]} (any rank, annotations allowed) whose name is {@code key} or ends
+     * in {@code Key}, {@code Keys} or {@code RemovedPartitions}. Group 1 is the name.
+     */
+    private static final Pattern HEAP_PARTITION_KEY_ARRAY = Pattern.compile(
+            "\\bbyte\\s*(?:@[A-Za-z_$][A-Za-z0-9_$.]*\\s*)*\\[\\s*\\](?:\\s*\\[\\s*\\])*\\s*(?:\\.\\.\\.\\s*)?"
+                    + "([A-Za-z_$][A-Za-z0-9_$]*)"
+    );
+    /**
+     * A list of heap arrays, nested or not; group 1 is the declared name, which must name a
+     * payload or an image, the only heap arrays the checkpoint key path still carries.
+     */
+    private static final Pattern HEAP_ARRAY_LIST = Pattern.compile(
+            "\\bObjList\\s*<\\s*(?:ObjList\\s*<\\s*)*byte\\s*\\[\\s*\\](?:\\s*>)+\\s*([A-Za-z_$][A-Za-z0-9_$]*)"
+    );
     private static final Pattern METHOD_INVOCATION = Pattern.compile(
             "\\b([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\("
     );
@@ -219,6 +235,75 @@ public class LiveViewNoGcSourceHygieneTest {
                         + String.join(System.lineSeparator(), violations),
                 violations.isEmpty()
         );
+    }
+
+    @Test
+    public void testCheckpointPartitionKeysAreNeverHeapArrays() throws IOException {
+        // A partition key used to be a byte[] copied out of native scratch at every hop -
+        // frozen per key per seal, re-copied into holders, shared by reference into a parked
+        // capture's key domain. Every key on the checkpoint path is now a native (address,
+        // length) pair or a handle into an arena its owner frees, so a byte[] under a key's
+        // name, or a list of byte[] that holds anything but payloads, is a regression.
+        final Path sourceRoot = findSourceRoot();
+        final List<String> violations = new ArrayList<>();
+        final String[] files = {
+                "io/questdb/cairo/lv/LiveViewCheckpointFunctionRootBuilder.java",
+                "io/questdb/cairo/lv/LiveViewCheckpointKeyArena.java",
+                "io/questdb/cairo/lv/LiveViewCheckpointKeyIndex.java",
+                "io/questdb/cairo/lv/LiveViewCheckpointKeyedReplay.java",
+                "io/questdb/cairo/lv/LiveViewCheckpointKeys.java",
+                "io/questdb/cairo/lv/LiveViewCheckpointMutationArena.java",
+                "io/questdb/cairo/lv/LiveViewCheckpointOutputKeyDomain.java",
+                "io/questdb/cairo/lv/LiveViewCheckpointPartitionMapEntry.java",
+                "io/questdb/cairo/lv/LiveViewCheckpointPartitionMapNode.java",
+                "io/questdb/cairo/lv/LiveViewCheckpointPartitionMapReader.java",
+                "io/questdb/cairo/lv/LiveViewCheckpointRangeRingStateBuilder.java",
+                "io/questdb/cairo/lv/LiveViewCheckpointRingSeal.java",
+                "io/questdb/cairo/lv/LiveViewCheckpointRowsBounds.java",
+                "io/questdb/cairo/lv/LiveViewCheckpointTimelineStoreReader.java",
+                "io/questdb/cairo/lv/LiveViewCheckpointTimelineStoreWriter.java",
+                "io/questdb/cairo/lv/LiveViewCheckpointWindowRootBuilder.java",
+                "io/questdb/cairo/lv/LiveViewRefreshJob.java",
+                "io/questdb/cairo/lv/LiveViewWindow.java"
+        };
+        for (int i = 0; i < files.length; i++) {
+            final Path file = sourceRoot.resolve(files[i]);
+            final String code = stripCommentsAndLiterals(Files.readString(file, StandardCharsets.UTF_8));
+            findHeapPartitionKeys(sourceRoot, file, code, violations);
+        }
+        Assert.assertTrue(
+                "checkpoint partition keys held as heap arrays:" + System.lineSeparator()
+                        + String.join(System.lineSeparator(), violations),
+                violations.isEmpty()
+        );
+    }
+
+    @Test
+    public void testHeapPartitionKeyScannerSelfCoverage() {
+        assertHeapPartitionKeyDetected("private byte[] key;");
+        assertHeapPartitionKeyDetected("final byte[] key = pool.next(length);");
+        assertHeapPartitionKeyDetected("void put(byte @NotNull [] key, byte[] scalarState) { }");
+        assertHeapPartitionKeyDetected("void of(@NotNull byte[] encodedKey) { }");
+        assertHeapPartitionKeyDetected("private byte[][] keys;");
+        assertHeapPartitionKeyDetected("private static byte[] copyEncodedKey(MemoryCARW keyBuffer) { return null; }");
+        assertHeapPartitionKeyDetected("byte[] getKey() { return null; }");
+        assertHeapPartitionKeyDetected("private final ObjList<byte[]> keys = new ObjList<>();");
+        assertHeapPartitionKeyDetected("private final ObjList<byte[]> removedPartitions = new ObjList<>();");
+        assertHeapPartitionKeyDetected("private ObjList<byte[]> groupedFreezeRemovedKeys;");
+        assertHeapPartitionKeyDetected("void walk(@NotNull ObjList<byte[]> keysOut) { }");
+        assertHeapPartitionKeyDetected("void collect(ObjList < byte [ ] > sink) { }");
+        assertHeapPartitionKeyDetected("ObjList<ObjList<byte[]>> keysByMember;");
+
+        assertNoHeapPartitionKeyDetected("private byte[] keySchema;");
+        assertNoHeapPartitionKeyDetected("private byte[] identity; private byte[] scalarState;");
+        assertNoHeapPartitionKeyDetected("byte[] copyKeyForTest() { return null; }");
+        assertNoHeapPartitionKeyDetected("void restore(byte @NotNull [] payload) { }");
+        assertNoHeapPartitionKeyDetected("private final LongList keys = new LongList();");
+        assertNoHeapPartitionKeyDetected("private final ObjList<byte[]> payloads = new ObjList<>();");
+        assertNoHeapPartitionKeyDetected("private final ObjList<byte[]> transplantPayloads = new ObjList<>();");
+        assertNoHeapPartitionKeyDetected("private final ObjList<ObjList<byte[]>> completeMemberImages;");
+        assertNoHeapPartitionKeyDetected("final ObjList<byte[]> images = memberImages.getQuick(m);");
+        assertNoHeapPartitionKeyDetected("// byte[] key\nlong keyHandle;");
     }
 
     @Test
@@ -1028,6 +1113,28 @@ public class LiveViewNoGcSourceHygieneTest {
         }
     }
 
+    private static void assertHeapPartitionKeyDetected(String source) {
+        final List<String> violations = new ArrayList<>();
+        findHeapPartitionKeys(
+                Path.of("source"),
+                Path.of("source/Snippet.java"),
+                stripCommentsAndLiterals("class C { " + source + " }"),
+                violations
+        );
+        Assert.assertEquals("expected one heap partition key violation for: " + source, 1, violations.size());
+    }
+
+    private static void assertNoHeapPartitionKeyDetected(String source) {
+        final List<String> violations = new ArrayList<>();
+        findHeapPartitionKeys(
+                Path.of("source"),
+                Path.of("source/Snippet.java"),
+                stripCommentsAndLiterals("class C { " + source + " }"),
+                violations
+        );
+        Assert.assertTrue("unexpected heap partition key violation: " + violations, violations.isEmpty());
+    }
+
     private static void assertMethodScopedCompiledEncodingDetected(String statement) {
         assertMethodScopedCompiledEncodingDetected("void hot() { " + statement + " }", "hot");
     }
@@ -1722,6 +1829,31 @@ public class LiveViewNoGcSourceHygieneTest {
         final Matcher matcher = FORBIDDEN_TYPE.matcher(code);
         while (matcher.find()) {
             addViolation(sourceRoot, file, code, matcher.start(), matcher.group(), violations);
+        }
+    }
+
+    private static void findHeapPartitionKeys(
+            Path sourceRoot,
+            Path file,
+            String code,
+            List<String> violations
+    ) {
+        final Matcher arrayMatcher = HEAP_PARTITION_KEY_ARRAY.matcher(code);
+        while (arrayMatcher.find()) {
+            final String name = arrayMatcher.group(1).toLowerCase();
+            if (name.equals("key")
+                    || name.endsWith("key")
+                    || name.endsWith("keys")
+                    || name.endsWith("removedpartitions")) {
+                addViolation(sourceRoot, file, code, arrayMatcher.start(), arrayMatcher.group(), violations);
+            }
+        }
+        final Matcher listMatcher = HEAP_ARRAY_LIST.matcher(code);
+        while (listMatcher.find()) {
+            final String name = listMatcher.group(1).toLowerCase();
+            if (!name.contains("payload") && !name.contains("image")) {
+                addViolation(sourceRoot, file, code, listMatcher.start(), listMatcher.group(), violations);
+            }
         }
     }
 

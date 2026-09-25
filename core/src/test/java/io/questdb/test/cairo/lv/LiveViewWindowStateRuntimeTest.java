@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.lv;
 
+import com.sun.management.ThreadMXBean;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
@@ -54,6 +55,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
 import java.util.Collections;
 
@@ -1045,6 +1047,53 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                 restoreHead();
                 Assert.assertArrayEquals(before, snapshotWindow(window()));
                 assertWelfordViewMatchesRecompute();
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testTheSnapshotImagesEveryKeyThroughOneArray() throws Exception {
+        // The repair overlay's fallback route copies the window aside through snapshot(),
+        // over the view's whole key domain. Each entry's fused components pass through a
+        // component image on their way into the sink and nothing keeps it past that, so the
+        // walk must reuse one image rather than allocate an array per key. An array per key
+        // costs at least its 16-byte header, so the bound below sits under half of that
+        // while a walk that allocates nothing per key stays far inside it.
+        final int keyCount = 4_096;
+        assertMemoryLeak(() -> {
+            createTargetView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                execute("INSERT INTO tx SELECT '" + DAILY_ANCHOR + "09:00:00.000000Z'::timestamp + x, "
+                        + "'acct-' || x, 1.0 FROM long_sequence(" + keyCount + ")");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                final LiveViewWindow window = window();
+                final LiveViewWindowStatePlan plan = window.getCheckpointWindowStatePlan();
+                Assert.assertNotNull("the target shape must adopt the plan", plan);
+                Assert.assertTrue(plan.getTotalRuntimeStateBytes() > 0);
+                Assert.assertEquals(keyCount, window.getAnchorMapSize());
+                try (MemoryCARW sink = Vm.getCARWInstance(64 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    // Grows the sink to the snapshot's size once and lets the walk compile,
+                    // so the measured walk below allocates only what snapshot() itself does.
+                    for (int i = 0; i < 8; i++) {
+                        sink.jumpTo(0);
+                        window.snapshot(sink);
+                    }
+                    final ThreadMXBean threadMXBean = (ThreadMXBean) ManagementFactory.getThreadMXBean();
+                    final long threadId = Thread.currentThread().threadId();
+                    sink.jumpTo(0);
+                    final long before = threadMXBean.getThreadAllocatedBytes(threadId);
+                    window.snapshot(sink);
+                    final long allocated = threadMXBean.getThreadAllocatedBytes(threadId) - before;
+                    Assert.assertTrue(
+                            "a snapshot of " + keyCount + " keys allocated " + allocated
+                                    + " bytes on the Java heap; its component images must not cost an array per key",
+                            allocated < keyCount * 8L
+                    );
+                }
                 assertNoRefreshFaults("lv");
             }
         });

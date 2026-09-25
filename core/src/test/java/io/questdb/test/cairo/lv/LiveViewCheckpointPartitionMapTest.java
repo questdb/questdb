@@ -41,6 +41,8 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -52,7 +54,6 @@ import java.lang.management.ManagementFactory;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.TreeMap;
-import java.util.function.LongSupplier;
 
 public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
 
@@ -92,7 +93,7 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
                                  new LiveViewCheckpointPartitionMapWriter(configuration, 4, 4, poolOwner)) {
                         writer.of(checkpointsDir(dir));
                         for (int i = keyCount - 1; i > 0; i--) {
-                            shrink.remove(key(i));
+                            LiveViewCheckpointTestKeys.remove(shrink, key(i));
                         }
                         writer.apply(root, shrink, segmentId++, collapsedRoot);
                         Assert.assertEquals(poolIdentity, writer.getObjectPoolIdentityForTest());
@@ -129,9 +130,10 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
                              new LiveViewCheckpointPartitionMapReader(configuration)) {
                     reader.of(checkpointsDir(dir));
                     Assert.assertEquals(keyCount, reader.size(root));
-                    final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-                    Assert.assertTrue(reader.find(root, key(keyCount - 1), entry));
-                    Assert.assertEquals(2 * keyCount + keyCount - 1, scalar(entry));
+                    try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                        Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, root, key(keyCount - 1), entry));
+                        Assert.assertEquals(2 * keyCount + keyCount - 1, scalar(entry));
+                    }
                 }
             }
         });
@@ -177,19 +179,20 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
             try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
                  Path dir = new Path()) {
                 reader.of(checkpointsDir(dir));
-                final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-                Assert.assertTrue(reader.find(oldRoot, key(0), entry));
-                Assert.assertEquals(0, scalar(entry));
-                Assert.assertEquals(0, entry.getStatePageRef(0).getSegmentId());
-                Assert.assertTrue(reader.find(newRoot, key(0), entry));
-                Assert.assertEquals(999, scalar(entry));
-                Assert.assertEquals(9, entry.getStatePageRef(0).getSegmentId());
+                try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                    Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, oldRoot, key(0), entry));
+                    Assert.assertEquals(0, scalar(entry));
+                    Assert.assertEquals(0, entry.getStatePageRef(0).getSegmentId());
+                    Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, newRoot, key(0), entry));
+                    Assert.assertEquals(999, scalar(entry));
+                    Assert.assertEquals(9, entry.getStatePageRef(0).getSegmentId());
 
-                Assert.assertEquals(oldChildren.length, reader.rootChildCount(newRoot));
-                final LiveViewCheckpointPageRef child = new LiveViewCheckpointPageRef();
-                for (int i = 1; i < oldChildren.length; i++) {
-                    reader.rootChildRef(newRoot, i, child);
-                    assertRefEquals(oldChildren[i], child);
+                    Assert.assertEquals(oldChildren.length, reader.rootChildCount(newRoot));
+                    final LiveViewCheckpointPageRef child = new LiveViewCheckpointPageRef();
+                    for (int i = 1; i < oldChildren.length; i++) {
+                        reader.rootChildRef(newRoot, i, child);
+                        assertRefEquals(oldChildren[i], child);
+                    }
                 }
             }
         });
@@ -218,15 +221,16 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
             try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
                  Path dir = new Path()) {
                 reader.of(checkpointsDir(dir));
-                final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-                Assert.assertTrue(reader.find(root, key(63), entry));
-                Assert.assertEquals(63, scalar(entry));
-                try {
-                    reader.find(root, key(0), entry);
-                    Assert.fail("expected selected corrupt path to fail");
-                } catch (CairoException e) {
-                    Assert.assertEquals(CairoException.LV_CHECKPOINT_TIMELINE_INVALID, e.getErrno());
-                    TestUtils.assertContains(e.getFlyweightMessage(), "checksum mismatch");
+                try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                    Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, root, key(63), entry));
+                    Assert.assertEquals(63, scalar(entry));
+                    try {
+                        LiveViewCheckpointTestKeys.find(reader, root, key(0), entry);
+                        Assert.fail("expected selected corrupt path to fail");
+                    } catch (CairoException e) {
+                        Assert.assertEquals(CairoException.LV_CHECKPOINT_TIMELINE_INVALID, e.getErrno());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "checksum mismatch");
+                    }
                 }
             }
         });
@@ -256,38 +260,39 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
                 writer.apply(new LiveViewCheckpointPageRef(), initial, 1, root);
             }
 
-            final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-            try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
-                 Path dir = new Path()) {
-                reader.of(checkpointsDir(dir));
-                Assert.assertTrue(reader.find(root, key(0), entry));
-                final long depth = reader.getDecodedPageCount();
-                Assert.assertTrue(
-                        "the tree has to be deeper than the memo this guards, depth=" + depth,
-                        depth > 4
-                );
+            try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
+                     Path dir = new Path()) {
+                    reader.of(checkpointsDir(dir));
+                    Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, root, key(0), entry));
+                    final long depth = reader.getDecodedPageCount();
+                    Assert.assertTrue(
+                            "the tree has to be deeper than the memo this guards, depth=" + depth,
+                            depth > 4
+                    );
 
-                // Repeating one lookup must decode nothing at all.
-                for (int pass = 0; pass < 8; pass++) {
-                    Assert.assertTrue(reader.find(root, key(0), entry));
-                    Assert.assertEquals(0, scalar(entry));
-                }
-                Assert.assertEquals(depth, reader.getDecodedPageCount());
+                    // Repeating one lookup must decode nothing at all.
+                    for (int pass = 0; pass < 8; pass++) {
+                        Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, root, key(0), entry));
+                        Assert.assertEquals(0, scalar(entry));
+                    }
+                    Assert.assertEquals(depth, reader.getDecodedPageCount());
 
-                // A seal walks the keys it touched in the order it touched them, so
-                // an ascending sweep is the shape that matters: each page is decoded
-                // as the sweep reaches it, and once.
-                final long beforeSweep = reader.getDecodedPageCount();
-                for (int i = 0; i < keyCount; i++) {
-                    Assert.assertTrue(reader.find(root, key(i), entry));
-                    Assert.assertEquals(i, scalar(entry));
+                    // A seal walks the keys it touched in the order it touched them, so
+                    // an ascending sweep is the shape that matters: each page is decoded
+                    // as the sweep reaches it, and once.
+                    final long beforeSweep = reader.getDecodedPageCount();
+                    for (int i = 0; i < keyCount; i++) {
+                        Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, root, key(i), entry));
+                        Assert.assertEquals(i, scalar(entry));
+                    }
+                    final long sweepDecodes = reader.getDecodedPageCount() - beforeSweep;
+                    Assert.assertTrue(
+                            "an ascending sweep decoded " + sweepDecodes + " pages, a memoless descent per key costs "
+                                    + keyCount * depth,
+                            sweepDecodes < keyCount * depth / 4
+                    );
                 }
-                final long sweepDecodes = reader.getDecodedPageCount() - beforeSweep;
-                Assert.assertTrue(
-                        "an ascending sweep decoded " + sweepDecodes + " pages, a memoless descent per key costs "
-                                + keyCount * depth,
-                        sweepDecodes < keyCount * depth / 4
-                );
             }
         });
     }
@@ -309,26 +314,27 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
                 writer.apply(new LiveViewCheckpointPageRef(), initial, 1, root);
             }
 
-            final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-            try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
-                 Path dir = new Path()) {
-                reader.of(checkpointsDir(dir));
-                Assert.assertTrue(reader.find(root, key(0), entry));
-                Assert.assertEquals(0, scalar(entry));
-                final long depth = reader.getDecodedPageCount();
-                Assert.assertTrue("the tree must exceed the 64-level memo, depth=" + depth, depth > 64);
+            try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
+                     Path dir = new Path()) {
+                    reader.of(checkpointsDir(dir));
+                    Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, root, key(0), entry));
+                    Assert.assertEquals(0, scalar(entry));
+                    final long depth = reader.getDecodedPageCount();
+                    Assert.assertTrue("the tree must exceed the 64-level memo, depth=" + depth, depth > 64);
 
-                // The cached prefix stays resident, while the suffix must be decoded
-                // through the scratch node on every descent.
-                final long beforeRepeat = reader.getDecodedPageCount();
-                Assert.assertTrue(reader.find(root, key(0), entry));
-                Assert.assertEquals(0, scalar(entry));
-                Assert.assertTrue(reader.getDecodedPageCount() > beforeRepeat);
+                    // The cached prefix stays resident, while the suffix must be decoded
+                    // through the scratch node on every descent.
+                    final long beforeRepeat = reader.getDecodedPageCount();
+                    Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, root, key(0), entry));
+                    Assert.assertEquals(0, scalar(entry));
+                    Assert.assertTrue(reader.getDecodedPageCount() > beforeRepeat);
 
-                for (int i = 0; i < keyCount; i++) {
-                    Assert.assertTrue(reader.find(root, key(i), entry));
-                    Assert.assertEquals(i, scalar(entry));
-                    Assert.assertEquals(i % 5, entry.getStatePageRef(0).getSegmentId());
+                    for (int i = 0; i < keyCount; i++) {
+                        Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, root, key(i), entry));
+                        Assert.assertEquals(i, scalar(entry));
+                        Assert.assertEquals(i % 5, entry.getStatePageRef(0).getSegmentId());
+                    }
                 }
             }
         });
@@ -357,7 +363,7 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
                         } while (used[key]);
                         used[key] = true;
                         if ((rnd.nextInt() & 3) == 0) {
-                            mutations.remove(key(key));
+                            LiveViewCheckpointTestKeys.remove(mutations, key(key));
                             expected.remove(key);
                         } else {
                             final int value = rnd.nextInt();
@@ -373,7 +379,7 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
                     reader.iterateAll(root, entry -> {
                         Assert.assertTrue(iterator.hasNext());
                         final Map.Entry<Integer, Integer> expectedEntry = iterator.next();
-                        Assert.assertEquals((int) expectedEntry.getKey(), intKey(entry.getKey()));
+                        Assert.assertEquals((int) expectedEntry.getKey(), intKey(entry.copyKeyForTest()));
                         Assert.assertEquals((int) expectedEntry.getValue(), scalar(entry));
                     });
                     Assert.assertFalse(iterator.hasNext());
@@ -398,43 +404,44 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
                 writer.apply(new LiveViewCheckpointPageRef(), initial, 7, first);
             }
 
-            final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-            try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
-                 Path dir = new Path()) {
-                reader.of(checkpointsDir(dir));
-                Assert.assertTrue(reader.find(first, key(1), entry));
-                Assert.assertEquals(11, scalar(entry));
+            try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
+                     Path dir = new Path()) {
+                    reader.of(checkpointsDir(dir));
+                    Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, first, key(1), entry));
+                    Assert.assertEquals(11, scalar(entry));
 
-                // Unmap before the id is re-minted: a published segment is immutable,
-                // so the replacement arrives by rename, which a live mapping of the
-                // name it replaces would block on Windows.
-                reader.detach();
+                    // Unmap before the id is re-minted: a published segment is immutable,
+                    // so the replacement arrives by rename, which a live mapping of the
+                    // name it replaces would block on Windows.
+                    reader.detach();
 
-                // Production re-mints an id only after the retire, repair or
-                // compaction that deleted the segment holding it, and the writer
-                // refuses to publish over a name that still exists. Delete it here
-                // for the same reason, so this rebuild is the one production
-                // performs rather than a rename onto a live file - which POSIX
-                // silently allows and Windows MoveFileW rejects outright.
-                try (Path segment = new Path()) {
-                    configuration.getFilesFacade().removeQuiet(
-                            LiveViewCheckpointLayout.metaSegmentPath(segment, checkpointsDir(dir), 7).$()
-                    );
+                    // Production re-mints an id only after the retire, repair or
+                    // compaction that deleted the segment holding it, and the writer
+                    // refuses to publish over a name that still exists. Delete it here
+                    // for the same reason, so this rebuild is the one production
+                    // performs rather than a rename onto a live file - which POSIX
+                    // silently allows and Windows MoveFileW rejects outright.
+                    try (Path segment = new Path()) {
+                        configuration.getFilesFacade().removeQuiet(
+                                LiveViewCheckpointLayout.metaSegmentPath(segment, checkpointsDir(dir), 7).$()
+                        );
+                    }
+
+                    final LiveViewCheckpointPageRef second = new LiveViewCheckpointPageRef();
+                    try (LiveViewCheckpointMutationArena replacement = new LiveViewCheckpointMutationArena();
+                         LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration)) {
+                        writer.of(checkpointsDir(dir));
+                        put(replacement, 1, 22, 0);
+                        writer.apply(new LiveViewCheckpointPageRef(), replacement, 7, second);
+                    }
+                    // Guards the guard: the replacement has to land where the memo keyed
+                    // the page it replaces, or a miss would hide a memo that never dropped.
+                    assertRefEquals(first, second);
+
+                    Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, second, key(1), entry));
+                    Assert.assertEquals(22, scalar(entry));
                 }
-
-                final LiveViewCheckpointPageRef second = new LiveViewCheckpointPageRef();
-                try (LiveViewCheckpointMutationArena replacement = new LiveViewCheckpointMutationArena();
-                     LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration)) {
-                    writer.of(checkpointsDir(dir));
-                    put(replacement, 1, 22, 0);
-                    writer.apply(new LiveViewCheckpointPageRef(), replacement, 7, second);
-                }
-                // Guards the guard: the replacement has to land where the memo keyed
-                // the page it replaces, or a miss would hide a memo that never dropped.
-                assertRefEquals(first, second);
-
-                Assert.assertTrue(reader.find(second, key(1), entry));
-                Assert.assertEquals(22, scalar(entry));
             }
         });
     }
@@ -468,28 +475,29 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
                 writer.apply(root, update, 2, nextRoot);
             }
 
-            final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-            try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
-                 Path dir = new Path()) {
-                reader.of(checkpointsDir(dir));
-                for (int pass = 0; pass < 3; pass++) {
-                    for (int i = 0; i < keyCount; i++) {
-                        Assert.assertTrue(reader.find(root, key(i), entry));
-                        Assert.assertEquals(i, scalar(entry));
-                        Assert.assertEquals(i % 5, entry.getStatePageRef(0).getSegmentId());
+            try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
+                     Path dir = new Path()) {
+                    reader.of(checkpointsDir(dir));
+                    for (int pass = 0; pass < 3; pass++) {
+                        for (int i = 0; i < keyCount; i++) {
+                            Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, root, key(i), entry));
+                            Assert.assertEquals(i, scalar(entry));
+                            Assert.assertEquals(i % 5, entry.getStatePageRef(0).getSegmentId());
+                        }
+                        Assert.assertFalse(LiveViewCheckpointTestKeys.find(reader, root, key(keyCount), entry));
                     }
-                    Assert.assertFalse(reader.find(root, key(keyCount), entry));
-                }
-                // Two roots share every page the update left untouched, so a lookup
-                // must answer with the root it names rather than with the pages the
-                // lookup before it decoded.
-                for (int pass = 0; pass < 3; pass++) {
-                    Assert.assertTrue(reader.find(nextRoot, key(0), entry));
-                    Assert.assertEquals(999, scalar(entry));
-                    Assert.assertTrue(reader.find(root, key(0), entry));
-                    Assert.assertEquals(0, scalar(entry));
-                    Assert.assertTrue(reader.find(nextRoot, key(63), entry));
-                    Assert.assertEquals(63, scalar(entry));
+                    // Two roots share every page the update left untouched, so a lookup
+                    // must answer with the root it names rather than with the pages the
+                    // lookup before it decoded.
+                    for (int pass = 0; pass < 3; pass++) {
+                        Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, nextRoot, key(0), entry));
+                        Assert.assertEquals(999, scalar(entry));
+                        Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, root, key(0), entry));
+                        Assert.assertEquals(0, scalar(entry));
+                        Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, nextRoot, key(63), entry));
+                        Assert.assertEquals(63, scalar(entry));
+                    }
                 }
             }
         });
@@ -570,359 +578,398 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
             try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
                  Path dir = new Path()) {
                 reader.of(checkpointsDir(dir));
-                final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-                for (int i = 0; i < 63; i++) {
-                    Assert.assertTrue(reader.find(updatedRoot, key(i), entry));
-                    Assert.assertEquals(1_000 + i, scalar(entry));
+                try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                    for (int i = 0; i < 63; i++) {
+                        Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, updatedRoot, key(i), entry));
+                        Assert.assertEquals(1_000 + i, scalar(entry));
+                    }
+                    Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, updatedRoot, key(63), entry));
+                    Assert.assertEquals(63, scalar(entry));
                 }
-                Assert.assertTrue(reader.find(updatedRoot, key(63), entry));
-                Assert.assertEquals(63, scalar(entry));
             }
         });
     }
 
     @Test
-    public void testFlyweightReusesManyExactKeyWidthsInConstantTime() {
-        final int widthCount = 4_096;
-        final byte[] emptyBytes = new byte[0];
-        final LiveViewCheckpointStatePageRef[] emptyRefs = new LiveViewCheckpointStatePageRef[0];
-        final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-        final byte[][] retained = new byte[widthCount][];
-        long retainedBytes = 0;
-        for (int charCount = 1; charCount <= widthCount; charCount++) {
-            entry.of(new byte[stringKeyWidth(charCount)], emptyBytes, emptyRefs);
-            retained[charCount - 1] = entry.getKey();
-            retainedBytes += stringKeyWidth(charCount);
-        }
-        Assert.assertEquals(16_797_696, retainedBytes);
-        Assert.assertEquals(retainedBytes, entry.getRetainedBufferBytesForTest());
-
-        entry.clear();
-        Assert.assertEquals(0, entry.getKey().length);
-        Assert.assertEquals(0, entry.getScalarState().length);
-        Assert.assertEquals(0, entry.getStatePageCount());
-        entry.resetWidthLookupCountForTest();
-        for (int charCount = 1; charCount <= widthCount; charCount++) {
-            entry.of(new byte[stringKeyWidth(charCount)], emptyBytes, emptyRefs);
-            Assert.assertSame(retained[charCount - 1], entry.getKey());
-        }
-        Assert.assertEquals(
-                "each supported STRING width must perform one direct lookup",
-                widthCount,
-                entry.getWidthLookupCountForTest()
-        );
-
-        // Every STRING width from 1 to 4,096 characters adds up to more than the key cache may
-        // keep once its operation ends, so a trim drops them all.
-        entry.trimWidthCaches();
-        Assert.assertEquals(0, entry.getRetainedBufferBytesForTest());
-        entry.of(new byte[stringKeyWidth(1)], emptyBytes, emptyRefs);
-        Assert.assertNotSame("a width the trim dropped must get a fresh array", retained[0], entry.getKey());
-    }
-
-    @Test
-    public void testFlyweightReusesScalarAndPageRefExactWidths() {
-        final int widthCount = 400;
-        final byte[] key = new byte[]{1};
-        final byte[][] retainedScalars = new byte[widthCount][];
-        final LiveViewCheckpointStatePageRef[] retainedRefs = new LiveViewCheckpointStatePageRef[widthCount];
-        final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-        for (int width = 1; width <= widthCount; width++) {
-            entry.of(key, new byte[width], refs(width));
-            retainedScalars[width - 1] = entry.getScalarState();
-            retainedRefs[width - 1] = entry.getStatePageRef(width - 1);
-        }
-        // Widths 1 to 400 add up to 80,200 scalar bytes and as many reference slots, within what
-        // either cache keeps once its operation ends, so the trim keeps every width.
-        Assert.assertEquals(80_200, entry.getRetainedStatePageRefCountForTest());
-        Assert.assertEquals(key.length + 80_200, entry.getRetainedBufferBytesForTest());
-        entry.trimWidthCaches();
-
-        entry.resetWidthLookupCountForTest();
-        for (int width = 1; width <= widthCount; width++) {
-            entry.of(key, new byte[width], refs(width));
-            Assert.assertSame(retainedScalars[width - 1], entry.getScalarState());
-            Assert.assertSame(retainedRefs[width - 1], entry.getStatePageRef(width - 1));
-            Assert.assertEquals(width, entry.getStatePageCount());
-            Assert.assertEquals(width, entry.getStatePageRef(width - 1).getSegmentId());
-        }
-        Assert.assertEquals(3 * widthCount, entry.getWidthLookupCountForTest());
-    }
-
-    @Test
-    public void testFlyweightTrimKeepsCachesWithinTheirRetentionLimits() {
-        // Distinct key and scalar widths that add up to exactly 16,777,216 bytes, and distinct
-        // reference counts that add up to exactly 262,144 slots: what the key, scalar and
-        // reference caches of an entry may each keep once an operation ends.
-        final int[] byteWidths = new int[17];
-        long byteWidthSum = 0;
-        for (int i = 0; i < 16; i++) {
-            byteWidths[i] = 1_048_568 + i;
-            byteWidthSum += byteWidths[i];
-        }
-        byteWidths[16] = 8;
-        byteWidthSum += byteWidths[16];
-        Assert.assertEquals(16_777_216, byteWidthSum);
-        final int[] refCounts = {65_536, 65_535, 65_534, 65_533, 6};
-        Assert.assertEquals(262_144, Arrays.stream(refCounts).asLongStream().sum());
-
-        final byte[] emptyBytes = new byte[0];
-        final LiveViewCheckpointStatePageRef[] emptyRefs = new LiveViewCheckpointStatePageRef[0];
-        final byte[] oneMoreByte = new byte[]{1};
-        final LiveViewCheckpointStatePageRef[] oneMoreRef = refs(1);
-        final byte[][] bytes = new byte[byteWidths.length][];
-        for (int i = 0; i < byteWidths.length; i++) {
-            bytes[i] = new byte[byteWidths[i]];
-            Arrays.fill(bytes[i], (byte) i);
-        }
-        final LiveViewCheckpointStatePageRef[][] refs = new LiveViewCheckpointStatePageRef[refCounts.length][];
-        for (int i = 0; i < refCounts.length; i++) {
-            refs[i] = refs(refCounts[i]);
-        }
-
-        final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-        final byte[][] cachedKeys = new byte[bytes.length][];
-        final byte[][] cachedScalars = new byte[bytes.length][];
-        final LiveViewCheckpointStatePageRef[] cachedRefs = new LiveViewCheckpointStatePageRef[refs.length];
-        for (int i = 0; i < bytes.length; i++) {
-            entry.of(bytes[i], bytes[i], emptyRefs);
-            cachedKeys[i] = entry.getKey();
-            cachedScalars[i] = entry.getScalarState();
-        }
-        for (int i = 0; i < refs.length; i++) {
-            entry.of(emptyBytes, emptyBytes, refs[i]);
-            cachedRefs[i] = entry.getStatePageRef(0);
-        }
-        Assert.assertEquals(2 * byteWidthSum, entry.getRetainedBufferBytesForTest());
-        Assert.assertEquals(262_144, entry.getRetainedStatePageRefCountForTest());
-
-        // Caches at their limits keep every width across a trim.
-        entry.trimWidthCaches();
-        Assert.assertEquals(2 * byteWidthSum, entry.getRetainedBufferBytesForTest());
-        Assert.assertEquals(262_144, entry.getRetainedStatePageRefCountForTest());
-        for (int i = 0; i < bytes.length; i++) {
-            entry.of(bytes[i], bytes[i], emptyRefs);
-            Assert.assertSame("a key cache at its limit must keep its widths [width=" + byteWidths[i] + ']', cachedKeys[i], entry.getKey());
-            Assert.assertSame(cachedScalars[i], entry.getScalarState());
-        }
-        for (int i = 0; i < refs.length; i++) {
-            entry.of(emptyBytes, emptyBytes, refs[i]);
-            Assert.assertSame("a reference cache at its limit must keep its counts [count=" + refCounts[i] + ']', cachedRefs[i], entry.getStatePageRef(0));
-        }
-
-        // One more key byte takes the key cache past its limit: the trim drops every key width,
-        // and the scalar and reference caches, each within its own limit, keep theirs.
-        entry.of(oneMoreByte, emptyBytes, emptyRefs);
-        entry.trimWidthCaches();
-        Assert.assertEquals(byteWidthSum, entry.getRetainedBufferBytesForTest());
-        Assert.assertEquals(262_144, entry.getRetainedStatePageRefCountForTest());
-        for (int i = 0; i < bytes.length; i++) {
-            entry.of(bytes[i], bytes[i], emptyRefs);
-            Assert.assertNotSame("a key width the trim dropped must get a fresh array [width=" + byteWidths[i] + ']', cachedKeys[i], entry.getKey());
-            Assert.assertArrayEquals(bytes[i], entry.getKey());
-            Assert.assertSame(cachedScalars[i], entry.getScalarState());
-            cachedKeys[i] = entry.getKey();
-        }
-        // The refill counts from zero, so the key cache sits at its limit again and a trim keeps it.
-        entry.trimWidthCaches();
-        for (int i = 0; i < bytes.length; i++) {
-            entry.of(bytes[i], emptyBytes, emptyRefs);
-            Assert.assertSame("a refilled key cache at its limit must keep its widths [width=" + byteWidths[i] + ']', cachedKeys[i], entry.getKey());
-        }
-
-        // The same for the scalar cache.
-        entry.of(emptyBytes, oneMoreByte, emptyRefs);
-        entry.trimWidthCaches();
-        Assert.assertEquals(byteWidthSum, entry.getRetainedBufferBytesForTest());
-        for (int i = 0; i < bytes.length; i++) {
-            entry.of(bytes[i], bytes[i], emptyRefs);
-            Assert.assertSame(cachedKeys[i], entry.getKey());
-            Assert.assertNotSame("a scalar width the trim dropped must get a fresh array [width=" + byteWidths[i] + ']', cachedScalars[i], entry.getScalarState());
-            Assert.assertArrayEquals(bytes[i], entry.getScalarState());
-            cachedScalars[i] = entry.getScalarState();
-        }
-        entry.trimWidthCaches();
-        for (int i = 0; i < bytes.length; i++) {
-            entry.of(emptyBytes, bytes[i], emptyRefs);
-            Assert.assertSame("a refilled scalar cache at its limit must keep its widths [width=" + byteWidths[i] + ']', cachedScalars[i], entry.getScalarState());
-        }
-
-        // The same for the reference cache.
-        entry.of(emptyBytes, emptyBytes, oneMoreRef);
-        entry.trimWidthCaches();
-        Assert.assertEquals(0, entry.getRetainedStatePageRefCountForTest());
-        Assert.assertEquals(2 * byteWidthSum, entry.getRetainedBufferBytesForTest());
-        for (int i = 0; i < refs.length; i++) {
-            entry.of(emptyBytes, emptyBytes, refs[i]);
-            Assert.assertNotSame("a reference count the trim dropped must get fresh references [count=" + refCounts[i] + ']', cachedRefs[i], entry.getStatePageRef(0));
-            Assert.assertEquals(refCounts[i], entry.getStatePageCount());
-            Assert.assertEquals(refCounts[i], entry.getStatePageRef(refCounts[i] - 1).getSegmentId());
-            cachedRefs[i] = entry.getStatePageRef(0);
-        }
-        entry.trimWidthCaches();
-        for (int i = 0; i < refs.length; i++) {
-            entry.of(emptyBytes, emptyBytes, refs[i]);
-            Assert.assertSame("a refilled reference cache at its limit must keep its counts [count=" + refCounts[i] + ']', cachedRefs[i], entry.getStatePageRef(0));
-        }
-    }
-
-    @Test
-    public void testReaderDecodePoolsKeepEveryArrayWithinTheirRetentionLimits() throws Exception {
+    public void testFlyweightKeepsOneNativeKeyBufferForEveryWidth() throws Exception {
         assertMemoryLeak(() -> {
-            // Single-leaf maps, each entry with its own key, scalar and references. Decoding
-            // fullBytes needs 16 keys of 1,048,572 bytes and 16 scalars of 4 bytes, exactly
-            // 16,777,216 image bytes; decoding fullRefs needs 4 arrays of 65,536 state page
-            // references, exactly 262,144. That is what a node's byte pool and reference pool may
-            // each keep once an operation ends. oneMoreByte adds one key of a width the byte
-            // pool does not hold yet, 5 bytes, and oneMoreRef adds one reference. The 17 keys of
-            // wideWidths each have their own width of about 1 MiB, 17,825,656 bytes in all.
-            final long retainedBytesLimit = 16_777_216;
-            final long retainedRefsLimit = 262_144;
-            final int scalarWidth = Integer.BYTES;
-            final int fullKeyCount = 16;
-            final int fullKeyWidth = 1_048_572;
-            final int fullRefEntryCount = 4;
-            final int fullRefCount = 65_536;
-            final int oneMoreKeyWidth = 5;
-            final int wideWidthCount = 17;
-            final int firstWideKeyWidth = 1_048_560;
-            Assert.assertEquals(retainedBytesLimit, (long) fullKeyCount * (fullKeyWidth + scalarWidth));
-            Assert.assertEquals(retainedRefsLimit, (long) fullRefEntryCount * fullRefCount);
-            final LiveViewCheckpointPageRef fullBytes = new LiveViewCheckpointPageRef();
-            final LiveViewCheckpointPageRef oneMoreByte = new LiveViewCheckpointPageRef();
-            final LiveViewCheckpointPageRef fullRefs = new LiveViewCheckpointPageRef();
-            final LiveViewCheckpointPageRef oneMoreRef = new LiveViewCheckpointPageRef();
-            final LiveViewCheckpointPageRef wideWidths = new LiveViewCheckpointPageRef();
-            try (Path dir = new Path()) {
-                checkpointsDir(dir);
-                writeDistinctEntries(dir, 1, 0, fullKeyCount, fullKeyWidth, 0, scalarWidth, 0, fullBytes);
-                writeDistinctEntries(dir, 2, 100, 1, oneMoreKeyWidth, 0, scalarWidth, 0, oneMoreByte);
-                writeDistinctEntries(dir, 3, 200, fullRefEntryCount, scalarWidth, 0, scalarWidth, fullRefCount, fullRefs);
-                writeDistinctEntries(dir, 4, 300, 1, scalarWidth, 0, scalarWidth, 1, oneMoreRef);
-                writeDistinctEntries(dir, 5, 400, wideWidthCount, firstWideKeyWidth, 1, scalarWidth, 0, wideWidths);
+            // Every STRING width from 1 to 4,096 characters. The entry copies each key into the
+            // one native buffer it owns, which grows to the widest key and serves every
+            // narrower one, so no width costs a heap array or a width lookup, and a trim within
+            // the limit keeps the buffer.
+            final int widthCount = 4_096;
+            final int widestKey = stringKeyWidth(widthCount);
+            final byte[] emptyBytes = new byte[0];
+            final LiveViewCheckpointStatePageRef[] emptyRefs = new LiveViewCheckpointStatePageRef[0];
+            final long source = Unsafe.malloc(widestKey, MemoryTag.NATIVE_DEFAULT);
+            try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                for (int i = 0; i < widestKey; i++) {
+                    Unsafe.putByte(source + i, (byte) (i * 31));
+                }
+                entry.of(source, widestKey, emptyBytes, emptyRefs);
+                final long keyAddress = entry.getKeyAddress();
+                final long capacity = entry.getKeyBufferCapacityForTest();
+                Assert.assertTrue(
+                        "the buffer holds the widest key [capacity=" + capacity + ']',
+                        capacity >= widestKey && capacity < 2L * widestKey
+                );
+
+                final ThreadMXBean threadMXBean = (ThreadMXBean) ManagementFactory.getThreadMXBean();
+                final long threadId = Thread.currentThread().threadId();
+                entry.resetWidthLookupCountForTest();
+                int mismatchCount = 0;
+                final long allocatedBefore = threadMXBean.getThreadAllocatedBytes(threadId);
+                for (int charCount = widthCount; charCount >= 1; charCount--) {
+                    final int width = stringKeyWidth(charCount);
+                    entry.of(source, width, emptyBytes, emptyRefs);
+                    if (entry.getKeyLength() != width
+                            || entry.getKeyAddress() != keyAddress
+                            || Unsafe.getByte(entry.getKeyAddress() + width - 1) != Unsafe.getByte(source + width - 1)) {
+                        mismatchCount++;
+                    }
+                }
+                final long allocatedBytes = threadMXBean.getThreadAllocatedBytes(threadId) - allocatedBefore;
+                Assert.assertEquals(0, mismatchCount);
+                Assert.assertEquals("a key costs no width lookup", 0, entry.getWidthLookupCountForTest());
+                Assert.assertTrue(
+                        "copying a key of any width must not allocate heap [allocatedBytes=" + allocatedBytes + ']',
+                        allocatedBytes <= 16_384
+                );
+                Assert.assertEquals(capacity, entry.getKeyBufferCapacityForTest());
+
+                entry.clear();
+                Assert.assertEquals(0, entry.getKeyLength());
+                Assert.assertEquals(0, entry.getScalarState().length);
+                Assert.assertEquals(0, entry.getStatePageCount());
+                entry.trimWidthCaches();
+                Assert.assertEquals(
+                        "a key buffer within its limit survives the trim",
+                        capacity,
+                        entry.getKeyBufferCapacityForTest()
+                );
+            } finally {
+                Unsafe.free(source, widestKey, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testFlyweightReusesScalarAndPageRefExactWidths() throws Exception {
+        assertMemoryLeak(() -> {
+            final int widthCount = 400;
+            final byte[] key = new byte[]{1};
+            final byte[][] retainedScalars = new byte[widthCount][];
+            final LiveViewCheckpointStatePageRef[] retainedRefs = new LiveViewCheckpointStatePageRef[widthCount];
+            try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                for (int width = 1; width <= widthCount; width++) {
+                    LiveViewCheckpointTestKeys.of(entry, key, new byte[width], refs(width));
+                    retainedScalars[width - 1] = entry.getScalarState();
+                    retainedRefs[width - 1] = entry.getStatePageRef(width - 1);
+                }
+                // Widths 1 to 400 add up to 80,200 scalar bytes and as many reference slots, within
+                // what either cache keeps once its operation ends, so the trim keeps every width.
+                Assert.assertEquals(80_200, entry.getRetainedStatePageRefCountForTest());
+                Assert.assertEquals(
+                        entry.getKeyBufferCapacityForTest() + 80_200,
+                        entry.getRetainedBufferBytesForTest()
+                );
+                entry.trimWidthCaches();
+
+                entry.resetWidthLookupCountForTest();
+                for (int width = 1; width <= widthCount; width++) {
+                    LiveViewCheckpointTestKeys.of(entry, key, new byte[width], refs(width));
+                    Assert.assertSame(retainedScalars[width - 1], entry.getScalarState());
+                    Assert.assertSame(retainedRefs[width - 1], entry.getStatePageRef(width - 1));
+                    Assert.assertEquals(width, entry.getStatePageCount());
+                    Assert.assertEquals(width, entry.getStatePageRef(width - 1).getSegmentId());
+                }
+                // One scalar and one reference lookup per copy; the key takes none.
+                Assert.assertEquals(2 * widthCount, entry.getWidthLookupCountForTest());
+            }
+        });
+    }
+
+    @Test
+    public void testFlyweightTrimFreesAKeyBufferPastItsRetentionLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            // A key buffer of exactly 16,777,216 bytes is what an entry may keep once its
+            // operation ends; one byte more takes it past the limit, and the trim frees it.
+            final long limit = LiveViewCheckpointPartitionMapEntry.MAX_RETAINED_BUFFER_BYTES;
+            final byte[] emptyBytes = new byte[0];
+            final LiveViewCheckpointStatePageRef[] emptyRefs = new LiveViewCheckpointStatePageRef[0];
+            final byte[] scalar = {1, 2, 3, 4};
+            final long sourceLength = limit + 1;
+            final long source = Unsafe.malloc(sourceLength, MemoryTag.NATIVE_DEFAULT);
+            try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                Vect.memset(source, sourceLength, 7);
+                Unsafe.putByte(source + limit - 1, (byte) 9);
+                entry.of(source, (int) limit, scalar, emptyRefs);
+                Assert.assertEquals(limit, entry.getKeyBufferCapacityForTest());
+                entry.trimWidthCaches();
+                Assert.assertEquals("a key buffer at its limit survives the trim", limit, entry.getKeyBufferCapacityForTest());
+                Assert.assertEquals(limit, entry.getKeyLength());
+                Assert.assertEquals(9, Unsafe.getByte(entry.getKeyAddress() + limit - 1));
+
+                entry.of(source, (int) sourceLength, scalar, emptyRefs);
+                Assert.assertTrue(entry.getKeyBufferCapacityForTest() > limit);
+                entry.trimWidthCaches();
+                Assert.assertEquals("a key buffer past its limit is freed", 0, entry.getKeyBufferCapacityForTest());
+                Assert.assertEquals("the freed buffer takes its key with it", 0, entry.getKeyLength());
+                Assert.assertArrayEquals("the scalar state stays intact", scalar, entry.getScalarState());
+
+                // The next copy allocates a buffer again.
+                entry.of(source, 16, emptyBytes, emptyRefs);
+                Assert.assertEquals(16, entry.getKeyLength());
+                Assert.assertEquals(7, Unsafe.getByte(entry.getKeyAddress() + 15));
+                Assert.assertTrue(entry.getKeyBufferCapacityForTest() > 0);
+            } finally {
+                Unsafe.free(source, sourceLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testFlyweightTrimKeepsCachesWithinTheirRetentionLimits() throws Exception {
+        // Distinct scalar widths that add up to exactly 16,777,216 bytes, and distinct reference
+        // counts that add up to exactly 262,144 slots: what the scalar and reference caches of
+        // an entry may each keep once an operation ends. The entry copies no key, so its key
+        // buffer stays unallocated and holds none of the counted bytes.
+        assertMemoryLeak(() -> {
+            final int[] byteWidths = new int[17];
+            long byteWidthSum = 0;
+            for (int i = 0; i < 16; i++) {
+                byteWidths[i] = 1_048_568 + i;
+                byteWidthSum += byteWidths[i];
+            }
+            byteWidths[16] = 8;
+            byteWidthSum += byteWidths[16];
+            Assert.assertEquals(16_777_216, byteWidthSum);
+            final int[] refCounts = {65_536, 65_535, 65_534, 65_533, 6};
+            Assert.assertEquals(262_144, Arrays.stream(refCounts).asLongStream().sum());
+
+            final byte[] emptyBytes = new byte[0];
+            final LiveViewCheckpointStatePageRef[] emptyRefs = new LiveViewCheckpointStatePageRef[0];
+            final byte[] oneMoreByte = new byte[]{1};
+            final LiveViewCheckpointStatePageRef[] oneMoreRef = refs(1);
+            final byte[][] bytes = new byte[byteWidths.length][];
+            for (int i = 0; i < byteWidths.length; i++) {
+                bytes[i] = new byte[byteWidths[i]];
+                Arrays.fill(bytes[i], (byte) i);
+            }
+            final LiveViewCheckpointStatePageRef[][] refs = new LiveViewCheckpointStatePageRef[refCounts.length][];
+            for (int i = 0; i < refCounts.length; i++) {
+                refs[i] = refs(refCounts[i]);
             }
 
+            try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                final byte[][] cachedScalars = new byte[bytes.length][];
+                final LiveViewCheckpointStatePageRef[] cachedRefs = new LiveViewCheckpointStatePageRef[refs.length];
+                for (int i = 0; i < bytes.length; i++) {
+                    LiveViewCheckpointTestKeys.of(entry, emptyBytes, bytes[i], emptyRefs);
+                    cachedScalars[i] = entry.getScalarState();
+                }
+                for (int i = 0; i < refs.length; i++) {
+                    LiveViewCheckpointTestKeys.of(entry, emptyBytes, emptyBytes, refs[i]);
+                    cachedRefs[i] = entry.getStatePageRef(0);
+                }
+                Assert.assertEquals(0, entry.getKeyBufferCapacityForTest());
+                Assert.assertEquals(byteWidthSum, entry.getRetainedBufferBytesForTest());
+                Assert.assertEquals(262_144, entry.getRetainedStatePageRefCountForTest());
+
+                // Caches at their limits keep every width across a trim.
+                entry.trimWidthCaches();
+                Assert.assertEquals(byteWidthSum, entry.getRetainedBufferBytesForTest());
+                Assert.assertEquals(262_144, entry.getRetainedStatePageRefCountForTest());
+                for (int i = 0; i < bytes.length; i++) {
+                    LiveViewCheckpointTestKeys.of(entry, emptyBytes, bytes[i], emptyRefs);
+                    Assert.assertSame("a scalar cache at its limit must keep its widths [width=" + byteWidths[i] + ']', cachedScalars[i], entry.getScalarState());
+                }
+                for (int i = 0; i < refs.length; i++) {
+                    LiveViewCheckpointTestKeys.of(entry, emptyBytes, emptyBytes, refs[i]);
+                    Assert.assertSame("a reference cache at its limit must keep its counts [count=" + refCounts[i] + ']', cachedRefs[i], entry.getStatePageRef(0));
+                }
+
+                // One more scalar byte takes the scalar cache past its limit: the trim drops every
+                // scalar width, and the reference cache, within its own limit, keeps its counts.
+                LiveViewCheckpointTestKeys.of(entry, emptyBytes, oneMoreByte, emptyRefs);
+                entry.trimWidthCaches();
+                Assert.assertEquals(0, entry.getRetainedBufferBytesForTest());
+                Assert.assertEquals(262_144, entry.getRetainedStatePageRefCountForTest());
+                for (int i = 0; i < bytes.length; i++) {
+                    LiveViewCheckpointTestKeys.of(entry, emptyBytes, bytes[i], emptyRefs);
+                    Assert.assertNotSame("a scalar width the trim dropped must get a fresh array [width=" + byteWidths[i] + ']', cachedScalars[i], entry.getScalarState());
+                    Assert.assertArrayEquals(bytes[i], entry.getScalarState());
+                    cachedScalars[i] = entry.getScalarState();
+                }
+                // The refill counts from zero, so the scalar cache sits at its limit again and a
+                // trim keeps it.
+                entry.trimWidthCaches();
+                for (int i = 0; i < bytes.length; i++) {
+                    LiveViewCheckpointTestKeys.of(entry, emptyBytes, bytes[i], emptyRefs);
+                    Assert.assertSame("a refilled scalar cache at its limit must keep its widths [width=" + byteWidths[i] + ']', cachedScalars[i], entry.getScalarState());
+                }
+
+                // The same for the reference cache.
+                LiveViewCheckpointTestKeys.of(entry, emptyBytes, emptyBytes, oneMoreRef);
+                entry.trimWidthCaches();
+                Assert.assertEquals(0, entry.getRetainedStatePageRefCountForTest());
+                Assert.assertEquals(byteWidthSum, entry.getRetainedBufferBytesForTest());
+                for (int i = 0; i < refs.length; i++) {
+                    LiveViewCheckpointTestKeys.of(entry, emptyBytes, emptyBytes, refs[i]);
+                    Assert.assertNotSame("a reference count the trim dropped must get fresh references [count=" + refCounts[i] + ']', cachedRefs[i], entry.getStatePageRef(0));
+                    Assert.assertEquals(refCounts[i], entry.getStatePageCount());
+                    Assert.assertEquals(refCounts[i], entry.getStatePageRef(refCounts[i] - 1).getSegmentId());
+                    cachedRefs[i] = entry.getStatePageRef(0);
+                }
+                entry.trimWidthCaches();
+                for (int i = 0; i < refs.length; i++) {
+                    LiveViewCheckpointTestKeys.of(entry, emptyBytes, emptyBytes, refs[i]);
+                    Assert.assertSame("a refilled reference cache at its limit must keep its counts [count=" + refCounts[i] + ']', cachedRefs[i], entry.getStatePageRef(0));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLookupsCopyOutOfAMemoSlotThatIsReDecodedLater() throws Exception {
+        assertMemoryLeak(() -> {
+            // Minimum capacity, so the two keys sit in different leaves at the same depth and the
+            // second lookup re-decodes the memo slot the first one read, reusing its arena.
+            final int keyCount = 64;
+            final int keyWidth = 40;
+            final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
+            try (LiveViewCheckpointMutationArena initial = new LiveViewCheckpointMutationArena();
+                 LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration, 2, 2);
+                 Path dir = new Path()) {
+                for (int i = 0; i < keyCount; i++) {
+                    LiveViewCheckpointTestKeys.put(initial, distinctBytes(i, keyWidth), key(i), refs(1));
+                }
+                writer.of(checkpointsDir(dir));
+                writer.apply(new LiveViewCheckpointPageRef(), initial, 1, root);
+            }
+
+            try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
+                 LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
+                 LiveViewCheckpointPartitionMapEntry second = new LiveViewCheckpointPartitionMapEntry();
+                 Path dir = new Path()) {
+                reader.of(checkpointsDir(dir));
+                Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, root, distinctBytes(0, keyWidth), first));
+                final long decodedBefore = reader.getDecodedPageCount();
+                Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, root, distinctBytes(keyCount - 1, keyWidth), second));
+                Assert.assertTrue(
+                        "the second lookup must re-decode the leaf slot the first one read",
+                        reader.getDecodedPageCount() > decodedBefore
+                );
+                Assert.assertArrayEquals(distinctBytes(0, keyWidth), first.copyKeyForTest());
+                Assert.assertEquals(0, scalar(first));
+                Assert.assertArrayEquals(distinctBytes(keyCount - 1, keyWidth), second.copyKeyForTest());
+                Assert.assertEquals(keyCount - 1, scalar(second));
+
+                // A walk hands every entry out through the reader's own scratch entry, so what a
+                // lookup copied out stays put across it too.
+                final int[] visited = {0};
+                reader.iterateAll(root, entry -> visited[0]++);
+                Assert.assertEquals(keyCount, visited[0]);
+                Assert.assertArrayEquals(distinctBytes(0, keyWidth), first.copyKeyForTest());
+                Assert.assertEquals(0, scalar(first));
+            }
+        });
+    }
+
+    @Test
+    public void testReaderDetachFreesOnlyNodeArenasPastTheirRetentionLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            // Single-leaf maps. A decoded page lives in the arena of the node that decoded it, so
+            // an arena holds one page, and what it keeps is that page's size. The narrow map's
+            // leaf holds 8 keys of 1,048,572 bytes, 8 MiB of images, within what a node may
+            // keep once an operation ends; the wide map's leaf holds 17 keys of about 1 MiB each,
+            // 17,825,656 bytes, past it. The reference map's leaf holds 3 entries of 65,536 state
+            // page references each, 7.5 MiB of references, which the arena keeps as bytes.
+            final long limit = LiveViewCheckpointPartitionMapReader.MAX_NODE_RETAINED_BYTES;
+            final int scalarWidth = Integer.BYTES;
+            final int narrowKeyCount = 8;
+            final int narrowKeyWidth = 1_048_572;
+            final int wideKeyCount = 17;
+            final int firstWideKeyWidth = 1_048_560;
+            final int refEntryCount = 3;
+            final int refCount = 65_536;
+            final LiveViewCheckpointPageRef narrow = new LiveViewCheckpointPageRef();
+            final LiveViewCheckpointPageRef wide = new LiveViewCheckpointPageRef();
+            final LiveViewCheckpointPageRef manyRefs = new LiveViewCheckpointPageRef();
             try (Path dir = new Path()) {
                 checkpointsDir(dir);
-                final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-                final int[] visited = new int[1];
+                writeDistinctEntries(dir, 1, 0, narrowKeyCount, narrowKeyWidth, 0, scalarWidth, 0, narrow);
+                writeDistinctEntries(dir, 2, 100, wideKeyCount, firstWideKeyWidth, 1, scalarWidth, 0, wide);
+                writeDistinctEntries(dir, 3, 200, refEntryCount, scalarWidth, 0, scalarWidth, refCount, manyRefs);
+            }
 
-                // Lookups decode into the reader's memo node and copy into the caller's entry, so
-                // what the reader keeps is the memo node's pools alone.
-                try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration)) {
-                    assertDecodePoolRetention(
-                            reader,
-                            dir,
-                            () -> {
-                                for (int i = 0; i < fullKeyCount; i++) {
-                                    Assert.assertTrue(reader.find(fullBytes, distinctBytes(i, fullKeyWidth), entry));
-                                    assertDistinctWideEntry(i, fullKeyWidth, scalarWidth, entry);
-                                }
-                            },
-                            () -> {
-                                Assert.assertTrue(reader.find(oneMoreByte, distinctBytes(100, oneMoreKeyWidth), entry));
-                                assertDistinctEntry(100, oneMoreKeyWidth, scalarWidth, 0, entry);
-                            },
-                            reader::getRetainedBufferBytesForTest,
-                            retainedBytesLimit,
-                            retainedBytesLimit + oneMoreKeyWidth,
-                            0,
-                            0
-                    );
-                    assertDecodePoolRetention(
-                            reader,
-                            dir,
-                            () -> {
-                                for (int i = 0; i < fullRefEntryCount; i++) {
-                                    Assert.assertTrue(reader.find(fullRefs, distinctBytes(200 + i, scalarWidth), entry));
-                                    assertDistinctEntry(200 + i, scalarWidth, scalarWidth, fullRefCount, entry);
-                                }
-                            },
-                            () -> {
-                                Assert.assertTrue(reader.find(oneMoreRef, distinctBytes(300, scalarWidth), entry));
-                                assertDistinctEntry(300, scalarWidth, scalarWidth, 1, entry);
-                            },
-                            reader::getRetainedStatePageRefCountForTest,
-                            retainedRefsLimit,
-                            retainedRefsLimit + 1,
-                            0,
-                            0
-                    );
+            try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
+                 LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
+                 Path dir = new Path()) {
+                checkpointsDir(dir);
+                // Lookups decode into the memo node and copy into the caller's entry.
+                reader.of(dir);
+                for (int i = 0; i < narrowKeyCount; i++) {
+                    Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, narrow, distinctBytes(i, narrowKeyWidth), entry));
+                    assertDistinctWideEntry(i, narrowKeyWidth, scalarWidth, entry);
                 }
+                final long narrowBytes = reader.getRetainedBufferBytesForTest();
+                Assert.assertTrue(
+                        "the memo node's arena holds the narrow page [bytes=" + narrowBytes + ']',
+                        narrowBytes >= (long) narrowKeyCount * narrowKeyWidth && narrowBytes <= limit
+                );
+                reader.detach();
+                Assert.assertEquals("an arena within its limit survives detach", narrowBytes, reader.getRetainedBufferBytesForTest());
 
-                // A root count decodes the root into the reader's navigation node.
-                try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration)) {
-                    assertDecodePoolRetention(
-                            reader,
-                            dir,
-                            () -> Assert.assertEquals(0, reader.rootChildCount(fullBytes)),
-                            () -> Assert.assertEquals(0, reader.rootChildCount(oneMoreByte)),
-                            reader::getRetainedBufferBytesForTest,
-                            retainedBytesLimit,
-                            retainedBytesLimit + oneMoreKeyWidth,
-                            0,
-                            0
-                    );
+                // References decode through the arena field for field.
+                reader.of(dir);
+                for (int i = 0; i < refEntryCount; i++) {
+                    Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, manyRefs, distinctBytes(200 + i, scalarWidth), entry));
+                    assertDistinctEntry(200 + i, scalarWidth, scalarWidth, refCount, entry);
                 }
+                reader.detach();
+                Assert.assertTrue(
+                        "an arena holding references within its limit survives detach [bytes="
+                                + reader.getRetainedBufferBytesForTest() + ']',
+                        reader.getRetainedBufferBytesForTest() >= (long) refEntryCount * refCount * LiveViewCheckpointStatePageRef.BYTES
+                );
 
-                // Iteration decodes into a pooled node and copies every entry into the reader's
-                // scratch entry, whose caches keep one array per width on top of the node's pools.
-                try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration)) {
-                    assertDecodePoolRetention(
-                            reader,
-                            dir,
-                            () -> {
-                                visited[0] = 0;
-                                reader.iterateAll(fullBytes, visitedEntry -> assertDistinctWideEntry(visited[0]++, fullKeyWidth, scalarWidth, visitedEntry));
-                                Assert.assertEquals(fullKeyCount, visited[0]);
-                            },
-                            () -> reader.iterateAll(oneMoreByte, visitedEntry -> assertDistinctEntry(100, oneMoreKeyWidth, scalarWidth, 0, visitedEntry)),
-                            reader::getRetainedBufferBytesForTest,
-                            retainedBytesLimit,
-                            retainedBytesLimit + oneMoreKeyWidth,
-                            fullKeyWidth + scalarWidth,
-                            fullKeyWidth + scalarWidth + oneMoreKeyWidth
-                    );
-                    assertDecodePoolRetention(
-                            reader,
-                            dir,
-                            () -> {
-                                visited[0] = 0;
-                                reader.iterateAll(fullRefs, visitedEntry -> assertDistinctEntry(200 + visited[0]++, scalarWidth, scalarWidth, fullRefCount, visitedEntry));
-                                Assert.assertEquals(fullRefEntryCount, visited[0]);
-                            },
-                            () -> reader.iterateAll(oneMoreRef, visitedEntry -> assertDistinctEntry(300, scalarWidth, scalarWidth, 1, visitedEntry)),
-                            reader::getRetainedStatePageRefCountForTest,
-                            retainedRefsLimit,
-                            retainedRefsLimit + 1,
-                            fullRefCount,
-                            fullRefCount + 1
-                    );
+                reader.of(dir);
+                for (int i = 0; i < wideKeyCount; i++) {
+                    Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, wide, distinctBytes(100 + i, firstWideKeyWidth + i), entry));
+                    assertDistinctWideEntry(100 + i, firstWideKeyWidth + i, scalarWidth, entry);
                 }
+                Assert.assertTrue(
+                        "the memo node's arena must hold the whole wide page [bytes="
+                                + reader.getLargestRetainedBufferBytesForTest() + ']',
+                        reader.getLargestRetainedBufferBytesForTest() > limit
+                );
+                reader.detach();
+                Assert.assertEquals("an arena past its limit is freed on detach", 0, reader.getRetainedBufferBytesForTest());
 
-                // Keys of 17 widths take the scratch entry's key cache, and the pooled node's byte
-                // pool, past their limits within one iteration, so detach() drops both and only the
-                // scratch entry's 4-byte scalar width stays.
-                try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration)) {
-                    reader.of(dir);
-                    visited[0] = 0;
-                    reader.iterateAll(wideWidths, visitedEntry -> {
-                        final int i = visited[0]++;
-                        assertDistinctWideEntry(400 + i, firstWideKeyWidth + i, scalarWidth, visitedEntry);
-                    });
-                    Assert.assertEquals(wideWidthCount, visited[0]);
-                    Assert.assertTrue(
-                            "an iteration must keep every key width it copies [largestRetainedBytes="
-                                    + reader.getLargestRetainedBufferBytesForTest() + ']',
-                            reader.getLargestRetainedBufferBytesForTest() > retainedBytesLimit
-                    );
-                    reader.detach();
-                    Assert.assertEquals(
-                            "detaching must drop the scratch entry's key cache past its limit",
-                            scalarWidth,
-                            reader.getRetainedBufferBytesForTest()
-                    );
-                }
+                // The next operation decodes into a fresh arena and still answers.
+                reader.of(dir);
+                Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, wide, distinctBytes(100, firstWideKeyWidth), entry));
+                assertDistinctWideEntry(100, firstWideKeyWidth, scalarWidth, entry);
+                reader.detach();
+                Assert.assertEquals(0, reader.getRetainedBufferBytesForTest());
+
+                // A walk decodes into a pooled node and copies every entry into the reader's scratch
+                // entry, whose key buffer grows to the widest key, well within its own limit.
+                reader.of(dir);
+                final int[] visited = {0};
+                reader.iterateAll(wide, visitedEntry -> {
+                    final int i = visited[0]++;
+                    assertDistinctWideEntry(100 + i, firstWideKeyWidth + i, scalarWidth, visitedEntry);
+                });
+                Assert.assertEquals(wideKeyCount, visited[0]);
+                Assert.assertTrue(reader.getLargestRetainedBufferBytesForTest() > limit);
+                reader.detach();
+                final long walkBytes = reader.getRetainedBufferBytesForTest();
+                Assert.assertTrue(
+                        "detach must free the walk node's arena and keep only the scratch entry [bytes=" + walkBytes + ']',
+                        walkBytes >= firstWideKeyWidth + wideKeyCount - 1 && walkBytes < 4L * firstWideKeyWidth
+                );
             }
         });
     }
@@ -933,12 +980,13 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
             // A ring-shaped function keeps two state pages per chunk and up to 256 chunks per key,
             // and keys that start at different times reach different chunk counts. Here 1,024 keys
             // hold every even reference count from 2 to 512, four keys per count, in an order
-            // unrelated to key order, so every leaf holds its own mix of counts. A node's pool keeps,
-            // per count, the most arrays of that count a single leaf needed, which for these leaves
-            // adds up to more than 65,536 references. Each pass is one operation: shuffled lookups,
-            // a full iteration, then detach(). Once the pools hold every count, a pass must not
-            // allocate: an allocation-free pass measures a few hundred bytes, while fresh references
-            // for every decoded entry cost hundreds of megabytes.
+            // unrelated to key order, so every leaf holds its own mix of counts. A decoded leaf keeps
+            // its references in its node's native arena, and an entry keeps one reference array per
+            // count it has copied, which for these keys adds up to more than 65,536 references. Each
+            // pass is one operation: shuffled lookups, a full iteration, then detach(). Once the
+            // entries hold every count, a pass must not allocate: an allocation-free pass measures a
+            // few hundred bytes, while fresh references for every decoded entry cost hundreds of
+            // megabytes.
             final int keyCount = 1_024;
             final int warmUpPasses = 2;
             final int measuredPasses = 4;
@@ -958,7 +1006,7 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
                  LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration)) {
                 writer.of(checkpointsDir(dir));
                 for (int i = 0; i < keyCount; i++) {
-                    arena.put(keys[i], keys[i], refs(refCounts[i]));
+                    LiveViewCheckpointTestKeys.put(arena, keys[i], keys[i], refs(refCounts[i]));
                 }
                 writer.apply(new LiveViewCheckpointPageRef(), arena, 1, root);
             }
@@ -968,53 +1016,55 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
             try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
                  Path dir = new Path()) {
                 checkpointsDir(dir);
-                final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-                final int[] mismatchCount = new int[1];
-                final int[] visitedCount = new int[1];
-                final LiveViewCheckpointPartitionMapReader.Visitor visitor = visitedEntry -> {
-                    final int i = scalar(visitedEntry);
-                    if (i != visitedCount[0]++ || !hasRefs(visitedEntry, refCounts[i])) {
-                        mismatchCount[0]++;
-                    }
-                };
-                long lookupRefCount = 0;
-                for (int pass = 0; pass < warmUpPasses + measuredPasses; pass++) {
-                    final long decodedPagesBefore = reader.getDecodedPageCount();
-                    final long allocatedBefore = threadMXBean.getThreadAllocatedBytes(threadId);
-                    reader.of(dir);
-                    for (int n = 0; n < keyCount; n++) {
-                        final int i = order[n];
-                        if (!reader.find(root, keys[i], entry) || scalar(entry) != i || !hasRefs(entry, refCounts[i])) {
+                try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                    final int[] mismatchCount = new int[1];
+                    final int[] visitedCount = new int[1];
+                    final LiveViewCheckpointPartitionMapReader.Visitor visitor = visitedEntry -> {
+                        final int i = scalar(visitedEntry);
+                        if (i != visitedCount[0]++ || !hasRefs(visitedEntry, refCounts[i])) {
                             mismatchCount[0]++;
                         }
-                    }
-                    if (pass == 0) {
-                        lookupRefCount = reader.getRetainedStatePageRefCountForTest();
-                    }
-                    visitedCount[0] = 0;
-                    reader.iterateAll(root, visitor);
-                    reader.detach();
-                    final long allocatedBytes = threadMXBean.getThreadAllocatedBytes(threadId) - allocatedBefore;
-                    final long decodedPages = reader.getDecodedPageCount() - decodedPagesBefore;
-                    Assert.assertEquals(0, mismatchCount[0]);
-                    Assert.assertEquals(keyCount, visitedCount[0]);
-                    Assert.assertTrue(
-                            "shuffled lookups must keep decoding leaves [pass=" + pass + ", decodedPages=" + decodedPages + ']',
-                            decodedPages > keyCount
-                    );
-                    if (pass >= warmUpPasses) {
+                    };
+                    long lookupRefCount = 0;
+                    for (int pass = 0; pass < warmUpPasses + measuredPasses; pass++) {
+                        final long decodedPagesBefore = reader.getDecodedPageCount();
+                        final long allocatedBefore = threadMXBean.getThreadAllocatedBytes(threadId);
+                        reader.of(dir);
+                        for (int n = 0; n < keyCount; n++) {
+                            final int i = order[n];
+                            if (!LiveViewCheckpointTestKeys.find(reader, root, keys[i], entry) || scalar(entry) != i || !hasRefs(entry, refCounts[i])) {
+                                mismatchCount[0]++;
+                            }
+                        }
+                        if (pass == 0) {
+                            lookupRefCount = entry.getRetainedStatePageRefCountForTest();
+                        }
+                        visitedCount[0] = 0;
+                        reader.iterateAll(root, visitor);
+                        reader.detach();
+                        final long allocatedBytes = threadMXBean.getThreadAllocatedBytes(threadId) - allocatedBefore;
+                        final long decodedPages = reader.getDecodedPageCount() - decodedPagesBefore;
+                        Assert.assertEquals(0, mismatchCount[0]);
+                        Assert.assertEquals(keyCount, visitedCount[0]);
                         Assert.assertTrue(
-                                "a warmed-up pass must not allocate per decoded page [pass=" + pass
-                                        + ", decodedPages=" + decodedPages + ", allocatedBytes=" + allocatedBytes
-                                        + ", limit=" + passAllocationLimitBytes + ']',
-                                allocatedBytes <= passAllocationLimitBytes
+                                "shuffled lookups must keep decoding leaves [pass=" + pass + ", decodedPages=" + decodedPages + ']',
+                                decodedPages > keyCount
                         );
+                        if (pass >= warmUpPasses) {
+                            Assert.assertTrue(
+                                    "a warmed-up pass must not allocate per decoded page [pass=" + pass
+                                            + ", decodedPages=" + decodedPages + ", allocatedBytes=" + allocatedBytes
+                                            + ", limit=" + passAllocationLimitBytes + ']',
+                                    allocatedBytes <= passAllocationLimitBytes
+                            );
+                        }
                     }
+                    Assert.assertTrue(
+                            "the lookups must have copied more than 65,536 references of distinct counts [refCount="
+                                    + lookupRefCount + ']',
+                            lookupRefCount > 65_536
+                    );
                 }
-                Assert.assertTrue(
-                        "the lookups' decode pool must hold more than 65,536 references [refCount=" + lookupRefCount + ']',
-                        lookupRefCount > 65_536
-                );
             }
         });
     }
@@ -1056,7 +1106,7 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
                  LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration)) {
                 writer.of(checkpointsDir(dir));
                 for (int i = 0; i < keyCount; i++) {
-                    arena.put(keys[i], key(i), refs(1));
+                    LiveViewCheckpointTestKeys.put(arena, keys[i], key(i), refs(1));
                 }
                 writer.apply(new LiveViewCheckpointPageRef(), arena, 1, root);
             }
@@ -1066,33 +1116,34 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
             try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
                  Path dir = new Path()) {
                 checkpointsDir(dir);
-                final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-                for (int pass = 0; pass < warmUpPasses + measuredPasses; pass++) {
-                    final long decodedPagesBefore = reader.getDecodedPageCount();
-                    final long allocatedBefore = threadMXBean.getThreadAllocatedBytes(threadId);
-                    reader.of(dir);
-                    int mismatchCount = 0;
-                    for (int n = 0; n < keyCount; n++) {
-                        final int i = order[n];
-                        if (!reader.find(root, keys[i], entry) || !Arrays.equals(keys[i], entry.getKey()) || scalar(entry) != i) {
-                            mismatchCount++;
+                try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                    for (int pass = 0; pass < warmUpPasses + measuredPasses; pass++) {
+                        final long decodedPagesBefore = reader.getDecodedPageCount();
+                        final long allocatedBefore = threadMXBean.getThreadAllocatedBytes(threadId);
+                        reader.of(dir);
+                        int mismatchCount = 0;
+                        for (int n = 0; n < keyCount; n++) {
+                            final int i = order[n];
+                            if (!LiveViewCheckpointTestKeys.find(reader, root, keys[i], entry) || !hasKey(entry, keys[i]) || scalar(entry) != i) {
+                                mismatchCount++;
+                            }
                         }
-                    }
-                    reader.detach();
-                    final long allocatedBytes = threadMXBean.getThreadAllocatedBytes(threadId) - allocatedBefore;
-                    final long decodedPages = reader.getDecodedPageCount() - decodedPagesBefore;
-                    Assert.assertEquals(0, mismatchCount);
-                    Assert.assertTrue(
-                            "shuffled lookups must keep decoding leaves [pass=" + pass + ", decodedPages=" + decodedPages + ']',
-                            decodedPages > keyCount
-                    );
-                    if (pass >= warmUpPasses) {
+                        reader.detach();
+                        final long allocatedBytes = threadMXBean.getThreadAllocatedBytes(threadId) - allocatedBefore;
+                        final long decodedPages = reader.getDecodedPageCount() - decodedPagesBefore;
+                        Assert.assertEquals(0, mismatchCount);
                         Assert.assertTrue(
-                                "a warmed-up pass must not allocate per decoded page [pass=" + pass
-                                        + ", decodedPages=" + decodedPages + ", allocatedBytes=" + allocatedBytes
-                                        + ", limit=" + passAllocationLimitBytes + ']',
-                                allocatedBytes <= passAllocationLimitBytes
+                                "shuffled lookups must keep decoding leaves [pass=" + pass + ", decodedPages=" + decodedPages + ']',
+                                decodedPages > keyCount
                         );
+                        if (pass >= warmUpPasses) {
+                            Assert.assertTrue(
+                                    "a warmed-up pass must not allocate per decoded page [pass=" + pass
+                                            + ", decodedPages=" + decodedPages + ", allocatedBytes=" + allocatedBytes
+                                            + ", limit=" + passAllocationLimitBytes + ']',
+                                    allocatedBytes <= passAllocationLimitBytes
+                            );
+                        }
                     }
                 }
             }
@@ -1103,10 +1154,10 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
     public void testShuffledLookupsOverWideKeyWidthsAllocateNothingOnceWarm() throws Exception {
         assertMemoryLeak(() -> {
             // 32 key widths of 4,096 to 6,080 bytes with 64 keys each. Keys of one width sort
-            // together, as STRING keys of one length do, so a leaf holds up to 64 keys of a width
-            // and a node's pool keeps at least 32 arrays of every width: more than 4 MiB of key
-            // images. Each pass is one operation: lookups of every 16th key in shuffled order, which
-            // cross every leaf, a full iteration, then detach(). Once the pools hold every width, a
+            // together, as STRING keys of one length do, so a leaf holds up to 64 keys of a width,
+            // which its node decodes into its native arena: more than 256 KiB of key images. Each
+            // pass is one operation: lookups of every 16th key in shuffled order, which cross every
+            // leaf, a full iteration, then detach(). Once the arenas have grown to the widest leaf, a
             // pass must not allocate.
             final int widthCount = 32;
             final int keysPerWidth = 64;
@@ -1138,7 +1189,7 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
                  LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration)) {
                 writer.of(checkpointsDir(dir));
                 for (int i = 0; i < keyCount; i++) {
-                    arena.put(keys[i], key(i), refs(1));
+                    LiveViewCheckpointTestKeys.put(arena, keys[i], key(i), refs(1));
                 }
                 writer.apply(new LiveViewCheckpointPageRef(), arena, 1, root);
             }
@@ -1148,99 +1199,148 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
             try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
                  Path dir = new Path()) {
                 checkpointsDir(dir);
-                final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-                final int[] mismatchCount = new int[1];
-                final int[] visitedCount = new int[1];
-                final LiveViewCheckpointPartitionMapReader.Visitor visitor = visitedEntry -> {
-                    final int i = visitedCount[0]++;
-                    if (scalar(visitedEntry) != i || !Arrays.equals(keys[i], visitedEntry.getKey())) {
-                        mismatchCount[0]++;
-                    }
-                };
-                long largestLookupPoolBytes = 0;
-                for (int pass = 0; pass < warmUpPasses + measuredPasses; pass++) {
-                    final long decodedPagesBefore = reader.getDecodedPageCount();
-                    final long allocatedBefore = threadMXBean.getThreadAllocatedBytes(threadId);
-                    reader.of(dir);
-                    for (int n = 0; n < lookupCount; n++) {
-                        final int i = order[n];
-                        if (!reader.find(root, keys[i], entry) || scalar(entry) != i || !Arrays.equals(keys[i], entry.getKey())) {
+                try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                    final int[] mismatchCount = new int[1];
+                    final int[] visitedCount = new int[1];
+                    final LiveViewCheckpointPartitionMapReader.Visitor visitor = visitedEntry -> {
+                        final int i = visitedCount[0]++;
+                        if (scalar(visitedEntry) != i || !hasKey(visitedEntry, keys[i])) {
                             mismatchCount[0]++;
                         }
-                    }
-                    if (pass == 0) {
-                        largestLookupPoolBytes = reader.getLargestRetainedBufferBytesForTest();
-                    }
-                    visitedCount[0] = 0;
-                    reader.iterateAll(root, visitor);
-                    reader.detach();
-                    final long allocatedBytes = threadMXBean.getThreadAllocatedBytes(threadId) - allocatedBefore;
-                    final long decodedPages = reader.getDecodedPageCount() - decodedPagesBefore;
-                    Assert.assertEquals(0, mismatchCount[0]);
-                    Assert.assertEquals(keyCount, visitedCount[0]);
-                    Assert.assertTrue(
-                            "shuffled lookups must keep decoding leaves [pass=" + pass + ", decodedPages=" + decodedPages + ']',
-                            decodedPages > lookupCount
-                    );
-                    if (pass >= warmUpPasses) {
+                    };
+                    long largestLookupPoolBytes = 0;
+                    for (int pass = 0; pass < warmUpPasses + measuredPasses; pass++) {
+                        final long decodedPagesBefore = reader.getDecodedPageCount();
+                        final long allocatedBefore = threadMXBean.getThreadAllocatedBytes(threadId);
+                        reader.of(dir);
+                        for (int n = 0; n < lookupCount; n++) {
+                            final int i = order[n];
+                            if (!LiveViewCheckpointTestKeys.find(reader, root, keys[i], entry) || scalar(entry) != i || !hasKey(entry, keys[i])) {
+                                mismatchCount[0]++;
+                            }
+                        }
+                        if (pass == 0) {
+                            largestLookupPoolBytes = reader.getLargestRetainedBufferBytesForTest();
+                        }
+                        visitedCount[0] = 0;
+                        reader.iterateAll(root, visitor);
+                        reader.detach();
+                        final long allocatedBytes = threadMXBean.getThreadAllocatedBytes(threadId) - allocatedBefore;
+                        final long decodedPages = reader.getDecodedPageCount() - decodedPagesBefore;
+                        Assert.assertEquals(0, mismatchCount[0]);
+                        Assert.assertEquals(keyCount, visitedCount[0]);
                         Assert.assertTrue(
-                                "a warmed-up pass must not allocate per decoded page [pass=" + pass
-                                        + ", decodedPages=" + decodedPages + ", allocatedBytes=" + allocatedBytes
-                                        + ", limit=" + passAllocationLimitBytes + ']',
-                                allocatedBytes <= passAllocationLimitBytes
+                                "shuffled lookups must keep decoding leaves [pass=" + pass + ", decodedPages=" + decodedPages + ']',
+                                decodedPages > lookupCount
                         );
+                        if (pass >= warmUpPasses) {
+                            Assert.assertTrue(
+                                    "a warmed-up pass must not allocate per decoded page [pass=" + pass
+                                            + ", decodedPages=" + decodedPages + ", allocatedBytes=" + allocatedBytes
+                                            + ", limit=" + passAllocationLimitBytes + ']',
+                                    allocatedBytes <= passAllocationLimitBytes
+                            );
+                        }
                     }
+                    Assert.assertTrue(
+                            "the lookups must have decoded leaves of 64 keys of at least 4 KiB [bytes="
+                                    + largestLookupPoolBytes + ']',
+                            largestLookupPoolBytes > 64L * 4_096
+                    );
                 }
-                Assert.assertTrue(
-                        "the lookups' decode pool must hold more than 4 MiB of key images [bytes=" + largestLookupPoolBytes + ']',
-                        largestLookupPoolBytes > 4_194_304
-                );
             }
         });
     }
 
-    // Checks one decode pool of reader against its retention limit across three operations:
-    // filling the pool to exactly its limit keeps every array past detach(), one element more
-    // drops them all at detach(), and a refill counts from zero, so the pool sits at its limit
-    // again and keeps it. retained reads the pool together with what the reader keeps beside it,
-    // which is residual before push runs and pushedResidual after.
-    private static void assertDecodePoolRetention(
-            LiveViewCheckpointPartitionMapReader reader,
-            Path dir,
-            Runnable fill,
-            Runnable push,
-            LongSupplier retained,
-            long limit,
-            long pushed,
-            long residual,
-            long pushedResidual
-    ) {
-        reader.of(dir);
-        fill.run();
-        Assert.assertEquals("an operation must keep every array it lends", limit + residual, retained.getAsLong());
-        reader.detach();
-        Assert.assertEquals("a pool at its limit must keep every array", limit + residual, retained.getAsLong());
+    @Test
+    public void testWarmedLookupsAllocateNoHeapWhateverTheKeyWidths() throws Exception {
+        assertMemoryLeak(() -> {
+            // 1,024 keys of 1,024 distinct widths, 16,390 to 18,436 bytes, 17,825,792 bytes of key
+            // images in all: more than one node may keep once an operation ends. A seal's lookups
+            // run between of() and detach(), so a reader that images keys on the heap would pay
+            // for every width again on every operation. Decoded keys live in native memory, so
+            // 4,096 warmed lookups over four operations must allocate no heap at all; the bound
+            // leaves room for the measurement itself and does not grow with the key count. The
+            // odd operations probe with keys packed in one native block, the even ones with a
+            // native copy of each key made for its probe.
+            final int keyCount = 1_024;
+            final int firstKeyWidth = 16_390;
+            final int measuredPasses = 4;
+            final long allocationLimitBytes = 16_384;
+            final byte[][] keys = new byte[keyCount][];
+            final int[] order = new int[keyCount];
+            final long[] keyOffsets = new long[keyCount];
+            long nativeKeysSize = 0;
+            for (int i = 0; i < keyCount; i++) {
+                keys[i] = distinctBytes(i, firstKeyWidth + 2 * i);
+                order[i] = i;
+                keyOffsets[i] = nativeKeysSize;
+                nativeKeysSize += keys[i].length;
+            }
+            shuffle(order, new Rnd(42, 7));
+            final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
+            try (Path dir = new Path();
+                 LiveViewCheckpointMutationArena arena = new LiveViewCheckpointMutationArena();
+                 LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration)) {
+                writer.of(checkpointsDir(dir));
+                for (int i = 0; i < keyCount; i++) {
+                    LiveViewCheckpointTestKeys.put(arena, keys[i], key(i), refs(1));
+                }
+                writer.apply(new LiveViewCheckpointPageRef(), arena, 1, root);
+            }
 
-        reader.of(dir);
-        fill.run();
-        push.run();
-        Assert.assertEquals(
-                "an operation must keep every array it lends past the limit too",
-                pushed + pushedResidual,
-                retained.getAsLong()
-        );
-        reader.detach();
-        Assert.assertEquals("a pool past its limit must drop every array", pushedResidual, retained.getAsLong());
-
-        reader.of(dir);
-        fill.run();
-        Assert.assertEquals(limit + pushedResidual, retained.getAsLong());
-        reader.detach();
-        Assert.assertEquals(
-                "a refilled pool at its limit must keep every array",
-                limit + pushedResidual,
-                retained.getAsLong()
-        );
+            final ThreadMXBean threadMXBean = (ThreadMXBean) ManagementFactory.getThreadMXBean();
+            final long threadId = Thread.currentThread().threadId();
+            try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
+                 Path dir = new Path()) {
+                checkpointsDir(dir);
+                try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                    int mismatchCount = 0;
+                    // Warm-up: one whole operation, so every reusable shell exists.
+                    reader.of(dir);
+                    for (int n = 0; n < keyCount; n++) {
+                        final int i = order[n];
+                        if (!LiveViewCheckpointTestKeys.find(reader, root, keys[i], entry) || scalar(entry) != i) {
+                            mismatchCount++;
+                        }
+                    }
+                    reader.detach();
+                    final long nativeKeys = Unsafe.malloc(nativeKeysSize, MemoryTag.NATIVE_DEFAULT);
+                    final long allocatedBytes;
+                    try {
+                        for (int i = 0; i < keyCount; i++) {
+                            for (int b = 0; b < keys[i].length; b++) {
+                                Unsafe.putByte(nativeKeys + keyOffsets[i] + b, keys[i][b]);
+                            }
+                        }
+                        final long allocatedBefore = threadMXBean.getThreadAllocatedBytes(threadId);
+                        for (int pass = 0; pass < measuredPasses; pass++) {
+                            final boolean isNativeProbe = (pass & 1) == 1;
+                            reader.of(dir);
+                            for (int n = 0; n < keyCount; n++) {
+                                final int i = order[n];
+                                final boolean isFound = isNativeProbe
+                                        ? reader.find(root, nativeKeys + keyOffsets[i], keys[i].length, entry)
+                                        : LiveViewCheckpointTestKeys.find(reader, root, keys[i], entry);
+                                if (!isFound || scalar(entry) != i || !hasKey(entry, keys[i])) {
+                                    mismatchCount++;
+                                }
+                            }
+                            reader.detach();
+                        }
+                        allocatedBytes = threadMXBean.getThreadAllocatedBytes(threadId) - allocatedBefore;
+                    } finally {
+                        Unsafe.free(nativeKeys, nativeKeysSize, MemoryTag.NATIVE_DEFAULT);
+                    }
+                    Assert.assertEquals(0, mismatchCount);
+                    Assert.assertTrue(
+                            "warmed lookups must not allocate heap [probes=" + measuredPasses * keyCount
+                                    + ", allocatedBytes=" + allocatedBytes + ", limit=" + allocationLimitBytes + ']',
+                            allocatedBytes <= allocationLimitBytes
+                    );
+                }
+            }
+        });
     }
 
     // Checks an entry distinctBytes() and distinctRefs() wrote under id, down to every field of
@@ -1252,7 +1352,7 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
             int refCount,
             LiveViewCheckpointPartitionMapEntry entry
     ) {
-        Assert.assertArrayEquals("key [id=" + id + ']', distinctBytes(id, keyWidth), entry.getKey());
+        Assert.assertArrayEquals("key [id=" + id + ']', distinctBytes(id, keyWidth), entry.copyKeyForTest());
         Assert.assertArrayEquals("scalar [id=" + id + ']', distinctBytes(id, scalarWidth), entry.getScalarState());
         Assert.assertEquals("reference count [id=" + id + ']', refCount, entry.getStatePageCount());
         final LiveViewCheckpointStatePageRef[] expectedRefs = distinctRefs(id, refCount);
@@ -1274,7 +1374,7 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
     // Checks an entry writeDistinctEntries() wrote under id without state page references, reading
     // only the bytes of a wide key that tell it apart from every other entry.
     private static void assertDistinctWideEntry(int id, int keyWidth, int scalarWidth, LiveViewCheckpointPartitionMapEntry entry) {
-        final byte[] key = entry.getKey();
+        final byte[] key = entry.copyKeyForTest();
         Assert.assertEquals("key width [id=" + id + ']', keyWidth, key.length);
         Assert.assertEquals("key id [id=" + id + ']', id, intKey(key));
         Assert.assertEquals("key tail [id=" + id + ']', (byte) id, key[keyWidth - 1]);
@@ -1315,6 +1415,21 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
         return refs;
     }
 
+    // Tells whether entry holds exactly the bytes of key, reading its native key in place, so
+    // the measured lookups allocate nothing to check what they found.
+    private static boolean hasKey(LiveViewCheckpointPartitionMapEntry entry, byte[] key) {
+        if (entry.getKeyLength() != key.length) {
+            return false;
+        }
+        final long address = entry.getKeyAddress();
+        for (int i = 0; i < key.length; i++) {
+            if (Unsafe.getByte(address + i) != key[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     // Tells whether entry holds count references, the last of which refs(count) wrote.
     private static boolean hasRefs(LiveViewCheckpointPartitionMapEntry entry, int count) {
         return entry.getStatePageCount() == count && entry.getStatePageRef(count - 1).getSegmentId() == count;
@@ -1337,7 +1452,7 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
         final LiveViewCheckpointStatePageRef ref = new LiveViewCheckpointStatePageRef().of(
                 segmentId, key * 8L, 8, 8, 0x31, 0, 1, 0
         );
-        arena.put(key(key), scalar, new LiveViewCheckpointStatePageRef[]{ref});
+        LiveViewCheckpointTestKeys.put(arena, key(key), scalar, new LiveViewCheckpointStatePageRef[]{ref});
     }
 
     private static LiveViewCheckpointStatePageRef[] refs(int count) {
@@ -1389,7 +1504,7 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
             writer.of(dir);
             for (int i = 0; i < count; i++) {
                 final int id = firstId + i;
-                arena.put(distinctBytes(id, firstKeyWidth + i * keyWidthStep), distinctBytes(id, scalarWidth), distinctRefs(id, refCount));
+                LiveViewCheckpointTestKeys.put(arena, distinctBytes(id, firstKeyWidth + i * keyWidthStep), distinctBytes(id, scalarWidth), distinctRefs(id, refCount));
             }
             writer.apply(new LiveViewCheckpointPageRef(), arena, segmentId, root);
         }
@@ -1407,8 +1522,8 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
         try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
              Path dir = new Path()) {
             reader.of(checkpointsDir(dir));
-            try {
-                reader.find(root, key(0), new LiveViewCheckpointPartitionMapEntry());
+            try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                LiveViewCheckpointTestKeys.find(reader, root, key(0), entry);
                 Assert.fail("expected corrupt partition map rejection");
             } catch (CairoException e) {
                 Assert.assertEquals(CairoException.LV_CHECKPOINT_TIMELINE_INVALID, e.getErrno());

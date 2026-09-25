@@ -188,8 +188,8 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
                  Path dir = new Path()) {
                 builder.of(checkpointsDir(dir), oldRoot, AVG_ID, 1, new byte[]{1, 2});
                 builder.setScalarStateRef(stateRef(3, 0));
-                builder.putPartition(key(1), new byte[]{11}, new LiveViewCheckpointStatePageRef[]{stateRef(2, 24)});
-                builder.removePartition(key(2));
+                LiveViewCheckpointTestKeys.putPartition(builder, key(1), new byte[]{11}, new LiveViewCheckpointStatePageRef[]{stateRef(2, 24)});
+                LiveViewCheckpointTestKeys.removePartition(builder, key(2));
                 builder.build(41, newRoot);
             }
 
@@ -225,14 +225,15 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
                 oldFunction.getPartitionMapRootRef(oldMapRoot);
                 newFunction.getPartitionMapRootRef(newMapRoot);
                 mapReader.of(checkpointsDir(dir));
-                final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-                Assert.assertTrue(mapReader.find(oldMapRoot, key(1), entry));
-                Assert.assertEquals(1, entry.getScalarState()[0]);
-                Assert.assertTrue(mapReader.find(oldMapRoot, key(2), entry));
-                Assert.assertTrue(mapReader.find(newMapRoot, key(1), entry));
-                Assert.assertEquals(11, entry.getScalarState()[0]);
-                Assert.assertEquals(2, entry.getStatePageRef(0).getSegmentId());
-                Assert.assertFalse(mapReader.find(newMapRoot, key(2), entry));
+                try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                    Assert.assertTrue(LiveViewCheckpointTestKeys.find(mapReader, oldMapRoot, key(1), entry));
+                    Assert.assertEquals(1, entry.getScalarState()[0]);
+                    Assert.assertTrue(LiveViewCheckpointTestKeys.find(mapReader, oldMapRoot, key(2), entry));
+                    Assert.assertTrue(LiveViewCheckpointTestKeys.find(mapReader, newMapRoot, key(1), entry));
+                    Assert.assertEquals(11, entry.getScalarState()[0]);
+                    Assert.assertEquals(2, entry.getStatePageRef(0).getSegmentId());
+                    Assert.assertFalse(LiveViewCheckpointTestKeys.find(mapReader, newMapRoot, key(2), entry));
+                }
             }
         });
     }
@@ -481,8 +482,8 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
                     true,
                     null
             );
-            builder.putPartition(key(1), anchorState(111), false);
-            builder.putPartition(key(2), anchorState(222), false);
+            LiveViewCheckpointTestKeys.putPartition(builder, key(1), anchorState(111), false);
+            LiveViewCheckpointTestKeys.putPartition(builder, key(2), anchorState(222), false);
             builder.build(metadataSegmentId, root);
         }
         return root;
@@ -506,8 +507,8 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
              Path dir = new Path()) {
             builder.of(checkpointsDir(dir), new LiveViewCheckpointPageRef(), AVG_ID, 1, new byte[]{1, 2});
             builder.setScalarStateRef(stateRef(1, 0));
-            builder.putPartition(key(1), new byte[]{1}, new LiveViewCheckpointStatePageRef[]{stateRef(1, 8), stateRef(2, 16)});
-            builder.putPartition(key(2), new byte[]{2}, new LiveViewCheckpointStatePageRef[]{stateRef(2, 24)});
+            LiveViewCheckpointTestKeys.putPartition(builder, key(1), new byte[]{1}, new LiveViewCheckpointStatePageRef[]{stateRef(1, 8), stateRef(2, 16)});
+            LiveViewCheckpointTestKeys.putPartition(builder, key(2), new byte[]{2}, new LiveViewCheckpointStatePageRef[]{stateRef(2, 24)});
             builder.build(metadataSegmentId, root);
         }
         return root;
@@ -518,7 +519,7 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
         try (LiveViewCheckpointFunctionRootBuilder builder = new LiveViewCheckpointFunctionRootBuilder(configuration);
              Path dir = new Path()) {
             builder.of(checkpointsDir(dir), new LiveViewCheckpointPageRef(), SUM_ID, 1, new byte[]{3});
-            builder.putPartition(key(7), new byte[]{7}, new LiveViewCheckpointStatePageRef[]{stateRef(4, 0)});
+            LiveViewCheckpointTestKeys.putPartition(builder, key(7), new byte[]{7}, new LiveViewCheckpointStatePageRef[]{stateRef(4, 0)});
             builder.build(metadataSegmentId, root);
         }
         return root;
@@ -546,7 +547,7 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
         final LiveViewCheckpointPageRef functionRootRef = new LiveViewCheckpointPageRef();
         try (LiveViewCheckpointFunctionRootBuilder functionBuilder = new LiveViewCheckpointFunctionRootBuilder(configuration)) {
             functionBuilder.of(checkpointsDir(dir), new LiveViewCheckpointPageRef(), identity, 1, new byte[]{1, 2});
-            functionBuilder.putPartition(key(1), new byte[]{1}, new LiveViewCheckpointStatePageRef[]{stateRef(1, 0)});
+            LiveViewCheckpointTestKeys.putPartition(functionBuilder, key(1), new byte[]{1}, new LiveViewCheckpointStatePageRef[]{stateRef(1, 0)});
             functionBuilder.build(segmentId, functionRootRef);
         }
         final LiveViewCheckpointPageRef windowRootRef = new LiveViewCheckpointPageRef();
@@ -562,7 +563,7 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
                     true,
                     null
             );
-            windowBuilder.putPartition(key(1), anchorState(111), false);
+            LiveViewCheckpointTestKeys.putPartition(windowBuilder, key(1), anchorState(111), false);
             windowBuilder.build(segmentId + 1, windowRootRef);
         }
 

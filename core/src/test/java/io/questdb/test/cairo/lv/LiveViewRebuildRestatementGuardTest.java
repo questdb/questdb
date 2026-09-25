@@ -129,7 +129,48 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             2026-01-03T09:05:00.000000Z\tacct-1\t80.0\t2
             2026-01-03T09:10:00.000000Z\tacct-2\t32.0\t1
             """;
+    // The same once ROWS_AHEAD sits above the late row too: acct-1 carries the correction's 64.0
+    // through the rest of day three.
+    private static final String CORRECTED_DAY_THREE_ROWS_AHEAD = """
+            created_at\taccount_id\tcumulative_sum\tcumulative_count
+            2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+            2026-01-01T09:10:00.000000Z\tacct-2\t2.0\t1
+            2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
+            2026-01-02T09:10:00.000000Z\tacct-1\t12.0\t2
+            2026-01-03T09:00:00.000000Z\tacct-1\t16.0\t1
+            2026-01-03T09:05:00.000000Z\tacct-1\t80.0\t2
+            2026-01-03T09:10:00.000000Z\tacct-2\t32.0\t1
+            2026-01-03T10:00:00.000000Z\tacct-1\t144.0\t3
+            2026-01-03T10:10:00.000000Z\tacct-2\t160.0\t2
+            2026-01-03T10:20:00.000000Z\tacct-1\t400.0\t4
+            2026-01-03T10:30:00.000000Z\tacct-2\t672.0\t3
+            """;
     private static final String CRASH_IMAGE_DIR_NAME = "lv_checkpoints_crash_image";
+    // What the view with no window dependency holds once the fixture's six rows are in, in one
+    // commit. Nothing resets the accumulators, so each account carries its whole history.
+    private static final String UNLOCALIZED_ROWS = """
+            created_at\taccount_id\tcumulative_sum\tcumulative_count
+            2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+            2026-01-01T09:10:00.000000Z\tacct-2\t2.0\t1
+            2026-01-02T09:00:00.000000Z\tacct-1\t5.0\t2
+            2026-01-02T09:10:00.000000Z\tacct-1\t13.0\t3
+            2026-01-03T09:00:00.000000Z\tacct-1\t29.0\t4
+            2026-01-03T09:10:00.000000Z\tacct-2\t34.0\t2
+            """;
+    // What that view holds once the late day-two row has been repaired in, over a base that lost
+    // its oldest day. The repair replays the whole surviving base from the view boundary and
+    // replaces the view from its first output row up, so the day the base lost stays in the view
+    // and every row above it is recomputed without that day.
+    private static final String UNLOCALIZED_CORRECTED_ROWS = """
+            created_at\taccount_id\tcumulative_sum\tcumulative_count
+            2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+            2026-01-01T09:10:00.000000Z\tacct-2\t2.0\t1
+            2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
+            2026-01-02T09:05:00.000000Z\tacct-1\t68.0\t2
+            2026-01-02T09:10:00.000000Z\tacct-1\t76.0\t3
+            2026-01-03T09:00:00.000000Z\tacct-1\t92.0\t4
+            2026-01-03T09:10:00.000000Z\tacct-2\t32.0\t1
+            """;
     // What names a checkpoint data segment inside the view's checkpoint directory. The segment a
     // repair stages carries the temporary suffix until its splice publishes it.
     private static final String DATA_SEGMENT_PATH_PART = LiveViewCheckpointLayout.DATA_DIR_NAME
@@ -551,6 +592,53 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     @Test
+    public void testACrashDuringAParkedTruncatingRepairRestoresOverTheDayTheBaseLost() throws Exception {
+        assertMemoryLeak(() -> {
+            seedSixRows("");
+            dropPartitionAndRefresh("2026-01-01");
+            parkTruncatingRepairAndRestart(true);
+        });
+    }
+
+    @Test
+    public void testARestartDuringAParkedRepairWithNoCaptureRestoresOverTheDayTheBaseLost() throws Exception {
+        // The other way into the truncate: the splice's capture cannot open, here because its
+        // repair descriptor cannot be published, so the repair holds nothing to splice through.
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (isArmed.get() && Utf8s.containsAscii(to, Files.SEPARATOR + LiveViewCheckpointLayout.REPAIR_DIR_NAME
+                        + Files.SEPARATOR + LiveViewCheckpointLayout.REPAIR_DESCRIPTOR_PREFIX)) {
+                    isArmed.set(false);
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                return super.rename(from, to);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            seedSixRows("");
+            dropPartitionAndRefresh("2026-01-01");
+            isArmed.set(true);
+            parkRepairAndRestart(false);
+            Assert.assertFalse("the descriptor fault must have fired", isArmed.get());
+            capture.drain();
+            capture.assertLogged("live view checkpoint timeline repair capture unavailable, retiring instead [view=lv");
+            capture.assertLogged("live view O3 repair yielded on its turn budget [view=lv");
+            capture.assertNotLogged("live view rebuild from the applied base refused");
+        });
+    }
+
+    @Test
+    public void testARestartDuringAParkedTruncatingRepairRestoresOverTheDayTheBaseLost() throws Exception {
+        assertMemoryLeak(() -> {
+            seedSixRows("");
+            dropPartitionAndRefresh("2026-01-01");
+            parkTruncatingRepairAndRestart(false);
+        });
+    }
+
+    @Test
     public void testARestartDuringAParkedRepairRestoresOverTheDayTtlEvicted() throws Exception {
         assertMemoryLeak(() -> {
             seedSixRows("");
@@ -572,6 +660,150 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                             """);
             assertViewRows(ALL_ROWS);
             parkRepairAndRestart(false);
+        });
+    }
+
+    @Test
+    public void testARestartDuringAnUnlocalizedRepairRestoresOverTheDayTheBaseLost() throws Exception {
+        assertMemoryLeak(() -> {
+            seedUnlocalizedView();
+            dropPartitionAndRefresh("2026-01-01", UNLOCALIZED_ROWS);
+            cancelUnlocalizedRepairAndRestart();
+        });
+    }
+
+    @Test
+    public void testABaseMetadataChangeUnderAnUnlocalizedRepairRestoresInPlaceOverTheDayTtlEvicted() throws Exception {
+        // No shutdown this time. The TTL change moves the base's metadata version, which the view
+        // first meets when its repair replay opens the base through the compiled SELECT, so that
+        // replay throws and the drift recovery restores the runtime in place. It needs the timeline
+        // the replay had not moved anything under: without one it rebuilds from the applied base,
+        // meets the day TTL evicted and stops the view, with no restart involved.
+        assertMemoryLeak(() -> {
+            seedUnlocalizedView();
+            // TTL measures a partition's age against the earlier of the table's newest row and
+            // the wall clock, so the clock moves past the fixture's last day first.
+            setCurrentMicros(ts("2026-01-05T00:00:00.000000Z"));
+            execute("ALTER TABLE tx SET TTL 1 DAY");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertQuery("SELECT min(created_at), count() FROM tx")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            min\tcount
+                            2026-01-02T09:00:00.000000Z\t4
+                            """);
+            assertViewRows(UNLOCALIZED_ROWS);
+            final LiveViewInstance instance = instance("lv");
+            final long processedBefore = instance.getLastProcessedSeqTxn();
+            execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-02T09:05:00.000000Z', 'acct-1', 64.0)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+
+            Assert.assertFalse("the view must keep refreshing", instance.isCheckpointRecoveryBlocked());
+            capture.drain();
+            capture.assertLogged("resumeFromAnchor=false");
+            capture.assertLogged("live view restored its runtime from the checkpoint timeline [view=lv, cause=base table metadata change");
+            capture.assertLogged("live view O3 head-miss replay completed [view=lv");
+            capture.assertLogged("localized=false");
+            capture.assertNotLogged("live view rebuild from the applied base refused");
+            Assert.assertEquals(1, instance.getCheckpointRuntimeRestores());
+            Assert.assertEquals("the drift is the one fault", 1, instance.getRefreshFaultCount());
+            Assert.assertEquals("the retry must consume the correction", processedBefore + 1, instance.getLastProcessedSeqTxn());
+            assertViewRows(UNLOCALIZED_CORRECTED_ROWS);
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+            assertViewRows(UNLOCALIZED_CORRECTED_ROWS);
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
+    public void testARestartDuringAFilteredResumeWithNoCaptureRestoresOverTheDayTheBaseLost() throws Exception {
+        // A resume that declines the checkpoint chain truncates the timeline instead of
+        // re-versioning the roots above its anchor. Its own row loop never consults the circuit
+        // breaker, but the filter cursor under it does on every row it pulls, so an engine
+        // shutdown trips a filtered resume in the middle of its replay. The view's refresh is
+        // cancelled once the resume has restored its anchor and opened its cursors, which
+        // consult the breaker too, and before its replay pulls a row. The breaker's throttle
+        // then lets a later row of the replay find the flag, which the four rows committed above
+        // the anchor make sure it reaches.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+            seedSixRows("", "WHERE amount > 0");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (String row : ROWS_AHEAD) {
+                    execute("INSERT INTO tx VALUES " + row);
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                }
+            }
+            final String rowsWithRowsAhead = ALL_ROWS + String.join("", ROWS_AHEAD_OUTPUT);
+            dropPartitionAndRefresh("2026-01-01", rowsWithRowsAhead);
+            final LiveViewInstance cancelled = instance("lv");
+            final long generationBefore = newestGeneration(cancelled);
+            final long processedBefore = cancelled.getLastProcessedSeqTxn();
+            execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-03T09:05:00.000000Z', 'acct-1', 64.0)");
+            drainWalQueue();
+            final AtomicBoolean hasReplayStarted = new AtomicBoolean();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                job.setSimulateResumeReplayStartForTest(() -> {
+                    hasReplayStarted.set(true);
+                    cancelled.cancelRefresh();
+                });
+                for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES && cancelled.getRefreshFaultCount() == 0; pass++) {
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    drainWalQueue();
+                    job.processNotificationsForTest();
+                }
+            }
+            Assert.assertTrue("the resume replay must have started", hasReplayStarted.get());
+            Assert.assertEquals("the breaker must have ended the replay exactly once", 1, cancelled.getRefreshFaultCount());
+            capture.drain();
+            capture.assertLogged("resumeFromAnchor=true");
+            capture.assertLogged("live view O3 resume declined the checkpoint chain, truncating instead [view=lv");
+            capture.assertLogged("live view refresh cancelled [view=lv");
+            capture.assertNotLogged("live view O3 resume replay completed");
+            Assert.assertEquals("a cancelled replay must not consume the correction", processedBefore, cancelled.getLastProcessedSeqTxn());
+            assertViewRows(rowsWithRowsAhead);
+            final long generationAfterCancel = newestGeneration(cancelled);
+            final boolean isMarkerOnDiskAfterCancel;
+            try (Path dir = checkpointsDir(cancelled)) {
+                isMarkerOnDiskAfterCancel = LiveViewCheckpointRepairMarker.exists(engine.getConfiguration().getFilesFacade(), dir);
+            }
+            shutdown();
+
+            restart();
+            assertRestoredFromTimeline("lv");
+            final LiveViewInstance restored = instance("lv");
+            Assert.assertFalse("the view must keep refreshing", restored.isCheckpointRecoveryBlocked());
+            Assert.assertEquals("the restart must consume the correction", processedBefore + 1, restored.getLastProcessedSeqTxn());
+            assertViewRows(CORRECTED_DAY_THREE_ROWS_AHEAD);
+            assertNoRefreshFaults("lv");
+            capture.drain();
+            capture.assertLogged("live view O3 resume replay completed [view=lv");
+            capture.assertNotLogged("live view rebuild from the applied base refused");
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+            assertViewRows(CORRECTED_DAY_THREE_ROWS_AHEAD);
+            assertNoRefreshFaults("lv");
+
+            // What made both recoveries sound: the cancelled replay had moved nothing durable,
+            // so the restart found the timeline it resumed from intact and no marker over it.
+            Assert.assertFalse("a cancelled replay owes no repair marker", isMarkerOnDiskAfterCancel);
+            Assert.assertEquals("a cancelled replay must not publish a generation", generationBefore, generationAfterCancel);
         });
     }
 
@@ -1843,8 +2075,7 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                     FILTERED_LATER_DAYS_LOST_DAY_EVIDENCE,
                     FILTERED_LATER_DAYS_ROWS
             );
-            capture.assertLogged("live view cannot restore its runtime from the checkpoint timeline, rebuilding from the applied base "
-                    + "[view=lv, cause=base table metadata change, reason=timeline is absent]");
+            assertDriftRestoreFoundNoGeneration();
         });
     }
 
@@ -1881,8 +2112,7 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR, guard.getVerdict());
             assertFilteredViewRows(FILTERED_TWO_DAY_ROWS);
             capture.drain();
-            capture.assertLogged("live view cannot restore its runtime from the checkpoint timeline, rebuilding from the applied base "
-                    + "[view=lv, cause=base table metadata change, reason=timeline is absent]");
+            assertDriftRestoreFoundNoGeneration();
             capture.assertNotLogged("live view rebuild from the applied base runs without the restatement guard");
         });
     }
@@ -2578,6 +2808,20 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
         });
     }
 
+    /**
+     * Asserts the base metadata drift recovery tried to restore the runtime from the view's
+     * timeline and found no generation in it, which is what sends it to the rebuild the caller
+     * asserts refused. The view never published a generation, and the anchor lookup of the repair
+     * the drift interrupts opens the view's {@code _timeline}, which creates an empty one. That
+     * repair retires the timeline only once its replay has ended, so the empty file is still there
+     * when the recovery reads it.
+     */
+    private void assertDriftRestoreFoundNoGeneration() {
+        capture.assertLogged("live view could not restore its runtime from the checkpoint timeline, rebuilding from the applied base "
+                + "[view=lv, cause=base table metadata change, error=");
+        capture.assertLogged("live view checkpoint has no valid generation to restore");
+    }
+
     private void assertFilteredViewRows(String expected) throws Exception {
         assertQuery("SELECT ts, sym, i, v FROM lv")
                 .noLeakCheck()
@@ -3007,11 +3251,36 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
         createBaseView(true);
     }
 
+    /**
+     * The same accumulators as {@link #createView()} over a ROWS frame wider than any account's
+     * history in these cases, beside a lag that ignores nulls. That lag reaches back an unbounded
+     * number of rows, so no dependency bounds the window: an out-of-order repair either resumes
+     * from a sealed boundary below the change or replays the whole base from the view boundary.
+     */
+    private void createUnlocalizedView() throws Exception {
+        execute("""
+                CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                SELECT created_at, account_id,
+                       sum(amount) OVER (PARTITION BY account_id ORDER BY created_at ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) AS cumulative_sum,
+                       count(account_id) OVER (PARTITION BY account_id ORDER BY created_at ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) AS cumulative_count,
+                       lag(amount, 1) IGNORE NULLS OVER (PARTITION BY account_id ORDER BY created_at ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) AS previous_amount
+                FROM tx""");
+    }
+
     private void createView() throws Exception {
+        createView("");
+    }
+
+    /**
+     * The same, with {@code whereClause} between the FROM and the WINDOW clauses, or none when
+     * it is empty.
+     */
+    private void createView(String whereClause) throws Exception {
         execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
                 + "SELECT created_at, account_id, sum(amount) OVER w AS cumulative_sum, "
                 + "count(account_id) OVER w AS cumulative_count "
-                + "FROM tx WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')");
+                + "FROM tx" + (whereClause.isEmpty() ? "" : " " + whereClause)
+                + " WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')");
     }
 
     /**
@@ -3019,13 +3288,17 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
      * past the DROP PARTITION the way it always has: it keeps those rows.
      */
     private void dropPartitionAndRefresh(String day) throws Exception {
+        dropPartitionAndRefresh(day, ALL_ROWS);
+    }
+
+    private void dropPartitionAndRefresh(String day, String expectedViewRows) throws Exception {
         execute("ALTER TABLE tx DROP PARTITION LIST '" + day + "'");
         drainWalQueue();
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
             driveRefreshToQuiescence(job);
         }
         Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
-        assertViewRows(ALL_ROWS);
+        assertViewRows(expectedViewRows);
         assertNoRefreshFaults("lv");
     }
 
@@ -3289,13 +3562,17 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
         final long processedBefore = parked.getLastProcessedSeqTxn();
         execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-02T09:05:00.000000Z', 'acct-1', 64.0)");
         drainWalQueue();
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        final long generationWhileParked;
+        final boolean isMarkerOnDiskWhileParked;
         try (
                 Path crashImage = new Path().of(engine.getConfiguration().getDbRoot()).concat(CRASH_IMAGE_DIR_NAME).slash();
                 Path checkpoints = checkpointsDir(parked).slash()
         ) {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveUntilParked(job, "lv");
-                Assert.assertEquals(generationBefore, newestGeneration(parked));
+                generationWhileParked = newestGeneration(parked);
+                isMarkerOnDiskWhileParked = LiveViewCheckpointRepairMarker.exists(ff, checkpoints);
                 Assert.assertEquals(processedBefore, parked.getLastProcessedSeqTxn());
                 assertViewRows(ALL_ROWS);
                 if (isCrash) {
@@ -3307,7 +3584,6 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             }
             shutdown();
             if (isCrash) {
-                final FilesFacade ff = engine.getConfiguration().getFilesFacade();
                 Assert.assertTrue(ff.rmdir(checkpoints));
                 TestUtils.copyDirectory(crashImage, checkpoints, engine.getConfiguration().getMkDirMode());
                 Assert.assertTrue(ff.rmdir(crashImage));
@@ -3328,6 +3604,112 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
         Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
         assertViewRows(CORRECTED_ROWS);
         assertNoRefreshFaults("lv");
+
+        // What made both recoveries sound: the parked repair had moved nothing durable, so the
+        // restart found the timeline it had pinned intact and no repair marker over it.
+        Assert.assertEquals("a parked repair must not publish a generation", generationBefore, generationWhileParked);
+        Assert.assertFalse("a parked repair owes no repair marker", isMarkerOnDiskWhileParked);
+    }
+
+    /**
+     * {@link #parkRepairAndRestart(boolean)} for a head miss that declines the checkpoint splice
+     * and truncates the timeline at its output floor instead, which is what a repair crossing
+     * more sealed boundaries than {@code cairo.live.view.checkpoint.repair.max.chained.boundaries}
+     * allows does. A limit of 0 declines every splice, so the fixture's one-boundary repair takes
+     * the same branch the default limit of 256 sends a deeper one down.
+     */
+    private void parkTruncatingRepairAndRestart(boolean isCrash) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        parkRepairAndRestart(isCrash);
+        capture.drain();
+        capture.assertLogged("live view O3 head miss declined the checkpoint splice, truncating instead [view=lv");
+        capture.assertLogged("live view O3 repair yielded on its turn budget [view=lv");
+        capture.assertNotLogged("live view rebuild from the applied base refused");
+    }
+
+    /**
+     * Cancels the view's refresh and drives the turn that meets the commit the caller has just
+     * made, so the first circuit-breaker check of that turn throws, the way an engine shutdown
+     * trips the same breaker. Nothing consults the breaker ahead of the repair: the commit is out
+     * of order, so the forward drain hands it to the repair before reading a row of it, and the
+     * check that throws is the repair's own, past what its first turn settles before it replays.
+     * The instance keeps the flag, so the caller stops the process next.
+     */
+    private void cancelRefreshTurn(LiveViewInstance instance) {
+        instance.cancelRefresh();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES && instance.getRefreshFaultCount() == 0; pass++) {
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                drainWalQueue();
+                job.processNotificationsForTest();
+            }
+        }
+        Assert.assertEquals("the breaker must have ended the replay exactly once", 1, instance.getRefreshFaultCount());
+    }
+
+    /**
+     * Commits a late day-two row to the view {@link #seedUnlocalizedView()} created. No sealed
+     * boundary sits below it and the window has no finite dependency, so the repair replays the
+     * whole surviving base from the view boundary in one turn it cannot yield. The view's refresh
+     * is cancelled ahead of that turn, so the replay's own circuit-breaker check throws on its
+     * first row - which is where an engine shutdown trips the same breaker - and the process then
+     * stops. Then restarts, twice.
+     * <p>
+     * Nothing durable moved before the breaker tripped: the replacement sat uncommitted in the
+     * view's WAL writer, which rolled it back, and the correction stayed unconsumed. So the
+     * timeline the view had before the correction still describes the output on disk, and the
+     * first restart must restore from it and repair the correction again. A restart that found no
+     * timeline would rebuild from the applied base instead, meet the day the base lost and stop
+     * the view, on that restart and on every one after it.
+     */
+    private void cancelUnlocalizedRepairAndRestart() throws Exception {
+        final LiveViewInstance cancelled = instance("lv");
+        final long generationBefore = newestGeneration(cancelled);
+        final long processedBefore = cancelled.getLastProcessedSeqTxn();
+        execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-02T09:05:00.000000Z', 'acct-1', 64.0)");
+        drainWalQueue();
+        cancelRefreshTurn(cancelled);
+        capture.drain();
+        capture.assertLogged("resumeFromAnchor=false");
+        capture.assertLogged("live view refresh cancelled [view=lv");
+        capture.assertNotLogged("live view O3 head-miss replay completed");
+        Assert.assertEquals("a cancelled replay must not consume the correction", processedBefore, cancelled.getLastProcessedSeqTxn());
+        assertViewRows(UNLOCALIZED_ROWS);
+        final boolean isTimelineOnDiskAfterCancel = new File(checkpointsRootByDirName(), LiveViewCheckpointLayout.TIMELINE_FILE_NAME).exists();
+        final long generationAfterCancel = isTimelineOnDiskAfterCancel ? newestGeneration(cancelled) : Numbers.LONG_NULL;
+        shutdown();
+
+        restart();
+        final LiveViewInstance restored = instance("lv");
+        Assert.assertEquals(
+                "live view 'lv' took the wrong restart recovery route",
+                "timeline_restore",
+                LiveViewCheckpointRestoreRoute.name(restored.getCheckpointRestoreRoute())
+        );
+        Assert.assertEquals("the restart must restore rather than rebuild", 0, restored.getCheckpointRebuildAttempts());
+        Assert.assertFalse("the view must keep refreshing", restored.isCheckpointRecoveryBlocked());
+        Assert.assertEquals("the restart must consume the correction", processedBefore + 1, restored.getLastProcessedSeqTxn());
+        // The repair the restart re-ran retires the timeline it restored from at its replacement
+        // commit, and its head seal opens the history the second restart restores from.
+        Assert.assertEquals(1, restored.getCheckpointTimelineResets());
+        assertViewRows(UNLOCALIZED_CORRECTED_ROWS);
+        assertNoRefreshFaults("lv");
+        capture.drain();
+        capture.assertLogged("live view O3 head-miss replay completed [view=lv");
+        capture.assertLogged("localized=false");
+        capture.assertNotLogged("live view rebuild from the applied base refused");
+
+        shutdown();
+        restart();
+        assertRestoredFromTimeline("lv");
+        Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+        assertViewRows(UNLOCALIZED_CORRECTED_ROWS);
+        assertNoRefreshFaults("lv");
+
+        // What made both recoveries sound: the cancelled replay had moved nothing durable, so the
+        // restart found the timeline it replayed over intact.
+        Assert.assertTrue("a cancelled replay must leave its timeline on disk", isTimelineOnDiskAfterCancel);
+        Assert.assertEquals("a cancelled replay must not publish a generation", generationBefore, generationAfterCancel);
     }
 
     /**
@@ -3374,6 +3756,33 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     /**
+     * The fixture's six rows over three days in one commit, into the view
+     * {@link #createUnlocalizedView()} creates. One commit seals one boundary, at the newest row,
+     * so a late row anywhere below it finds no boundary to resume from.
+     */
+    private void seedUnlocalizedView() throws Exception {
+        execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) "
+                + "TIMESTAMP(created_at) PARTITION BY DAY WAL");
+        createUnlocalizedView();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveSeedToCompletion(job, "lv");
+            execute("""
+                    INSERT INTO tx (created_at, account_id, amount) VALUES
+                        ('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0),
+                        ('2026-01-01T09:10:00.000000Z', 'acct-2', 2.0),
+                        ('2026-01-02T09:00:00.000000Z', 'acct-1', 4.0),
+                        ('2026-01-02T09:10:00.000000Z', 'acct-1', 8.0),
+                        ('2026-01-03T09:00:00.000000Z', 'acct-1', 16.0),
+                        ('2026-01-03T09:10:00.000000Z', 'acct-2', 32.0)""");
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        }
+        assertViewRows(UNLOCALIZED_ROWS);
+        assertNoRefreshFaults("lv");
+        Assert.assertEquals("one boundary for the one commit", 1, countSealedBoundaries("lv"));
+    }
+
+    /**
      * Rebuilds the view registry from disk and drives the first refresh turns, which is where a
      * restart runs its recovery. Returns what the last whole-view rebuild's guard found.
      */
@@ -3392,9 +3801,17 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
      * every base partition holds rows the view has derived output from.
      */
     private void seedSixRows(String dedupClause) throws Exception {
+        seedSixRows(dedupClause, "");
+    }
+
+    /**
+     * The same, into a view filtered by {@code whereClause}. Every fixture row passes the filters
+     * the cases use, so the view holds {@link #ALL_ROWS} either way.
+     */
+    private void seedSixRows(String dedupClause, String whereClause) throws Exception {
         execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) "
                 + "TIMESTAMP(created_at) PARTITION BY DAY WAL " + dedupClause);
-        createView();
+        createView(whereClause);
         final String[] rows = {
                 "'2026-01-01T09:00:00.000000Z', 'acct-1', 1.0",
                 "'2026-01-01T09:10:00.000000Z', 'acct-2', 2.0",

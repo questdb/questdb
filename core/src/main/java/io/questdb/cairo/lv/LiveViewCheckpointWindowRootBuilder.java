@@ -67,9 +67,6 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
     private final LiveViewCheckpointWindowRoot oldWindowRoot;
     private final LiveViewCheckpointPartitionMapReader partitionMapReader;
     private final LiveViewCheckpointPartitionMapWriter partitionMapWriter;
-    // The keys this build put, for a complete snapshot to remove the rest by omission.
-    // The same open-addressed byte-key set the repair domain is, rather than a HashSet of
-    // wrappers: every put and every probe would otherwise allocate one.
     private final LiveViewCheckpointWindowRoot resultWindowRoot;
     private final LongList segmentUseCounts = new LongList();
     private final LiveViewCheckpointMetaSegmentWriter segmentWriter;
@@ -159,12 +156,15 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
                 // removing an entry the predecessor does not hold is a no-op one layer
                 // down, and every key outside Q remains untouched by construction.
                 for (int i = 0, n = outputKeys.getSlotCount(); i < n; i++) {
-                    final byte[] key = outputKeys.getKeyAt(i);
-                    if (key == null) {
+                    if (!outputKeys.isSlotUsed(i)) {
                         continue;
                     }
-                    if (!mutations.containsSortedKey(key)) {
-                        mutations.remove(key);
+                    // Q's storage is not the mutation arena, so staging the removal
+                    // cannot move the key under the address.
+                    final long keyAddress = outputKeys.getKeyAddress(i);
+                    final int keyLength = outputKeys.getKeyLength(i);
+                    if (!mutations.containsSortedKey(keyAddress, keyLength)) {
+                        mutations.remove(keyAddress, keyLength);
                     }
                 }
             } else {
@@ -419,27 +419,20 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
      * allocates a mutation nor descends the tree per key. Nothing published distinguishes
      * the two: the partition-map writer drops an equal put anyway.
      */
-    public void putPartition(byte @NotNull [] key, byte @NotNull [] scalarState, boolean isUnchanged) {
+    public void putPartition(long keyAddress, int keyLength, byte @NotNull [] scalarState, boolean isUnchanged) {
         ensureInitialized();
-        if (scalarState.length != totalInlineStateBytes) {
-            throw CairoException.critical(0)
-                    .put("live view checkpoint window state payload width does not match the manifest")
-                    .put(" [expected=").put(totalInlineStateBytes)
-                    .put(", actual=").put(scalarState.length).put(']');
-        }
+        validatePayloadWidth(scalarState);
         if (isCompleteSnapshot) {
             // Only a complete snapshot needs the put domain, and only to name the entries
-            // it must remove. A forward freeze pays neither the key copy nor the set
-            // insert: duplicates still raise one layer down, where the partition-map
+            // it must remove. A forward freeze pays neither the key copy nor the domain
+            // entry: duplicates still raise one layer down, where the partition-map
             // writer sorts the mutations and rejects two that name the same key.
-            // Copied: the set holds the array rather than an image of it, and the caller
-            // owns the one it handed over only until the mutation below takes it.
             if (isUnchanged) {
-                mutations.domain(key);
+                mutations.domain(keyAddress, keyLength);
             }
         }
         if (!isUnchanged) {
-            mutations.put(key, scalarState);
+            mutations.put(keyAddress, keyLength, scalarState);
         }
     }
 
@@ -449,9 +442,9 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
      * map without the seal walking what remains, so the removals arrive named rather than
      * by omission. A key the tree does not hold is a no-op.
      */
-    public void removePartition(byte @NotNull [] key) {
+    public void removePartition(long keyAddress, int keyLength) {
         ensureInitialized();
-        mutations.remove(key);
+        mutations.remove(keyAddress, keyLength);
     }
 
     private void ensureInitialized() {
@@ -461,11 +454,24 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
         }
     }
 
+    private void validatePayloadWidth(byte[] scalarState) {
+        if (scalarState.length != totalInlineStateBytes) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint window state payload width does not match the manifest")
+                    .put(" [expected=").put(totalInlineStateBytes)
+                    .put(", actual=").put(scalarState.length).put(']');
+        }
+    }
+
     private final class MissingPartitionVisitor implements LiveViewCheckpointPartitionMapReader.Visitor {
         @Override
         public void onEntry(@NotNull LiveViewCheckpointPartitionMapEntry entry) {
-            if (!mutations.containsSortedKey(entry.getKey())) {
-                mutations.remove(entry.getKey());
+            // The key sits in the reader's scratch entry, not in the staging arena the
+            // removal appends to, so the append cannot move it.
+            final long keyAddress = entry.getKeyAddress();
+            final int keyLength = entry.getKeyLength();
+            if (!mutations.containsSortedKey(keyAddress, keyLength)) {
+                mutations.remove(keyAddress, keyLength);
             }
         }
     }

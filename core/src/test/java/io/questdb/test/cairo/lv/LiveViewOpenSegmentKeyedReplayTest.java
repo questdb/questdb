@@ -25,15 +25,23 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointOpenSegmentCost;
+import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 
 /**
  * Coverage for the repair of a correction that lands in the <b>open</b> anchor segment -
@@ -729,6 +737,140 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testASecondKeyedResumeTransplantsThroughTheFirstOnesArenaAndArrays() throws Exception {
+        // The transplant freezes the isolated runtime's keys through the contract a seal
+        // freezes the primary's with: each key goes into the worker's native key arena, whose
+        // memory it clears rather than frees between repairs, and each payload is leased from
+        // a pool the way a seal leases it. A worker's second resume over the same key therefore
+        // freezes its keys into the same arena memory and images its payloads into the arrays
+        // its first one left behind, so it puts nothing on the heap per key.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+
+                commit(row(4, 2, 35, "acct-1"), job);
+                Assert.assertEquals(1, job.openSegmentKeyedResumeCountForTest());
+                final long firstTransplantedKeys = job.transplantedKeyCountForTest();
+                Assert.assertTrue(firstTransplantedKeys > 0);
+                Assert.assertEquals(
+                        "every key the transplant handed back must be frozen in its arena",
+                        firstTransplantedKeys,
+                        job.getTransplantKeyArenaKeyCountForTest()
+                );
+                final long firstKeyAddress = job.getTransplantKeyArenaAddressForTest();
+                Assert.assertNotEquals(0, firstKeyAddress);
+                final ObjList<byte[]> firstPayloads = new ObjList<>();
+                job.collectTransplantPayloadsForTest(firstPayloads);
+                Assert.assertEquals(firstTransplantedKeys, firstPayloads.size());
+                assertViewMatchesRecompute();
+
+                commit(row(4, 2, 36, "acct-1"), job);
+                Assert.assertEquals(2, job.openSegmentKeyedResumeCountForTest());
+                Assert.assertEquals(
+                        "the second resume must hand back as many keys as the first",
+                        2 * firstTransplantedKeys,
+                        job.transplantedKeyCountForTest()
+                );
+                Assert.assertEquals(firstTransplantedKeys, job.getTransplantKeyArenaKeyCountForTest());
+                Assert.assertEquals(
+                        "the second transplant must freeze its keys into the memory the first one kept",
+                        firstKeyAddress,
+                        job.getTransplantKeyArenaAddressForTest()
+                );
+                final ObjList<byte[]> secondPayloads = new ObjList<>();
+                job.collectTransplantPayloadsForTest(secondPayloads);
+                Assert.assertEquals(firstPayloads.size(), secondPayloads.size());
+                for (int i = 0, n = secondPayloads.size(); i < n; i++) {
+                    Assert.assertTrue(
+                            "transplant payload " + i + " must be one the first transplant imaged into",
+                            containsSameArray(firstPayloads, secondPayloads.getQuick(i))
+                    );
+                }
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testATransplantPastTheKeyLimitFreesItsArenaAndShrinksItsHandleLists() throws Exception {
+        // A worker keeps the transplant's key arena and handle lists for its lifetime and only
+        // clears them between repairs, so a correction wider than the retention limit must
+        // free the arena and shrink the lists back rather than park its key domain there.
+        assertTransplantFreesItsKeyArena(LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_KEYS + 1_024, 0);
+    }
+
+    @Test
+    public void testATransplantOfWideKeysPastTheByteLimitFreesItsArena() throws Exception {
+        // Far fewer keys than the key limit, each wider than a kilobyte, so only the byte
+        // limit can tell that the arena grew past what a worker may keep.
+        final int keyCount = 4_096;
+        final int accountChars = 1_536;
+        Assert.assertTrue(keyCount < LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_KEYS);
+        Assert.assertTrue((long) keyCount * accountChars > LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_KEY_BYTES);
+        assertTransplantFreesItsKeyArena(keyCount, accountChars);
+    }
+
+    @Test
+    public void testATransplantOfWidePayloadsPastTheImageByteLimitHandsItsArraysBack() throws Exception {
+        // A transplant leases each payload from a pool the worker keeps, so a second one images
+        // into the first one's arrays. Payloads as wide as the leaf budget allows pass the
+        // image byte limit far inside the key and array limits, and past it the pool must hand
+        // its arrays back rather than keep megabytes of them on the worker.
+        final int components = (LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES - Long.BYTES)
+                / (Double.BYTES + Long.BYTES);
+        // The anchor value beside sixteen bytes of state per component.
+        final int payloadBytes = Long.BYTES + components * (Double.BYTES + Long.BYTES);
+        final int keyCount = (int) (LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAY_BYTES / payloadBytes) + 1_024;
+        Assert.assertTrue(keyCount < LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_KEYS);
+        assertMemoryLeak(() -> {
+            final StringBuilder columns = new StringBuilder();
+            final StringBuilder projections = new StringBuilder();
+            final StringBuilder values = new StringBuilder();
+            for (int i = 1; i <= components; i++) {
+                columns.append(", q").append(i).append(" DOUBLE");
+                projections.append(", sum(q").append(i).append(") OVER w AS s").append(i);
+                values.append(", x::double");
+            }
+            execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL" + columns + ") "
+                    + "TIMESTAMP(created_at) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                    + "SELECT created_at, account_id" + projections + " FROM tx "
+                    + "WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')");
+            execute("INSERT INTO tx SELECT '2026-01-02T01:00:00.000000Z'::timestamp + x * 1_000_000, "
+                    + "concat('acct-', x)" + values + " FROM long_sequence(" + keyCount + ")");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertNoRefreshFaults("lv");
+                Assert.assertEquals(keyCount, transplantTheViewIntoItself(job, viewInstance()));
+                final ObjList<byte[]> firstPayloads = new ObjList<>();
+                job.collectTransplantPayloadsForTest(firstPayloads);
+                Assert.assertEquals(keyCount, firstPayloads.size());
+                Assert.assertEquals(
+                        "the view must fuse every component into one payload",
+                        payloadBytes,
+                        firstPayloads.getQuick(0).length
+                );
+                Assert.assertEquals(keyCount, transplantTheViewIntoItself(job, viewInstance()));
+                final ObjList<byte[]> secondPayloads = new ObjList<>();
+                job.collectTransplantPayloadsForTest(secondPayloads);
+                for (int i = 0, n = secondPayloads.size(); i < n; i++) {
+                    Assert.assertFalse(
+                            "transplant payload " + i + " must not be an array the first transplant left pooled",
+                            containsSameArray(firstPayloads, secondPayloads.getQuick(i))
+                    );
+                }
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
     public void testAKeyBudgetOfZeroStillResumesTheOpenSegmentByKey() throws Exception {
         // server.conf documents a key budget at or below zero as unlimited. The open
         // segment's domain is collected under the same budget as a closed segment's, so a
@@ -1063,6 +1205,80 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 // reading the sibling case that lets the override through takes of its own
                 // drive - the one this fixture repeats with two hot hours added.
                 Assert.assertEquals(0, job.runtimeAnchorReuseCountForTest());
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    private static boolean containsSameArray(ObjList<byte[]> arrays, byte[] array) {
+        for (int i = 0, n = arrays.size(); i < n; i++) {
+            if (arrays.getQuick(i) == array) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static LongList transplantHandles(LiveViewRefreshJob job, String name) throws Exception {
+        final Field field = LiveViewRefreshJob.class.getDeclaredField(name);
+        field.setAccessible(true);
+        return (LongList) field.get(job);
+    }
+
+    /**
+     * Hands the view's whole fused state back to itself through the transplant a keyed
+     * resume runs. A keyed resume moves only the keys its correction touched, and no
+     * fixture here corrects tens of thousands of keys at once, so a case that needs a
+     * transplant that wide drives it directly with the primary window as the replayed one:
+     * the freeze, the restore and the trim after them are the ones a real resume runs, and
+     * each key gets back exactly the state it already holds.
+     *
+     * @return how many keys moved
+     */
+    private static int transplantTheViewIntoItself(LiveViewRefreshJob job, LiveViewInstance instance) throws Exception {
+        final Method transplant = LiveViewRefreshJob.class.getDeclaredMethod(
+                "transplantKeyedRepairState",
+                LiveViewInstance.class,
+                LiveViewWindow.class
+        );
+        transplant.setAccessible(true);
+        return (int) transplant.invoke(job, instance, instance.getAnchorWindow());
+    }
+
+    /**
+     * Transplants the view's whole state into itself, see {@link #transplantTheViewIntoItself},
+     * and checks what the transplant left on the worker.
+     *
+     * @param accountChars how wide each account name is padded, or 0 to keep it narrow
+     */
+    private void assertTransplantFreesItsKeyArena(int keyCount, int accountChars) throws Exception {
+        assertMemoryLeak(() -> {
+            createView(row(2, 0, 10, "acct-0"), false);
+            final String account = accountChars > 0
+                    ? "rpad(concat('acct-', x), " + accountChars + ", 'k')"
+                    : "concat('acct-', x)";
+            execute("INSERT INTO tx SELECT '2026-01-02T01:00:00.000000Z'::timestamp + x * 1_000_000, "
+                    + account + ", 1.0 FROM long_sequence(" + keyCount + ")");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(
+                        "the transplant must hand back every key the view holds",
+                        keyCount + 1,
+                        transplantTheViewIntoItself(job, viewInstance())
+                );
+                Assert.assertEquals(
+                        "a transplant past the retention limits must free its key arena",
+                        0,
+                        job.getTransplantKeyArenaKeyCountForTest()
+                );
+                final LongList keys = transplantHandles(job, "transplantKeys");
+                Assert.assertEquals("the handles must go with the arena they name", 0, keys.size());
+                Assert.assertTrue(
+                        "the handle list must shrink back, capacity=" + keys.capacity(),
+                        keys.capacity() < keyCount
+                );
+                Assert.assertEquals(0, transplantHandles(job, "transplantRemovedKeys").size());
                 assertViewMatchesRecompute();
             }
         });

@@ -154,7 +154,7 @@ public class LiveViewCompiledEncodingIdentityTest extends AbstractLiveViewTest {
 
         try (LiveViewCheckpointFunctionRootBuilder builder = new LiveViewCheckpointFunctionRootBuilder(configuration);
              LiveViewCheckpointMetaSegmentWriter unopened = new LiveViewCheckpointMetaSegmentWriter(configuration)) {
-            expectInitializerFailure(() ->
+            expectInitializerFailure("function root metadata page reference invalid", () ->
                     ofBorrowedCompiled(builder, dir, invalidMetaRef, invalidIdentity, 1, invalidSchema));
             Assert.assertFalse("function builder retained invalid-predecessor bytes",
                     isBorrowingCompiled(builder, invalidIdentity, invalidSchema));
@@ -172,7 +172,7 @@ public class LiveViewCompiledEncodingIdentityTest extends AbstractLiveViewTest {
 
         try (LiveViewCheckpointWindowRootBuilder builder = new LiveViewCheckpointWindowRootBuilder(configuration);
              LiveViewCheckpointMetaSegmentWriter unopened = new LiveViewCheckpointMetaSegmentWriter(configuration)) {
-            expectInitializerFailure(() -> ofBorrowedCompiled(
+            expectInitializerFailure("window state root metadata page reference invalid", () -> ofBorrowedCompiled(
                     builder, dir, invalidMetaRef, invalidIdentity, ColumnType.TIMESTAMP_MICRO,
                     invalidSchema, invalidManifest, 16, true, null
             ));
@@ -196,7 +196,7 @@ public class LiveViewCompiledEncodingIdentityTest extends AbstractLiveViewTest {
         try (LiveViewCheckpointFunctionRootBuilder builder = new LiveViewCheckpointFunctionRootBuilder(configuration)) {
             ofBorrowedCompiled(builder, dir, nullMetaRef, identityA, 1, schemaA);
             builder.build(81, functionPredecessor);
-            expectInitializerFailure(() ->
+            expectInitializerFailure("function root identity or schema mismatch", () ->
                     ofBorrowedCompiled(builder, dir, functionPredecessor, identityB, 1, schemaB));
             Assert.assertFalse("function builder retained semantic-mismatch bytes",
                     isBorrowingCompiled(builder, identityB, schemaB));
@@ -388,11 +388,13 @@ public class LiveViewCompiledEncodingIdentityTest extends AbstractLiveViewTest {
         }
     }
 
-    private static void expectInitializerFailure(CheckedRunnable action) {
+    private static void expectInitializerFailure(String expectedMessage, CheckedRunnable action) {
         try {
             action.run();
             throw new AssertionError("expected builder initializer failure");
-        } catch (CairoException ignored) {
+        } catch (CairoException e) {
+            final String message = e.getFlyweightMessage().toString();
+            Assert.assertTrue("wrong initializer failure: " + message, message.contains(expectedMessage));
         }
     }
 

@@ -180,9 +180,9 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
             final LiveViewWindowStateManifest manifest = countManifest();
             final LiveViewCheckpointPageRef first = new LiveViewCheckpointPageRef();
             buildDirectRoot(1, new LiveViewCheckpointPageRef(), manifest, true, builder -> {
-                builder.putPartition(directKey(1), countPayload(10, 1), false);
-                builder.putPartition(directKey(2), countPayload(20, 2), false);
-                builder.putPartition(directKey(3), countPayload(30, 3), false);
+                LiveViewCheckpointTestKeys.putPartition(builder, directKey(1), countPayload(10, 1), false);
+                LiveViewCheckpointTestKeys.putPartition(builder, directKey(2), countPayload(20, 2), false);
+                LiveViewCheckpointTestKeys.putPartition(builder, directKey(3), countPayload(30, 3), false);
             }, first);
             Assert.assertEquals(3, directEntryCount(first));
 
@@ -190,7 +190,7 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
             // the entry the predecessor wrote for it.
             final LiveViewCheckpointPageRef forward = new LiveViewCheckpointPageRef();
             buildDirectRoot(2, first, manifest, false, builder ->
-                    builder.putPartition(directKey(2), countPayload(20, 22), false), forward);
+                    LiveViewCheckpointTestKeys.putPartition(builder, directKey(2), countPayload(20, 22), false), forward);
             Assert.assertEquals(3, directEntryCount(forward));
             Assert.assertEquals(22, directCount(forward, directKey(2)));
             Assert.assertEquals(3, directCount(forward, directKey(3)));
@@ -199,8 +199,8 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
             // key still counts as named: it is live, it simply needs no mutation.
             final LiveViewCheckpointPageRef complete = new LiveViewCheckpointPageRef();
             buildDirectRoot(3, forward, manifest, true, builder -> {
-                builder.putPartition(directKey(1), countPayload(10, 1), true);
-                builder.putPartition(directKey(2), countPayload(20, 22), true);
+                LiveViewCheckpointTestKeys.putPartition(builder, directKey(1), countPayload(10, 1), true);
+                LiveViewCheckpointTestKeys.putPartition(builder, directKey(2), countPayload(20, 22), true);
             }, complete);
             Assert.assertEquals(2, directEntryCount(complete));
             Assert.assertEquals(1, directCount(complete, directKey(1)));
@@ -211,31 +211,31 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
     @Test
     public void testAFusedEntryShapeIsValidatedBeforeItIsSliced() throws Exception {
         assertMemoryLeak(() -> {
-            final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
+            try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                // The leaf holds no length of its own for an inlined payload, so the
+                // manifest's total is the only width there is and anything else would slice
+                // a component out of bytes something else wrote.
+                LiveViewCheckpointTestKeys.of(entry, directKey(1), new byte[TARGET_PAYLOAD_BYTES - 1], new LiveViewCheckpointStatePageRef[0]);
+                assertInvalid(
+                        () -> LiveViewCheckpointWindowRoot.readWindowState(entry, TARGET_PAYLOAD_BYTES),
+                        "window state entry scalar length invalid"
+                );
 
-            // The leaf holds no length of its own for an inlined payload, so the
-            // manifest's total is the only width there is and anything else would slice
-            // a component out of bytes something else wrote.
-            entry.of(directKey(1), new byte[TARGET_PAYLOAD_BYTES - 1], new LiveViewCheckpointStatePageRef[0]);
-            assertInvalid(
-                    () -> LiveViewCheckpointWindowRoot.readWindowState(entry, TARGET_PAYLOAD_BYTES),
-                    "window state entry scalar length invalid"
-            );
+                // Right length, but naming a page beside it: not the entry the manifest
+                // describes, whatever the bytes read as.
+                final LiveViewCheckpointStatePageRef ref = new LiveViewCheckpointStatePageRef();
+                ref.of(1, 0, 8, 8, 0x41, 0, 1, 0);
+                LiveViewCheckpointTestKeys.of(entry, directKey(1), new byte[TARGET_PAYLOAD_BYTES], new LiveViewCheckpointStatePageRef[]{ref});
+                assertInvalid(
+                        () -> LiveViewCheckpointWindowRoot.readWindowState(entry, TARGET_PAYLOAD_BYTES),
+                        "window state entry must not reference a state page"
+                );
 
-            // Right length, but naming a page beside it: not the entry the manifest
-            // describes, whatever the bytes read as.
-            final LiveViewCheckpointStatePageRef ref = new LiveViewCheckpointStatePageRef();
-            ref.of(1, 0, 8, 8, 0x41, 0, 1, 0);
-            entry.of(directKey(1), new byte[TARGET_PAYLOAD_BYTES], new LiveViewCheckpointStatePageRef[]{ref});
-            assertInvalid(
-                    () -> LiveViewCheckpointWindowRoot.readWindowState(entry, TARGET_PAYLOAD_BYTES),
-                    "window state entry must not reference a state page"
-            );
-
-            assertInvalid(
-                    () -> LiveViewCheckpointWindowRoot.readAnchorValue(new byte[ANCHOR_BYTES - 1]),
-                    "window state entry is too short for its anchor value"
-            );
+                assertInvalid(
+                        () -> LiveViewCheckpointWindowRoot.readAnchorValue(new byte[ANCHOR_BYTES - 1]),
+                        "window state entry is too short for its anchor value"
+                );
+            }
         });
     }
 
@@ -463,7 +463,7 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
             final LiveViewWindowStateManifest manifest = countManifest();
             final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
             buildDirectRoot(1, new LiveViewCheckpointPageRef(), manifest, true, builder ->
-                    builder.putPartition(directKey(1), countPayload(10, 1), false), root);
+                    LiveViewCheckpointTestKeys.putPartition(builder, directKey(1), countPayload(10, 1), false), root);
 
             try (
                     LiveViewCheckpointWindowRootBuilder builder =
@@ -562,8 +562,8 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             final LiveViewCheckpointPageRef rootRef = new LiveViewCheckpointPageRef();
             buildDirectRoot(1, new LiveViewCheckpointPageRef(), sumCountManifest(), true, builder -> {
-                builder.putPartition(directKey(1), sumCountPayload(100, 1.5, 3), false);
-                builder.putPartition(directKey(2), sumCountPayload(200, -2.5, 7), false);
+                LiveViewCheckpointTestKeys.putPartition(builder, directKey(1), sumCountPayload(100, 1.5, 3), false);
+                LiveViewCheckpointTestKeys.putPartition(builder, directKey(2), sumCountPayload(200, -2.5, 7), false);
             }, rootRef);
 
             // The fixture reads clean, so every rejection below is the patch's doing.
@@ -815,8 +815,8 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
             final LiveViewWindowStateManifest manifest = sumCountManifest();
             final LiveViewCheckpointPageRef rootRef = new LiveViewCheckpointPageRef();
             buildDirectRoot(1, new LiveViewCheckpointPageRef(), manifest, true, builder -> {
-                builder.putPartition(directKey(1), sumCountPayload(100, 1.5, 3), false);
-                builder.putPartition(directKey(2), sumCountPayload(200, -2.5, 7), false);
+                LiveViewCheckpointTestKeys.putPartition(builder, directKey(1), sumCountPayload(100, 1.5, 3), false);
+                LiveViewCheckpointTestKeys.putPartition(builder, directKey(2), sumCountPayload(200, -2.5, 7), false);
             }, rootRef);
 
             try (
@@ -837,15 +837,16 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                 root.getPartitionMapRootRef(mapRootRef);
                 reader.of(dir);
                 Assert.assertEquals(2, reader.size(mapRootRef));
-                final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-                Assert.assertTrue(reader.find(mapRootRef, directKey(2), entry));
-                final byte[] payload = LiveViewCheckpointWindowRoot.readWindowState(
-                        entry,
-                        root.getTotalInlineStateBytes()
-                );
-                Assert.assertEquals(200, LiveViewCheckpointWindowRoot.readAnchorValue(payload));
-                Assert.assertEquals(-2.5, Double.longBitsToDouble(readLongLe(payload, ANCHOR_BYTES)), 0.0);
-                Assert.assertEquals(7, readLongLe(payload, ANCHOR_BYTES + Double.BYTES));
+                try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                    Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, mapRootRef, directKey(2), entry));
+                    final byte[] payload = LiveViewCheckpointWindowRoot.readWindowState(
+                            entry,
+                            root.getTotalInlineStateBytes()
+                    );
+                    Assert.assertEquals(200, LiveViewCheckpointWindowRoot.readAnchorValue(payload));
+                    Assert.assertEquals(-2.5, Double.longBitsToDouble(readLongLe(payload, ANCHOR_BYTES)), 0.0);
+                    Assert.assertEquals(7, readLongLe(payload, ANCHOR_BYTES + Double.BYTES));
+                }
             }
         });
     }
@@ -972,12 +973,13 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
             final LiveViewCheckpointPageRef mapRootRef = new LiveViewCheckpointPageRef();
             root.getPartitionMapRootRef(mapRootRef);
             reader.of(dir);
-            final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-            Assert.assertTrue("the root must hold " + Arrays.toString(key), reader.find(mapRootRef, key, entry));
-            return readLongLe(
-                    LiveViewCheckpointWindowRoot.readWindowState(entry, root.getTotalInlineStateBytes()),
-                    ANCHOR_BYTES
-            );
+            try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                Assert.assertTrue("the root must hold " + Arrays.toString(key), LiveViewCheckpointTestKeys.find(reader, mapRootRef, key, entry));
+                return readLongLe(
+                        LiveViewCheckpointWindowRoot.readWindowState(entry, root.getTotalInlineStateBytes()),
+                        ANCHOR_BYTES
+                );
+            }
         }
     }
 

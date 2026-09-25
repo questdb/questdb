@@ -429,12 +429,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // The transplant's scratch: one keyed repair's finished per-key state, read off the
     // isolated runtime through the same freeze contract a seal uses and written into the
     // primary through the matching restore. Sized by the correction's key domain, and
-    // cleared rather than dropped so a worker pays for the growth once.
+    // cleared rather than dropped so a worker pays for the growth once. The keys go into
+    // transplantKeyArena, native and untracked like the rest of a worker's scratch, and
+    // transplantKeys and transplantRemovedKeys hold their handles; the payload images come
+    // out of transplantByteArrays, which only the transplant leases from. Both are trimmed
+    // to a seal's retention limits once the transplant ends. transplantKeyMemory is only
+    // the buffer the freeze encodes each key through.
+    private final LiveViewCheckpointByteArrayPool transplantByteArrays = new LiveViewCheckpointByteArrayPool();
+    private final LiveViewCheckpointKeyArena transplantKeyArena = new LiveViewCheckpointKeyArena();
     private final MemoryCARW transplantKeyMemory = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
     private final LiveViewStatePageReader transplantKeyPage = new LiveViewStatePageReader();
-    private final ObjList<byte[]> transplantKeys = new ObjList<>();
+    private final LongList transplantKeys = new LongList();
     private final ObjList<byte[]> transplantPayloads = new ObjList<>();
-    private final ObjList<byte[]> transplantRemovedKeys = new ObjList<>();
+    private final LongList transplantRemovedKeys = new LongList();
     private final LongList transplantValues = new LongList();
     // Keys this worker has handed back to a primary runtime, summed over every keyed
     // resume it published.
@@ -577,6 +584,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // production.
     @TestOnly
     private boolean simulateRepairUnwindCleanupFaultForTest;
+    // Test-only: when armed, a predecessor resume runs this action once its anchor is
+    // restored and its cursors are open, immediately before its replay pulls the first row,
+    // so a test can end the replay there the way a circuit-breaker trip or a fault inside it
+    // would. One-shot (self-clears on fire); always null in production.
+    @TestOnly
+    private Runnable simulateResumeReplayStartForTest;
     // Test-only: when armed, the refresh finally throws right where a real
     // LiveViewInMemoryBuffer.close() would (a native-memory / tracker-balance assert
     // under -ea), so a test can prove the refresh latch is still released on that path.
@@ -723,7 +736,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         stagingBuffer = Misc.free(stagingBuffer);
         Misc.free(rowsBounds);
         Misc.free(keyedReplay);
+        Misc.free(repairPlan);
         Misc.free(segmentChangeSet);
+        Misc.free(transplantKeyArena);
         Misc.free(transplantKeyMemory);
         Misc.freeObjListIfCloseable(flushSymbolResolverPool);
         flushSymbolResolverPool.clear();
@@ -980,6 +995,34 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public long openSegmentSparseResumeCountForTest() {
         return openSegmentSparseResumeCount;
+    }
+
+    /**
+     * Test-only: appends the payload arrays the last transplant handed back, so a case can
+     * tell whether a later transplant imaged into the same arrays.
+     */
+    @TestOnly
+    public void collectTransplantPayloadsForTest(@NotNull ObjList<byte[]> payloadSink) {
+        payloadSink.addAll(transplantPayloads);
+    }
+
+    /**
+     * Test-only: the native address of the first key the last transplant froze, so a case
+     * can tell whether a later transplant froze its keys into the same memory; 0 when it
+     * froze none.
+     */
+    @TestOnly
+    public long getTransplantKeyArenaAddressForTest() {
+        return transplantKeys.size() == 0 ? 0 : transplantKeyArena.address(transplantKeys.getQuick(0));
+    }
+
+    /**
+     * Test-only: keys the transplant's key arena holds right now, which is the keys of the
+     * last transplant until the next one starts.
+     */
+    @TestOnly
+    public int getTransplantKeyArenaKeyCountForTest() {
+        return transplantKeyArena.keyCount();
     }
 
     /**
@@ -1328,6 +1371,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public void setSimulateRepairUnwindCleanupFaultForTest() {
         this.simulateRepairUnwindCleanupFaultForTest = true;
+    }
+
+    /**
+     * Test-only: arms a one-shot action the next predecessor resume runs once its anchor is
+     * restored, immediately before its replay pulls the first row. Lets a test cancel the view's
+     * refresh at that point, so the circuit breaker the replay consults ends it mid-replay, as an
+     * engine shutdown would. Production never calls this.
+     */
+    @TestOnly
+    public void setSimulateResumeReplayStartForTest(Runnable action) {
+        this.simulateResumeReplayStartForTest = action;
     }
 
     /**
@@ -1810,7 +1864,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     ) {
         final LiveViewCheckpointRepairSession session =
                 new LiveViewCheckpointRepairSession(engine.getConfiguration(), this, windowFactory);
-        session.of(plan);
+        try {
+            // Copies the plan's output key domain into native memory the session owns.
+            session.of(plan);
+        } catch (Throwable th) {
+            Misc.free(session, th);
+            throw th;
+        }
         return session;
     }
 
@@ -4454,13 +4514,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * path, so an O3 repair always advances the boundary rather than leaving it
      * parked at the stale {@code maxTs} it found.
      * <p>
-     * {@code retireTimeline} decides whether the timeline goes with it. A repair
-     * that publishes its own range splice passes {@code false}: the splice
+     * {@code retireTimeline} decides whether the timeline goes with it. A head miss
+     * passes {@code false} on its first turn whatever route it takes. A splice
      * re-versions the roots in {@code [C, H)} and keeps the prefix - and, when the
      * repair converged, the suffix above {@code H} - which is the whole point of the
      * timeline, so retiring them here would throw away exactly what the splice is
-     * about to correct. Every other repair passes {@code true} - see
-     * {@link #retireCheckpointTimeline}.
+     * about to correct. The other two routes owe the timeline a durable change, and
+     * make it only at their replacement commit, once their replay can no longer
+     * park, unwind or crash with nothing committed: a localized repair truncates
+     * through {@link #truncateOrRetireTimelineOnO3(LiveViewInstance, long)}, and an
+     * unlocalized rebuild retires through {@link #retireCheckpointTimeline}. Every
+     * other caller passes {@code true} - see {@link #retireCheckpointTimeline} - bar
+     * the upgrade rebuild of a view carried over from an older checkpoint format,
+     * which keeps that directory until its replacement has committed.
      */
     private void retireCheckpointStateOnO3(LiveViewInstance instance, boolean retireTimeline) {
         instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
@@ -6363,31 +6429,65 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         transplantPayloads.clear();
         transplantValues.clear();
         transplantRemovedKeys.clear();
-        replayWindow.freezeCheckpointEntries(
-                transplantKeyMemory,
-                transplantKeys,
-                transplantValues,
-                transplantRemovedKeys,
-                // Complete rather than incremental: the isolated map IS the key domain, so
-                // there is no predecessor to image a difference against and nothing to
-                // gain from one.
-                false,
-                plan.getTotalInlineStateBytes(),
-                transplantPayloads
-        );
-        for (int i = 0, n = transplantKeys.size(); i < n; i++) {
-            final byte[] key = transplantKeys.getQuick(i);
-            transplantKeyMemory.jumpTo(0);
-            for (int b = 0; b < key.length; b++) {
-                transplantKeyMemory.putByte(key[b]);
-            }
-            primaryWindow.transplantCheckpointWindowEntry(
-                    transplantKeyPage.of(transplantKeyMemory, 0, key.length),
-                    transplantPayloads.getQuick(i)
+        // The lists above were the only holders of the handles and arrays the last
+        // transplant took, and the loop below is the only reader of this one's: it frames
+        // each key where the arena holds it and restores each payload into the primary's
+        // map value before it takes the next entry.
+        transplantKeyArena.clear();
+        transplantByteArrays.reset();
+        int transplanted = 0;
+        try {
+            replayWindow.freezeCheckpointEntries(
+                    transplantKeyMemory,
+                    transplantKeyArena,
+                    transplantKeys,
+                    transplantValues,
+                    transplantRemovedKeys,
+                    // Complete rather than incremental: the isolated map IS the key domain,
+                    // so there is no predecessor to image a difference against and nothing
+                    // to gain from one.
+                    false,
+                    plan.getTotalInlineStateBytes(),
+                    transplantPayloads,
+                    null,
+                    transplantByteArrays
             );
+            for (int i = 0, n = transplantKeys.size(); i < n; i++) {
+                // The restore appends nothing to the arena, so the page stays framed over
+                // the key for the whole call.
+                final long keyHandle = transplantKeys.getQuick(i);
+                primaryWindow.transplantCheckpointWindowEntry(
+                        transplantKeyPage.of(
+                                transplantKeyArena.memory(),
+                                transplantKeyArena.bytesOffset(keyHandle),
+                                transplantKeyArena.length(keyHandle)
+                        ),
+                        transplantPayloads.getQuick(i)
+                );
+            }
+            transplanted = transplantKeys.size();
+        } finally {
+            // The seal's own limits: a correction wide enough to pass them drops its arrays
+            // from the pool, and its keys from the arena and the handle lists, instead of
+            // parking them on this worker for good. A key count past the limit frees the
+            // lists that grew one handle per key; a few wide keys past the byte limit free
+            // the arena alone would not.
+            if (transplantByteArrays.getRetainedArrayCount()
+                    > LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAYS
+                    || transplantByteArrays.getRetainedBytes()
+                    > LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAY_BYTES) {
+                transplantByteArrays.clear();
+            }
+            if (transplantKeyArena.keyCount() > LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_KEYS
+                    || transplantKeyArena.capacity() > LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_KEY_BYTES) {
+                // The handles name keys the release frees, so they go with it.
+                transplantKeyArena.release();
+                transplantKeys.restoreInitialCapacity();
+                transplantRemovedKeys.restoreInitialCapacity();
+            }
         }
-        transplantedKeyCount += transplantKeys.size();
-        return transplantKeys.size();
+        transplantedKeyCount += transplanted;
+        return transplanted;
     }
 
     /**
@@ -7575,12 +7675,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *     resolves the marker; one that does not publish retires the timeline, which takes
      *     the marker with it. A marker that cannot be written drops the capture and
      *     retires the timeline ahead of the commit instead;</li>
-     *     <li>a resume holding <b>no capture</b> truncates the timeline ahead of the
-     *     restore, keeping the roots below the output floor with the anchor among them,
-     *     and writes the marker with the truncate. A crash mid-replay therefore sends a
-     *     restart to the rebuild from the applied base. Once the post-replay seal appends
-     *     a fresh head onto the preserved prefix, the resume clears the marker; a resume
-     *     that seals no head retires the truncated timeline instead.</li>
+     *     <li>a resume holding <b>no capture</b> truncates the timeline at the same
+     *     point, immediately before the replacement commit, keeping the roots below the
+     *     output floor with the anchor among them, and writes the marker with the
+     *     truncate. A fault, a circuit-breaker trip or a crash during the replay therefore
+     *     leaves no marker either. The restore takes the provisional repair baseline, and
+     *     the truncate moves it to the generation it publishes, so the closing seal still
+     *     freezes incrementally. Once the post-replay seal appends a fresh head onto the
+     *     preserved prefix, the resume clears the marker; a resume that seals no head
+     *     retires the truncated timeline instead.</li>
      * </ul>
      * <p>
      * A restore failure retires the whole timeline and abandons the replay without
@@ -7621,8 +7724,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         long o3ScanRows = 0;
         long replayMaxTs = Numbers.LONG_NULL;
         // Set once this resume has a live repair marker on disk: the truncate a resume
-        // holding no capture takes writes one ahead of the replay, and the splice writes
-        // one immediately before its replacement commit. The seal below resolves it.
+        // holding no capture takes and the splice both write one immediately before the
+        // replacement commit. The seal below resolves it.
         boolean prefixMarkerLive = false;
         // The ladder this resume leaves behind. Every boundary above the anchor
         // describes output the replay is about to rewrite, so it needs a new root
@@ -7924,8 +8027,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         source = anchorDispatchingCursor;
                     }
                     try (RecordCursor windowCursor = replayWindowFactory.getIncrementalCursor(source, executionContext)) {
-                        // Read before the truncate below clears the head, which is half
-                        // of what identifies the runtime as the anchor's own state. A keyed
+                        // Read before anything clears the head, which is half of what
+                        // identifies the runtime as the anchor's own state. A keyed
                         // replay never reuses it: the reuse asks whether the PRIMARY already
                         // stands at the anchor, and a keyed replay does not fold into the
                         // primary at all.
@@ -7965,32 +8068,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // the runtime is inconsistent until the replay commits.
                             markWindowStateDirty(instance);
                         }
-                        if (timelineCapture == null) {
-                            // No capture, so the roots above the output floor cannot be
-                            // re-versioned and must not survive the output they describe.
-                            // Preserve the ones below it (the anchor among them) instead
-                            // of retiring the whole timeline for one predecessor-resume
-                            // repair; the marker this writes forces a mid-repair crash to
-                            // rebuild from the applied base.
-                            //
-                            // Ordered BEFORE the restore, which is what lets the seal that
-                            // closes this repair freeze incrementally. The truncate leaves
-                            // the anchor as the head of the generation it publishes, so the
-                            // restore that follows is a restore from the head and adopts
-                            // that root as the runtime's incremental baseline - every key
-                            // the replay then touches is marked dirty, and the seal freezes
-                            // those keys alone rather than the whole live domain. Restoring
-                            // first left the baseline unset (the anchor was not the head
-                            // yet) and every repair seal a complete scan.
-                            //
-                            // The failure direction is unchanged: a restore that cannot
-                            // read the root retires the whole timeline either way, and the
-                            // truncate only ever drops roots this replay is about to
-                            // rewrite.
-                            final long timelineStart = System.nanoTime();
-                            prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, plan.getOutputLowTs());
-                            openSegmentRepairPhases.timelinePublicationNanos += System.nanoTime() - timelineStart;
-                        }
+                        // A resume holding no capture truncates the timeline at its
+                        // replacement commit rather than here, and the anchor is not the
+                        // head of the generation it restores from until then. So the
+                        // restore below takes the provisional repair baseline for both
+                        // routes, as a chain needs it anyway, and the truncate turns that
+                        // stamp into the generation it publishes; see
+                        // adoptTruncatedHeadCheckpointBaseline.
                         final long rootRestoreStart = System.nanoTime();
                         final long anchorLvRowPosition;
                         if (keyed) {
@@ -8016,22 +8100,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             anchorLvRowPosition = instance.getLvRowsTotal();
                             runtimeAnchorReuseCount++;
                             // No restore ran, so nothing stamped the baseline the freeze
-                            // about to follow reads. Stamp it here on the same terms the
-                            // restore would have: the provisional repair stamp when a
-                            // chained capture is going to freeze against this state, the
-                            // truncate's new generation otherwise.
-                            if (timelineCapture != null) {
-                                adoptRepairCheckpointBaseline(instance, windowFactory);
-                            } else {
-                                adoptTruncatedHeadCheckpointBaseline(instance, windowFactory, anchorMaxTs, anchorCheckpointId);
-                            }
+                            // or the closing seal reads. Stamp it here on the same terms the
+                            // restore takes: the provisional repair stamp.
+                            adoptRepairCheckpointBaseline(instance, windowFactory);
                         } else {
                             anchorLvRowPosition = restoreAnchorRoot(
                                     instance,
                                     windowFactory,
                                     anchorMaxTs,
                                     anchorCheckpointId,
-                                    timelineCapture != null
+                                    true
                             );
                         }
                         openSegmentRepairPhases.rootRestoreNanos += System.nanoTime() - rootRestoreStart;
@@ -8076,6 +8154,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         final long scanStart = System.nanoTime();
                         final RecordCursor outCursor = compiledPlan.wrapWindowOutput(windowCursor, executionContext);
                         Record outRecord = outCursor.getRecord();
+                        if (simulateResumeReplayStartForTest != null) { // @TestOnly, always null in production
+                            final Runnable replayStart = simulateResumeReplayStartForTest;
+                            simulateResumeReplayStartForTest = null;
+                            replayStart.run();
+                        }
                         while (outCursor.hasNext()) {
                             long ts = outRecord.getTimestamp(cursorTimestampIndex);
                             if (replayMaxTs == Numbers.LONG_NULL || ts > replayMaxTs) {
@@ -8214,6 +8297,31 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             repairBoundaries.clear();
                             retireCheckpointStateOnO3(instance, true);
                         }
+                    } else {
+                        // No capture, so the roots above the output floor cannot be
+                        // re-versioned and must not survive the output they describe.
+                        // Preserve the ones below it (the anchor among them) instead of
+                        // retiring the whole timeline for one predecessor-resume repair.
+                        //
+                        // Here, at the same point and for the same reason as the splice's
+                        // marker above: the truncate writes the durable marker and drops the
+                        // roots the replay has rewritten the output of, and until the commit
+                        // below the timeline is the one the pre-repair output belongs to. A
+                        // replay that unwinds on a fault or on the circuit breaker an engine
+                        // shutdown trips - a filtered replay consults it on every row it
+                        // pulls - or a process that crashes, leaves that timeline standing,
+                        // and the in-place recovery and a restart restore from it.
+                        //
+                        // The truncate leaves the anchor as the head of the generation it
+                        // publishes, which is what lets the seal that closes this repair
+                        // freeze incrementally: the stamp the restore took moves to that
+                        // generation, keeping the keys the replay touched.
+                        final long timelineStart = System.nanoTime();
+                        prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, plan.getOutputLowTs());
+                        openSegmentRepairPhases.timelinePublicationNanos += System.nanoTime() - timelineStart;
+                        if (!keyed) {
+                            adoptTruncatedHeadCheckpointBaseline(instance, windowFactory, anchorMaxTs, anchorCheckpointId);
+                        }
                     }
                     final long commitStart = System.nanoTime();
                     if (sparse) {
@@ -8271,11 +8379,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // candidate is discarded having changed nothing, the generation it pinned
                     // still describes exactly the output on disk, and a later cycle replans
                     // the same correction. Nor does a repair marker stand over that generation
-                    // when the replay unwound ahead of its commit: the splice writes its marker
-                    // immediately before that commit, so the in-place recovery and a restart
-                    // restore from the timeline rather than rebuild from the applied base. A
-                    // commit that threw keeps the marker it wrote, because nothing here can
-                    // tell whether the replacement landed before the throw.
+                    // when the replay unwound ahead of its commit: the splice writes its marker,
+                    // and a resume holding no capture its truncate, immediately before that
+                    // commit, so the in-place recovery and a restart restore from the timeline
+                    // rather than rebuild from the applied base. A commit that threw keeps the
+                    // marker it wrote, because nothing here can tell whether the replacement
+                    // landed before the throw.
                     //
                     // The timeline is deliberately NOT retired here. Retiring would delete
                     // every historical root and leave that replan with no anchor below the
@@ -9135,15 +9244,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // coverage no root has.
             LiveViewCheckpointTimelineStoreWriter.RepairResult timelineSplice = null;
             // Set when this repair has a durable repair marker on disk, which the two ways of
-            // keeping a timeline both leave: the prefix truncate an EOF-reaching localized
-            // repair takes when it holds no capture, on its first turn, and the splice, which
-            // leaves every root where it is and rewrites the output beneath them, at its
-            // replacement commit. The post-replay seal resolves it either way - see the block
-            // that reads it.
+            // keeping a timeline both leave: the prefix truncate a localized repair takes when
+            // it holds no capture, and the splice, which leaves every root where it is and
+            // rewrites the output beneath them. Both write it immediately before the
+            // replacement commit, on the turn that commits. The post-replay seal resolves it
+            // either way - see the block that reads it.
             //
-            // Read off the session rather than re-derived, because it outlives the turn: a
-            // truncating repair that parks on its budget leaves the marker on disk, and the
-            // turn that finishes it is the one that owes the clear.
+            // Read off the session on a resumed turn, although a parked repair never carries
+            // one: no marker goes down ahead of the turn that commits, and that turn does not
+            // park.
             boolean prefixMarkerLive = session != null && session.isRepairMarkerLive();
             // Set when the replay stops on its turn budget with the repair unfinished,
             // together with the inclusive timestamp the next turn re-opens the scan at.
@@ -9221,47 +9330,48 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     );
                 }
 
-                // Retire the checkpoint state this O3 has unsealed. Clearing the head
-                // puts the post-replay seal on its first-checkpoint path; the follow-up
-                // seal below opens a fresh history, and until then a restart rebuilds
-                // from the view boundary.
+                // Retire the checkpoint state this O3 has unsealed, in two halves. The head
+                // goes here: clearing it puts the post-replay seal on its first-checkpoint
+                // path. The durable half waits for the replacement commit. The replay below
+                // may park on its turn budget, unwind on a fault - a base metadata change the
+                // replay is the first to meet is one - or on the circuit breaker an engine
+                // shutdown trips, or end in a crash, all with nothing committed. Until the
+                // post-replay seal lands, a restart restores from the timeline while one stands
+                // with no live repair marker, and rebuilds from the view boundary otherwise,
+                // and so does the in-place recovery of a fault; that rebuild is what the
+                // restatement guard refuses on a base that has lost rows the view keeps. So
+                // nothing durable moves here.
                 //
-                // The versioned timeline goes with it unless this repair holds a splice
-                // capture, which corrects the same roots precisely instead of dropping
-                // them all.
-                //
-                // First turn only: a repair that yielded already retired what its change
-                // unsealed, and the timeline it may still splice into is the one its
+                // Each route settles the timeline on the turn that finishes the repair, around
+                // its replacement commit, and each of this replay's routes that writes a repair
+                // marker writes it only at that commit, immediately before it:
+                //  - a repair holding a splice capture keeps every root and writes its marker,
+                //    and the splice then re-versions the roots its replay crossed;
+                //  - a localized repair holding none - the view's timeline was retired by an
+                //    earlier repair and no seal has re-opened it, the boundary bound declined
+                //    the splice, or the capture could not open - truncates the timeline at R
+                //    and writes its marker with the truncate. The roots below R stay, because
+                //    the replay rewrites nothing under them;
+                //  - an unlocalized rebuild retires the whole timeline and writes no marker. It
+                //    retires once its replay has ended, just before its replacement commits,
+                //    or straight after its probe when that finds no row to replay. Its replay
+                //    reads the whole base in one turn it may not yield, however old the view
+                //    is.
+                // The timeline a repair may still splice into on a later turn is the one its
                 // capture pinned.
                 //
-                // A whole-view rebuild retires later, once its scan has shown the guard it
-                // restates nothing and just before its replacement commits (see
-                // prepareWholeViewReplacement). Its timeline is the one thing a refusal
-                // must leave standing: the restart that retries the recovery restores from
-                // it whenever it can. Nothing between here and there reads the head or the
-                // timeline, and nothing durable moves. The upgrade rebuild of a view carried
-                // over from an older checkpoint format retires later still, once its
-                // replacement has committed; see the publication tail below.
-                if (!resuming) {
-                    if (timelineCapture == null && localized) {
-                        // Localized repair with no capture to splice through - the view's
-                        // timeline was retired by an earlier repair and no seal has re-opened
-                        // it, or the boundary bound declined it. There is no
-                        // suffix to correct, but the roots below R are still correct.
-                        // Preserve them - keeping the long-term anchors and the checkpoint id
-                        // space - instead of retiring the whole timeline for one near-head
-                        // correction. The durable marker this writes forces a mid-repair
-                        // crash to rebuild from the applied base.
-                        prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, emitLowTs);
-                    } else if (!fullRebuild) {
-                        retireCheckpointStateOnO3(instance, timelineCapture == null);
-                    }
-                    if (session != null) {
-                        // Whatever this turn decided, the session is what carries it to the
-                        // turn that resolves it. The truncate may have retired instead of
-                        // preserving, which takes the marker with it.
-                        session.setRepairMarkerLive(prefixMarkerLive);
-                    }
+                // A whole-view rebuild clears nothing here. prepareWholeViewReplacement clears
+                // its head and retires its timeline once the scan has shown the guard it
+                // restates nothing, just before the replacement commits. Its timeline is the
+                // one thing a refusal must leave standing: the restart that retries the
+                // recovery restores from it whenever it can. Nothing between here and there
+                // reads the head or the timeline, and nothing durable moves. The upgrade
+                // rebuild of a view carried over from an older checkpoint format retires later
+                // still, once its replacement has committed; see the publication tail below.
+                //
+                // First turn only: a repair that yielded cleared the head on its first turn.
+                if (!resuming && !fullRebuild) {
+                    retireCheckpointStateOnO3(instance, false);
                 }
 
                 engine.detachReader(reader);
@@ -9340,6 +9450,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         }
                         hasReplayRow = probeSource.hasNext();
                     }
+                }
+                if (!hasReplayRow && !fullRebuild) {
+                    // An unlocalized rebuild whose probe found no row replays nothing, so the
+                    // retire it owes - after its replay, just before its replacement commits;
+                    // see below - has nothing left to wait for. Taken now, ahead of the pure
+                    // delete that clears the view, or of the watermark advance of a rebuild that
+                    // replaces nothing. Only an unlocalized rebuild can get here: a localized one
+                    // always has a replay row.
+                    retireCheckpointTimeline(instance);
                 }
 
                 if (hasReplayRow) {
@@ -9700,6 +9819,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 // uncommitted in the writer: a refusal unwinds through the
                                 // finally below, which closes the writer and rolls them back.
                                 prepareWholeViewReplacement(instance);
+                            } else if (!localized) {
+                                // The unlocalized rebuild's retire, at the same point and in the
+                                // same order as the whole-view rebuild's above. Its replay is
+                                // over, so no breaker trip, fault or crash inside it can leave the
+                                // view without the timeline its uncommitted replacement has moved
+                                // nothing under; and it still precedes the commit, so a crash
+                                // between the two leaves no root describing output the
+                                // replacement has moved. The rebuild never yields - it holds no
+                                // session - so this is the turn that commits.
+                                retireCheckpointTimeline(instance);
                             }
 
                             // Every candidate root the repair owed is frozen and the runtime
@@ -9852,6 +9981,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                         session.discardDescriptor();
                                         repairBoundaries.clear();
                                         retireCheckpointStateOnO3(instance, true);
+                                    }
+                                } else if (localized) {
+                                    // The prefix truncate a localized repair holding no capture
+                                    // owes, at the same point and for the same reason as the
+                                    // splice's marker above: the commit is the first statement
+                                    // that moves durable output above R. Until here the timeline
+                                    // is the one the pre-repair output belongs to, so a repair
+                                    // that parks, unwinds or is discarded, or a process that
+                                    // crashes, leaves a timeline a restart restores from.
+                                    //
+                                    // The truncate writes its durable marker first and drops the
+                                    // roots at or above R. It retires the timeline instead when no
+                                    // prefix survives, which takes the marker with it.
+                                    prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, emitLowTs);
+                                    if (session != null) {
+                                        session.setRepairMarkerLive(prefixMarkerLive);
                                     }
                                 }
                                 if (sparse) {
@@ -11945,38 +12090,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Re-stamps the runtime's incremental checkpoint baseline with the generation the
-     * truncate just published, for the resume that reused the runtime rather than
-     * restoring it.
-     * <p>
-     * A restore does this itself: it adopts the root it read whenever that root is the
-     * head of the generation it read it from, which after the truncate the anchor is. A
-     * reused runtime never reads anything, so without this it carries the baseline of a
-     * generation the truncate has moved on from, and the seal that closes the repair
-     * falls back to a complete scan of the live domain - the very cost the reuse exists
-     * to avoid, and at repair cadence the dominant cost of an out-of-order view.
-     * <p>
-     * Three conditions, and any one of them missing leaves the baseline alone:
-     * <ul>
-     *     <li>the truncate published, so there is a generation to stamp;</li>
-     *     <li>the boundary it left as head is the anchor this replay reused the runtime
-     *     for, so the root the next seal builds on top of is the one the runtime
-     *     equals;</li>
-     *     <li>the target is already on the incremental path. Stamping clears the
-     *     full-scan flag, so a target that raised it - a compaction, a reset, a
-     *     function that tracks no dirty keys at all - must keep it.</li>
-     * </ul>
-     * The logical-byte baseline carries over unchanged for the same reason the state
-     * does: nothing has touched either since the seal that recorded it.
-     */
-    /**
      * Stamps the runtime with the provisional repair baseline, for the resume that
      * reused the runtime rather than restoring it.
      * <p>
      * A restore does this itself when the caller asks for it. A reused runtime reads
      * nothing, so without this it carries whatever baseline the last publication left,
      * and the chained capture that is about to freeze against it would find no match
-     * and freeze every boundary complete - the very cost the chain exists to avoid.
+     * and freeze every boundary complete - the very cost the chain exists to avoid. The
+     * seal that closes a resume holding no capture reads the same stamp once the
+     * truncate has moved it to the generation it published; see
+     * {@link #adoptTruncatedHeadCheckpointBaseline}.
      * <p>
      * The claim it makes is the one {@link #canReuseRuntimeAnchor} has just proved:
      * the live maps are the anchor root's state, entry for entry. The stamp names no
@@ -12012,7 +12135,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Converts the provisional repair stamp into the generation the splice published,
-     * once it has.
+     * once it has. A resume that truncates instead reaches it through
+     * {@link #adoptTruncatedHeadCheckpointBaseline}.
      * <p>
      * What the runtime holds at this point is the newest root the splice carries plus
      * the keys the replay touched above it, so the stamp moves and the dirty set stays
@@ -12036,6 +12160,28 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    /**
+     * Converts the provisional repair stamp a resume holding no capture carries into the
+     * generation its truncate just published, keeping the keys its replay touched.
+     * <p>
+     * The resume restores the anchor - or reuses a runtime standing at it - under the
+     * provisional stamp, because the anchor is not yet the head of any generation: the
+     * truncate that makes it one runs only at the replacement commit, after the replay.
+     * What the runtime holds then is the anchor's state plus the keys the replay touched,
+     * and the truncated generation's head is the anchor, so the stamp moves and the dirty
+     * set stays - which is what lets the seal that closes the repair freeze those keys
+     * alone rather than the whole live domain.
+     * <p>
+     * Two conditions, and either one missing leaves the stamp where it is, which the next
+     * seal reads as no baseline and answers with a complete scan:
+     * <ul>
+     *     <li>the truncate published, so there is a generation to name;</li>
+     *     <li>the boundary it left as head is this resume's anchor, so the root the next
+     *     seal builds on top of is the one the runtime started the replay from.</li>
+     * </ul>
+     * Only a target still carrying the stamp moves, so one that never took it - a target
+     * that raised the full-scan flag, say - keeps what it has.
+     */
     private void adoptTruncatedHeadCheckpointBaseline(
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
@@ -12047,17 +12193,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 || truncatedHeadCheckpointId != anchorCheckpointId) {
             return;
         }
-        final LiveViewWindow anchorWindow = instance.getAnchorWindow();
-        if (anchorWindow != null && !anchorWindow.isCheckpointFullScanRequired()) {
-            anchorWindow.onCheckpointPersisted(anchorWindow.getCheckpointLogicalStateBytes(), truncatedHeadGeneration);
-        }
-        final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            final WindowFunction function = functions.getQuick(i);
-            if (!function.isCheckpointFullScanRequired()) {
-                function.onCheckpointPersisted(function.getCheckpointLogicalStateBytes(), truncatedHeadGeneration);
-            }
-        }
+        adoptSplicedCheckpointBaseline(instance, windowFactory, truncatedHeadGeneration);
     }
 
     /**

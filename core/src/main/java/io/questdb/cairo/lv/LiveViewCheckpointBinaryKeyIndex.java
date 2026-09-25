@@ -32,9 +32,11 @@ import org.jetbrains.annotations.NotNull;
 import java.util.Arrays;
 
 /**
- * Reusable content index for checkpoint binary keys. The two primitive qualifiers
- * let a caller keep one flat table for several function ordinals and state versions
- * without joining them to the key or allocating a wrapper for each probe.
+ * Reusable content index for checkpoint function identities, the encoded byte arrays a
+ * compiled function names its root by. The two primitive qualifiers let a caller keep one
+ * flat table for several namespaces and versions without joining them to the identity or
+ * allocating a wrapper for each probe. Partition keys never reach it: they are native and
+ * go through {@link LiveViewCheckpointKeyIndex}.
  * <p>
  * Keys are held by reference and must remain immutable while indexed. Values are
  * non-negative integers; {@code -1} is reserved for a missing lookup.

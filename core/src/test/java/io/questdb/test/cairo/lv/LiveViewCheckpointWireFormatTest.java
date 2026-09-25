@@ -239,7 +239,7 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
                     final int[] seen = {0};
                     reader.iterateAll(page.ref(), entry -> {
                         final int i = seen[0]++;
-                        Assert.assertArrayEquals(at + " entry " + i + " [key]", keys[i], entry.getKey());
+                        Assert.assertArrayEquals(at + " entry " + i + " [key]", keys[i], entry.copyKeyForTest());
                         Assert.assertArrayEquals(at + " entry " + i + " [scalar]", scalars[i], entry.getScalarState());
                         Assert.assertEquals(
                                 at + " entry " + i + " [statePageCount]",
@@ -630,7 +630,7 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
                         final int child = i;
                         final long[] seen = {0};
                         reader.iterateAll(childRef, entry -> {
-                            final byte[] key = entry.getKey();
+                            final byte[] key = entry.copyKeyForTest();
                             Assert.assertTrue(
                                     at + ": child " + child + " holds a key below its separator",
                                     compareUnsigned(lowBound, key) <= 0
@@ -650,9 +650,9 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
                     // And the descent itself, from the internal node down: every entry the
                     // children hold, in ascending key order, reached through this page.
                     final ObjList<byte[]> descended = new ObjList<>();
-                    // The visitor hands out the decoded node's own key array, which the reader
-                    // reuses for the next page, so anything kept past the callback is copied.
-                    reader.iterateAll(page.ref(), entry -> descended.add(entry.getKey().clone()));
+                    // The visitor hands out the reader's scratch entry, whose key buffer the
+                    // next entry overwrites, so anything kept past the callback is copied.
+                    reader.iterateAll(page.ref(), entry -> descended.add(entry.copyKeyForTest()));
                     Assert.assertEquals(at + " [entries under the internal node]", entriesBelow, descended.size());
                     for (int i = 1, m = descended.size(); i < m; i++) {
                         Assert.assertTrue(
@@ -665,14 +665,15 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
                     // And the descent's binary search, which is the operation a restore actually
                     // runs: every key the released tree holds has to come back through this
                     // internal node, not merely be reachable by walking every leaf.
-                    final LiveViewCheckpointPartitionMapEntry found = new LiveViewCheckpointPartitionMapEntry();
-                    for (int i = 0, m = descended.size(); i < m; i++) {
-                        final byte[] key = descended.getQuick(i);
-                        Assert.assertTrue(
-                                at + ": the descent must find every key it delivered, at " + i,
-                                reader.find(page.ref(), key, found)
-                        );
-                        Assert.assertArrayEquals(at + " [find " + i + ']', key, found.getKey());
+                    try (LiveViewCheckpointPartitionMapEntry found = new LiveViewCheckpointPartitionMapEntry()) {
+                        for (int i = 0, m = descended.size(); i < m; i++) {
+                            final byte[] key = descended.getQuick(i);
+                            Assert.assertTrue(
+                                    at + ": the descent must find every key it delivered, at " + i,
+                                    LiveViewCheckpointTestKeys.find(reader, page.ref(), key, found)
+                            );
+                            Assert.assertArrayEquals(at + " [find " + i + ']', key, found.copyKeyForTest());
+                        }
                     }
                 }
             }

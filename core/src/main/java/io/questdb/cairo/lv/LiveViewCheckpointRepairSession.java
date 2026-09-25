@@ -116,9 +116,8 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     private boolean isColdKeyedReplayRoute;
     private boolean isKeyedReplayRoute;
     // Whether this repair has a durable LiveViewCheckpointRepairMarker on disk that the
-    // turn finishing it owes a clear. It lives here rather than in the executing turn
-    // because it outlives one: a truncating repair that parks on its budget leaves the
-    // marker behind, and the turn that resumes it is a different call with its own locals.
+    // turn finishing it owes a clear. Only the turn that commits the replacement writes
+    // one, and that turn does not park, so a parked session always reports false here.
     private boolean isRepairMarkerLive;
     private boolean isSuspended;
     // Set when close() abandoned the repair but could not put the overlay back, leaving the
@@ -199,12 +198,12 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         // while AbstractMultiTenantPool answers a second return of either the writer or
         // the pinned reader with "double close". Everything that releases memory sits
         // below them - the pinned base snapshot, the descriptor's mapping and its three
-        // Paths, the overlay's window-state copy charged to the view's MemoryTracker, and
-        // the carryover's state buffers - and a strand there is permanent: close() runs
-        // from paths that have already detached the session, so nothing in the process
-        // still holds it and only a restart reclaims what it kept. discard() is in the
-        // chain for the same reason: a descriptor left on disk reads as a crashed repair
-        // to the next startup sweep.
+        // Paths, the overlay's window-state copy charged to the view's MemoryTracker, the
+        // carryover's state buffers and the plan's copy of the output key domain - and a
+        // strand there is permanent: close() runs from paths that have already detached
+        // the session, so nothing in the process still holds it and only a restart
+        // reclaims what it kept. discard() is in the chain for the same reason: a
+        // descriptor left on disk reads as a crashed repair to the next startup sweep.
         Throwable failure = Misc.freeBestEffort(null, keyedReplay);
         keyedReplay = null;
         failure = Misc.freeBestEffort(failure, capture);
@@ -224,6 +223,9 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         // baselines could name. Dropping them leaves every target on the complete freeze
         // the wipe left it owing, which is the safe direction.
         failure = Misc.freeBestEffort(failure, sealCarryover);
+        // The plan copy of() took owns a native copy of the output key domain, which
+        // nothing else can reach once the session is gone.
+        failure = Misc.freeBestEffort(failure, plan);
         boundaries.clear();
         keyedBoundaryPositions.clear();
         segmentLoop.clear();
@@ -512,7 +514,8 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      * Opens the session over one repair's plan. The plan is copied rather than
      * referenced: the refresh worker refills its own instance on every repair,
      * while a suspended one has to keep the bounds it derived against the
-     * snapshot it pinned.
+     * snapshot it pinned. The copy takes native memory for the output key domain,
+     * so it can fail to allocate, and {@link #close()} frees it.
      */
     public void of(@NotNull LiveViewCheckpointRepairPlan plan) {
         this.plan.copyFrom(plan);
@@ -563,13 +566,12 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     /**
      * Records whether this repair has a live durable repair marker. Only the head-miss
      * replay, the one executor whose session can park, sets the flag and reads it back.
-     * It writes the marker before a prefix truncate, or immediately before the replacement
-     * commit a timeline splice publishes over, and clears it once the post-replay seal - or
-     * the splice itself - has made the timeline consistent again. A truncating repair that
-     * parks on its turn budget leaves the marker on disk, so the flag travels with the
-     * session and the turn that finishes the repair is the one that resolves it. A splicing
-     * head miss has written none while its replay runs or while it is parked: nothing
-     * durable has moved under its roots yet.
+     * It writes the marker immediately before its replacement commit, ahead of the prefix
+     * truncate or the timeline splice that commit publishes over, and clears it once the
+     * post-replay seal - or the splice itself - has made the timeline consistent again. A
+     * head miss has written none while its replay runs or while it is parked, whichever of
+     * the two it takes: nothing durable has moved yet, so a parked repair that is discarded
+     * or ends in a crash leaves the timeline a restart restores from.
      * <p>
      * A predecessor resume never sets the flag. It never parks, so it tracks its marker in
      * a local of its own, and its session reports false here even while that marker is on

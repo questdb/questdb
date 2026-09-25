@@ -78,10 +78,10 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
     @Test
     public void testSealedChunksAreSharedAndOnlyTheAppendedTailIsWritten() throws Exception {
         assertMemoryLeak(() -> {
-            final LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
-            final LiveViewCheckpointPartitionMapEntry second = new LiveViewCheckpointPartitionMapEntry();
             final long[] secondSegmentBytes = new long[1];
-            try (Catalogue directory = new Catalogue()) {
+            try (Catalogue directory = new Catalogue();
+                 LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
+                 LiveViewCheckpointPartitionMapEntry second = new LiveViewCheckpointPartitionMapEntry()) {
                 writeInitial(first, directory, 1, 4_106);
 
                 try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
@@ -93,7 +93,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                     builder.append(writer, 4_106_000, Double.doubleToRawLongBits(10_000.0));
                     builder.append(writer, 4_107_000, Double.doubleToRawLongBits(-0.0));
                     builder.append(writer, 4_108_000, Double.doubleToRawLongBits(10_002.0));
-                    builder.freeze(writer, KEY, Double.doubleToRawLongBits(-0.0), 0, 0, 0, 4_104, second);
+                    LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, Double.doubleToRawLongBits(-0.0), 0, 0, 0, 4_104, second);
                     secondSegmentBytes[0] = writer.commit();
                     directory.addSegment(2, secondSegmentBytes[0]);
                 }
@@ -168,10 +168,10 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
             final long nanBits = 0x7ff8_dead_beef_1234L;
             final LongList timestamps = new LongList();
             final LongList values = new LongList();
-            final LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
-            final LiveViewCheckpointPartitionMapEntry second = new LiveViewCheckpointPartitionMapEntry();
-            final LiveViewCheckpointPartitionMapEntry third = new LiveViewCheckpointPartitionMapEntry();
-            try (Catalogue directory = new Catalogue()) {
+            try (Catalogue directory = new Catalogue();
+                 LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
+                 LiveViewCheckpointPartitionMapEntry second = new LiveViewCheckpointPartitionMapEntry();
+                 LiveViewCheckpointPartitionMapEntry third = new LiveViewCheckpointPartitionMapEntry()) {
                 try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
                      LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
                      Path dir = new Path()) {
@@ -184,7 +184,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                         timestamps.add(ts);
                         values.add(bits);
                     }
-                    builder.freeze(writer, KEY, 0L, 0, 0, 0, timestamps.size(), first);
+                    LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 0L, 0, 0, 0, timestamps.size(), first);
                     directory.addSegment(50, writer.commit());
                 }
 
@@ -200,7 +200,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                         timestamps.add(ts);
                         values.add(nanBits);
                     }
-                    builder.freeze(writer, KEY, 0L, 0, 0, 0, timestamps.size(), second);
+                    LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 0L, 0, 0, 0, timestamps.size(), second);
                     directory.addSegment(51, writer.commit());
                 }
 
@@ -224,7 +224,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                         timestamps.add(ts);
                         values.add(bits);
                     }
-                    builder.freeze(writer, KEY, 0L, 0, 0, 0, timestamps.size(), third);
+                    LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 0L, 0, 0, 0, timestamps.size(), third);
                     directory.addSegment(52, writer.commit());
                 }
 
@@ -271,11 +271,15 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             final LongList timestamps = new LongList();
             final LongList values = new LongList();
-            try (Catalogue directory = new Catalogue()) {
+            try (Catalogue directory = new Catalogue();
+                 LiveViewCheckpointPartitionMapEntry even = new LiveViewCheckpointPartitionMapEntry();
+                 LiveViewCheckpointPartitionMapEntry odd = new LiveViewCheckpointPartitionMapEntry()) {
+                // Each boundary freezes into the entry the one before it did not use, so
+                // the builder still reads the previous root while the next one is sealed.
                 LiveViewCheckpointPartitionMapEntry root = null;
                 for (int boundary = 0; boundary < boundaries; boundary++) {
                     final long segmentId = boundary + 1;
-                    final LiveViewCheckpointPartitionMapEntry sealed = new LiveViewCheckpointPartitionMapEntry();
+                    final LiveViewCheckpointPartitionMapEntry sealed = root == even ? odd : even;
                     try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
                          LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
                          Path dir = new Path()) {
@@ -292,7 +296,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                             values.add(bits);
                             builder.append(writer, ts, bits);
                         }
-                        builder.freeze(writer, KEY, 0L, 0, 0, 0, timestamps.size(), sealed);
+                        LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 0L, 0, 0, 0, timestamps.size(), sealed);
                         directory.addSegment(segmentId, writer.commit());
                     }
                     root = sealed;
@@ -437,26 +441,26 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
     @Test
     public void testMalformedMetadataAndDataAreRejected() throws Exception {
         assertMemoryLeak(() -> {
-            final LiveViewCheckpointPartitionMapEntry valid = new LiveViewCheckpointPartitionMapEntry();
-            try (Catalogue directory = new Catalogue()) {
+            try (Catalogue directory = new Catalogue();
+                 LiveViewCheckpointPartitionMapEntry valid = new LiveViewCheckpointPartitionMapEntry()) {
                 writeInitial(valid, directory, 30, 3);
 
                 final byte[] shortScalar = Arrays.copyOf(
                         valid.getScalarState(),
                         LiveViewCheckpointRangeRingStateReader.scalarStateBytes(1) - 1
                 );
-                assertInvalid(entry(shortScalar, refs(valid)), directory, false, "scalar state size mismatch");
+                assertInvalid(shortScalar, refs(valid), directory, false, "scalar state size mismatch");
 
                 final byte[] badVersion = Arrays.copyOf(valid.getScalarState(), valid.getScalarState().length);
                 badVersion[0] = 3;
-                assertInvalid(entry(badVersion, refs(valid)), directory, false, "format version mismatch");
+                assertInvalid(badVersion, refs(valid), directory, false, "format version mismatch");
 
                 final byte[] badHead = Arrays.copyOf(valid.getScalarState(), valid.getScalarState().length);
                 badHead[4] = 127;
-                assertInvalid(entry(badHead, refs(valid)), directory, false, "logical chunk bounds invalid");
+                assertInvalid(badHead, refs(valid), directory, false, "logical chunk bounds invalid");
 
                 final LiveViewCheckpointStatePageRef[] oddRefs = Arrays.copyOf(refs(valid), 1);
-                assertInvalid(entry(valid.getScalarState(), oddRefs), directory, false, "reference count invalid");
+                assertInvalid(valid.getScalarState(), oddRefs, directory, false, "reference count invalid");
 
                 final LiveViewCheckpointStatePageRef[] badKind = refs(valid);
                 final LiveViewCheckpointStatePageRef timestampRef = badKind[0];
@@ -465,7 +469,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                         timestampRef.getDecodedLength(), LiveViewCheckpointRangeRingStateReader.DOUBLE_VALUE_PAGE_KIND,
                         timestampRef.getCodec(), timestampRef.getRowCount(), timestampRef.getFlags()
                 );
-                assertInvalid(entry(valid.getScalarState(), badKind), directory, false, "timestamp page kind or codec invalid");
+                assertInvalid(valid.getScalarState(), badKind, directory, false, "timestamp page kind or codec invalid");
 
                 final LiveViewCheckpointStatePageRef[] mismatched = refs(valid);
                 final LiveViewCheckpointStatePageRef valueRef = mismatched[1];
@@ -473,7 +477,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                         valueRef.getSegmentId(), valueRef.getOffset(), valueRef.getStoredLength(),
                         2 * Long.BYTES, valueRef.getPageKind(), valueRef.getCodec(), 2, valueRef.getFlags()
                 );
-                assertInvalid(entry(valid.getScalarState(), mismatched), directory, false, "row counts differ");
+                assertInvalid(valid.getScalarState(), mismatched, directory, false, "row counts differ");
 
                 // A regular three-row cadence fits the plain FoR block, and the
                 // block's own embedded count is the first thing the checked decoder
@@ -486,11 +490,12 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                 // instead: this ring's timestamps are far enough apart that the page
                 // stores raw, so flipping one word makes the sequence decrease
                 // without disturbing anything the decoder validates.
-                final LiveViewCheckpointPartitionMapEntry sparse = new LiveViewCheckpointPartitionMapEntry();
-                writeInitial(sparse, directory, 31, 3, 1L << 40);
-                Assert.assertEquals(LiveViewCheckpointStateCodec.RAW_64, sparse.getStatePageRef(0).getCodec());
-                corruptDataPage(directory, 31, sparse.getStatePageRef(0).getOffset(), Long.BYTES, -1);
-                assertInvalid(sparse, directory, true, "rows are not canonical");
+                try (LiveViewCheckpointPartitionMapEntry sparse = new LiveViewCheckpointPartitionMapEntry()) {
+                    writeInitial(sparse, directory, 31, 3, 1L << 40);
+                    Assert.assertEquals(LiveViewCheckpointStateCodec.RAW_64, sparse.getStatePageRef(0).getCodec());
+                    corruptDataPage(directory, 31, sparse.getStatePageRef(0).getOffset(), Long.BYTES, -1);
+                    assertInvalid(sparse, directory, true, "rows are not canonical");
+                }
             }
         });
     }
@@ -506,9 +511,10 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
             final List<LongList> valueSnapshots = new ArrayList<>();
             long nextTimestamp = 0;
             try (Catalogue directory = new Catalogue()) {
-                LiveViewCheckpointPartitionMapEntry previous = new LiveViewCheckpointPartitionMapEntry();
+                LiveViewCheckpointPartitionMapEntry previous = null;
                 for (int generation = 0; generation < 40; generation++) {
                     final LiveViewCheckpointPartitionMapEntry next = new LiveViewCheckpointPartitionMapEntry();
+                    roots.add(next);
                     final int drop = timestamps.size() == 0 ? 0 : rnd.nextInt(timestamps.size() / 3 + 1);
                     for (int i = 0; i < drop; i++) {
                         timestamps.removeIndex(0);
@@ -532,16 +538,19 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                             timestamps.add(nextTimestamp);
                             values.add(Double.doubleToRawLongBits(value));
                         }
-                        builder.freeze(writer, KEY, Double.doubleToRawLongBits(generation + 0.125), 0, 0, 0, timestamps.size(), next);
+                        LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, Double.doubleToRawLongBits(generation + 0.125), 0, 0, 0, timestamps.size(), next);
                         directory.addSegment(100 + generation, writer.commit());
                     }
-                    roots.add(next);
                     timestampSnapshots.add(new LongList(timestamps));
                     valueSnapshots.add(new LongList(values));
                     assertRestored(next, directory, timestamps, values);
                     final int old = rnd.nextInt(roots.size());
                     assertRestored(roots.get(old), directory, timestampSnapshots.get(old), valueSnapshots.get(old));
                     previous = next;
+                }
+            } finally {
+                for (int i = 0, n = roots.size(); i < n; i++) {
+                    roots.get(i).close();
                 }
             }
         });
@@ -559,11 +568,11 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
             final int initialRows = 4_106;
             final int dropRows = 5;
             final int appendRows = 3;
-            final LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
-            final LiveViewCheckpointPartitionMapEntry second = new LiveViewCheckpointPartitionMapEntry();
             final LongList firstTimestamps = new LongList();
             final long[] secondSegmentBytes = new long[1];
-            try (Catalogue directory = new Catalogue()) {
+            try (Catalogue directory = new Catalogue();
+                 LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
+                 LiveViewCheckpointPartitionMapEntry second = new LiveViewCheckpointPartitionMapEntry()) {
                 try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
                      LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
                      Path dir = new Path()) {
@@ -576,7 +585,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                         builder.append(writer, ts);
                         firstTimestamps.add(ts);
                     }
-                    builder.freeze(writer, KEY, 0L, 0, 0, 0, initialRows, first);
+                    LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 0L, 0, 0, 0, initialRows, first);
                     directory.addSegment(40, writer.commit());
                 }
 
@@ -595,7 +604,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                         builder.append(writer, ts);
                         secondTimestamps.add(ts);
                     }
-                    builder.freeze(writer, KEY, 0L, 0, 0, 0, secondTimestamps.size(), second);
+                    LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 0L, 0, 0, 0, secondTimestamps.size(), second);
                     secondSegmentBytes[0] = writer.commit();
                     directory.addSegment(41, secondSegmentBytes[0]);
                 }
@@ -723,16 +732,16 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
     @Test
     public void testWholeChunkDropReusesRemainingTailWithoutWritingData() throws Exception {
         assertMemoryLeak(() -> {
-            final LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
-            final LiveViewCheckpointPartitionMapEntry second = new LiveViewCheckpointPartitionMapEntry();
-            try (Catalogue directory = new Catalogue()) {
+            try (Catalogue directory = new Catalogue();
+                 LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
+                 LiveViewCheckpointPartitionMapEntry second = new LiveViewCheckpointPartitionMapEntry()) {
                 writeInitial(first, directory, 20, LiveViewCheckpointStateCodec.CHUNK_ROWS + 12);
                 try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
                      LiveViewCheckpointDataSegmentWriter unopenedWriter = new LiveViewCheckpointDataSegmentWriter(configuration);
                      Path dir = new Path()) {
                     builder.of(first, LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 1);
                     builder.dropHeadRows(LiveViewCheckpointStateCodec.CHUNK_ROWS + 5L);
-                    builder.freeze(unopenedWriter, KEY, Double.doubleToRawLongBits(1.25), 0, 0, 0, 7, second);
+                    LiveViewCheckpointTestKeys.freeze(builder, unopenedWriter, KEY, Double.doubleToRawLongBits(1.25), 0, 0, 0, 7, second);
                 }
                 Assert.assertEquals(2, second.getStatePageCount());
                 assertRefEquals(first.getStatePageRef(2), second.getStatePageRef(0));
@@ -753,11 +762,11 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
         final int appendRows = 3;
         final long firstSegment = longColumn ? 60 : 62;
         final long secondSegment = firstSegment + 1;
-        final LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
-        final LiveViewCheckpointPartitionMapEntry second = new LiveViewCheckpointPartitionMapEntry();
         final LongList firstTimestamps = new LongList();
         final LongList firstValues = new LongList();
-        try (Catalogue directory = new Catalogue()) {
+        try (Catalogue directory = new Catalogue();
+             LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
+             LiveViewCheckpointPartitionMapEntry second = new LiveViewCheckpointPartitionMapEntry()) {
             try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
                  LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
                  Path dir = new Path()) {
@@ -772,7 +781,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                     firstTimestamps.add(ts);
                     firstValues.add(valueBits);
                 }
-                builder.freeze(writer, KEY, 0L, 0, 0, 0, initialRows, first);
+                LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 0L, 0, 0, 0, initialRows, first);
                 directory.addSegment(firstSegment, writer.commit());
             }
 
@@ -795,7 +804,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                     secondTimestamps.add(ts);
                     secondValues.add(valueBits);
                 }
-                builder.freeze(writer, KEY, 0L, 0, 0, 0, secondTimestamps.size(), second);
+                LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 0L, 0, 0, 0, secondTimestamps.size(), second);
                 directory.addSegment(secondSegment, writer.commit());
             }
 
@@ -831,6 +840,18 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
     }
 
     private static void assertInvalid(
+            byte[] scalar,
+            LiveViewCheckpointStatePageRef[] refs,
+            Catalogue directory,
+            boolean readPayload,
+            CharSequence message
+    ) {
+        try (LiveViewCheckpointPartitionMapEntry entry = entry(scalar, refs)) {
+            assertInvalid(entry, directory, readPayload, message);
+        }
+    }
+
+    private static void assertInvalid(
             LiveViewCheckpointPartitionMapEntry entry,
             Catalogue directory,
             boolean readPayload,
@@ -861,8 +882,8 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
      * value kind nor takes the payload as a {@code long[]}.
      */
     private static void assertLongValueRingRoundTrips(long[] payload, long segmentId, int expectedValueCodec) {
-        final LiveViewCheckpointPartitionMapEntry root = new LiveViewCheckpointPartitionMapEntry();
-        try (Catalogue directory = new Catalogue()) {
+        try (Catalogue directory = new Catalogue();
+             LiveViewCheckpointPartitionMapEntry root = new LiveViewCheckpointPartitionMapEntry()) {
             try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
                  LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
                  Path dir = new Path()) {
@@ -871,7 +892,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                 for (int i = 0; i < payload.length; i++) {
                     builder.append(writer, i * 1_000L, payload[i]);
                 }
-                builder.freeze(writer, KEY, 0L, 0, 0, 0, payload.length, root);
+                LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 0L, 0, 0, 0, payload.length, root);
                 directory.addSegment(segmentId, writer.commit());
             }
             for (int i = 1; i < root.getStatePageCount(); i += 2) {
@@ -1012,8 +1033,8 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
             int expectedValueCodec
     ) {
         final int words = LiveViewCheckpointRangeRingStateReader.valueWords(valueKind);
-        final LiveViewCheckpointPartitionMapEntry root = new LiveViewCheckpointPartitionMapEntry();
-        try (Catalogue directory = new Catalogue()) {
+        try (Catalogue directory = new Catalogue();
+             LiveViewCheckpointPartitionMapEntry root = new LiveViewCheckpointPartitionMapEntry()) {
             try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
                  LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
                  Path dir = new Path()) {
@@ -1034,7 +1055,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                         );
                     }
                 }
-                builder.freeze(writer, KEY, 0L, 0, 0, 0, timestamps.size(), root);
+                LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 0L, 0, 0, 0, timestamps.size(), root);
                 directory.addSegment(segmentId, writer.commit());
             }
             Assert.assertTrue(
@@ -1146,11 +1167,11 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
         final long secondSegment = firstSegment + 1;
         final int maxChunkRows = LiveViewCheckpointRangeRingStateReader.maxChunkRows(valueKind);
         Assert.assertEquals(LiveViewCheckpointStateCodec.CHUNK_ROWS / words, maxChunkRows);
-        final LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
-        final LiveViewCheckpointPartitionMapEntry second = new LiveViewCheckpointPartitionMapEntry();
         final LongList firstTimestamps = new LongList();
         final LongList firstWords = new LongList();
-        try (Catalogue directory = new Catalogue()) {
+        try (Catalogue directory = new Catalogue();
+             LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
+             LiveViewCheckpointPartitionMapEntry second = new LiveViewCheckpointPartitionMapEntry()) {
             try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
                  LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
                  Path dir = new Path()) {
@@ -1160,7 +1181,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                     final long ts = i * 1_000L;
                     appendWideRow(builder, writer, ts, initialRows - i, words, firstTimestamps, firstWords);
                 }
-                builder.freeze(writer, KEY, 1, 2, 3, 4, initialRows, first);
+                LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 1, 2, 3, 4, initialRows, first);
                 directory.addSegment(firstSegment, writer.commit());
             }
 
@@ -1182,7 +1203,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                     final long ts = (initialRows + i) * 1_000L;
                     appendWideRow(builder, writer, ts, -i - 1, words, secondTimestamps, secondWords);
                 }
-                builder.freeze(writer, KEY, 5, 6, 7, 8, secondTimestamps.size(), second);
+                LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 5, 6, 7, 8, secondTimestamps.size(), second);
                 directory.addSegment(secondSegment, writer.commit());
             }
 
@@ -1298,7 +1319,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
             byte[] scalar,
             LiveViewCheckpointStatePageRef[] refs
     ) {
-        return new LiveViewCheckpointPartitionMapEntry().of(KEY, scalar, refs);
+        return LiveViewCheckpointTestKeys.of(new LiveViewCheckpointPartitionMapEntry(), KEY, scalar, refs);
     }
 
     private static LiveViewCheckpointStatePageRef[] refs(LiveViewCheckpointPartitionMapEntry entry) {
@@ -1339,7 +1360,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
             for (int i = 0; i < rows; i++) {
                 builder.append(writer, i * step, Double.doubleToRawLongBits(i + 0.25));
             }
-            builder.freeze(writer, KEY, Double.doubleToRawLongBits(42.5), 0, 0, 0, rows, out);
+            LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, Double.doubleToRawLongBits(42.5), 0, 0, 0, rows, out);
             directory.addSegment(segmentId, writer.commit());
         }
     }

@@ -24,8 +24,12 @@
 
 package io.questdb.test.cairo.lv;
 
+import com.sun.management.ThreadMXBean;
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
+import io.questdb.cairo.lv.LiveViewCheckpointKeyedReplay;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
@@ -36,15 +40,27 @@ import io.questdb.cairo.lv.LiveViewCheckpointWindowRoot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.std.AbstractIntHashSet;
+import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.NumericException;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -73,7 +89,17 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
     private static final int ACCOUNTS = 8;
+    private static final String ACCOUNT_PREFIX = "acct-";
+    // A bound on the measured arms together that does not grow with the key count: the
+    // tables a wide domain restarts from on every arm fit in it, one object per key of an
+    // ARM_KEY_DOMAIN-wide domain does not.
+    private static final long ARM_ALLOCATION_LIMIT_BYTES = 16 * 1024;
+    private static final int ARM_KEY_DOMAIN = 4_096;
+    private static final int ARM_ROUNDS = 4;
     private static final int ROWS_PER_ACCOUNT_PER_DAY = 10;
+    // The default cairo.live.view.checkpoint.repair.scan.max.keys: the widest key domain a
+    // keyed repair takes at the default budget.
+    private static final int WIDE_KEY_DOMAIN = 100_000;
 
     @Test
     public void testABoundaryTheKeyedScanNeverCrossesKeepsItsOwnPosition() throws Exception {
@@ -915,6 +941,156 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
         assertAKeyBudgetAtOrBelowZeroIsUnlimited(-4_294_967_295L);
     }
 
+    @Test
+    public void testANarrowRepairAfterAWideOneClearsTablesSizedForItsOwnKeys() throws Exception {
+        // The cost contract of the worker's keyed replay scratch. A wide repair - a
+        // correction touching a whole key budget's worth of accounts - grows the three key
+        // tables to hold its domain, and the worker's one replay serves every later keyed
+        // repair of every view on it. The refresh job clears it at least twice per repaired
+        // segment, keyed or not, and a clear sweeps the whole table, so a table left at the
+        // wide repair's size charges every one of those clears for the widest domain the
+        // worker ever armed. A narrow repair that follows must work on tables no larger than
+        // the ones a fresh worker would build for the same keys.
+        assertMemoryLeak(() -> {
+            final ArrayColumnTypes checkpointKeyTypes = new ArrayColumnTypes();
+            checkpointKeyTypes.add(ColumnType.STRING);
+            final AccountSymbolTable symbols = new AccountSymbolTable();
+            final SymbolTableCursor storedRows = new SymbolTableCursor(symbols);
+            final IntList wideKeys = new IntList();
+            for (int key = 0; key < WIDE_KEY_DOMAIN; key++) {
+                wideKeys.add(key);
+            }
+            final IntList narrowKeys = new IntList();
+            narrowKeys.add(1);
+            narrowKeys.add(2);
+            try (
+                    LiveViewCheckpointKeyedReplay replay = new LiveViewCheckpointKeyedReplay();
+                    LiveViewCheckpointKeyedReplay fresh = new LiveViewCheckpointKeyedReplay()
+            ) {
+                Assert.assertTrue(replay.arm(0, symbols, checkpointKeyTypes, wideKeys, true));
+                Assert.assertTrue(replay.bindStoredRows(storedRows, 0, 1));
+                final int[] wideSlots = keyTableSlots(replay);
+                for (int i = 0; i < wideSlots.length; i++) {
+                    Assert.assertTrue(
+                            "the wide repair must have grown table " + i + " past its keys, or the case covers nothing",
+                            wideSlots[i] > WIDE_KEY_DOMAIN
+                    );
+                }
+                // The refresh job's sequence around one segment: the clear in the finally of
+                // the wide segment, then the clear ahead of the next segment's gate.
+                replay.closeStoredRows();
+                replay.clear();
+                replay.clear();
+
+                Assert.assertTrue(replay.arm(0, symbols, checkpointKeyTypes, narrowKeys, false));
+                Assert.assertTrue(replay.bindStoredRows(storedRows, 0, 1));
+                Assert.assertTrue(fresh.arm(0, symbols, checkpointKeyTypes, narrowKeys, false));
+                Assert.assertTrue(fresh.bindStoredRows(storedRows, 0, 1));
+                // All three at once, so a failure names every table still at the wide size.
+                Assert.assertEquals(
+                        "a narrow repair after a wide one must work on tables sized for its own keys"
+                                + " [storedSymbolKeys, outputKeys]",
+                        Arrays.toString(keyTableSlots(fresh)),
+                        Arrays.toString(keyTableSlots(replay))
+                );
+                // Whatever the tables were, the narrow repair's domain is its own.
+                Assert.assertEquals(2, replay.getOutputKeys().size());
+                Assert.assertEquals(2, replay.getBaseSymbolKeys().size());
+                Assert.assertEquals(1, replay.getBaseSymbolKeys().getQuick(0));
+                Assert.assertEquals(2, replay.getBaseSymbolKeys().getQuick(1));
+                replay.closeStoredRows();
+                fresh.closeStoredRows();
+            }
+        });
+    }
+
+    @Test
+    public void testArmingAWideDomainAllocatesNoHeapPerKey() throws Exception {
+        // Arming resolves every key of Q into the encoding a checkpoint root keys by, once
+        // per keyed segment repair and up to the scan key budget wide. A String or an
+        // encoded array per member charges each of those repairs heap in proportion to the
+        // domain, so the measured arms must come out the same size whatever the key count.
+        assertMemoryLeak(() -> {
+            final ArrayColumnTypes checkpointKeyTypes = new ArrayColumnTypes();
+            checkpointKeyTypes.add(ColumnType.STRING);
+            final PrecomputedAccountSymbolTable symbols = new PrecomputedAccountSymbolTable(ARM_KEY_DOMAIN);
+            final IntList keys = new IntList();
+            for (int key = 0; key < ARM_KEY_DOMAIN; key++) {
+                keys.add(key);
+            }
+            try (
+                    TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope();
+                    LiveViewCheckpointKeyedReplay replay = new LiveViewCheckpointKeyedReplay()
+            ) {
+                final ThreadMXBean threadMXBean = scope.getBean();
+                // Two warm-up arms, so the lists the domain reuses have reached its width
+                // and the class paths are resolved before the measured window.
+                Assert.assertTrue(replay.arm(0, symbols, checkpointKeyTypes, keys, true));
+                Assert.assertTrue(replay.arm(0, symbols, checkpointKeyTypes, keys, true));
+
+                final long threadId = Thread.currentThread().threadId();
+                final long before = threadMXBean.getThreadAllocatedBytes(threadId);
+                for (int round = 0; round < ARM_ROUNDS; round++) {
+                    Assert.assertTrue(replay.arm(0, symbols, checkpointKeyTypes, keys, true));
+                }
+                final long allocated = threadMXBean.getThreadAllocatedBytes(threadId) - before;
+
+                Assert.assertEquals("every key plus the null one", ARM_KEY_DOMAIN + 1, replay.getOutputKeys().size());
+                Assert.assertTrue(
+                        ARM_ROUNDS + " arms of a " + ARM_KEY_DOMAIN + "-key domain allocated " + allocated
+                                + " heap bytes; arming must not allocate per key",
+                        allocated < ARM_ALLOCATION_LIMIT_BYTES
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testBindingStoredRowsResolvesEveryKeyThroughTheViewsOwnMap() throws Exception {
+        // The merge drops a stored row whose key the replay recomputes, and the view's rows
+        // carry the view's own symbol ids rather than the base's. Binding therefore resolves
+        // every value of Q in the view's map, and a value the view never stored is simply
+        // absent there. Non-ASCII values have to resolve exactly like ASCII ones - a decode
+        // that mangled a UTF-16 unit would silently keep a superseded row - and the null key
+        // resolves to the null id on both sides.
+        assertMemoryLeak(() -> {
+            final ArrayColumnTypes checkpointKeyTypes = new ArrayColumnTypes();
+            checkpointKeyTypes.add(ColumnType.STRING);
+            final ListSymbolTable baseSymbols = new ListSymbolTable(
+                    "acct-1", "東京", "zürich", "ÿĀ￿", "pair-😀", "", "only-in-base"
+            );
+            // The view's map names the same strings under other ids, in another order, and
+            // does not name the base's last value at all.
+            final ListSymbolTable storedSymbols = new ListSymbolTable(
+                    "x", "pair-😀", "", "zürich", "ÿĀ￿", "東京", "acct-1"
+            );
+            final IntList keys = new IntList();
+            for (int key = 0; key < 7; key++) {
+                keys.add(key);
+            }
+            try (LiveViewCheckpointKeyedReplay replay = new LiveViewCheckpointKeyedReplay()) {
+                for (int pass = 0; pass < 2; pass++) {
+                    final boolean hasNullKey = pass == 0;
+                    Assert.assertTrue(replay.arm(0, baseSymbols, checkpointKeyTypes, keys, hasNullKey));
+                    Assert.assertTrue(replay.bindStoredRows(new SymbolTableCursor(storedSymbols), 0, 1));
+                    final IntHashSet stored =
+                            (IntHashSet) fieldOf(LiveViewCheckpointKeyedReplay.class, "storedSymbolKeys", replay);
+                    Assert.assertEquals(hasNullKey ? 7 : 6, stored.size());
+                    Assert.assertEquals(hasNullKey, stored.contains(SymbolTable.VALUE_IS_NULL));
+                    for (int storedKey = 1; storedKey < 7; storedKey++) {
+                        Assert.assertTrue(
+                                "stored id " + storedKey + " (" + storedSymbols.valueOf(storedKey) + ") must resolve",
+                                stored.contains(storedKey)
+                        );
+                    }
+                    Assert.assertFalse("a value the base never carried must not resolve", stored.contains(0));
+                    Assert.assertEquals(hasNullKey ? 8 : 7, replay.getOutputKeys().size());
+                    replay.closeStoredRows();
+                }
+            }
+        });
+    }
+
     /**
      * Turns the keyed route on, and prices one index open at one base row.
      * <p>
@@ -1391,9 +1567,214 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
     }
 
+    private static Object fieldOf(Class<?> owner, String name, Object target) throws ReflectiveOperationException {
+        final Field field = owner.getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(target);
+    }
+
+    /**
+     * The slot counts of the replay's two key tables - storedSymbolKeys and outputKeys -
+     * which is what each clear of that table sweeps. Read afresh on every call so that an
+     * assertion never stands on a table the replay has since replaced.
+     */
+    private static int[] keyTableSlots(LiveViewCheckpointKeyedReplay replay) throws ReflectiveOperationException {
+        final Object storedSymbolKeys = fieldOf(LiveViewCheckpointKeyedReplay.class, "storedSymbolKeys", replay);
+        return new int[]{
+                ((int[]) fieldOf(AbstractIntHashSet.class, "keys", storedSymbolKeys)).length,
+                replay.getOutputKeys().getSlotCount()
+        };
+    }
+
     private LiveViewInstance viewInstance() {
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         Assert.assertNotNull("live view 'lv' must be registered", instance);
         return instance;
+    }
+
+    /**
+     * A symbol map naming key {@code n} {@code acct-n}, for both the base reader a keyed
+     * replay arms against and the view's own map its merge resolves the same values in.
+     */
+    private static final class AccountSymbolTable implements StaticSymbolTable {
+        @Override
+        public boolean containsNullValue() {
+            return false;
+        }
+
+        @Override
+        public int getSymbolCount() {
+            return WIDE_KEY_DOMAIN;
+        }
+
+        @Override
+        public int keyOf(CharSequence value) {
+            if (value == null) {
+                return SymbolTable.VALUE_IS_NULL;
+            }
+            try {
+                final int key = Numbers.parseInt(value, ACCOUNT_PREFIX.length(), value.length());
+                return key < WIDE_KEY_DOMAIN ? key : SymbolTable.VALUE_NOT_FOUND;
+            } catch (NumericException e) {
+                return SymbolTable.VALUE_NOT_FOUND;
+            }
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            return key > -1 && key < WIDE_KEY_DOMAIN ? ACCOUNT_PREFIX + key : null;
+        }
+    }
+
+    /**
+     * A symbol map naming each key by the value at its index, and the null key by null.
+     */
+    private static final class ListSymbolTable implements StaticSymbolTable {
+        private final ObjList<String> values = new ObjList<>();
+
+        private ListSymbolTable(String... values) {
+            for (String value : values) {
+                this.values.add(value);
+            }
+        }
+
+        @Override
+        public boolean containsNullValue() {
+            return false;
+        }
+
+        @Override
+        public int getSymbolCount() {
+            return values.size();
+        }
+
+        @Override
+        public int keyOf(CharSequence value) {
+            if (value == null) {
+                return SymbolTable.VALUE_IS_NULL;
+            }
+            for (int key = 0, n = values.size(); key < n; key++) {
+                if (Chars.equals(values.getQuick(key), value)) {
+                    return key;
+                }
+            }
+            return SymbolTable.VALUE_NOT_FOUND;
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            return key > -1 && key < values.size() ? values.getQuick(key) : null;
+        }
+    }
+
+    /**
+     * {@link AccountSymbolTable} over a narrower domain whose values exist before the case
+     * measures anything, so resolving a key allocates nothing on the symbol map's side.
+     */
+    private static final class PrecomputedAccountSymbolTable implements StaticSymbolTable {
+        private final ObjList<String> values = new ObjList<>();
+
+        private PrecomputedAccountSymbolTable(int keyCount) {
+            for (int key = 0; key < keyCount; key++) {
+                values.add(ACCOUNT_PREFIX + key);
+            }
+        }
+
+        @Override
+        public boolean containsNullValue() {
+            return false;
+        }
+
+        @Override
+        public int getSymbolCount() {
+            return values.size();
+        }
+
+        @Override
+        public int keyOf(CharSequence value) {
+            if (value == null) {
+                return SymbolTable.VALUE_IS_NULL;
+            }
+            try {
+                final int key = Numbers.parseInt(value, ACCOUNT_PREFIX.length(), value.length());
+                return key < values.size() ? key : SymbolTable.VALUE_NOT_FOUND;
+            } catch (NumericException e) {
+                return SymbolTable.VALUE_NOT_FOUND;
+            }
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            return key > -1 && key < values.size() ? values.getQuick(key) : null;
+        }
+    }
+
+    /**
+     * The view's stored rows as far as binding a merge reads them: the key column's symbol
+     * map, and no row.
+     */
+    private static final class SymbolTableCursor implements RecordCursor {
+        private final StaticSymbolTable symbols;
+
+        private SymbolTableCursor(StaticSymbolTable symbols) {
+            this.symbols = symbols;
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public Record getRecord() {
+            return null;
+        }
+
+        @Override
+        public Record getRecordB() {
+            return null;
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return symbols;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return false;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+        }
+
+        @Override
+        public long size() {
+            return 0;
+        }
+
+        @Override
+        public void toTop() {
+        }
     }
 }

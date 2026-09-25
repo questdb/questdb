@@ -26,8 +26,13 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.lv.LiveViewCheckpointMutationArena;
+import io.questdb.cairo.lv.LiveViewCheckpointStatePageRef;
 import io.questdb.std.IntObjHashMap;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.test.tools.LimitedMemoryTracker;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -37,11 +42,13 @@ import org.junit.Test;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Arrays;
 
 public class LiveViewCheckpointMutationArenaTest {
     // The widest key or scalar one mutation may carry.
     private static final int MAX_FIELD_BYTES = 1 << 20;
     private static final byte[] NO_BYTES = new byte[0];
+    private static final LiveViewCheckpointStatePageRef[] NO_REFS = new LiveViewCheckpointStatePageRef[0];
 
     @Test
     public void testArenaGrowsPastTwoGiBUntilTheTrackerLimit() throws Exception {
@@ -61,15 +68,15 @@ public class LiveViewCheckpointMutationArenaTest {
                     // Descending prefixes, so the sort has to move every entry.
                     for (int i = 0; i < fillerCount; i++) {
                         putIntKey(key, fillerCount - i);
-                        arena.put(key, NO_BYTES);
+                        LiveViewCheckpointTestKeys.put(arena, key, NO_BYTES);
                     }
                     // Two probes wholly above 2^31 that differ only in their last byte and sort
                     // ahead of every filler, so ordering them reads each probe to its end.
                     putIntKey(key, 0);
                     key[MAX_FIELD_BYTES - 1] = 2;
-                    arena.put(key, NO_BYTES);
+                    LiveViewCheckpointTestKeys.put(arena, key, NO_BYTES);
                     key[MAX_FIELD_BYTES - 1] = 1;
-                    arena.put(key, NO_BYTES);
+                    LiveViewCheckpointTestKeys.put(arena, key, NO_BYTES);
                     Assert.assertTrue("the tracker must carry the staged bytes", tracker.getUsed() > 1L << 31);
 
                     final int count = fillerCount + 2;
@@ -88,7 +95,7 @@ public class LiveViewCheckpointMutationArenaTest {
                     for (int i = 1; i <= 64 && !isBreached; i++) {
                         putIntKey(key, fillerCount + i);
                         try {
-                            arena.put(key, NO_BYTES);
+                            LiveViewCheckpointTestKeys.put(arena, key, NO_BYTES);
                         } catch (CairoException e) {
                             Assert.assertTrue(e.isOutOfMemory());
                             TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
@@ -99,7 +106,7 @@ public class LiveViewCheckpointMutationArenaTest {
                     Assert.assertTrue(tracker.getUsed() <= limit);
 
                     arena.clear();
-                    arena.put(intKey(1), NO_BYTES);
+                    LiveViewCheckpointTestKeys.put(arena, intKey(1), NO_BYTES);
                     Assert.assertEquals(1, arena.sortAndValidateForTest());
                 }
                 Assert.assertEquals(0, tracker.getUsed());
@@ -108,67 +115,75 @@ public class LiveViewCheckpointMutationArenaTest {
     }
 
     @Test
-    public void testArenaGrowthFailureReleasesTrackerAndCanBeReused() {
-        try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(1)) {
-            final LiveViewCheckpointMutationArena arena = new LiveViewCheckpointMutationArena(tracker);
-            try {
+    public void testArenaGrowthFailureReleasesTrackerAndCanBeReused() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(1)) {
+                final LiveViewCheckpointMutationArena arena = new LiveViewCheckpointMutationArena(tracker);
                 try {
-                    arena.put(intKey(1), NO_BYTES);
-                    Assert.fail();
-                } catch (CairoException ignored) {
+                    try {
+                        LiveViewCheckpointTestKeys.put(arena, intKey(1), NO_BYTES);
+                        Assert.fail();
+                    } catch (CairoException ignored) {
+                    }
+                    tracker.setLimit(Long.MAX_VALUE);
+                    arena.clear();
+                    LiveViewCheckpointTestKeys.put(arena, intKey(1), NO_BYTES);
+                    arena.sortAndValidateForTest();
+                    Assert.assertTrue(tracker.getUsed() > 0);
+                } finally {
+                    arena.close();
                 }
-                tracker.setLimit(Long.MAX_VALUE);
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
+    public void testDuplicateRejected() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (LiveViewCheckpointMutationArena arena = new LiveViewCheckpointMutationArena()) {
+                LiveViewCheckpointTestKeys.put(arena, intKey(1), NO_BYTES);
+                LiveViewCheckpointTestKeys.put(arena, intKey(1), NO_BYTES);
+                try {
+                    arena.sortAndValidateForTest();
+                    Assert.fail();
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.getFlyweightMessage().toString().contains("duplicate"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testEmptySingleSortedReverseAndHighCardinality() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            assertSorted(0, false);
+            assertSorted(1, false);
+            assertSorted(1_000, false);
+            assertSorted(1_000, true);
+            assertSorted(1_000_000, true);
+        });
+    }
+
+    @Test
+    public void testKeyLengthBoundaryIsValidatedBeforeAppend() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final byte[] anchorState = new byte[Long.BYTES];
+            try (LiveViewCheckpointMutationArena arena = new LiveViewCheckpointMutationArena()) {
+                LiveViewCheckpointTestKeys.put(arena, new byte[1 << 20], anchorState);
+                arena.sortAndValidateForTest();
+                Assert.assertEquals(1, arena.getMutationCount());
+
                 arena.clear();
-                arena.put(intKey(1), NO_BYTES);
-                arena.sortAndValidateForTest();
-                Assert.assertTrue(tracker.getUsed() > 0);
-            } finally {
-                arena.close();
+                try {
+                    LiveViewCheckpointTestKeys.put(arena, new byte[(1 << 20) + 1], anchorState);
+                    Assert.fail("expected oversized key rejection");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.getFlyweightMessage().toString().contains("partition key length out of bounds"));
+                }
+                Assert.assertEquals("validation must run before native append", 0, arena.getMutationCount());
             }
-            Assert.assertEquals(0, tracker.getUsed());
-        }
-    }
-
-    @Test
-    public void testDuplicateRejected() {
-        try (LiveViewCheckpointMutationArena arena = new LiveViewCheckpointMutationArena()) {
-            arena.put(intKey(1), NO_BYTES);
-            arena.put(intKey(1), NO_BYTES);
-            try {
-                arena.sortAndValidateForTest();
-                Assert.fail();
-            } catch (CairoException e) {
-                Assert.assertTrue(e.getFlyweightMessage().toString().contains("duplicate"));
-            }
-        }
-    }
-
-    @Test
-    public void testEmptySingleSortedReverseAndHighCardinality() {
-        assertSorted(0, false);
-        assertSorted(1, false);
-        assertSorted(1_000, false);
-        assertSorted(1_000, true);
-        assertSorted(1_000_000, true);
-    }
-
-    @Test
-    public void testKeyLengthBoundaryIsValidatedBeforeAppend() {
-        final byte[] anchorState = new byte[Long.BYTES];
-        try (LiveViewCheckpointMutationArena arena = new LiveViewCheckpointMutationArena()) {
-            arena.put(new byte[1 << 20], anchorState);
-            arena.sortAndValidateForTest();
-            Assert.assertEquals(1, arena.getMutationCount());
-
-            arena.clear();
-            try {
-                arena.put(new byte[(1 << 20) + 1], anchorState);
-                Assert.fail("expected oversized key rejection");
-            } catch (CairoException e) {
-                Assert.assertTrue(e.getFlyweightMessage().toString().contains("partition key length out of bounds"));
-            }
-            Assert.assertEquals("validation must run before native append", 0, arena.getMutationCount());
-        }
+        });
     }
 
     @Test
@@ -242,28 +257,162 @@ public class LiveViewCheckpointMutationArenaTest {
     }
 
     @Test
-    public void testSortIsReusedUntilArenaChanges() {
-        try (LiveViewCheckpointMutationArena arena = new LiveViewCheckpointMutationArena()) {
-            arena.put(intKey(2), NO_BYTES);
-            arena.put(intKey(1), NO_BYTES);
-            Assert.assertEquals(2, arena.sortAndValidateForTest());
-
-            Assert.assertEquals("an unchanged arena must retain its validated order", 0, arena.sortAndValidateForTest());
-
-            arena.put(intKey(3), NO_BYTES);
-            Assert.assertEquals("appending must invalidate the retained order", 3, arena.sortAndValidateForTest());
-            Assert.assertEquals(1, arena.getSortedMutationIndex(0));
-            Assert.assertEquals(0, arena.getSortedMutationIndex(1));
-            Assert.assertEquals(2, arena.getSortedMutationIndex(2));
-
-            arena.put(intKey(3), NO_BYTES);
-            try {
-                arena.sortAndValidateForTest();
-                Assert.fail("expected duplicate rejection after append");
-            } catch (CairoException e) {
-                Assert.assertTrue(e.getFlyweightMessage().toString().contains("duplicate"));
+    public void testKeysStageTheSameBytesWhereverTheyAreCopiedFrom() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // Keys of 0 to 40 bytes, many sharing a prefix and many carrying high-bit bytes, staged
+            // once each from a copy of its own and once as a slice of one block that packs them
+            // back to back, through every operation. Both arenas must stage exactly each key's
+            // bytes and sort them the same way, and that order must be the unsigned
+            // byte-by-byte-then-length order a persisted map is sorted in.
+            final int keyCount = 2_000;
+            final Rnd rnd = new Rnd(42, 7);
+            final byte[][] keys = new byte[keyCount][];
+            final long[] offsets = new long[keyCount];
+            long totalBytes = 0;
+            for (int i = 0; i < keyCount; i++) {
+                final int length = rnd.nextInt(41);
+                final byte[] key = new byte[length];
+                for (int b = 0; b < length; b++) {
+                    key[b] = (byte) (rnd.nextBoolean() ? 0x80 | rnd.nextInt(128) : rnd.nextInt(3));
+                }
+                if (length >= Integer.BYTES) {
+                    // A distinct tail keeps every key unique however short its alphabet.
+                    putIntKey(key, i);
+                    reverse(key);
+                }
+                keys[i] = key;
+                offsets[i] = totalBytes;
+                totalBytes += length;
             }
-        }
+            // Short keys can collide; keep the first of each.
+            final boolean[] isDuplicate = new boolean[keyCount];
+            for (int i = 0; i < keyCount; i++) {
+                for (int j = 0; j < i && !isDuplicate[i]; j++) {
+                    if (!isDuplicate[j] && Arrays.equals(keys[i], keys[j])) {
+                        isDuplicate[i] = true;
+                    }
+                }
+            }
+            final long source = Unsafe.malloc(Math.max(1, totalBytes), MemoryTag.NATIVE_DEFAULT);
+            try (LiveViewCheckpointMutationArena copiedArena = new LiveViewCheckpointMutationArena();
+                 LiveViewCheckpointMutationArena nativeArena = new LiveViewCheckpointMutationArena()) {
+                for (int i = 0; i < keyCount; i++) {
+                    for (int b = 0; b < keys[i].length; b++) {
+                        Unsafe.putByte(source + offsets[i] + b, keys[i][b]);
+                    }
+                }
+                // The key each mutation index stages, in staging order.
+                final int[] stagedKeyIndexes = new int[keyCount];
+                int staged = 0;
+                for (int i = 0; i < keyCount; i++) {
+                    if (isDuplicate[i]) {
+                        continue;
+                    }
+                    final long address = source + offsets[i];
+                    final int length = keys[i].length;
+                    switch (i % 4) {
+                        case 0 -> {
+                            LiveViewCheckpointTestKeys.put(copiedArena, keys[i], intKey(i));
+                            nativeArena.put(address, length, intKey(i));
+                        }
+                        case 1 -> {
+                            LiveViewCheckpointTestKeys.put(copiedArena, keys[i], intKey(i), NO_REFS);
+                            nativeArena.put(address, length, intKey(i), NO_REFS);
+                        }
+                        case 2 -> {
+                            LiveViewCheckpointTestKeys.remove(copiedArena, keys[i]);
+                            nativeArena.remove(address, length);
+                        }
+                        default -> {
+                            LiveViewCheckpointTestKeys.domain(copiedArena, keys[i]);
+                            nativeArena.domain(address, length);
+                        }
+                    }
+                    stagedKeyIndexes[staged++] = i;
+                }
+                Assert.assertEquals(staged, copiedArena.sortAndValidateForTest());
+                Assert.assertEquals(staged, nativeArena.sortAndValidateForTest());
+                int previous = -1;
+                for (int s = 0; s < staged; s++) {
+                    final int mutationIndex = nativeArena.getSortedMutationIndex(s);
+                    Assert.assertEquals(copiedArena.getSortedMutationIndex(s), mutationIndex);
+                    final int length = nativeArena.getKeyLengthForTest(mutationIndex);
+                    Assert.assertEquals(copiedArena.getKeyLengthForTest(mutationIndex), length);
+                    final byte[] nativeStaged = stagedKey(nativeArena, mutationIndex);
+                    Assert.assertArrayEquals(keys[stagedKeyIndexes[mutationIndex]], nativeStaged);
+                    Assert.assertArrayEquals(stagedKey(copiedArena, mutationIndex), nativeStaged);
+                    if (previous > -1) {
+                        Assert.assertTrue(
+                                "sorted keys must be strictly increasing unsigned, then by length [at=" + s + ']',
+                                compareUnsigned(stagedKey(nativeArena, previous), nativeStaged) < 0
+                        );
+                    }
+                    previous = mutationIndex;
+                }
+            } finally {
+                Unsafe.free(source, Math.max(1, totalBytes), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testNativeKeyIsValidatedAndMustNotAliasItsArena() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long length = (1 << 20) + 1;
+            final long source = Unsafe.malloc(length, MemoryTag.NATIVE_DEFAULT);
+            try (LiveViewCheckpointMutationArena arena = new LiveViewCheckpointMutationArena()) {
+                Vect.memset(source, length, 1);
+                arena.put(source, 1 << 20, NO_BYTES);
+                Assert.assertEquals(1, arena.getMutationCount());
+                try {
+                    arena.put(source, (1 << 20) + 1, NO_BYTES);
+                    Assert.fail("expected oversized key rejection");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "partition key length out of bounds");
+                }
+                Assert.assertEquals("validation must run before native append", 1, arena.getMutationCount());
+
+                // A key the arena already stages cannot be the source of another: the copy may
+                // grow, and so move, the very memory it reads.
+                final long staged = arena.getKeyAddressForTest(0);
+                try {
+                    arena.remove(staged, 16);
+                    Assert.fail("expected the self-alias guard to reject the key");
+                } catch (AssertionError e) {
+                    TestUtils.assertContains(e.getMessage(), "aliases its own arena");
+                }
+                Assert.assertEquals("the rejected key must not be staged", 1, arena.getMutationCount());
+            } finally {
+                Unsafe.free(source, length, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testSortIsReusedUntilArenaChanges() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (LiveViewCheckpointMutationArena arena = new LiveViewCheckpointMutationArena()) {
+                LiveViewCheckpointTestKeys.put(arena, intKey(2), NO_BYTES);
+                LiveViewCheckpointTestKeys.put(arena, intKey(1), NO_BYTES);
+                Assert.assertEquals(2, arena.sortAndValidateForTest());
+
+                Assert.assertEquals("an unchanged arena must retain its validated order", 0, arena.sortAndValidateForTest());
+
+                LiveViewCheckpointTestKeys.put(arena, intKey(3), NO_BYTES);
+                Assert.assertEquals("appending must invalidate the retained order", 3, arena.sortAndValidateForTest());
+                Assert.assertEquals(1, arena.getSortedMutationIndex(0));
+                Assert.assertEquals(0, arena.getSortedMutationIndex(1));
+                Assert.assertEquals(2, arena.getSortedMutationIndex(2));
+
+                LiveViewCheckpointTestKeys.put(arena, intKey(3), NO_BYTES);
+                try {
+                    arena.sortAndValidateForTest();
+                    Assert.fail("expected duplicate rejection after append");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.getFlyweightMessage().toString().contains("duplicate"));
+                }
+            }
+        });
     }
 
     private static void assertSorted(int count, boolean reverse) {
@@ -272,7 +421,7 @@ public class LiveViewCheckpointMutationArenaTest {
             for (int i = 0; i < count; i++) {
                 final int value = reverse ? count - i - 1 : i;
                 putIntKey(key, value);
-                arena.put(key, NO_BYTES);
+                LiveViewCheckpointTestKeys.put(arena, key, NO_BYTES);
             }
             arena.sortAndValidateForTest();
             Assert.assertEquals(count, arena.getMutationCount());
@@ -284,16 +433,43 @@ public class LiveViewCheckpointMutationArenaTest {
                 Assert.assertEquals(reverse ? 0 : count - 1, arena.getSortedMutationIndex(count - 1));
             }
             arena.clear();
-            arena.put(intKey(7), NO_BYTES);
+            LiveViewCheckpointTestKeys.put(arena, intKey(7), NO_BYTES);
             arena.sortAndValidateForTest();
             Assert.assertEquals(1, arena.getMutationCount());
         }
+    }
+
+    private static int compareUnsigned(byte[] left, byte[] right) {
+        final int n = Math.min(left.length, right.length);
+        for (int i = 0; i < n; i++) {
+            final int cmp = Integer.compare(left[i] & 0xff, right[i] & 0xff);
+            if (cmp != 0) {
+                return cmp;
+            }
+        }
+        return Integer.compare(left.length, right.length);
+    }
+
+    private static byte[] stagedKey(LiveViewCheckpointMutationArena arena, int mutationIndex) {
+        final byte[] key = new byte[arena.getKeyLengthForTest(mutationIndex)];
+        for (int b = 0; b < key.length; b++) {
+            key[b] = Unsafe.getByte(arena.getKeyAddressForTest(mutationIndex) + b);
+        }
+        return key;
     }
 
     private static byte[] intKey(int value) {
         final byte[] key = new byte[Integer.BYTES];
         putIntKey(key, value);
         return key;
+    }
+
+    private static void reverse(byte[] key) {
+        for (int i = 0, j = key.length - 1; i < j; i++, j--) {
+            final byte swap = key[i];
+            key[i] = key[j];
+            key[j] = swap;
+        }
     }
 
     private static void putIntKey(byte[] key, int value) {

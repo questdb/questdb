@@ -384,23 +384,6 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
-     * Copies the first {@code length} bytes of the encoded key {@code keyBuffer} holds
-     * into a fresh array, which is the form both the put and the removal channels carry
-     * to publication.
-     */
-    private static byte[] copyEncodedKey(
-            MemoryCARW keyBuffer,
-            int length,
-            @Nullable LiveViewCheckpointByteArrayPool byteArrayPool
-    ) {
-        final byte[] key = byteArrayPool == null ? new byte[length] : byteArrayPool.next(length);
-        for (int i = 0; i < length; i++) {
-            key[i] = keyBuffer.getByte(i);
-        }
-        return key;
-    }
-
-    /**
      * Builds the sink {@link #compact()} hands to each window function so it can mirror
      * the rebuilt anchor map's surviving keys into a probe map of its own {@link Map}
      * implementation.
@@ -882,43 +865,25 @@ public class LiveViewWindow implements QuietCloseable {
      * whole truth.
      * <p>
      * {@code keyBuffer} is caller-owned scratch the key codec writes through; it is rewound
-     * per entry and holds nothing once this returns.
+     * per entry and holds nothing once this returns. Every key the walk emits is appended to
+     * {@code keyArena}, and {@code keysOut} and {@code removedKeysOut} carry the handles, which
+     * stay valid until the caller clears or releases that arena.
      *
      * @param entryStateBytes the state bytes one published entry carries for a key
      * @param payloadsOut     the scalar payloads, index-aligned with {@code keysOut}
+     * @param payloadPool     the pool the payloads are leased from, or null to allocate each
      */
-    public long freezeCheckpointEntries(
-            @NotNull MemoryCARW keyBuffer,
-            @NotNull ObjList<byte[]> keysOut,
-            @NotNull LongList valuesOut,
-            @NotNull ObjList<byte[]> removedKeysOut,
-            boolean isIncremental,
-            int entryStateBytes,
-            @Nullable ObjList<byte[]> payloadsOut
-    ) {
-        return freezeCheckpointEntries(
-                keyBuffer,
-                keysOut,
-                valuesOut,
-                removedKeysOut,
-                isIncremental,
-                entryStateBytes,
-                payloadsOut,
-                null,
-                null
-        );
-    }
-
     long freezeCheckpointEntries(
             @NotNull MemoryCARW keyBuffer,
-            @NotNull ObjList<byte[]> keysOut,
+            @NotNull LiveViewCheckpointKeyArena keyArena,
+            @NotNull LongList keysOut,
             @NotNull LongList valuesOut,
-            @NotNull ObjList<byte[]> removedKeysOut,
+            @NotNull LongList removedKeysOut,
             boolean isIncremental,
             int entryStateBytes,
             @Nullable ObjList<byte[]> payloadsOut,
             @Nullable BoolList isElisionRuledOutOut,
-            @Nullable LiveViewCheckpointByteArrayPool byteArrayPool
+            @Nullable LiveViewCheckpointByteArrayPool payloadPool
     ) {
         // One member, allocated locally: this runs once per seal, where the batched member
         // walk below runs once per seal for R members and is the one worth pooling.
@@ -935,6 +900,7 @@ public class LiveViewWindow implements QuietCloseable {
         }
         freezeCheckpointEntries(
                 keyBuffer,
+                keyArena,
                 keysOut,
                 valuesOut,
                 removedKeysOut,
@@ -944,7 +910,7 @@ public class LiveViewWindow implements QuietCloseable {
                 projectionIndexes,
                 logicalBytes,
                 isElisionRuledOutOut,
-                byteArrayPool
+                payloadPool
         );
         return logicalBytes.getQuick(0);
     }
@@ -984,37 +950,18 @@ public class LiveViewWindow implements QuietCloseable {
      *                          {@code projectionIndexes}: seeded by the caller with the
      *                          member root's own logical size, charged in place here, and
      *                          reset to zero for a complete freeze, which builds on nothing
+     * @param payloadPool       the pool the images are leased from, or null to allocate each
      */
-    public void freezeCheckpointMemberEntries(
-            @NotNull MemoryCARW keyBuffer,
-            @NotNull IntList projectionIndexes,
-            @NotNull ObjList<byte[]> keysOut,
-            @NotNull ObjList<ObjList<byte[]>> imagesOut,
-            @NotNull ObjList<byte[]> removedKeysOut,
-            boolean isIncremental,
-            @NotNull LongList logicalBytesInOut
-    ) {
-        freezeCheckpointMemberEntries(
-                keyBuffer,
-                projectionIndexes,
-                keysOut,
-                imagesOut,
-                removedKeysOut,
-                isIncremental,
-                logicalBytesInOut,
-                null
-        );
-    }
-
     void freezeCheckpointMemberEntries(
             @NotNull MemoryCARW keyBuffer,
+            @NotNull LiveViewCheckpointKeyArena keyArena,
             @NotNull IntList projectionIndexes,
-            @NotNull ObjList<byte[]> keysOut,
+            @NotNull LongList keysOut,
             @NotNull ObjList<ObjList<byte[]>> imagesOut,
-            @NotNull ObjList<byte[]> removedKeysOut,
+            @NotNull LongList removedKeysOut,
             boolean isIncremental,
             @NotNull LongList logicalBytesInOut,
-            @Nullable LiveViewCheckpointByteArrayPool byteArrayPool
+            @Nullable LiveViewCheckpointByteArrayPool payloadPool
     ) {
         final LiveViewWindowStatePlan plan = checkpointWindowStatePlan;
         if (plan == null) {
@@ -1041,6 +988,7 @@ public class LiveViewWindow implements QuietCloseable {
         }
         freezeCheckpointEntries(
                 keyBuffer,
+                keyArena,
                 keysOut,
                 null,
                 removedKeysOut,
@@ -1050,7 +998,7 @@ public class LiveViewWindow implements QuietCloseable {
                 projectionIndexes,
                 logicalBytesInOut,
                 null,
-                byteArrayPool
+                payloadPool
         );
     }
 
@@ -1070,9 +1018,9 @@ public class LiveViewWindow implements QuietCloseable {
      * - so the caller buckets them by that flag and issues one walk per bucket, which is
      * two in the worst case and one in practice.
      * <p>
-     * The single {@code byte[]} each key is encoded into is handed to every member. That is
-     * safe because a frozen partition never mutates its key: {@code FrozenPartition.key} is
-     * final and the directory and partition-map writers only read it.
+     * Each key is appended to {@code keyArena} once, and its one handle is handed to every
+     * member. That is safe because a frozen partition never mutates its key: the arena is
+     * append-only, and the directory and partition-map writers only read it.
      *
      * @param entryStateBytes      the state bytes one published entry carries, per member
      * @param valuesOut            the per-key anchor values, index-aligned with
@@ -1096,16 +1044,17 @@ public class LiveViewWindow implements QuietCloseable {
      */
     private void freezeCheckpointEntries(
             @NotNull MemoryCARW keyBuffer,
-            @NotNull ObjList<byte[]> keysOut,
+            @NotNull LiveViewCheckpointKeyArena keyArena,
+            @NotNull LongList keysOut,
             @Nullable LongList valuesOut,
-            @NotNull ObjList<byte[]> removedKeysOut,
+            @NotNull LongList removedKeysOut,
             boolean isIncremental,
             @NotNull IntList entryStateBytes,
             @Nullable ObjList<ObjList<byte[]>> payloadsOut,
             @NotNull IntList memberProjectionIndexes,
             @NotNull LongList logicalBytesInOut,
             @Nullable BoolList isElisionRuledOutOut,
-            @Nullable LiveViewCheckpointByteArrayPool byteArrayPool
+            @Nullable LiveViewCheckpointByteArrayPool payloadPool
     ) {
         checkpointFreezeScanCount++;
         final int memberCount = entryStateBytes.size();
@@ -1195,8 +1144,7 @@ public class LiveViewWindow implements QuietCloseable {
                         throw CairoException.critical(0)
                                 .put("live view checkpoint dirty anchor key is missing from the anchor map");
                     }
-                    final byte[] key = copyEncodedKey(keyBuffer, (int) length, byteArrayPool);
-                    removedKeysOut.add(key);
+                    removedKeysOut.add(keyArena.append(keyBuffer.addressOf(0), (int) length));
                     if (!isNewSinceCheckpoint) {
                         // The predecessor root holds this key, so the build takes its
                         // entry out and the charge goes with it. A key created and evicted
@@ -1205,7 +1153,7 @@ public class LiveViewWindow implements QuietCloseable {
                         for (int m = 0; m < memberCount; m++) {
                             logicalBytesInOut.setQuick(m, checkedAdd(
                                     logicalBytesInOut.getQuick(m),
-                                    -((long) key.length + entryStateBytes.getQuick(m))
+                                    -(length + entryStateBytes.getQuick(m))
                             ));
                         }
                     }
@@ -1217,8 +1165,9 @@ public class LiveViewWindow implements QuietCloseable {
             if (anchorValue.getByte(SLOT_TOMBSTONE) == 1) {
                 continue;
             }
-            final byte[] key = copyEncodedKey(keyBuffer, (int) length, byteArrayPool);
-            keysOut.add(key);
+            // The payload encoders below still read the key at keyBuffer's offset 0, which
+            // the append leaves where it is: the arena is memory of its own.
+            keysOut.add(keyArena.append(keyBuffer.addressOf(0), (int) length));
             if (isAnchorValueEmitted) {
                 valuesOut.add(anchorValue.getLong(SLOT_ANCHOR_VALUE));
             }
@@ -1242,17 +1191,17 @@ public class LiveViewWindow implements QuietCloseable {
                                 record,
                                 keyStartIndex,
                                 stateBytes,
-                                byteArrayPool
+                                payloadPool
                         );
                     } else if (isFused) {
-                        image = encodeWindowStatePayload(anchorValue, stateBytes, byteArrayPool);
+                        image = encodeWindowStatePayload(anchorValue, stateBytes, payloadPool);
                     } else {
                         image = encodeWindowStatePayloadFromPrivateMaps(
                                 storagePlan,
                                 keyBuffer,
                                 anchorValue,
                                 stateBytes,
-                                byteArrayPool
+                                payloadPool
                         );
                     }
                     payloadsOut.getQuick(m).add(image);
@@ -1260,7 +1209,7 @@ public class LiveViewWindow implements QuietCloseable {
                 if (isCharged) {
                     logicalBytesInOut.setQuick(
                             m,
-                            checkedAdd(logicalBytesInOut.getQuick(m), (long) key.length + stateBytes)
+                            checkedAdd(logicalBytesInOut.getQuick(m), length + stateBytes)
                     );
                 }
             }
@@ -2335,6 +2284,10 @@ public class LiveViewWindow implements QuietCloseable {
         // dirty-cadence SHORT).
         // The codec needs the key-start index to address them via record.getXxx(columnIndex).
         final int keyStartIndex = activeKeyStartIndex;
+        // One image serves the whole walk, the way restore() reads through one: each entry
+        // overwrites all of it and the sink copies it out, so nothing holds an entry's image
+        // past its turn.
+        final byte[] image = componentStateBytes > 0 ? new byte[componentStateBytes] : null;
         MapRecordCursor cursor = anchorMap.getCursor();
         MapRecord record = anchorMap.getRecord();
         long emitted = 0;
@@ -2345,8 +2298,8 @@ public class LiveViewWindow implements QuietCloseable {
             }
             LiveViewSnapshotKeyCodec.writeKey(sink, record, partitionKeyTypes, keyStartIndex);
             sink.putLong(value.getLong(SLOT_ANCHOR_VALUE));
-            if (componentStateBytes > 0) {
-                final byte[] image = encodeWindowStateRuntimeImage(value, componentStateBytes);
+            if (image != null) {
+                encodeWindowStateRuntimeImage(value, image);
                 for (int i = 0; i < componentStateBytes; i++) {
                     sink.putByte(image[i]);
                 }
@@ -3111,22 +3064,23 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
-     * Builds one entry's whole component image - every component in the plan's canonical
-     * order, at cumulative offsets - out of the map value the walk already holds. The
+     * Writes one entry's whole component image - every component in the plan's canonical
+     * order, at cumulative offsets - out of the map value the walk already holds, over all
+     * of {@code image}: the components' widths sum to
+     * {@link LiveViewWindowStatePlan#getTotalRuntimeStateBytes()}, which is its length. The
      * overlay's counterpart of {@link #encodeWindowStatePayload}, which stops at the leaf's
      * prefix.
      */
-    private byte[] encodeWindowStateRuntimeImage(MapValue value, int componentStateBytes) {
+    private void encodeWindowStateRuntimeImage(MapValue value, byte @NotNull [] image) {
         final LiveViewWindowStatePlan plan = checkpointWindowStatePlan;
         assert plan != null;
-        final byte[] image = new byte[componentStateBytes];
         int offset = 0;
         for (int c = 0, n = plan.getComponentCount(); c < n; c++) {
             final LiveViewAccumulatorDescriptor component = plan.getComponent(c);
             component.freezeStateInto(value, plan.getComponentSlotBase(c), image, offset);
             offset += component.getStateLength();
         }
-        return image;
+        assert offset == image.length;
     }
 
     /**

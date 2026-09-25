@@ -497,7 +497,7 @@ public class LiveViewCheckpointInlineStateTest extends AbstractCairoTest {
 
         private static Entry of(LiveViewCheckpointPartitionMapEntry entry) {
             final byte[] scalar = entry.getScalarState();
-            final long key = readLong(entry.getKey(), 0);
+            final long key = readLong(entry.copyKeyForTest(), 0);
             if (scalar.length != 0) {
                 Assert.assertEquals("an inline entry names no page", 0, entry.getStatePageCount());
                 return new Entry(key, readLong(scalar, 0), scalar.length, true);

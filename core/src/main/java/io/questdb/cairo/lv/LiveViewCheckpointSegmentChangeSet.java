@@ -98,6 +98,16 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
      * 1.68 and its maximum 35.
      */
     public static final int MAX_CLOSED_SEGMENTS = 64;
+    // The widest key membership table of() keeps for the next repair: 128 KiB. A clear
+    // writes every slot, and one worker's change set is rebound for every repair of every
+    // view on it, keyed or not - so a table one wide repair grew, up to 128 MiB at the
+    // default key budget, would charge that write to each of them. Past this, of() frees
+    // the table and the next keyed repair allocates the initial one.
+    private static final int MAX_RETAINED_KEY_MEMBERSHIP_CAPACITY = 1 << 14;
+    // The most open-segment row timestamps of() keeps room for: 512 KiB. A keyed walk
+    // leaves one per open-segment row, so a wide one would otherwise pin its whole list
+    // on the worker until the next wide one.
+    private static final int MAX_RETAINED_RESIDUAL_ROWS = 1 << 16;
     // No WAL symbol integer is negative but the null one, which resolveKey answers without
     // the map, so -1 can mark an empty slot.
     private static final int NO_WAL_KEY = -1;
@@ -144,7 +154,9 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
     // (keySetOrdinal << 32 | baseKey) for every key any list holds, so one probe answers
     // whether a key is already in its segment's list. One set for every list rather than a
     // set per list: the lists grow and clear together, and a single block is one
-    // allocation to retain and one to free. Allocated by the first keyed repair.
+    // allocation to retain and one to free. Allocated by the first keyed repair, and again
+    // by the first one after of() freed a table grown past
+    // MAX_RETAINED_KEY_MEMBERSHIP_CAPACITY.
     private DirectLongHashSet keyMembership;
     private boolean overflowed;
     private long residualMaxTs;
@@ -175,11 +187,13 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
     public boolean addRow(long ts, int key, @NotNull LiveViewCheckpointAnchorPlan anchorPlan) {
         if (ts >= activeSegmentStart) {
             widenResidual(ts, ts);
-            if (collectsResidualKeys) {
+            addResidualKey(key);
+            // Only a complete domain reads the timestamps back, and an incomplete one never
+            // completes again, so a row past the overflow costs the list nothing.
+            if (collectsResidualKeys && !residualKeyDomainOverflowed) {
                 residualRowTimestamps.add(ts);
                 residualRowsSorted = false;
             }
-            addResidualKey(key);
             return true;
         }
         if (overflowed) {
@@ -449,6 +463,11 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
             keySets.getQuick(i).clear();
         }
         residualKeys.clear();
+        if (keyMembership != null && keyMembership.capacity() > MAX_RETAINED_KEY_MEMBERSHIP_CAPACITY) {
+            // Freed rather than cleared: the clear would write the whole block the widest
+            // repair grew, and this repair may collect a handful of keys or none at all.
+            keyMembership = Misc.free(keyMembership);
+        }
         if (keyMembership != null) {
             keyMembership.clear();
         } else if (maxKeysPerSegment > 0) {
@@ -464,7 +483,11 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
                     false
             );
         }
-        residualRowTimestamps.clear();
+        if (residualRowTimestamps.capacity() > MAX_RETAINED_RESIDUAL_ROWS) {
+            residualRowTimestamps.restoreInitialCapacity();
+        } else {
+            residualRowTimestamps.clear();
+        }
         residualRowsSorted = true;
         hasResidualNullKey = false;
         residualKeyDomainOverflowed = false;

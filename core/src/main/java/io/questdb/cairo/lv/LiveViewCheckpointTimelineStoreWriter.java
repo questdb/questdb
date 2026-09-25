@@ -79,18 +79,23 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
     public static final int FUNCTION_STATE_PAGE_KIND = 0x41;
     /**
-     * Frozen key and state image arrays one freeze scratch keeps pooled once its
-     * operation ends. An inline or fused seal images a key into one key array and one
-     * state or payload array, so the pool stays warm for such seals of up to 32,768
-     * keys - 32 times the key set the allocation gate pins as garbage-free - and an
-     * outlier seal above that hands its whole frozen graph back instead of parking it on
-     * the worker for its lifetime. A page-backed seal takes one array per key and a ring
-     * seal three. A fused anchored seal pools about 120 bytes per key in its frozen
-     * scratch, so the limit caps such a scratch at roughly 4 MiB. It bounds every frozen
-     * list that grows one entry per key, but not the state page references a partition
-     * holder owns: {@link #MAX_RETAINED_FROZEN_STATE_PAGE_REFS} bounds those. The price
-     * is paid above the limit: a seal imaging more keys than that allocates its frozen
-     * graph afresh, as every seal did before the scratch was pooled.
+     * State and payload image arrays and frozen keys, counted together, up to which one
+     * freeze scratch keeps its frozen graph pooled once its operation ends. A key takes no
+     * array - it lives in the scratch's native key arena, which the operation frees - but it
+     * still adds a holder or a handle to the heap lists, as the pooled key array it replaced
+     * did, so every seal shape stays warm up to the key count it did while keys were
+     * arrays. An inline seal freezes a key and images its state into one array, and a fused
+     * seal a key and one payload, so the pool stays warm for such seals of up to 32,768
+     * keys - 32 times the key set the allocation gate pins as garbage-free - and an outlier
+     * seal above that hands its whole frozen graph back instead of parking it on the worker
+     * for its lifetime. A page-backed seal takes a key and no array, so it stays warm up to
+     * 65,536 keys, where it also reaches {@link #MAX_RETAINED_FROZEN_STATE_PAGE_REFS}; a
+     * grouped seal takes a key and one image per member for each key, and a ring seal a key
+     * and a scalar. Wide images reach {@link #MAX_RETAINED_FROZEN_ARRAY_BYTES} first. It
+     * bounds every frozen list that grows one entry per key or image, but not the state
+     * page references a partition holder owns: {@link #MAX_RETAINED_FROZEN_STATE_PAGE_REFS}
+     * bounds those. The price is paid above the limit: a seal freezing more than that
+     * allocates its frozen graph afresh, as every seal did before the scratch was pooled.
      */
     public static final int MAX_RETAINED_FROZEN_ARRAYS = 65_536;
     /**
@@ -100,17 +105,35 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      */
     public static final long MAX_RETAINED_FROZEN_ARRAY_BYTES = 4_194_304;
     /**
+     * Frozen keys the keyed repair transplant's key arena and handle lists may keep once
+     * the transplant ends. Unlike a freeze scratch's, that arena outlives its operation: a
+     * worker keeps it for its lifetime. The transplant freezes a key and one payload for
+     * each key, so this is the key count at which the two together reach
+     * {@link #MAX_RETAINED_FROZEN_ARRAYS}, the limit a freeze scratch counts its keys and
+     * images against. Past it the arena is freed and the lists shrink back, so an outlier
+     * correction does not park its key domain on the worker.
+     */
+    public static final int MAX_RETAINED_FROZEN_KEYS = 32_768;
+    /**
+     * Native key bytes a frozen key arena that outlives its operation - the keyed repair
+     * transplant's, which a worker keeps for its lifetime - may keep once the operation
+     * ends. A freeze scratch frees its own key arena whenever its operation ends, so it
+     * retains none. Past this the arena is freed, so a few wide keys cannot pin a large
+     * arena on the worker any more than many narrow ones can.
+     */
+    public static final long MAX_RETAINED_FROZEN_KEY_BYTES = 4_194_304;
+    /**
      * State page references the frozen partition holders of one freeze scratch keep
      * once its operation ends. A holder owns its reference array and every reference in
      * it instead of taking them from the image array pool: one reference per key for a
      * page-backed partition, but one per live chunk page for a ring-shaped one. A ring
      * seal's holders therefore grow with keys times chunk pages while its image arrays
      * grow with keys alone - 2,048 keys at 38 chunk pages pin 77,824 references in only
-     * 6,144 arrays. A reference costs about 60 bytes with its array slot, so the limit
-     * caps the holders of one scratch at roughly 4 MiB, and a page-backed seal reaches
-     * it at the key count at which it reaches {@link #MAX_RETAINED_FROZEN_ARRAYS}. Above
-     * it a seal allocates its holders afresh, which a ring holder already does whenever
-     * its key's chunk count changes.
+     * 2,048 scalar arrays. A reference costs about 60 bytes with its array slot, so the
+     * limit caps the holders of one scratch at roughly 4 MiB, and a page-backed seal, at
+     * one reference and one frozen key per key, reaches it at the key count at which it
+     * reaches {@link #MAX_RETAINED_FROZEN_ARRAYS}. Above it a seal allocates its holders
+     * afresh, which a ring holder already does whenever its key's chunk count changes.
      */
     public static final int MAX_RETAINED_FROZEN_STATE_PAGE_REFS = 65_536;
     /**
@@ -462,8 +485,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      *
      * @param outputKeys    {@code Q}, the keys this repair's replay describes, or null
      *                      when it describes every live key. The capture takes its own
-     *                      copy: the plan it comes from is refilled by the next repair
-     *                      this worker runs, while a capture may be parked across turns
+     *                      copy, which {@code memoryTracker} does not count: the plan or
+     *                      keyed replay it comes from is refilled by the next repair this
+     *                      worker runs, while a capture may be parked across turns
      * @param memoryTracker the repaired view's refresh workload tracker, which
      *                      the freeze scratch buffers charge from here until the
      *                      capture closes, or null to account against process
@@ -506,20 +530,32 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             }
             final LiveViewCheckpointSuperblock superblock = metaStore.getSuperblock();
             final FreezeScratch scratch = acquireRepairScratch(memoryTracker);
+            final RepairCapture capture;
             try {
-                return new RepairCapture(
+                capture = new RepairCapture(
                         checkpointsDir,
                         skipPublishedSegmentIds(checkpointsDir, superblock.nextSegmentId),
                         superblock.generation,
                         superblock.timelineRootRef,
                         superblock.rowPositionDeltaRootRef,
                         superblock.segmentDirectoryRootRef,
-                        outputKeys,
                         chained,
                         scratch
                 );
             } catch (Throwable th) {
                 releaseRepairScratch(scratch);
+                throw th;
+            }
+            // From here the capture holds the scratch lease and its close() returns it, so
+            // a failure below frees the capture and must not release the scratch again: a
+            // second release throws "not leased" and masks the original failure.
+            try {
+                if (outputKeys != null) {
+                    capture.adoptOutputKeys(outputKeys);
+                }
+                return capture;
+            } catch (Throwable th) {
+                Misc.free(capture, th);
                 throw th;
             }
         } finally {
@@ -693,6 +729,20 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         return lastBoundaryPartitionPuts;
     }
 
+    /**
+     * @return repair freeze scratches currently leased to an open capture
+     */
+    @TestOnly
+    public int getLeasedRepairScratchCountForTest() {
+        int count = 0;
+        for (int i = 0, n = repairScratchPool.size(); i < n; i++) {
+            if (repairScratchPool.getQuick(i).isLeased) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     @TestOnly
     public int getPartitionMapObjectPoolIdentityForTest() {
         return System.identityHashCode(partitionMapObjectPool);
@@ -748,9 +798,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     }
 
     /**
-     * @return image bytes of the largest single key or scalar pool the two previous-boundary
-     * shells keep for reuse, headers excluded: one width cache of an entry, or one node
-     * decode pool or scratch entry width cache of a partition-map reader
+     * @return bytes of the largest single buffer the two previous-boundary shells keep for
+     * reuse: the native key buffer or the scalar width cache of an entry, or one node arena
+     * or the scratch entry's key buffer or scalar width cache of a partition-map reader
      */
     @TestOnly
     public long getLargestRetainedPreviousBoundaryBufferBytesForTest() {
@@ -761,11 +811,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     }
 
     /**
-     * @return image bytes of every key and scalar array the two previous-boundary shells
-     * keep for reuse, headers excluded: the width caches of their entries and the node
-     * decode pools and scratch entries of their partition-map readers. The shells live as
-     * long as the writer, so this is what they retain from views the worker served
-     * before; the writer's other readers and caches are not part of it.
+     * @return bytes of every key and scalar buffer the two previous-boundary shells keep for
+     * reuse: the key buffers and scalar width caches of their entries and the node arenas
+     * and scratch entries of their partition-map readers. The shells live as long as the
+     * writer, so this is what they retain from views the worker served before; the writer's
+     * other readers and caches are not part of it.
      */
     @TestOnly
     public long getRetainedPreviousBoundaryBufferBytesForTest() {
@@ -1132,7 +1182,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             // whole-domain route keeps the per-boundary fallback: its boundary
             // i + 1 must read boundary i's newly committed root.
             final BatchedRepairRoots batchedRoots = !capture.isChained()
-                    && capture.outputKeys != null
+                    && capture.getOutputKeys() != null
                     && boundaryCount > 0
                     ? roots.buildRepairRootsBatched(capture, definitionTxn)
                     : null;
@@ -1188,7 +1238,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                             boundary,
                             oldStateRootRef,
                             seedDirectory,
-                            capture.outputKeys,
+                            capture.getOutputKeys(),
                             oldEntry.checkpointId,
                             oldEntry.maxTimestamp,
                             definitionTxn,
@@ -1246,7 +1296,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 // row stream it holds rather than the pages it stores - so the boundary
                 // keeps the total it already had instead of shedding every key the
                 // repair did not touch.
-                final long logicalStateBytes = capture.outputKeys != null
+                final long logicalStateBytes = capture.getOutputKeys() != null
                         ? oldEntry.logicalStateBytes
                         : boundary.logicalStateBytes;
                 final LiveViewCheckpointTimelineEntry newEntry = newEntries.getQuick(i).of(
@@ -2063,7 +2113,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         if (entry == null) {
             return 0;
         }
-        long bytes = checkedAdd(entry.getKey().length, entry.getScalarState().length);
+        long bytes = checkedAdd(entry.getKeyLength(), entry.getScalarState().length);
         for (int i = 0, n = entry.getStatePageCount(); i < n; i++) {
             bytes = checkedAdd(bytes, entry.getStatePageRef(i).getDecodedLength());
         }
@@ -2704,8 +2754,15 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         final Map scanMap = isIncremental ? dirtyMap : map;
         final MapRecordCursor cursor = scanMap.getCursor();
         final MapRecord record = scanMap.getRecord();
-        final LiveViewCheckpointPartitionMapEntry ringEntry =
-                isRingShaped ? new LiveViewCheckpointPartitionMapEntry() : null;
+        final LiveViewCheckpointPartitionMapEntry ringEntry = activeScratch.ringEntry;
+        final LiveViewCheckpointKeyArena frozenKeys = activeScratch.frozenKeys;
+        if (!isIncremental) {
+            // A complete freeze indexes every key it images, and it images at most the
+            // function's live keys - fewer when Q names fewer - so the index is sized for
+            // them in one allocation rather than regrown as the walk fills it.
+            final long indexedKeyBound = outputKeys == null ? map.size() : Math.min(map.size(), outputKeys.size());
+            activeScratch.frozenPartitionIndex.reserve(activeScratch.frozenPartitionIndex.size() + indexedKeyBound);
+        }
         long visitedKeyCount = 0;
         long imagedKeyCount = 0;
         while (cursor.hasNext()) {
@@ -2752,17 +2809,21 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             if (!isIncremental) {
                 keyLength = encodeCheckpointKey(record, keyTypes, keyStartIndex);
             }
-            final byte[] key = activeScratch.frozenByteArrays.copy(activeScratch.keyBuffer, 0, keyLength);
-            if (outputKeys != null && !outputKeys.contains(key)) {
+            // After the encode, which may have moved the buffer. Nothing below writes the key
+            // buffer again before the next key, and the frozen key arena is memory of its
+            // own, so the address holds across every append to it in this iteration.
+            final long keyAddress = activeScratch.keyBuffer.addressOf(0);
+            if (outputKeys != null && !outputKeys.contains(keyAddress, keyLength)) {
                 // Outside the replay's key domain: the state the runtime holds here was
                 // reconstructed from whatever rows happened to fall inside [L, H), so
                 // imaging it would publish a truncated history. The root keeps the entry
-                // the boundary already had, and no page is written for it at all.
+                // the boundary already had, and no page is written for it at all - nor is
+                // the key frozen, since nothing will name it.
                 continue;
             }
             final LiveViewCheckpointPartitionMapEntry previous = previousBoundary == null
                     ? null
-                    : previousBoundary.find(frozen.identity, frozen.stateFormatVersion, key);
+                    : previousBoundary.find(frozen.identity, frozen.stateFormatVersion, keyAddress, keyLength);
             if (isTombstoned || isEvicted) {
                 // Incremental only: the key died since the predecessor root - tombstoned
                 // by a reset no row cancelled, or dropped by the frontier sweep - so the
@@ -2770,7 +2831,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 // means the root never held the key (created and evicted inside one
                 // cadence), so there is nothing to remove and nothing to un-charge.
                 if (previous != null) {
-                    frozen.removedPartitions.add(key);
+                    frozen.removedPartitions.add(frozenKeys.append(keyAddress, keyLength));
                     logicalBytes = checkedAdd(logicalBytes, -logicalPartitionBytes(previous));
                 }
                 continue;
@@ -2781,12 +2842,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         dataWriter,
                         function,
                         value,
-                        key,
+                        keyAddress,
+                        keyLength,
                         previous,
                         previousBoundary == null ? Numbers.LONG_NULL : previousBoundary.getMaxTimestamp(),
                         ringEntry
                 ));
-                frozen.addPartition(ringEntry);
+                frozen.addPartition(frozenKeys.append(keyAddress, keyLength), ringEntry);
                 imagedKeyCount++;
             } else {
                 final long stateLength;
@@ -2803,7 +2865,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                             && previous != null
                             && previous.getStatePageCount() == 0
                             && Arrays.equals(previous.getScalarState(), scalarState);
-                    frozen.addPartition(key, scalarState, isUnchanged);
+                    frozen.addPartition(frozenKeys.append(keyAddress, keyLength), scalarState, isUnchanged);
                     imagedKeyCount++;
                     stateLength = scalarState.length;
                 } else {
@@ -2820,7 +2882,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                             && previousRef != null
                             && previousRef.getSegmentId() == stateRef.getSegmentId()
                             && previousRef.getOffset() == stateRef.getOffset();
-                    frozen.addPartition(key, stateRef, isUnchanged);
+                    frozen.addPartition(frozenKeys.append(keyAddress, keyLength), stateRef, isUnchanged);
                     imagedKeyCount++;
                     stateLength = stateRef.getDecodedLength();
                 }
@@ -2897,8 +2959,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     memberImages.add(new ObjList<>());
                 }
             }
+            final LiveViewCheckpointKeyArena frozenKeys = activeScratch.frozenKeys;
             window.freezeCheckpointMemberEntries(
                     activeScratch.keyBuffer,
+                    frozenKeys,
                     projectionIndexes,
                     activeScratch.groupedFreezeKeys,
                     memberImages,
@@ -2907,6 +2971,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     activeScratch.groupedFreezeLogicalBytes,
                     activeScratch.frozenByteArrays
             );
+            final int keyCount = activeScratch.groupedFreezeKeys.size();
+            if (!isIncremental) {
+                // Every member indexes the keys it images, and those are at most the walk's.
+                final long indexedKeyBound = outputKeys == null ? keyCount : Math.min(keyCount, outputKeys.size());
+                activeScratch.frozenPartitionIndex.reserve(
+                        activeScratch.frozenPartitionIndex.size() + indexedKeyBound * memberCount
+                );
+            }
             long logicalStateBytes = 0;
             // The walk is one, shared by every member of this bucket, so it is charged to the
             // first member's capture and the rest carry their images alone. Charging it per
@@ -2916,9 +2988,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 final FrozenFunction frozen = members.getQuick(m);
                 final ObjList<byte[]> images = memberImages.getQuick(m);
                 long imagedKeyCount = 0;
-                for (int i = 0, n = activeScratch.groupedFreezeKeys.size(); i < n; i++) {
-                    final byte[] key = activeScratch.groupedFreezeKeys.getQuick(i);
-                    if (outputKeys != null && !outputKeys.contains(key)) {
+                for (int i = 0; i < keyCount; i++) {
+                    // Every member shares the one handle the walk froze its key under. Nothing
+                    // in this iteration appends to the arena, so the address holds for it.
+                    final long keyHandle = activeScratch.groupedFreezeKeys.getQuick(i);
+                    final long keyAddress = frozenKeys.address(keyHandle);
+                    final int keyLength = frozenKeys.length(keyHandle);
+                    if (outputKeys != null && !outputKeys.contains(keyAddress, keyLength)) {
                         // Outside the replay's key domain, exactly as in freezeFunction: the
                         // state the group holds for this key was rebuilt from whatever rows
                         // fell inside [L, H), so the root keeps the entry it already had.
@@ -2927,13 +3003,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     final byte[] image = images.getQuick(i);
                     final LiveViewCheckpointPartitionMapEntry previous = previousBoundary == null
                             ? null
-                            : previousBoundary.find(frozen.identity, frozen.stateFormatVersion, key);
+                            : previousBoundary.find(frozen.identity, frozen.stateFormatVersion, keyAddress, keyLength);
                     final boolean isUnchanged = previousBoundary != null
                             && previousBoundary.isIncrementalBase()
                             && previous != null
                             && previous.getStatePageCount() == 0
                             && Arrays.equals(previous.getScalarState(), image);
-                    frozen.addPartition(key, image, isUnchanged);
+                    frozen.addPartition(keyHandle, image, isUnchanged);
                     imagedKeyCount++;
                 }
                 for (int i = 0, n = activeScratch.groupedFreezeRemovedKeys.size(); i < n; i++) {
@@ -3007,8 +3083,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         // payloads together: the window owns the group's runtime state, so a component's
         // bytes come off the same loaded value the anchor value does rather than out of a
         // probe per component.
+        final LiveViewCheckpointKeyArena frozenKeys = frozen.keyArena;
         frozen.logicalStateBytes = window.freezeCheckpointEntries(
                 activeScratch.keyBuffer,
+                frozenKeys,
                 frozen.keys,
                 frozen.anchorValues,
                 frozen.removedKeys,
@@ -3020,8 +3098,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         );
         long elisionProbes = 0;
         for (int i = 0, n = frozen.keys.size(); i < n; i++) {
-            final byte[] key = frozen.keys.getQuick(i);
-            if (outputKeys != null && !outputKeys.contains(key)) {
+            // Nothing in this iteration appends to the arena, so the address holds for it.
+            final long keyHandle = frozen.keys.getQuick(i);
+            final long keyAddress = frozenKeys.address(keyHandle);
+            final int keyLength = frozenKeys.length(keyHandle);
+            if (outputKeys != null && !outputKeys.contains(keyAddress, keyLength)) {
                 frozen.payloads.setQuick(i, null);
                 frozen.isUnchanged.add(true);
                 continue;
@@ -3041,7 +3122,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 continue;
             }
             elisionProbes++;
-            final LiveViewCheckpointPartitionMapEntry previous = previousBoundary.findWindowState(key);
+            final LiveViewCheckpointPartitionMapEntry previous = previousBoundary.findWindowState(keyAddress, keyLength);
             frozen.isUnchanged.add(previous != null
                     && previous.getStatePageCount() == 0
                     && Arrays.equals(previous.getScalarState(), frozen.payloads.getQuick(i)));
@@ -3263,9 +3344,21 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private final ObjList<ObjList<byte[]>> completeMemberImages = new ObjList<>();
         private final IntList completeMemberProjections = new IntList();
         private final ObjList<FrozenFunction> completeMembers = new ObjList<>();
+        // State and payload images; keys go to frozenKeys.
         private final LiveViewCheckpointByteArrayPool frozenByteArrays = new LiveViewCheckpointByteArrayPool();
         private final ObjList<FrozenBoundary> frozenBoundaryPool = new ObjList<>();
         private final ObjList<FrozenFunction> frozenFunctionPool = new ObjList<>();
+        // Every key the operation freezes, and every frozen holder names its key by a handle
+        // into it. Native, and freed with the two buffers when the operation ends, so it
+        // retains nothing between operations. Unlike the buffers it charges no tracker: the
+        // operation's tracker counts what it counted while every frozen key was a pooled heap
+        // array, so the refresh memory limit a view was sized for keeps admitting its seals
+        // and captures. Lazy, so a field initializer strands nothing.
+        private final LiveViewCheckpointKeyArena frozenKeys = new LiveViewCheckpointKeyArena();
+        // The frozen functions' partitions by key, one table for all of them with the
+        // function's ordinal as the namespace. Over frozenKeys, freed with it and, like it,
+        // untracked: it replaced per-function heap tables.
+        private final LiveViewCheckpointKeyIndex frozenPartitionIndex = new LiveViewCheckpointKeyIndex(frozenKeys);
         private final ObjList<FrozenWindowState> frozenWindowStatePool = new ObjList<>();
         private final LongList groupedFreezeLogicalBytes = new LongList();
         private final ObjList<ObjList<byte[]>> incrementalMemberImages = new ObjList<>();
@@ -3273,13 +3366,16 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private final ObjList<FrozenFunction> incrementalMembers = new ObjList<>();
         private final MemoryCARWImpl keyBuffer =
                 new MemoryCARWImpl(SCRATCH_PAGE_SIZE, SCRATCH_MAX_PAGES, MemoryTag.NATIVE_DEFAULT);
+        // The flyweight a ring seal freezes each partition into before the frozen function
+        // copies it. Untracked, like every entry: it holds one key's native copy.
+        private final LiveViewCheckpointPartitionMapEntry ringEntry = new LiveViewCheckpointPartitionMapEntry();
         private final MemoryCARWImpl stateBuffer =
                 new MemoryCARWImpl(SCRATCH_PAGE_SIZE, SCRATCH_MAX_PAGES, MemoryTag.NATIVE_DEFAULT);
         private int frozenBoundaryPoolCursor;
         private int frozenFunctionPoolCursor;
         // frozenPartitionPool, frozenStateRefPool, groupedFreezeKeys and
-        // groupedFreezeRemovedKeys grow one entry per frozen key, and ObjList.clear() keeps
-        // the backing array, so releaseFrozenGraph() replaces them after an outlier operation.
+        // groupedFreezeRemovedKeys grow one entry per frozen key, and clear() keeps the
+        // backing array, so releaseFrozenGraph() replaces them after an outlier operation.
         private ObjList<FrozenPartition> frozenPartitionPool = new ObjList<>();
         private int frozenPartitionPoolCursor;
         // Reference array slots of every holder in frozenPartitionPool, which is also the
@@ -3289,8 +3385,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private ObjList<LiveViewCheckpointStatePageRef> frozenStateRefPool = new ObjList<>();
         private int frozenStateRefPoolCursor;
         private int frozenWindowStatePoolCursor;
-        private ObjList<byte[]> groupedFreezeKeys = new ObjList<>();
-        private ObjList<byte[]> groupedFreezeRemovedKeys = new ObjList<>();
+        // Handles into frozenKeys, shared by every member of one grouped freeze.
+        private LongList groupedFreezeKeys = new LongList();
+        private LongList groupedFreezeRemovedKeys = new LongList();
         // DROP can close a parked repair capture on its own thread, under the view's refresh
         // latch (LiveViewInstance.tryCloseIfDropped), which the worker that owns this scratch
         // does not take to lease it for another view. That release clears the lease as its
@@ -3299,10 +3396,19 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private volatile boolean isLeased;
         private MemoryTracker memoryTracker;
 
+        /**
+         * Frees everything, native and pooled. {@link #release()} after this is a no-op
+         * rather than a second free: a closing writer closes the scratches it leased to
+         * parked repair captures, and each capture releases its scratch again when it is
+         * discarded afterwards.
+         */
         @Override
         public void close() {
             release();
+            Misc.free(frozenPartitionIndex);
+            Misc.free(frozenKeys);
             Misc.free(keyBuffer);
+            Misc.free(ringEntry);
             Misc.free(stateBuffer);
             completeMemberImages.clear();
             completeMembers.clear();
@@ -3343,6 +3449,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         @TestOnly
         private int getRetainedObjectCountForTest() {
             return frozenByteArrays.getRetainedArrayCount()
+                    + frozenKeys.keyCount()
                     + frozenBoundaryPool.size()
                     + frozenFunctionPool.size()
                     + frozenPartitionPool.size()
@@ -3373,8 +3480,15 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
 
         private void release() {
+            // What the ended operation froze decides what its holders may keep, so it is
+            // read before the arena goes. Releasing either of them again is a no-op.
+            final int frozenKeyCount = frozenKeys.keyCount();
+            frozenPartitionIndex.release();
+            frozenKeys.release();
             keyBuffer.clear();
             keyBuffer.setMemoryTracker(null);
+            ringEntry.clear();
+            ringEntry.trimWidthCaches();
             stateBuffer.clear();
             stateBuffer.setMemoryTracker(null);
             releaseGroupedFreezeScratch(incrementalMemberImages);
@@ -3384,7 +3498,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             completeMembers.clear();
             completeMemberProjections.clear();
             memoryTracker = null;
-            releaseFrozenGraph();
+            releaseFrozenGraph(frozenKeyCount);
         }
 
         /**
@@ -3397,16 +3511,20 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
          * reachable until another operation reused it. Beyond that, an operation that
          * pooled more than the retention limits allow hands back its whole frozen graph, so
          * one outlier seal does not park its footprint on the worker for good. Every list
-         * sized to the key set grows by at most one entry per image array the operation
-         * took, which is what lets the array pool's high-water mark stand for all of those
-         * lists. The state page references partition holders own do not follow that mark -
-         * a ring holder names one per live chunk page of its key - so the scratch counts
-         * them by themselves as holders take and drop reference arrays. An operation within
-         * the limits keeps everything pooled for the next one to reuse.
+         * sized to the key set grows by one entry per key the operation froze, which the key
+         * arena counted, or per image array it took, which the array pool counts - a grouped
+         * member's partitions follow its images - so the two counts summed stand for all of
+         * those lists, as the array count alone did while every frozen key was a pooled
+         * array. The state page references partition holders own follow neither - a ring
+         * holder names one per live chunk page of its key - so the scratch counts them by
+         * themselves as holders take and drop reference arrays. An operation within the
+         * limits keeps everything pooled for the next one to reuse.
+         *
+         * @param frozenKeyCount the keys the ended operation froze
          */
-        private void releaseFrozenGraph() {
+        private void releaseFrozenGraph(int frozenKeyCount) {
             assert frozenStatePageRefCount == countFrozenStatePageRefs();
-            if (frozenByteArrays.getRetainedArrayCount() > MAX_RETAINED_FROZEN_ARRAYS
+            if ((long) frozenByteArrays.getRetainedArrayCount() + frozenKeyCount > MAX_RETAINED_FROZEN_ARRAYS
                     || frozenByteArrays.getRetainedBytes() > MAX_RETAINED_FROZEN_ARRAY_BYTES
                     || frozenStatePageRefCount > MAX_RETAINED_FROZEN_STATE_PAGE_REFS) {
                 frozenByteArrays.clear();
@@ -3416,8 +3534,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 frozenPartitionPool = new ObjList<>();
                 frozenStatePageRefCount = 0;
                 frozenStateRefPool = new ObjList<>();
-                groupedFreezeKeys = new ObjList<>();
-                groupedFreezeRemovedKeys = new ObjList<>();
+                groupedFreezeKeys = new LongList();
+                groupedFreezeRemovedKeys = new LongList();
                 completeMemberImages.clear();
                 incrementalMemberImages.clear();
             } else {
@@ -3453,7 +3571,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * payload per live key holding the anchor value and every grouped component
      * together. {@link #keys}, {@link #payloads} and {@link #isUnchanged} stay
      * index-aligned; a payload is null exactly when a repair's key domain excluded the
-     * key, in which case the predecessor's whole entry stands.
+     * key, in which case the predecessor's whole entry stands. The keys are handles into
+     * the owning scratch's key arena, {@link #keyArena}.
      * <p>
      * The fused root is the boundary's one state root, and the functions it groups are
      * omitted from the function directory entirely.
@@ -3465,9 +3584,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         // probe.
         private final BoolList isElisionRuledOut = new BoolList();
         private final BoolList isUnchanged = new BoolList();
-        private final ObjList<byte[]> keys = new ObjList<>();
+        private final LiveViewCheckpointKeyArena keyArena;
+        private final LongList keys = new LongList();
         private final ObjList<byte[]> payloads = new ObjList<>();
-        private final ObjList<byte[]> removedKeys = new ObjList<>();
+        private final LongList removedKeys = new LongList();
         private int anchorValueType;
         private boolean isIncremental;
         private byte[] keySchema;
@@ -3478,9 +3598,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private LiveViewWindow window;
         private byte[] windowIdentity;
 
+        private FrozenWindowState(@NotNull LiveViewCheckpointKeyArena keyArena) {
+            this.keyArena = keyArena;
+        }
+
         /**
-         * Drops what this holder borrowed from the view it froze. The key and payload
-         * arrays stay: they belong to the scratch's array pool, not to the view.
+         * Drops what this holder borrowed from the view it froze. The key handles and the
+         * payload arrays stay: they belong to the scratch's key arena and array pool, not
+         * to the view.
          */
         private void clearRuntime() {
             window = null;
@@ -3546,10 +3671,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     }
 
     private final class FrozenFunction {
-        private final LiveViewCheckpointBinaryKeyIndex partitionIndexes =
-                new LiveViewCheckpointBinaryKeyIndex();
+        // The function's slot in its scratch's function pool, which is the namespace its
+        // partitions take in the scratch's partition index. Unique within one operation:
+        // the pool's cursor only rewinds when the operation ends, and so does the index.
+        private final int ordinal;
         private final ObjList<FrozenPartition> partitions = new ObjList<>();
-        private final ObjList<byte[]> removedPartitions = new ObjList<>();
+        // Handles into the scratch's key arena.
+        private final LongList removedPartitions = new LongList();
+        private final FreezeScratch scratch;
         private WindowFunction function;
         private byte[] identity;
         private boolean isIncremental;
@@ -3557,6 +3686,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private long logicalStateBytes;
         private LiveViewCheckpointStatePageRef scalarStateRef;
         private int stateFormatVersion;
+
+        private FrozenFunction(@NotNull FreezeScratch scratch, int ordinal) {
+            this.scratch = scratch;
+            this.ordinal = ordinal;
+        }
 
         private FrozenFunction of(
                 WindowFunction function,
@@ -3568,7 +3702,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             this.identity = identity;
             this.stateFormatVersion = stateFormatVersion;
             this.keySchema = keySchema;
-            partitionIndexes.clear();
             partitions.clear();
             removedPartitions.clear();
             isIncremental = false;
@@ -3579,7 +3712,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
         /**
          * Drops what this holder borrowed from the function it froze. The partitions stay:
-         * their arrays and holders belong to the scratch's pools, not to the view.
+         * their keys, arrays and holders belong to the scratch, not to the view.
          */
         private void clearRuntime() {
             function = null;
@@ -3588,31 +3721,41 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
 
         /**
-         * Takes one whole-state image the leaf carries itself. The image is already
-         * a fresh array per partition, so it is stored rather than copied again.
+         * @return the index in {@link #partitions} of this function's partition for the
+         * {@code keyLength} key bytes at {@code keyAddress}, or -1 when it froze none. Only
+         * a complete freeze indexes its partitions.
          */
-        private void addPartition(byte[] key, byte[] scalarState, boolean isUnchanged) {
-            final FrozenPartition partition = nextFrozenPartition();
-            final int previousStatePageRefCount = partition.statePageRefs.length;
-            addPartition(partition.of(key, scalarState, NO_STATE_PAGES, isUnchanged), previousStatePageRefCount);
-        }
-
-        private void addPartition(byte[] key, LiveViewCheckpointStatePageRef stateRef, boolean isUnchanged) {
-            final FrozenPartition partition = nextFrozenPartition();
-            final int previousStatePageRefCount = partition.statePageRefs.length;
-            addPartition(partition.of(key, NO_BYTES, stateRef, isUnchanged), previousStatePageRefCount);
+        private int findPartition(long keyAddress, int keyLength) {
+            return scratch.frozenPartitionIndex.get(ordinal, 0, keyAddress, keyLength);
         }
 
         /**
-         * Takes a ring seal's entry by copy: the seal reuses one flyweight for
-         * every partition it freezes.
+         * Takes one whole-state image the leaf carries itself. The image is already
+         * a fresh array per partition, so it is stored rather than copied again.
          */
-        private void addPartition(LiveViewCheckpointPartitionMapEntry entry) {
+        private void addPartition(long keyHandle, byte[] scalarState, boolean isUnchanged) {
+            final FrozenPartition partition = nextFrozenPartition();
+            final int previousStatePageRefCount = partition.statePageRefs.length;
+            addPartition(partition.of(keyHandle, scalarState, NO_STATE_PAGES, isUnchanged), previousStatePageRefCount);
+        }
+
+        private void addPartition(long keyHandle, LiveViewCheckpointStatePageRef stateRef, boolean isUnchanged) {
+            final FrozenPartition partition = nextFrozenPartition();
+            final int previousStatePageRefCount = partition.statePageRefs.length;
+            addPartition(partition.of(keyHandle, NO_BYTES, stateRef, isUnchanged), previousStatePageRefCount);
+        }
+
+        /**
+         * Takes a ring seal's scalar and references by copy: the seal reuses one
+         * flyweight for every partition it freezes. The key is already frozen under
+         * {@code keyHandle}.
+         */
+        private void addPartition(long keyHandle, LiveViewCheckpointPartitionMapEntry entry) {
             final FrozenPartition partition = nextFrozenPartition();
             final int previousStatePageRefCount = partition.statePageRefs.length;
             addPartition(
                     partition.of(
-                            activeScratch.frozenByteArrays.copy(entry.getKey()),
+                            keyHandle,
                             activeScratch.frozenByteArrays.copy(entry.getScalarState()),
                             entry,
                             false
@@ -3626,16 +3769,19 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
          *                                  holder owned before this freeze refilled it
          */
         private void addPartition(FrozenPartition partition, int previousStatePageRefCount) {
+            // The holder, its key handle and this function all belong to the scratch that is
+            // freezing, which is the only one whose arena the handle can name.
+            assert scratch == activeScratch;
             // A refill may have replaced the holder's reference array or dropped it for the
             // shared empty one, so the scratch's count moves by the difference.
             activeScratch.frozenStatePageRefCount += partition.statePageRefs.length - previousStatePageRefCount;
-            // partitionIndexes serves two readers, and an incremental freeze has
+            // The partition index serves two readers, and an incremental freeze has
             // neither: removeMissingPartitions, which only a full scan runs, and
             // CapturedPreviousBoundary, which only a repair capture builds - and a
             // capture always freezes completely. Skipping the insert keeps a
             // touched-key seal off one hash entry per key.
             if (!isIncremental) {
-                partitionIndexes.put(0, 0, partition.key, partitions.size());
+                scratch.frozenPartitionIndex.put(ordinal, 0, partition.keyHandle, partitions.size());
             }
             partitions.add(partition);
         }
@@ -3643,20 +3789,21 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
     private static final class FrozenPartition {
         // The predecessor already names these exact bytes. A full scan still keeps
-        // the partition in partitionsByKey so missing-key detection sees the
+        // the partition in the partition index so missing-key detection sees the
         // complete live domain, but no no-op put reaches the persistent map builder.
         private boolean isUnchanged;
-        private byte[] key;
+        // The key's handle in the key arena of the scratch that pools this holder.
+        private long keyHandle;
         private byte[] scalarState;
         private LiveViewCheckpointStatePageRef[] statePageRefs = NO_STATE_PAGES;
 
         private FrozenPartition of(
-                byte[] key,
+                long keyHandle,
                 byte[] scalarState,
                 LiveViewCheckpointStatePageRef[] statePageRefs,
                 boolean isUnchanged
         ) {
-            this.key = key;
+            this.keyHandle = keyHandle;
             this.scalarState = scalarState;
             this.statePageRefs = statePageRefs;
             this.isUnchanged = isUnchanged;
@@ -3664,7 +3811,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
 
         private FrozenPartition of(
-                byte[] key,
+                long keyHandle,
                 byte[] scalarState,
                 LiveViewCheckpointPartitionMapEntry entry,
                 boolean isUnchanged
@@ -3680,7 +3827,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 }
                 copyStateRef(entry.getStatePageRef(i), ref);
             }
-            return of(key, scalarState, statePageRefs, isUnchanged);
+            return of(keyHandle, scalarState, statePageRefs, isUnchanged);
         }
 
         /**
@@ -3698,7 +3845,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
          * function is frozen - would give one of them the other's page.
          */
         private FrozenPartition of(
-                byte[] key,
+                long keyHandle,
                 byte[] scalarState,
                 LiveViewCheckpointStatePageRef statePageRef,
                 boolean isUnchanged
@@ -3711,11 +3858,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 ref = statePageRefs[0] = new LiveViewCheckpointStatePageRef();
             }
             copyStateRef(statePageRef, ref);
-            return of(key, scalarState, statePageRefs, isUnchanged);
+            return of(keyHandle, scalarState, statePageRefs, isUnchanged);
         }
 
-        private void copyTo(LiveViewCheckpointPartitionMapEntry out) {
-            out.of(key, scalarState, statePageRefs);
+        /**
+         * @param keys the key arena of the scratch that pools this holder
+         */
+        private void copyTo(LiveViewCheckpointKeyArena keys, LiveViewCheckpointPartitionMapEntry out) {
+            out.of(keys.address(keyHandle), keys.length(keyHandle), scalarState, statePageRefs);
         }
     }
 
@@ -3733,14 +3883,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
     private FrozenFunction nextFrozenFunction() {
         if (activeScratch.frozenFunctionPoolCursor == activeScratch.frozenFunctionPool.size()) {
-            activeScratch.frozenFunctionPool.add(new FrozenFunction());
+            activeScratch.frozenFunctionPool.add(new FrozenFunction(activeScratch, activeScratch.frozenFunctionPool.size()));
         }
         return activeScratch.frozenFunctionPool.getQuick(activeScratch.frozenFunctionPoolCursor++);
     }
 
     private FrozenWindowState nextFrozenWindowState() {
         if (activeScratch.frozenWindowStatePoolCursor == activeScratch.frozenWindowStatePool.size()) {
-            activeScratch.frozenWindowStatePool.add(new FrozenWindowState());
+            activeScratch.frozenWindowStatePool.add(new FrozenWindowState(activeScratch.frozenKeys));
         }
         return activeScratch.frozenWindowStatePool.getQuick(activeScratch.frozenWindowStatePoolCursor++);
     }
@@ -3782,12 +3932,20 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * <p>
      * A lookup returns null whenever the previous boundary has nothing to share -
      * no such function, a different state layout, or a partition that did not
-     * exist there - and the freeze then writes that partition from empty.
+     * exist there - and the freeze then writes that partition from empty. A key
+     * passes as an {@code (address, length)} pair valid for the call, and a lookup
+     * copies what it returns into an entry the boundary owns, valid until the
+     * boundary's next lookup of the same kind.
      */
     private interface PreviousBoundary {
 
         @Nullable
-        LiveViewCheckpointPartitionMapEntry find(byte[] functionIdentity, int stateFormatVersion, byte[] key);
+        LiveViewCheckpointPartitionMapEntry find(
+                byte[] functionIdentity,
+                int stateFormatVersion,
+                long keyAddress,
+                int keyLength
+        );
 
         /**
          * The previous boundary's whole-state page for a function that keeps no
@@ -3804,7 +3962,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
          * not written under makes its bytes mean something else.
          */
         @Nullable
-        LiveViewCheckpointPartitionMapEntry findWindowState(byte[] key);
+        LiveViewCheckpointPartitionMapEntry findWindowState(long keyAddress, int keyLength);
 
         long getMaxTimestamp();
 
@@ -3876,17 +4034,18 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         public @Nullable LiveViewCheckpointPartitionMapEntry find(
                 byte[] functionIdentity,
                 int stateFormatVersion,
-                byte[] key
+                long keyAddress,
+                int keyLength
         ) {
             final FrozenFunction function = findFunction(functionIdentity, stateFormatVersion);
             if (function == null) {
                 return null;
             }
-            final int partitionIndex = function.partitionIndexes.get(0, 0, key);
+            final int partitionIndex = function.findPartition(keyAddress, keyLength);
             if (partitionIndex < 0) {
                 return null;
             }
-            function.partitions.getQuick(partitionIndex).copyTo(entry);
+            function.partitions.getQuick(partitionIndex).copyTo(function.scratch.frozenKeys, entry);
             return entry;
         }
 
@@ -3905,7 +4064,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
          * never the ones an unchanged-key short-circuit could stand on.
          */
         @Override
-        public @Nullable LiveViewCheckpointPartitionMapEntry findWindowState(byte[] key) {
+        public @Nullable LiveViewCheckpointPartitionMapEntry findWindowState(long keyAddress, int keyLength) {
             return null;
         }
 
@@ -4553,7 +4712,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private final long dataSegmentId;
         private final long generation;
         private final boolean isChained;
-        private final LiveViewCheckpointOutputKeyDomain outputKeys;
+        // Q, this capture's own copy, filled by adoptOutputKeys() after construction and,
+        // like the heap copy it replaced, charged to no tracker. Lazy, so a capture without
+        // one holds no native memory for it; see hasOutputKeys.
+        private final LiveViewCheckpointOutputKeyDomain outputKeys = new LiveViewCheckpointOutputKeyDomain();
         // The entry immediately below the repaired interval, for a chaining capture:
         // the root its first boundary is seeded from and frozen against. Resolved by
         // collectBoundaries, which is already reading the pinned timeline.
@@ -4569,6 +4731,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         // predecessor plus the boundaries this capture has already staged over it -
         // held open across the whole chain. Null for a capture that does not chain.
         private ChainedPreviousBoundary chain;
+        private boolean hasOutputKeys;
         private boolean hasPredecessor;
         private boolean isClosed;
         private boolean isDataOpen;
@@ -4581,7 +4744,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 LiveViewCheckpointPageRef timelineRootRef,
                 LiveViewCheckpointPageRef rowPositionDeltaRootRef,
                 LiveViewCheckpointPageRef segmentDirectoryRootRef,
-                @Nullable LiveViewCheckpointOutputKeyDomain outputKeys,
                 boolean chained,
                 FreezeScratch scratch
         ) {
@@ -4593,12 +4755,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             copy(timelineRootRef, this.timelineRootRef);
             copy(rowPositionDeltaRootRef, this.rowPositionDeltaRootRef);
             copy(segmentDirectoryRootRef, this.segmentDirectoryRootRef);
-            if (outputKeys != null) {
-                this.outputKeys = new LiveViewCheckpointOutputKeyDomain();
-                this.outputKeys.copyFrom(outputKeys);
-            } else {
-                this.outputKeys = null;
-            }
         }
 
         /**
@@ -4687,7 +4843,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     functions,
                     anchorWindow,
                     previousBoundary,
-                    outputKeys,
+                    getOutputKeys(),
                     baselineGeneration
             );
             boundary.oldEntry.copyFrom(entry);
@@ -4731,7 +4887,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 }
             } finally {
                 try {
+                    // First, so nothing freed after it can strand the copy. A close on the
+                    // DROP thread frees it there too: the free is thread-agnostic native
+                    // accounting.
+                    hasOutputKeys = false;
+                    Misc.free(outputKeys);
                     boundaries.clear();
+                    Misc.free(capturedPreviousBoundary.entry);
                     Misc.free(discardPath);
                     Misc.free(checkpointsDir);
                 } finally {
@@ -4770,7 +4932,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 @NotNull ObjList<WindowFunction> functions,
                 @Nullable LiveViewWindow anchorWindow
         ) {
-            if (outputKeys == null) {
+            if (!hasOutputKeys) {
                 return true;
             }
             // The storage plan, not the adopted runtime one. What a partial publication has
@@ -4966,6 +5128,18 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
 
         /**
+         * Copies {@code source} into this capture's own domain. Called once, by
+         * {@link #beginRepair} after construction, so a copy that fails to allocate is a
+         * capture beginRepair frees, rather than a half-built one whose Paths and scratch
+         * lease nothing would release.
+         */
+        private void adoptOutputKeys(@NotNull LiveViewCheckpointOutputKeyDomain source) {
+            assert !hasOutputKeys;
+            outputKeys.copyFrom(source);
+            hasOutputKeys = true;
+        }
+
+        /**
          * @return the published segment's exact length, or 0 when the capture's
          * boundaries all shared their pages and encoded nothing new
          */
@@ -4980,6 +5154,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             final long bytes = dataWriter.commit();
             isDataPublished = true;
             return bytes;
+        }
+
+        /**
+         * @return this capture's copy of {@code Q}, or null when its replay describes every
+         * live key
+         */
+        private @Nullable LiveViewCheckpointOutputKeyDomain getOutputKeys() {
+            return hasOutputKeys ? outputKeys : null;
         }
 
         /**
@@ -5042,8 +5224,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     new LiveViewCheckpointBinaryKeyIndex();
             @TestOnly
             private int functionIdentityQualificationCountForTest;
-            private final LiveViewCheckpointBinaryKeyIndex partitionIndex =
-                    new LiveViewCheckpointBinaryKeyIndex();
+            // Both indexes name the staged keys by their handles in the capture scratch's key
+            // arena, which the capture keeps leased until it closes - after this chain. Like
+            // that arena they charge no tracker. Lazy, so a constructor that throws strands
+            // nothing.
+            private final LiveViewCheckpointKeyIndex partitionIndex = new LiveViewCheckpointKeyIndex(scratch.frozenKeys);
             private final ObjList<FrozenPartition> stagedPartitions = new ObjList<>();
             // A flyweight of its own, as the published boundary keeps: the fused entry
             // and a function's entry are asked for by different halves of one freeze, and
@@ -5061,12 +5246,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             private final RootPreviousBoundary publishedPreviousBoundary;
             private final LiveViewCheckpointRoot publishedRoot;
             private final LiveViewCheckpointPageRef publishedStateRootRef = new LiveViewCheckpointPageRef();
-            private final LiveViewCheckpointBinaryKeyIndex windowPayloadIndex =
-                    new LiveViewCheckpointBinaryKeyIndex();
+            private final LiveViewCheckpointKeyIndex windowPayloadIndex = new LiveViewCheckpointKeyIndex(scratch.frozenKeys);
             private final ObjList<byte[]> windowPayloads = new ObjList<>();
             // Function ordinals remain stable for this chain's lifetime. The partition
-            // index combines one with the state version and binary key, so no joined key
-            // array or nested wrapper map is needed.
+            // index combines one with the state version and the key, so no joined key
+            // or nested wrapper map is needed.
             private FrozenBoundary newest;
 
             private ChainedPreviousBoundary(
@@ -5099,6 +5283,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         Misc.free(publishedFunctionDirectory);
                         Misc.free(publishedMetaStore);
                         Misc.free(publishedRoot);
+                        // Lazy, so nothing is allocated yet; freed for symmetry with close().
+                        Misc.free(entry);
+                        Misc.free(windowEntry);
+                        Misc.free(partitionIndex);
+                        Misc.free(windowPayloadIndex);
                         throw th;
                     }
                 }
@@ -5106,6 +5295,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
             @Override
             public void close() {
+                // First, so a close below that throws cannot strand them once the capture is
+                // gone: the capture marks itself closed before it closes this chain and never
+                // comes back to it.
+                Misc.free(partitionIndex);
+                Misc.free(windowPayloadIndex);
                 if (published != null) {
                     published.close();
                     published.free();
@@ -5113,10 +5307,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 Misc.free(publishedFunctionDirectory);
                 Misc.free(publishedMetaStore);
                 Misc.free(publishedRoot);
+                Misc.free(entry);
+                Misc.free(windowEntry);
                 functionOrdinalIndex.clear();
-                partitionIndex.clear();
                 stagedPartitions.clear();
-                windowPayloadIndex.clear();
                 windowPayloads.clear();
                 newest = null;
             }
@@ -5125,22 +5319,25 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             public @Nullable LiveViewCheckpointPartitionMapEntry find(
                     byte[] functionIdentity,
                     int stateFormatVersion,
-                    byte[] key
+                    long keyAddress,
+                    int keyLength
             ) {
                 final int functionOrdinal = functionOrdinal(functionIdentity, false);
                 if (functionOrdinal > -1) {
-                    final int stagedIndex = partitionIndex.get(functionOrdinal, stateFormatVersion, key);
+                    final int stagedIndex = partitionIndex.get(functionOrdinal, stateFormatVersion, keyAddress, keyLength);
                     if (stagedIndex == 0) {
                         // The chain removed it. The published root may still hold an
                         // entry, and it is exactly the one that must not be seen.
                         return null;
                     }
                     if (stagedIndex > 0) {
-                        stagedPartitions.getQuick(stagedIndex - 1).copyTo(entry);
+                        stagedPartitions.getQuick(stagedIndex - 1).copyTo(scratch.frozenKeys, entry);
                         return entry;
                     }
                 }
-                return published == null ? null : published.find(functionIdentity, stateFormatVersion, key);
+                return published == null
+                        ? null
+                        : published.find(functionIdentity, stateFormatVersion, keyAddress, keyLength);
             }
 
             @Override
@@ -5158,16 +5355,17 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             }
 
             @Override
-            public @Nullable LiveViewCheckpointPartitionMapEntry findWindowState(byte[] key) {
-                final int stagedIndex = windowPayloadIndex.get(0, 0, key);
+            public @Nullable LiveViewCheckpointPartitionMapEntry findWindowState(long keyAddress, int keyLength) {
+                final int stagedIndex = windowPayloadIndex.get(0, 0, keyAddress, keyLength);
                 if (stagedIndex == 0) {
                     return null;
                 }
                 if (stagedIndex > 0) {
-                    windowEntry.of(key, windowPayloads.getQuick(stagedIndex - 1), NO_STATE_PAGES);
+                    // The staged key is byte for byte the probe's, so the probe names it.
+                    windowEntry.of(keyAddress, keyLength, windowPayloads.getQuick(stagedIndex - 1), NO_STATE_PAGES);
                     return windowEntry;
                 }
-                return published == null ? null : published.findWindowState(key);
+                return published == null ? null : published.findWindowState(keyAddress, keyLength);
             }
 
             @Override
@@ -5235,6 +5433,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             private void absorb(FrozenBoundary boundary) {
                 final FrozenWindowState windowState = boundary.windowState;
                 if (windowState != null) {
+                    // Every handle the boundary holds is into this capture scratch's arena,
+                    // which the indexes are built over.
+                    assert windowState.keyArena == scratch.frozenKeys;
                     for (int i = 0, n = windowState.removedKeys.size(); i < n; i++) {
                         windowPayloadIndex.put(0, 0, windowState.removedKeys.getQuick(i), 0);
                     }
@@ -5250,6 +5451,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 }
                 for (int f = 0, m = boundary.functions.size(); f < m; f++) {
                     final FrozenFunction frozen = boundary.functions.getQuick(f);
+                    assert frozen.scratch == scratch;
                     final int functionOrdinal = functionOrdinal(frozen.identity, true);
                     for (int i = 0, n = frozen.removedPartitions.size(); i < n; i++) {
                         partitionIndex.put(
@@ -5265,7 +5467,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         partitionIndex.put(
                                 functionOrdinal,
                                 frozen.stateFormatVersion,
-                                partition.key,
+                                partition.keyHandle,
                                 stagedPartitions.size()
                         );
                     }
@@ -5442,9 +5644,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 dataReaders[i] = Misc.free(dataReaders[i]);
                 dataReaderSegmentIds[i] = -1;
             }
+            Misc.free(entry);
             Misc.free(functionRoot);
             Misc.free(partitionReader);
             Misc.free(segmentDirectory);
+            Misc.free(windowEntry);
             Misc.free(windowRoot);
             Misc.free(checkpointsDir);
         }
@@ -5468,12 +5672,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         public @Nullable LiveViewCheckpointPartitionMapEntry find(
                 byte[] functionIdentity,
                 int stateFormatVersion,
-                byte[] key
+                long keyAddress,
+                int keyLength
         ) {
             if (!resolveFunction(functionIdentity, stateFormatVersion)) {
                 return null;
             }
-            return partitionReader.find(partitionRootRef, key, entry) ? entry : null;
+            return partitionReader.find(partitionRootRef, keyAddress, keyLength, entry) ? entry : null;
         }
 
         @Override
@@ -5488,11 +5693,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
 
         @Override
-        public @Nullable LiveViewCheckpointPartitionMapEntry findWindowState(byte[] key) {
+        public @Nullable LiveViewCheckpointPartitionMapEntry findWindowState(long keyAddress, int keyLength) {
             if (!isWindowRootCompatible) {
                 return null;
             }
-            return partitionReader.find(windowMapRootRef, key, windowEntry) ? windowEntry : null;
+            return partitionReader.find(windowMapRootRef, keyAddress, keyLength, windowEntry) ? windowEntry : null;
         }
 
         @Override
@@ -6185,7 +6390,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 }
             }
             if (newRefs != null) {
-                functionRootBuilder.putPartition(entry.getKey(), entry.getScalarState(), newRefs);
+                functionRootBuilder.putPartition(
+                        entry.getKeyAddress(),
+                        entry.getKeyLength(),
+                        entry.getScalarState(),
+                        newRefs
+                );
             }
         }
 
@@ -6258,7 +6468,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 RepairCapture capture,
                 long definitionTxn
         ) {
-            assert !capture.isChained() && capture.outputKeys != null;
+            assert !capture.isChained() && capture.getOutputKeys() != null;
             final int boundaryCount = capture.size();
             final ObjList<BatchedBoundaryState> states = batchedBoundaryStates;
             while (states.size() < boundaryCount) {
@@ -6292,7 +6502,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                             boundary,
                             batchOldStateRootRef,
                             batchFunctionDirectory,
-                            capture.outputKeys,
+                            capture.getOutputKeys(),
                             stateSegmentId,
                             aggregateStateWriter,
                             state
@@ -6368,8 +6578,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         !windowState.isIncremental,
                         outputKeys
                 );
+                // The builder stages into an arena of its own, so no append here moves a
+                // key the frozen arena holds.
+                final LiveViewCheckpointKeyArena frozenKeys = windowState.keyArena;
                 for (int i = 0, n = windowState.removedKeys.size(); i < n; i++) {
-                    windowRootBuilder.removePartition(windowState.removedKeys.getQuick(i));
+                    final long keyHandle = windowState.removedKeys.getQuick(i);
+                    windowRootBuilder.removePartition(frozenKeys.address(keyHandle), frozenKeys.length(keyHandle));
                 }
                 for (int i = 0, n = windowState.keys.size(); i < n; i++) {
                     final byte[] payload = windowState.payloads.getQuick(i);
@@ -6377,7 +6591,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         continue;
                     }
                     final boolean isUnchanged = windowState.isUnchanged.get(i);
-                    windowRootBuilder.putPartition(windowState.keys.getQuick(i), payload, isUnchanged);
+                    final long keyHandle = windowState.keys.getQuick(i);
+                    windowRootBuilder.putPartition(
+                            frozenKeys.address(keyHandle),
+                            frozenKeys.length(keyHandle),
+                            payload,
+                            isUnchanged
+                    );
                     if (!isUnchanged) {
                         lastBoundaryPartitionPuts++;
                     }
@@ -6404,14 +6624,19 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     if (!frozen.isIncremental) {
                         removeMissingPartitions(oldFunctionRootRef, frozen, outputKeys);
                     }
+                    // The builder stages into an arena of its own, so no append here moves
+                    // a key the frozen arena holds.
+                    final LiveViewCheckpointKeyArena frozenKeys = frozen.scratch.frozenKeys;
                     for (int p = 0, m = frozen.removedPartitions.size(); p < m; p++) {
-                        functionRootBuilder.removePartition(frozen.removedPartitions.getQuick(p));
+                        final long keyHandle = frozen.removedPartitions.getQuick(p);
+                        functionRootBuilder.removePartition(frozenKeys.address(keyHandle), frozenKeys.length(keyHandle));
                     }
                     for (int p = 0, m = frozen.partitions.size(); p < m; p++) {
                         final FrozenPartition partition = frozen.partitions.getQuick(p);
                         if (!partition.isUnchanged) {
                             functionRootBuilder.putPartition(
-                                    partition.key,
+                                    frozenKeys.address(partition.keyHandle),
+                                    frozenKeys.length(partition.keyHandle),
                                     partition.scalarState,
                                     partition.statePageRefs
                             );
@@ -6473,8 +6698,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 // Removals first, mirroring the anchor and function paths below. A
                 // complete snapshot carries none - it removes by omission in build() - so
                 // the two rules never name one key twice.
+                // The builder stages into an arena of its own, so no append here moves a
+                // key the frozen arena holds.
+                final LiveViewCheckpointKeyArena frozenKeys = windowState.keyArena;
                 for (int i = 0, n = windowState.removedKeys.size(); i < n; i++) {
-                    windowRootBuilder.removePartition(windowState.removedKeys.getQuick(i));
+                    final long keyHandle = windowState.removedKeys.getQuick(i);
+                    windowRootBuilder.removePartition(frozenKeys.address(keyHandle), frozenKeys.length(keyHandle));
                 }
                 for (int i = 0, n = windowState.keys.size(); i < n; i++) {
                     final byte[] payload = windowState.payloads.getQuick(i);
@@ -6486,7 +6715,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         continue;
                     }
                     final boolean isUnchanged = windowState.isUnchanged.get(i);
-                    windowRootBuilder.putPartition(windowState.keys.getQuick(i), payload, isUnchanged);
+                    final long keyHandle = windowState.keys.getQuick(i);
+                    windowRootBuilder.putPartition(
+                            frozenKeys.address(keyHandle),
+                            frozenKeys.length(keyHandle),
+                            payload,
+                            isUnchanged
+                    );
                     if (!isUnchanged) {
                         lastBoundaryPartitionPuts++;
                     }
@@ -6527,14 +6762,19 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     if (!frozen.isIncremental) {
                         removeMissingPartitions(oldFunctionRootRef, frozen, outputKeys);
                     }
+                    // The builder stages into an arena of its own, so no append here moves
+                    // a key the frozen arena holds.
+                    final LiveViewCheckpointKeyArena frozenKeys = frozen.scratch.frozenKeys;
                     for (int p = 0, m = frozen.removedPartitions.size(); p < m; p++) {
-                        functionRootBuilder.removePartition(frozen.removedPartitions.getQuick(p));
+                        final long keyHandle = frozen.removedPartitions.getQuick(p);
+                        functionRootBuilder.removePartition(frozenKeys.address(keyHandle), frozenKeys.length(keyHandle));
                     }
                     for (int p = 0, m = frozen.partitions.size(); p < m; p++) {
                         final FrozenPartition partition = frozen.partitions.getQuick(p);
                         if (!partition.isUnchanged) {
                             functionRootBuilder.putPartition(
-                                    partition.key,
+                                    frozenKeys.address(partition.keyHandle),
+                                    frozenKeys.length(partition.keyHandle),
                                     partition.scalarState,
                                     partition.statePageRefs
                             );
@@ -6571,9 +6811,15 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             oldFunctionRoot.getPartitionMapRootRef(oldPartitionRoot);
             if (outputKeys != null) {
                 for (int i = 0, n = outputKeys.getSlotCount(); i < n; i++) {
-                    final byte[] key = outputKeys.getKeyAt(i);
-                    if (key != null && frozen.partitionIndexes.get(0, 0, key) < 0) {
-                        functionRootBuilder.removePartition(key);
+                    if (!outputKeys.isSlotUsed(i)) {
+                        continue;
+                    }
+                    // Q's storage is not the builder's arena, so staging the removal
+                    // cannot move the key under the address.
+                    final long keyAddress = outputKeys.getKeyAddress(i);
+                    final int keyLength = outputKeys.getKeyLength(i);
+                    if (frozen.findPartition(keyAddress, keyLength) < 0) {
+                        functionRootBuilder.removePartition(keyAddress, keyLength);
                     }
                 }
                 return;
@@ -6661,8 +6907,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
         @Override
         public void onEntry(@NotNull LiveViewCheckpointPartitionMapEntry entry) {
-            if (frozen.partitionIndexes.get(0, 0, entry.getKey()) < 0) {
-                roots.functionRootBuilder.removePartition(entry.getKey());
+            // The key sits in the reader's scratch entry, not in the staging arena the
+            // removal appends to, so the append cannot move it.
+            final long keyAddress = entry.getKeyAddress();
+            final int keyLength = entry.getKeyLength();
+            if (frozen.findPartition(keyAddress, keyLength) < 0) {
+                roots.functionRootBuilder.removePartition(keyAddress, keyLength);
             }
         }
     }

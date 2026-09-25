@@ -48,6 +48,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Before;
@@ -76,6 +77,7 @@ public class LiveViewCheckpointPublicationAllocationTest extends AbstractCairoTe
 
     private static final long DEFINITION_TXN = 11;
     private static final long LIFECYCLE_IDENTITY = 401;
+    private static final ColumnTypes LONG_KEY_TYPES = new SingleColumnType(ColumnType.LONG);
     private static final String LV_DIR = "lv_publication_allocation";
     private static final int MEASURED_SEALS = 16;
     /**
@@ -87,7 +89,9 @@ public class LiveViewCheckpointPublicationAllocationTest extends AbstractCairoTe
      * steady state stays comfortably inside it.
      */
     private static final long PER_SEAL_ALLOCATION_LIMIT_BYTES = 6_144;
+    private static final ColumnTypes STRING_KEY_TYPES = new SingleColumnType(ColumnType.STRING);
     private static final int WARMUP_SEALS = 16;
+    private static final int WIDTH_CHURN_KEYS = 64;
 
     @Before
     public void setUp() {
@@ -107,10 +111,83 @@ public class LiveViewCheckpointPublicationAllocationTest extends AbstractCairoTe
 
     @Test
     public void testASealJustInsideTheFrozenRetentionLimitAllocatesNothingPerSealOnceWarm() throws Exception {
-        // The writer hands an outlier seal's frozen graph back when the seal ends. One key
-        // array and one inline state array per key puts this key set just inside the
-        // limit, so its steady state must stay as garbage-free as a small one's.
+        // The writer hands an outlier seal's frozen graph back when the seal ends. Each key is
+        // one frozen key and one inline state array, which the limit counts together, so this
+        // key set sits just inside it and its steady state must stay as garbage-free as a
+        // small one's.
         assertSealAllocationIsBounded(LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAYS / 2 - 1_024);
+    }
+
+    @Test
+    public void testASealJustOutsideTheFrozenRetentionLimitHandsItsFrozenGraphBack() throws Exception {
+        // One frozen key and one inline state array per key puts this key set just past the
+        // limit, although its arrays alone stay far inside it: the keys count too, since each
+        // grows the frozen holders as a pooled key array once did.
+        assertSealHandsItsFrozenGraphBack(LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAYS / 2 + 1_024, false);
+    }
+
+    @Test
+    public void testAPageBackedSealJustInsideTheStatePageRefLimitAllocatesNothingPerSealOnceWarm() throws Exception {
+        // An inline key takes a frozen key and an image array, so an inline seal hands its
+        // graph back above half the array limit. A page-backed key takes the frozen key and
+        // one state page reference but no image array, which kept such a seal warm up to the
+        // reference limit while every key was a pooled array, and it must stay warm there.
+        final int keyCount = LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_STATE_PAGE_REFS - 1_024;
+        Assert.assertTrue(keyCount > LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAYS / 2);
+        assertSealAllocationIsBounded(keyCount, true);
+    }
+
+    @Test
+    public void testAPageBackedSealJustOutsideTheStatePageRefLimitHandsItsFrozenGraphBack() throws Exception {
+        // Above the reference limit, which is also where its frozen keys alone pass the array
+        // limit, the writer - one worker's, shared by every view it seals - must hand the
+        // seal's frozen holders back rather than park them for the worker's lifetime.
+        assertSealHandsItsFrozenGraphBack(LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_STATE_PAGE_REFS + 1_024, true);
+    }
+
+    @Test
+    public void testASealWhoseKeyWidthsMoveEverySealAllocatesNothingPerKey() throws Exception {
+        // Every seal here images keys of widths no earlier seal saw. A frozen key that is a
+        // heap array comes from a pool that keeps one array per width, so such a seal would
+        // allocate an array per key however warm the writer is; a key frozen into native
+        // memory costs the heap nothing whatever its width.
+        assertMemoryLeak(() -> {
+            final StringSink sink = new StringSink();
+            try (
+                    PartitionedStateStub stub = new PartitionedStateStub(STRING_KEY_TYPES, false);
+                    LiveViewCheckpointTimelineStoreWriter writer =
+                            new LiveViewCheckpointTimelineStoreWriter(configuration)
+            ) {
+                final ObjList<WindowFunction> functions = new ObjList<>();
+                functions.add(stub);
+                long seq = 1;
+                int widthStep = 0;
+                for (int i = 0; i < WARMUP_SEALS; i++) {
+                    stub.replaceStringKeys(WIDTH_CHURN_KEYS, widthStep++ * WIDTH_CHURN_KEYS + 1, sink);
+                    seal(writer, functions, seq++);
+                }
+                final ThreadMXBean threadMXBean = (ThreadMXBean) ManagementFactory.getThreadMXBean();
+                final long threadId = Thread.currentThread().threadId();
+                long allocated = 0;
+                try (Path dir = new Path()) {
+                    checkpointsDir(dir);
+                    for (int i = 0; i < MEASURED_SEALS; i++) {
+                        // Outside the measurement: the stub's own map and strings are not the seal's.
+                        stub.replaceStringKeys(WIDTH_CHURN_KEYS, widthStep++ * WIDTH_CHURN_KEYS + 1, sink);
+                        final long before = threadMXBean.getThreadAllocatedBytes(threadId);
+                        append(writer, dir, functions, seq++);
+                        allocated += threadMXBean.getThreadAllocatedBytes(threadId) - before;
+                    }
+                }
+                final long perSeal = allocated / MEASURED_SEALS;
+                Assert.assertTrue(
+                        "a warmed-up seal over " + WIDTH_CHURN_KEYS + " keys of widths no earlier seal saw"
+                                + " allocated " + perSeal + " bytes on the Java heap (" + allocated + " over "
+                                + MEASURED_SEALS + " seals); a frozen key must not be a heap array",
+                        perSeal < PER_SEAL_ALLOCATION_LIMIT_BYTES
+                );
+            }
+        });
     }
 
     @Test
@@ -153,9 +230,13 @@ public class LiveViewCheckpointPublicationAllocationTest extends AbstractCairoTe
     }
 
     private void assertSealAllocationIsBounded(int keyCount) throws Exception {
+        assertSealAllocationIsBounded(keyCount, false);
+    }
+
+    private void assertSealAllocationIsBounded(int keyCount, boolean isPageBacked) throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    PartitionedStateStub stub = new PartitionedStateStub(keyCount);
+                    PartitionedStateStub stub = new PartitionedStateStub(keyCount, isPageBacked);
                     LiveViewCheckpointTimelineStoreWriter writer =
                             new LiveViewCheckpointTimelineStoreWriter(configuration)
             ) {
@@ -175,6 +256,27 @@ public class LiveViewCheckpointPublicationAllocationTest extends AbstractCairoTe
                                 + " seals); a publication runs on retained shells and must not build"
                                 + " an object graph per call",
                         perSeal < PER_SEAL_ALLOCATION_LIMIT_BYTES
+                );
+            }
+        });
+    }
+
+    private void assertSealHandsItsFrozenGraphBack(int keyCount, boolean isPageBacked) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    PartitionedStateStub stub = new PartitionedStateStub(keyCount, isPageBacked);
+                    LiveViewCheckpointTimelineStoreWriter writer =
+                            new LiveViewCheckpointTimelineStoreWriter(configuration)
+            ) {
+                final ObjList<WindowFunction> functions = new ObjList<>();
+                functions.add(stub);
+                seal(writer, functions, 1);
+                // A graph kept warm holds at least one partition holder per key.
+                final int retained = writer.getRetainedFrozenObjectCountForTest();
+                Assert.assertTrue(
+                        "a seal of " + keyCount + " keys above the frozen retention limit must not park its"
+                                + " frozen graph on the writer, retained=" + retained,
+                        retained < keyCount
                 );
             }
         });
@@ -232,21 +334,39 @@ public class LiveViewCheckpointPublicationAllocationTest extends AbstractCairoTe
 
     /**
      * A partitioned function holding {@code keyCount} live keys, so a seal walks a
-     * real key domain rather than a single entry.
+     * real key domain rather than a single entry. Its eight-byte state is inlined into
+     * the leaf, or written to a data page when the stub is page-backed.
      */
     private static final class PartitionedStateStub extends BaseWindowFunction {
-        private static final ColumnTypes KEY_TYPES = new SingleColumnType(ColumnType.LONG);
-        private final Map map = new OrderedMap(
-                1024,
-                KEY_TYPES,
-                new SingleColumnType(ColumnType.LONG),
-                16,
-                0.7,
-                Integer.MAX_VALUE
-        );
+        private final boolean isPageBacked;
+        private final ColumnTypes keyTypes;
+        private final Map map;
 
         private PartitionedStateStub(int keyCount) {
+            this(keyCount, false);
+        }
+
+        private PartitionedStateStub(int keyCount, boolean isPageBacked) {
+            this(LONG_KEY_TYPES, isPageBacked);
+            for (int i = 0; i < keyCount; i++) {
+                final MapKey mapKey = map.withKey();
+                mapKey.putLong(i);
+                mapKey.createValue().putLong(0, i);
+            }
+        }
+
+        private PartitionedStateStub(ColumnTypes keyTypes, boolean isPageBacked) {
             super(null);
+            this.keyTypes = keyTypes;
+            this.isPageBacked = isPageBacked;
+            this.map = new OrderedMap(
+                    1024,
+                    keyTypes,
+                    new SingleColumnType(ColumnType.LONG),
+                    16,
+                    0.7,
+                    Integer.MAX_VALUE
+            );
             setCheckpointCompilerMetadata(
                     new LiveViewCheckpointFunctionIdentity(
                             "w0",
@@ -271,16 +391,12 @@ public class LiveViewCheckpointPublicationAllocationTest extends AbstractCairoTe
                             LiveViewCheckpointDependency.NumericConvergence.EXACT
                     )
             );
-            for (int i = 0; i < keyCount; i++) {
-                final MapKey mapKey = map.withKey();
-                mapKey.putLong(i);
-                mapKey.createValue().putLong(0, i);
-            }
         }
 
         @Override
         public int checkpointStateFixedLength() {
-            return Long.BYTES;
+            // Undeclared keeps the state page-backed; eight bytes inlines it into the leaf.
+            return isPageBacked ? -1 : Long.BYTES;
         }
 
         @Override
@@ -301,7 +417,7 @@ public class LiveViewCheckpointPublicationAllocationTest extends AbstractCairoTe
 
         @Override
         public ColumnTypes getCheckpointKeyColumnTypes() {
-            return KEY_TYPES;
+            return keyTypes;
         }
 
         @Override
@@ -342,6 +458,23 @@ public class LiveViewCheckpointPublicationAllocationTest extends AbstractCairoTe
         @Override
         public boolean supportsCheckpointState() {
             return true;
+        }
+
+        /**
+         * Replaces the key set with {@code keyCount} STRING keys of {@code firstChars} to
+         * {@code firstChars + keyCount - 1} characters, one width each.
+         */
+        private void replaceStringKeys(int keyCount, int firstChars, StringSink sink) {
+            map.clear();
+            for (int i = 0; i < keyCount; i++) {
+                sink.clear();
+                for (int c = 0, n = firstChars + i; c < n; c++) {
+                    sink.put((char) ('a' + (c + i) % 26));
+                }
+                final MapKey mapKey = map.withKey();
+                mapKey.putStr(sink);
+                mapKey.createValue().putLong(0, i);
+            }
         }
     }
 }

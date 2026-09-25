@@ -26,7 +26,9 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.HighBoundTag;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -181,9 +183,11 @@ import org.jetbrains.annotations.Nullable;
  * they produce cross back into the plan.
  * <p>
  * One instance per refresh job, reused across repairs - {@link #of} overwrites
- * every field, so no reset is needed between plans.
+ * every field, so no reset is needed between plans. The output key domain it derives
+ * lives in native memory the plan owns, so every owner closes its plan: the refresh job
+ * when it closes, and a repair session, which holds a copy, when it ends.
  */
-public final class LiveViewCheckpointRepairPlan {
+public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
     /**
      * The base table deduplicates on commit, so a ROWS discovery cannot trust the
      * affected key domain it reads off the post-change snapshot. The caller withholds
@@ -308,6 +312,12 @@ public final class LiveViewCheckpointRepairPlan {
      * and replays only the tail above it.
      */
     public static final int DISPOSITION_RESUME_FROM_ANCHOR = 2;
+    // The widest output key domain whose table of() keeps for the next plan. The refresh
+    // worker plans every repair it runs into one instance, and clear() keeps the table the
+    // widest Q grew, so one wide ROWS repair would otherwise leave that table on the worker
+    // for good, swept by every later plan. Past this, of() starts the domain over, as the
+    // keyed replay does with its own Q.
+    private static final int MAX_RETAINED_OUTPUT_KEYS = 1024;
     /**
      * The anchor source a per-segment plan is derived against: none. A resume runs to
      * end-of-frame, so letting one win the price comparison would put back the union
@@ -350,7 +360,7 @@ public final class LiveViewCheckpointRepairPlan {
     // Q, when the replay's own state is not key-complete but the discovery proved which
     // keys it does describe. Owned rather than referenced: the discovery's map is
     // overwritten by the next repair this worker plans, while a parked repair still owes
-    // its publication.
+    // its publication. Native, and freed by close().
     private final LiveViewCheckpointOutputKeyDomain outputKeyDomain = new LiveViewCheckpointOutputKeyDomain();
     private long outputLowTs;
     private long pinnedSeqTxn;
@@ -422,12 +432,28 @@ public final class LiveViewCheckpointRepairPlan {
     }
 
     /**
+     * Frees the output key domain's native memory. The plan stays usable: the next
+     * {@link #of} derives a fresh domain. Idempotent.
+     */
+    @Override
+    public void close() {
+        hasOutputKeyDomain = false;
+        Misc.free(outputKeyDomain);
+    }
+
+    /**
      * Copies every derived coordinate out of {@code other}. A repair that yields
      * on its turn budget keeps its own copy: the refresh worker refills its plan
      * instance on the next repair it runs, while the suspended one must keep the
-     * bounds it derived against the snapshot it pinned.
+     * bounds it derived against the snapshot it pinned. The output key domain is
+     * copied into this plan's own native memory, sized for its keys, which is why a copy
+     * can fail to allocate; a plan without one leaves this plan holding none.
      */
     public void copyFrom(@NotNull LiveViewCheckpointRepairPlan other) {
+        if (other == this) {
+            // The domain step below would read this plan's flag after clearing it.
+            return;
+        }
         this.anchorCheckpointId = other.anchorCheckpointId;
         this.anchorLogicalStateBytes = other.anchorLogicalStateBytes;
         this.anchorMaxTs = other.anchorMaxTs;
@@ -437,12 +463,21 @@ public final class LiveViewCheckpointRepairPlan {
         this.correctionTs = other.correctionTs;
         this.denialReason = other.denialReason;
         this.disposition = other.disposition;
-        this.hasOutputKeyDomain = other.hasOutputKeyDomain;
         this.highBoundTag = other.highBoundTag;
         this.highTsExclusive = other.highTsExclusive;
         this.isReplayStateKeyComplete = other.isReplayStateKeyComplete;
         this.localized = other.localized;
-        this.outputKeyDomain.copyFrom(other.outputKeyDomain);
+        // False until the copy holds the domain: a copy that fails to allocate leaves an
+        // empty domain, which must not read as Q.
+        this.hasOutputKeyDomain = false;
+        if (other.hasOutputKeyDomain) {
+            this.outputKeyDomain.copyFrom(other.outputKeyDomain);
+        } else {
+            // other's domain may still hold the table an earlier Q grew, and a plan
+            // without Q needs no copy of it.
+            this.outputKeyDomain.restoreInitialCapacity();
+        }
+        this.hasOutputKeyDomain = other.hasOutputKeyDomain;
         this.outputLowTs = other.outputLowTs;
         this.pinnedSeqTxn = other.pinnedSeqTxn;
         this.rebuildScanRows = other.rebuildScanRows;
@@ -914,7 +949,13 @@ public final class LiveViewCheckpointRepairPlan {
         localized = false;
         isReplayStateKeyComplete = false;
         hasOutputKeyDomain = false;
-        outputKeyDomain.clear();
+        // Past MAX_RETAINED_OUTPUT_KEYS the last Q's table goes back rather than staying
+        // on this worker for every later plan to sweep.
+        if (outputKeyDomain.size() > MAX_RETAINED_OUTPUT_KEYS) {
+            outputKeyDomain.restoreInitialCapacity();
+        } else {
+            outputKeyDomain.clear();
+        }
         // Derive the rebuild bounds even with an anchor in hand: the two dispositions
         // are compared on price below, and an anchor the cadence left just under an old
         // correction buys a resume that replays the whole view above it. An unpriced

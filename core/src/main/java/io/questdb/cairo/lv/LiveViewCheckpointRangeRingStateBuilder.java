@@ -222,11 +222,13 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
      * running aggregate for avg/sum, the emitted frame value for first_value/
      * last_value/nth_value) is stored by raw bits, and the frame size is stored
      * rather than recomputed, to preserve the exact continuation state. The scalar
-     * words beyond the ring's declared width are ignored.
+     * words beyond the ring's declared width are ignored. The {@code keyLength} key
+     * bytes at {@code keyAddress} are copied into {@code out}.
      */
     public void freeze(
             @NotNull LiveViewCheckpointDataSegmentWriter writer,
-            @NotNull byte[] key,
+            long keyAddress,
+            int keyLength,
             long scalarWord0,
             long scalarWord1,
             long scalarWord2,
@@ -234,41 +236,11 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
             long frameSize,
             @NotNull LiveViewCheckpointPartitionMapEntry out
     ) {
-        ensureInitialized();
-        // A frame with an unbounded low bound counts rows into its aggregate and
-        // then expires them from the ring, so frameSize may exceed the live rows.
-        if (frameSize < 0) {
-            throw CairoException.critical(0)
-                    .put("live view checkpoint RANGE ring frame size out of bounds")
-                    .put(" [frameSize=").put(frameSize).put(", rowCount=").put(rowCount).put(']');
-        }
-        if (tailCount > 0) {
-            sealTail(writer);
-        }
-        if (rowCount == 0) {
-            refCount = 0;
-            headOffset = 0;
-            lastTimestamp = 0;
-        }
-        validateLogicalBounds();
-        final LiveViewCheckpointStatePageRef[] resultRefs = new LiveViewCheckpointStatePageRef[refCount];
-        for (int i = 0; i < refCount; i++) {
-            resultRefs[i] = LiveViewCheckpointPartitionMapEntry.copyRef(refs[i]);
-        }
+        final LiveViewCheckpointStatePageRef[] resultRefs = sealForFreeze(writer, frameSize);
         out.of(
-                key,
-                LiveViewCheckpointRangeRingStateReader.encodeScalar(
-                        valueKind,
-                        scalarWords,
-                        headOffset,
-                        rowCount,
-                        scalarWord0,
-                        scalarWord1,
-                        scalarWord2,
-                        scalarWord3,
-                        frameSize,
-                        lastTimestamp
-                ),
+                keyAddress,
+                keyLength,
+                encodeScalar(scalarWord0, scalarWord1, scalarWord2, scalarWord3, frameSize),
                 resultRefs
         );
         initialized = false;
@@ -379,6 +351,21 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
         lastTimestamp = timestamp;
     }
 
+    private byte[] encodeScalar(long scalarWord0, long scalarWord1, long scalarWord2, long scalarWord3, long frameSize) {
+        return LiveViewCheckpointRangeRingStateReader.encodeScalar(
+                valueKind,
+                scalarWords,
+                headOffset,
+                rowCount,
+                scalarWord0,
+                scalarWord1,
+                scalarWord2,
+                scalarWord3,
+                frameSize,
+                lastTimestamp
+        );
+    }
+
     private void ensureInitialized() {
         if (!initialized) {
             throw CairoException.critical(0).put("live view checkpoint RANGE ring state builder is not initialized");
@@ -413,6 +400,39 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
             refs[i] = null;
         }
         refCount -= pagesPerChunk;
+    }
+
+    /**
+     * Seals the appended tail and validates the logical bounds for {@link #freeze}.
+     *
+     * @return a copy of every chunk reference the frozen entry names
+     */
+    private LiveViewCheckpointStatePageRef[] sealForFreeze(
+            @NotNull LiveViewCheckpointDataSegmentWriter writer,
+            long frameSize
+    ) {
+        ensureInitialized();
+        // A frame with an unbounded low bound counts rows into its aggregate and
+        // then expires them from the ring, so frameSize may exceed the live rows.
+        if (frameSize < 0) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint RANGE ring frame size out of bounds")
+                    .put(" [frameSize=").put(frameSize).put(", rowCount=").put(rowCount).put(']');
+        }
+        if (tailCount > 0) {
+            sealTail(writer);
+        }
+        if (rowCount == 0) {
+            refCount = 0;
+            headOffset = 0;
+            lastTimestamp = 0;
+        }
+        validateLogicalBounds();
+        final LiveViewCheckpointStatePageRef[] resultRefs = new LiveViewCheckpointStatePageRef[refCount];
+        for (int i = 0; i < refCount; i++) {
+            resultRefs[i] = LiveViewCheckpointPartitionMapEntry.copyRef(refs[i]);
+        }
+        return resultRefs;
     }
 
     private void sealTail(@NotNull LiveViewCheckpointDataSegmentWriter writer) {

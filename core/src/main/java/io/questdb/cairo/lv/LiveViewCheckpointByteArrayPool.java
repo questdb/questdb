@@ -32,9 +32,11 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.Arrays;
 
 /**
- * Operation-scoped high-water pool for exact-width frozen key and scalar
- * images. Each width retains its simultaneous-use high-water count, independent
- * of the order in which later freezes encounter widths.
+ * Operation-scoped high-water pool for exact-width frozen state and payload
+ * images. Partition keys never come from it: they are native, in a
+ * {@link LiveViewCheckpointKeyArena}. Each width retains its simultaneous-use
+ * high-water count, independent of the order in which later freezes encounter
+ * widths.
  * <p>
  * The pool never shrinks by itself. An owner that outlives the operations it
  * serves reads {@link #getRetainedArrayCount()} and {@link #getRetainedBytes()}

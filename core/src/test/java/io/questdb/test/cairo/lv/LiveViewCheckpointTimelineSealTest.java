@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
@@ -86,12 +87,16 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
     // at the last commit, 2 * 11 * 2_048 = 45_056 at the within-limit probe.
     private static final int RING_COMMITS = 20;
     private static final int RING_COMMITS_WITHIN_LIMIT = 12;
-    // Three frozen image arrays per ring key keep this key set far inside the array limit,
-    // so only the state page references can make its seal an outlier.
+    // A frozen key and a scalar image per ring key keep this key set far inside the array
+    // limit, so only the state page references can make its seal an outlier.
     private static final int RING_KEYS = 2_048;
     // LiveViewCheckpointRingSeal.MIN_SHARED_CHUNK_ROWS: the fewest rows a chunk may carry
     // and still be shared rather than re-imaged.
     private static final int RING_ROWS_PER_COMMIT = 64;
+    // Accumulator components of the wide fused view: with the anchor value beside them they
+    // fill a leaf entry's whole inline budget, so its fused payload is as wide as any gets.
+    private static final int WIDE_FUSED_COMPONENTS =
+            (LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES - Long.BYTES) / (Double.BYTES + Long.BYTES);
 
     @After
     public void resetClock() {
@@ -169,8 +174,10 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
         // into a reference array its frozen holder allocates for itself rather than takes
         // from the image array pool. What a ring seal leaves on the worker's writer grows
         // with keys times chunk pages, so a view far inside the image array limit could
-        // still park megabytes of holders there for as long as the worker runs.
-        Assert.assertTrue(3 * RING_KEYS < LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAYS);
+        // still park megabytes of holders there for as long as the worker runs. Each ring key
+        // is one frozen key and one pooled scalar image, so the key set stays inside the
+        // limit that counts keys and images together: only the reference limit can trim it.
+        Assert.assertTrue(2 * RING_KEYS < LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAYS);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY MONTH WAL");
             execute(
@@ -213,6 +220,57 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
     public void setUpCheckpointCadence() {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setCurrentMicros(0);
+    }
+
+    @Test
+    public void testAWideFusedSealPastTheImageByteLimitLeavesNoPayloadArraysInTheWorkersFreezeScratch() throws Exception {
+        // A fused seal counts a frozen key and a payload per key against the array limit, and
+        // a payload as wide as the leaf budget allows makes those arrays hold more bytes than
+        // a worker may keep while the seal is still far inside that limit. Only the image byte
+        // limit can hand them back, and it must: the writer lives as long as its worker.
+        assertMemoryLeak(() -> {
+            final StringBuilder columns = new StringBuilder();
+            final StringBuilder projections = new StringBuilder();
+            final StringBuilder values = new StringBuilder();
+            for (int i = 1; i <= WIDE_FUSED_COMPONENTS; i++) {
+                columns.append(", q").append(i).append(" DOUBLE");
+                projections.append(", sum(q").append(i).append(") OVER w AS s").append(i);
+                values.append(", x::double");
+            }
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL" + columns + ") TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute(
+                    "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, sym" + projections
+                            + " FROM base WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')"
+            );
+            // The anchor value beside sixteen bytes of state per component.
+            final int payloadBytes = Long.BYTES + WIDE_FUSED_COMPONENTS * (Double.BYTES + Long.BYTES);
+            final int keyCount = (int) (LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAY_BYTES / payloadBytes) + 1_024;
+            Assert.assertTrue(2 * keyCount < LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAYS);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                // One row per key in one commit, so the first seal that sees them images every
+                // payload at once.
+                execute(
+                        "INSERT INTO base SELECT (" + ts("2026-01-01T00:00:00.000000Z") + " + x * 1_000)::timestamp, "
+                                + "concat('s', x)" + values + " FROM long_sequence(" + keyCount + ")"
+                );
+                driveRefreshToQuiescence(job);
+                assertNoRefreshFaults("lv");
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertEquals(
+                        "the view must fuse every component into one payload",
+                        payloadBytes,
+                        instance.getAnchorWindow().getCheckpointWindowStatePlan().getTotalInlineStateBytes()
+                );
+                final long retained = timelineWriter(job).getRetainedFrozenByteArrayBytesForTest();
+                Assert.assertTrue(
+                        "the worker's freeze scratch must not keep a wide fused seal's payload arrays, retained="
+                                + retained,
+                        retained < LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAY_BYTES
+                );
+            }
+        });
     }
 
     @Test
