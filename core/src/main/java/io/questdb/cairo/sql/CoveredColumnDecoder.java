@@ -62,8 +62,44 @@ public final class CoveredColumnDecoder {
      * throws on it. No persisted type maps to it.
      */
     public static final int COVERED_NONE = -1;
+    /**
+     * Buffer layout of a covered column, from {@link #coveredLayout}: one value of
+     * {@code ColumnType.sizeOf(type)} bytes per row in the column buffer, no aux buffer.
+     */
+    public static final int LAYOUT_FIXED = 0;
+    /**
+     * VARCHAR: a {@code VARCHAR_AUX_WIDTH_BYTES} entry per row in the aux buffer, data in var-data.
+     */
+    public static final int LAYOUT_VARCHAR = 1;
+    /**
+     * STRING and BINARY: an 8-byte data offset per row plus a trailing sentinel in the aux buffer.
+     */
+    public static final int LAYOUT_OFFSET = 2;
+    /**
+     * ARRAY: an {@code ARRAY_AUX_WIDTH_BYTES} [offset][size] entry per row in the aux buffer.
+     */
+    public static final int LAYOUT_ARRAY = 3;
 
     private CoveredColumnDecoder() {
+    }
+
+    /**
+     * The buffer layout the callers allocate, grow and publish for a covered column of this
+     * type, decided once per column at setup next to {@link #coveredOpcode}: one of the four
+     * var-size layouts for VARCHAR, STRING / BINARY and ARRAY, {@link #LAYOUT_FIXED} for every
+     * other tag (the fixed-width types {@link #writeFixedWidthCovered} writes; a type without an
+     * arm never reaches a buffer, {@link #writeCoveredRow} throws on its {@link #COVERED_NONE}).
+     */
+    public static int coveredLayout(int columnType) {
+        return switch (ColumnTypeTag.of(columnType)) {
+            case VARCHAR -> LAYOUT_VARCHAR;
+            case STRING, BINARY -> LAYOUT_OFFSET;
+            case ARRAY -> LAYOUT_ARRAY;
+            case UNDEFINED, BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, SYMBOL, LONG256,
+                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, UUID, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, IPv4, DECIMAL8,
+                 DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING,
+                 PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> LAYOUT_FIXED;
+        };
     }
 
     /**

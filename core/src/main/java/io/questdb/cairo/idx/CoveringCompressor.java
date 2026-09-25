@@ -25,6 +25,7 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 
@@ -1025,29 +1026,27 @@ public class CoveringCompressor {
      * {@code Integer.MAX_VALUE}: the block header stores its value count in 32 bits.
      */
     public static long maxCompressedSize(int count, int columnType) {
-        return switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.DOUBLE ->
+        return switch (ColumnTypeTag.of(columnType)) {
+            case DOUBLE ->
                 // ALP header + packed data (worst case 64 bits) + all exceptions
                     DOUBLE_HEADER_SIZE + packedDataSizeLong(count, 64)
                             + (long) count * (4 + 8); // worst case: all exceptions (4B pos + 8B value)
-            case ColumnType.FLOAT ->
+            case FLOAT ->
                 // Float ALP header + packed data (worst case 32 bits) + all exceptions
                     FLOAT_ALP_HEADER_SIZE + packedDataSizeLong(count, 32)
                             + (long) count * (4 + 4); // worst case: all exceptions (4B pos + 4B value)
-            case ColumnType.LONG, ColumnType.DATE, ColumnType.GEOLONG, ColumnType.DECIMAL64 ->
-                    LONG_HEADER_SIZE + packedDataSizeLong(count, 64);
-            case ColumnType.TIMESTAMP ->
+            case LONG, DATE, GEOLONG, DECIMAL64 -> LONG_HEADER_SIZE + packedDataSizeLong(count, 64);
+            case TIMESTAMP ->
                 // Linear-prediction header is larger than delta (29 vs 21 bytes)
                     LONG_LINEAR_PRED_HEADER_SIZE + packedDataSizeLong(count, 64);
-            case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL, ColumnType.DECIMAL32 ->
-                    INT_HEADER_SIZE + packedDataSizeLong(count, 32);
-            case ColumnType.CHAR, ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
-                    SHORT_HEADER_SIZE + packedDataSizeLong(count, 16);
-            case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
-                    BYTE_HEADER_SIZE + packedDataSizeLong(count, 8);
-            case ColumnType.LONG128, ColumnType.UUID, ColumnType.DECIMAL128, ColumnType.LONG256,
-                 ColumnType.DECIMAL256 -> 4 + (long) count * ColumnType.sizeOf(columnType);
-            default -> throw new AssertionError("maxCompressedSize: unsupported column type " + columnType);
+            case INT, IPv4, GEOINT, SYMBOL, DECIMAL32 -> INT_HEADER_SIZE + packedDataSizeLong(count, 32);
+            case CHAR, SHORT, GEOSHORT, DECIMAL16 -> SHORT_HEADER_SIZE + packedDataSizeLong(count, 16);
+            case BYTE, BOOLEAN, GEOBYTE, DECIMAL8 -> BYTE_HEADER_SIZE + packedDataSizeLong(count, 8);
+            case LONG128, UUID, DECIMAL128, LONG256, DECIMAL256 -> 4 + (long) count * ColumnType.sizeOf(columnType);
+            // the var-size types take no fixed-stride sidecar (the callers gate on it); the rest are not columns
+            case UNDEFINED, STRING, BINARY, CURSOR, VAR_ARG, RECORD, GEOHASH, VARCHAR, ARRAY, DECIMAL, REGCLASS,
+                 REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN ->
+                    throw new AssertionError("maxCompressedSize: unsupported column type " + columnType);
         };
     }
 
