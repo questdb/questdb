@@ -901,12 +901,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      *     "replica access is read-only" is the error the user must see;</li>
      *     <li>the operator allowed all partition operations
      *     ({@code cairo.sql.all.partition.operations.allowed}). The statement then fails when
-     *     applied, as it did before these checks existed.</li>
+     *     applied, as it did before these checks existed;</li>
+     *     <li>the target is a view. A view has no partitions and no reader; the view
+     *     modification check rejects the statement with "cannot modify view".</li>
      * </ul>
      */
-    private static boolean isPartitionLayoutCheckSkipped(SqlExecutionContext executionContext) {
+    private static boolean isPartitionLayoutCheckSkipped(SqlExecutionContext executionContext, TableToken tableToken) {
         final CairoEngine engine = executionContext.getCairoEngine();
-        return executionContext.isWalApplication()
+        return tableToken.isView()
+                || executionContext.isWalApplication()
                 || engine.isReadOnlyMode()
                 || engine.getConfiguration().isAllPartitionOperationsAllowed();
     }
@@ -926,7 +929,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableToken tableToken,
             int position
     ) throws SqlException {
-        if (isPartitionLayoutCheckSkipped(executionContext)) {
+        if (isPartitionLayoutCheckSkipped(executionContext, tableToken)) {
             return;
         }
         try (TableReader reader = executionContext.getReader(tableToken)) {
@@ -955,7 +958,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableToken tableToken,
             int position
     ) throws SqlException {
-        if (isPartitionLayoutCheckSkipped(executionContext)) {
+        if (isPartitionLayoutCheckSkipped(executionContext, tableToken)) {
             return;
         }
         try (TableReader reader = executionContext.getReader(tableToken)) {
@@ -995,7 +998,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableToken tableToken,
             int position
     ) throws SqlException {
-        if (isPartitionLayoutCheckSkipped(executionContext)) {
+        if (isPartitionLayoutCheckSkipped(executionContext, tableToken)) {
             return;
         }
         try (TableReader reader = executionContext.getReader(tableToken)) {
