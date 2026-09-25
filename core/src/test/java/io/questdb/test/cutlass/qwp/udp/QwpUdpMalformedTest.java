@@ -26,6 +26,8 @@ package io.questdb.test.cutlass.qwp.udp;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.client.cutlass.qwp.client.QwpUdpSender;
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
+import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.client.network.NetworkFacadeImpl;
 import io.questdb.cutlass.qwp.server.DefaultQwpUdpReceiverConfiguration;
 import io.questdb.cutlass.qwp.server.LinuxMMQwpUdpReceiver;
@@ -107,6 +109,29 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             params.add(new Object[]{"recvmmsg", (ReceiverFactory) LinuxMMQwpUdpReceiver::new});
         }
         return params;
+    }
+
+    @Test
+    public void testSchemaFrameRequiresNegotiatedWebSocketTransport() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine);
+                 QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                 QwpTableBuffer table = new QwpTableBuffer("udp_schema_reject")) {
+                table.getOrCreateColumn("n", io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_LONG, true).addLong(1);
+                table.nextRow();
+                int length = encoder.encodeSchema(table, -1, -1);
+                byte[] datagram = new byte[length];
+                long address = encoder.getBuffer().getBufferPtr();
+                for (int i = 0; i < length; i++) {
+                    datagram[i] = io.questdb.client.std.Unsafe.getUnsafe().getByte(address + i);
+                }
+                sendRawBytes(datagram);
+                drainReceiver(receiver, 1);
+                Assert.assertEquals(1, receiver.getDroppedParseErrorCount());
+                Assert.assertEquals(0, receiver.getProcessedCount());
+            }
+            Assert.assertNull(engine.getTableTokenIfExists("udp_schema_reject"));
+        });
     }
 
     @Test

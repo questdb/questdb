@@ -398,13 +398,18 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         }
         try {
             messageHeader.parse(address, length);
+            if (messageHeader.isSchemaEnabled()) {
+                droppedParseErrorCount++;
+                LOG.error().$("schema frames require negotiated WebSocket transport").$();
+                return DATAGRAM_DROPPED;
+            }
         } catch (QwpParseException e) {
             switch (e.getErrorCode()) {
                 case INVALID_MAGIC -> droppedBadMagicCount++;
                 case UNSUPPORTED_VERSION -> droppedBadVersionCount++;
                 default -> droppedParseErrorCount++;
             }
-            LOG.error().$("header parse error: ").$(e.getFlyweightMessage()).$();
+            LOG.error().$("header parse error: ").$safe(e.getFlyweightMessage()).$();
             return DATAGRAM_DROPPED;
         }
         long totalLength = HEADER_SIZE + messageHeader.getPayloadLength();
@@ -443,7 +448,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                     // separately from parse errors.
                     droppedStaleTableCount++;
                     LOG.error().$("dropping datagram, table update details unavailable: ")
-                            .$(e.getFlyweightMessage()).$();
+                            .$safe(e.getFlyweightMessage()).$();
                     return datagramState | DATAGRAM_DROPPED;
                 }
                 if (tud == null) {

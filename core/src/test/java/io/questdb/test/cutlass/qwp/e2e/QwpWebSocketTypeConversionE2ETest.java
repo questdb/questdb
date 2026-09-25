@@ -25,14 +25,28 @@
 package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.client.Sender;
+import io.questdb.client.cutlass.http.client.WebSocketClient;
+import io.questdb.client.cutlass.http.client.WebSocketClientFactory;
+import io.questdb.client.cutlass.http.client.WebSocketFrameHandler;
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
+import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.client.std.Decimal128;
 import io.questdb.client.std.Decimal256;
 import io.questdb.client.std.Decimal64;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.protocol.QwpFixedWidthColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpGeoHashColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
+import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.time.temporal.ChronoUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_GEOHASH;
 import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_LONG;
@@ -40,13 +54,12 @@ import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_LONG;
 /**
  * End-to-end tests for QWP WebSocket type conversions.
  * <p>
- * Each test pre-creates a table with a specific column type, then sends data
- * with a different wire type via the {@link Sender} API. The server converts
- * the wire type to the column type, and we verify the result with SQL assertions.
+ * Tests either exercise target-directed conversions through the public {@link Sender}
+ * API or send an explicit unflagged legacy frame to characterize server-side conversion.
+ * Stored results are verified with SQL assertions.
  * <p>
- * All tests use interleaved null and non-null rows (non-null, null, non-null,
- * null, non-null) to thoroughly test the omit-column-implies-null behavior
- * during type conversion.
+ * Many conversion tests interleave supplied and omitted values to verify the
+ * target's missing-value behavior.
  */
 public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest {
 
@@ -79,9 +92,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertQuery("SELECT col FROM tc_bool_str ORDER BY ts")
+            assertQuery("SELECT col, col is null n FROM tc_bool_str ORDER BY ts")
                     .noLeakCheck()
-                    .returnsOnce("col\ntrue\nfalse\nfalse\nfalse\ntrue\n");
+                    .expectSize().returns("col\tn\ntrue\tfalse\n\ttrue\nfalse\tfalse\n\ttrue\ntrue\tfalse\n");
         });
     }
 
@@ -104,7 +117,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
                         .boolColumn("d", true)
                         .at(1_000_000_000_000L, ChronoUnit.MICROS);
 
-                // Omit all columns → null
+                // Omit all columns: BYTE/SHORT use zero; nullable targets use null.
                 sender.table("tc_bool_num")
                         .at(1_000_000_000_001L, ChronoUnit.MICROS);
 
@@ -117,7 +130,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
                         .boolColumn("d", false)
                         .at(1_000_000_000_002L, ChronoUnit.MICROS);
 
-                // Omit all columns → null
+                // Omit all columns: BYTE/SHORT use zero; nullable targets use null.
                 sender.table("tc_bool_num")
                         .at(1_000_000_000_003L, ChronoUnit.MICROS);
 
@@ -132,17 +145,16 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            // Omitted boolean columns send false (0), not SQL NULL,
-            // so omitted rows produce 0/0.0 across all numeric types.
-            assertQuery("SELECT b, s, i, l, f, d FROM tc_bool_num ORDER BY ts")
+            assertQuery("SELECT b, b is null bn, s, s is null sn, i, i is null `in`, " +
+                    "l, l is null ln, f, f is null fn, d, d is null dn FROM tc_bool_num ORDER BY ts")
                     .noLeakCheck()
-                    .returnsOnce("""
-                            b\ts\ti\tl\tf\td
-                            1\t1\t1\t1\t1.0\t1.0
-                            0\t0\t0\t0\t0.0\t0.0
-                            0\t0\t0\t0\t0.0\t0.0
-                            0\t0\t0\t0\t0.0\t0.0
-                            1\t1\t1\t1\t1.0\t1.0
+                    .expectSize().returns("""
+                            b\tbn\ts\tsn\ti\tin\tl\tln\tf\tfn\td\tdn
+                            1\tfalse\t1\tfalse\t1\tfalse\t1\tfalse\t1.0\tfalse\t1.0\tfalse
+                            0\tfalse\t0\tfalse\tnull\ttrue\tnull\ttrue\tnull\ttrue\tnull\ttrue
+                            0\tfalse\t0\tfalse\t0\tfalse\t0\tfalse\t0.0\tfalse\t0.0\tfalse
+                            0\tfalse\t0\tfalse\tnull\ttrue\tnull\ttrue\tnull\ttrue\tnull\ttrue
+                            1\tfalse\t1\tfalse\t1\tfalse\t1\tfalse\t1.0\tfalse\t1.0\tfalse
                             """);
         });
     }
@@ -176,9 +188,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertQuery("SELECT col FROM tc_bool_vc ORDER BY ts")
+            assertQuery("SELECT col, col is null n FROM tc_bool_vc ORDER BY ts")
                     .noLeakCheck()
-                    .returnsOnce("col\nfalse\nfalse\ntrue\nfalse\nfalse\n");
+                    .expectSize().returns("col\tn\nfalse\tfalse\n\ttrue\ntrue\tfalse\n\ttrue\nfalse\tfalse\n");
         });
     }
 
@@ -895,29 +907,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
                     "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
-                QwpWebSocketSender wsSender = (QwpWebSocketSender) sender;
-                QwpTableBuffer buf = wsSender.getTableBuffer("tc_geo_str");
-                QwpTableBuffer.ColumnBuffer col = buf.getOrCreateColumn("col", TYPE_GEOHASH, true);
-
-                // 5-bit precision, value 22 = 0b10110
-                col.addGeoHash(0b10110L, 5);
-                sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
-
-                col.addNull();
-                sender.at(1_000_000_000_001L, ChronoUnit.MICROS);
-
-                // 5-bit precision, value 31 = 0b11111
-                col.addGeoHash(0b11111L, 5);
-                sender.at(1_000_000_000_002L, ChronoUnit.MICROS);
-
-                col.addNull();
-                sender.at(1_000_000_000_003L, ChronoUnit.MICROS);
-
-                // 5-bit precision, value 10 = 0b01010
-                col.addGeoHash(0b01010L, 5);
-                sender.at(1_000_000_000_004L, ChronoUnit.MICROS);
-            }
+            sendLegacyGeoHash(port, "tc_geo_str", new long[]{0b10110L, -1, 0b11111L, -1, 0b01010L});
 
             drainWalQueue();
             assertQuery("SELECT col FROM tc_geo_str ORDER BY ts")
@@ -934,29 +924,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
                     "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
-                QwpWebSocketSender wsSender = (QwpWebSocketSender) sender;
-                QwpTableBuffer buf = wsSender.getTableBuffer("tc_geo_vc");
-                QwpTableBuffer.ColumnBuffer col = buf.getOrCreateColumn("col", TYPE_GEOHASH, true);
-
-                // 5-bit precision, value 1 = 0b00001
-                col.addGeoHash(0b00001L, 5);
-                sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
-
-                col.addNull();
-                sender.at(1_000_000_000_001L, ChronoUnit.MICROS);
-
-                // 5-bit precision, value 0 = 0b00000
-                col.addGeoHash(0b00000L, 5);
-                sender.at(1_000_000_000_002L, ChronoUnit.MICROS);
-
-                col.addNull();
-                sender.at(1_000_000_000_003L, ChronoUnit.MICROS);
-
-                // 5-bit precision, value 21 = 0b10101
-                col.addGeoHash(0b10101L, 5);
-                sender.at(1_000_000_000_004L, ChronoUnit.MICROS);
-            }
+            sendLegacyGeoHash(port, "tc_geo_vc", new long[]{0b00001L, -1, 0b00000L, -1, 0b10101L});
 
             drainWalQueue();
             assertQuery("SELECT col FROM tc_geo_vc ORDER BY ts")
@@ -1082,22 +1050,8 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
                     "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
-                QwpWebSocketSender wsSender = (QwpWebSocketSender) sender;
-                QwpTableBuffer buf = wsSender.getTableBuffer(table);
-                QwpTableBuffer.ColumnBuffer valueCol = buf.getOrCreateColumn("value", TYPE_LONG, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buf.getOrCreateColumn("ts", TYPE_LONG, true);
-
-                // 2022-02-25T00:00:00.000000Z in micros
-                valueCol.addLong(42L);
-                tsCol.addLong(1_645_747_200_000_000L);
-                sender.atNow();
-
-                // 2022-02-25T00:00:01.000000Z in micros
-                valueCol.addLong(99L);
-                tsCol.addLong(1_645_747_201_000_000L);
-                sender.atNow();
-            }
+            sendLegacyDesignatedLong(port, table,
+                    1_645_747_200_000_000L, 1_645_747_201_000_000L);
 
             drainWalQueue();
             assertQuery("SELECT value, ts FROM " + table + " ORDER BY ts")
@@ -1122,28 +1076,11 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
                     "ts TIMESTAMP_NS" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
-                QwpWebSocketSender wsSender = (QwpWebSocketSender) sender;
-                QwpTableBuffer buf = wsSender.getTableBuffer(table);
-                QwpTableBuffer.ColumnBuffer valueCol = buf.getOrCreateColumn("value", TYPE_LONG, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buf.getOrCreateColumn("ts", TYPE_LONG, true);
-
-                // 2022-02-25T00:00:00.000000000Z in nanos
-                valueCol.addLong(42L);
-                tsCol.addLong(1_645_747_200_000_000_000L);
-                sender.atNow();
-
-                // 2022-02-25T00:00:01.000000000Z in nanos
-                valueCol.addLong(99L);
-                tsCol.addLong(1_645_747_201_000_000_000L);
-                sender.atNow();
-            }
+            sendLegacyDesignatedLong(port, table,
+                    1_645_747_200_000_000_000L, 1_645_747_201_000_000_000L);
 
             drainWalQueue();
-            // The stored timestamps must be the literal nanosecond values sent.
-            // BUG: the appender treats the LONG wire type as microseconds because
-            // wireIsNanos is false, then tries to multiply by 1000, which overflows
-            // for realistic nanosecond values and drops the rows.
+            // The stored timestamps are the literal nanosecond values sent.
             assertQuery("SELECT value, ts FROM " + table + " ORDER BY ts")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -2094,5 +2031,146 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
                     .noLeakCheck()
                     .returnsOnce("col\n12345678-1234-5678-1234-567812345678\n\n00000000-0000-0000-0000-000000000001\n\na0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n");
         });
+    }
+
+    private static void sendLegacyDesignatedLong(
+            int port,
+            String tableName,
+            long firstTimestamp,
+            long secondTimestamp
+    ) throws Exception {
+        try (WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
+             QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+             QwpTableBuffer table = new QwpTableBuffer(tableName)) {
+            connectLegacy(client, port);
+            QwpTableBuffer.ColumnBuffer value = table.getOrCreateColumn("value", TYPE_LONG, false);
+            QwpTableBuffer.ColumnBuffer timestamp = table.getOrCreateColumn("ts", TYPE_LONG, false);
+            value.addLong(42);
+            timestamp.addLong(firstTimestamp);
+            table.nextRow();
+            value.addLong(99);
+            timestamp.addLong(secondTimestamp);
+            table.nextRow();
+
+            int length = encoder.encode(table);
+            QwpTableBlockCursor wire = parseLegacyFrame(encoder, length, 2, 2);
+            Assert.assertEquals(tableName, wire.getTableName());
+            Assert.assertEquals("value", wire.getColumnDef(0).getName());
+            Assert.assertEquals(TYPE_LONG, wire.getColumnDef(0).getTypeCode());
+            Assert.assertEquals("ts", wire.getColumnDef(1).getName());
+            Assert.assertEquals(TYPE_LONG, wire.getColumnDef(1).getTypeCode());
+            QwpFixedWidthColumnCursor valueWire = wire.getFixedWidthColumn(0);
+            QwpFixedWidthColumnCursor timestampWire = wire.getFixedWidthColumn(1);
+            Assert.assertEquals(0, valueWire.getNullBitmapAddress());
+            Assert.assertEquals(0, timestampWire.getNullBitmapAddress());
+            Assert.assertEquals(Long.BYTES, valueWire.getValueSize());
+            Assert.assertEquals(Long.BYTES, timestampWire.getValueSize());
+            Assert.assertEquals(2, valueWire.getValueCount());
+            Assert.assertEquals(2, timestampWire.getValueCount());
+            Assert.assertEquals(42, Unsafe.getLong(valueWire.getValuesAddress()));
+            Assert.assertEquals(99, Unsafe.getLong(valueWire.getValuesAddress() + Long.BYTES));
+            Assert.assertEquals(firstTimestamp, Unsafe.getLong(timestampWire.getValuesAddress()));
+            Assert.assertEquals(secondTimestamp, Unsafe.getLong(timestampWire.getValuesAddress() + Long.BYTES));
+            Assert.assertTrue(wire.hasNextRow());
+            wire.nextRow();
+            Assert.assertEquals(42, valueWire.getLong());
+            Assert.assertEquals(firstTimestamp, timestampWire.getLong());
+            Assert.assertTrue(wire.hasNextRow());
+            wire.nextRow();
+            Assert.assertEquals(99, valueWire.getLong());
+            Assert.assertEquals(secondTimestamp, timestampWire.getLong());
+            Assert.assertFalse(wire.hasNextRow());
+            sendAndAssertOk(client, encoder, length);
+        }
+    }
+
+    private static void sendLegacyGeoHash(int port, String tableName, long[] values) throws Exception {
+        try (WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
+             QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+             QwpTableBuffer table = new QwpTableBuffer(tableName)) {
+            connectLegacy(client, port);
+            QwpTableBuffer.ColumnBuffer timestamp = table.getOrCreateColumn("ts", TYPE_LONG, false);
+            QwpTableBuffer.ColumnBuffer value = table.getOrCreateColumn("col", TYPE_GEOHASH, true);
+            for (int row = 0; row < values.length; row++) {
+                timestamp.addLong(1_000_000_000_000L + row);
+                if (values[row] < 0) {
+                    value.addNull();
+                } else {
+                    value.addGeoHash(values[row], 5);
+                }
+                table.nextRow();
+            }
+
+            int length = encoder.encode(table);
+            QwpTableBlockCursor wire = parseLegacyFrame(encoder, length, 2, values.length);
+            Assert.assertEquals(tableName, wire.getTableName());
+            Assert.assertEquals("ts", wire.getColumnDef(0).getName());
+            Assert.assertEquals(TYPE_LONG, wire.getColumnDef(0).getTypeCode());
+            Assert.assertEquals("col", wire.getColumnDef(1).getName());
+            Assert.assertEquals(TYPE_GEOHASH, wire.getColumnDef(1).getTypeCode());
+            QwpGeoHashColumnCursor geoHash = wire.getGeoHashColumn(1);
+            Assert.assertEquals(5, geoHash.getPrecision());
+            for (int row = 0; row < values.length; row++) {
+                Assert.assertTrue(wire.hasNextRow());
+                wire.nextRow();
+                Assert.assertEquals(1_000_000_000_000L + row, wire.getFixedWidthColumn(0).getLong());
+                Assert.assertEquals(values[row] < 0, wire.isColumnNull(1));
+                if (values[row] >= 0) {
+                    Assert.assertEquals(values[row], geoHash.getGeoHash());
+                }
+            }
+            Assert.assertFalse(wire.hasNextRow());
+            byte[] expectedSuffix = {1, 0x0a, 5, (byte) values[0], (byte) values[2], (byte) values[4]};
+            long ptr = encoder.getBuffer().getBufferPtr() + length - expectedSuffix.length;
+            for (int i = 0; i < expectedSuffix.length; i++) {
+                Assert.assertEquals("encoded geohash byte " + i, expectedSuffix[i], Unsafe.getByte(ptr + i));
+            }
+            sendAndAssertOk(client, encoder, length);
+        }
+    }
+
+    private static void connectLegacy(WebSocketClient client, int port) {
+        client.connect("127.0.0.1", port);
+        client.upgrade("/write/v4", null);
+        Assert.assertFalse(client.isQwpSchemaEnabled());
+    }
+
+    private static QwpTableBlockCursor parseLegacyFrame(
+            QwpWebSocketEncoder encoder,
+            int length,
+            int columnCount,
+            int rowCount
+    ) throws Exception {
+        Assert.assertEquals(0, Unsafe.getByte(encoder.getBuffer().getBufferPtr()
+                + QwpConstants.HEADER_OFFSET_FLAGS) & QwpConstants.FLAG_SCHEMA);
+        QwpMessageCursor message = new QwpMessageCursor();
+        message.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
+        Assert.assertTrue(message.hasNextTable());
+        QwpTableBlockCursor wire = message.nextTable();
+        Assert.assertFalse(message.hasNextTable());
+        Assert.assertEquals(columnCount, wire.getColumnCount());
+        Assert.assertEquals(rowCount, wire.getRowCount());
+        return wire;
+    }
+
+    private static void sendAndAssertOk(WebSocketClient client, QwpWebSocketEncoder encoder, int length) {
+        client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
+        AtomicReference<WebSocketResponse> response = new AtomicReference<>();
+        Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
+            @Override
+            public void onBinaryMessage(long payloadPtr, int payloadLen) {
+                WebSocketResponse parsed = new WebSocketResponse();
+                Assert.assertTrue(parsed.readFrom(payloadPtr, payloadLen));
+                response.set(parsed);
+            }
+
+            @Override
+            public void onClose(int code, String reason) {
+                Assert.fail("unexpected close [code=" + code + ", reason=" + reason + ']');
+            }
+        }, 5_000));
+        Assert.assertNotNull(response.get());
+        Assert.assertTrue(response.get().getErrorMessage(), response.get().isSuccess());
+        Assert.assertEquals(0, response.get().getSequence());
     }
 }

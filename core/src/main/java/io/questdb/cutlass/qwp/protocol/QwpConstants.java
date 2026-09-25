@@ -66,6 +66,10 @@ public final class QwpConstants {
     public static final int DEFAULT_MAX_TABLES_PER_CONNECTION = 10_000;
     public static final long DEFAULT_MAX_UNCOMMITTED_ROWS = 1_000_000;
     /**
+     * Flag bit: connection control message (currently schema discovery).
+     */
+    public static final byte FLAG_CONTROL = 0x20;
+    /**
      * Flag bit: defer WAL commit. The server appends rows to WAL writers
      * but does not commit them until a subsequent message without this flag.
      * Allows clients to split a logical batch across multiple messages that
@@ -98,6 +102,10 @@ public final class QwpConstants {
      * Flag bit: Gorilla timestamp encoding enabled.
      */
     public static final byte FLAG_GORILLA = 0x04;
+    /**
+     * Flag bit: table headers carry pinned schema identities.
+     */
+    public static final byte FLAG_SCHEMA = 0x40;
     /**
      * Flag bit: the region starting at {@code delta_symbol_dict} (or the first
      * table block if no delta dict is present) is zstd-compressed. The prelude
@@ -150,6 +158,10 @@ public final class QwpConstants {
      * Maximum table name length in bytes.
      */
     public static final int MAX_TABLE_NAME_LENGTH = 127;
+    public static final byte SCHEMA_FEEDBACK_MODE_INVALIDATE_ALL = (byte) 0xC0;
+    public static final byte SCHEMA_FEEDBACK_MODE_MASK = (byte) 0xC0;
+    public static final byte SCHEMA_FEEDBACK_MODE_RESERVED = 0x40;
+    public static final byte SCHEMA_FEEDBACK_MODE_UPDATES = (byte) 0x80;
     /**
      * {@link #STATUS_SERVER_INFO} capability bit: this connection negotiated
      * durable acknowledgements.

@@ -1,0 +1,25 @@
+# case_id	input_type	input_value	target_type	expected_value
+byte_date_min	BYTE	-128	DATE	-128
+byte_date_max	BYTE	127	DATE	127
+byte_timestamp_min	BYTE	-128	TIMESTAMP	-128
+byte_timestamp_max	BYTE	127	TIMESTAMP	127
+byte_timestamp_ns_min	BYTE	-128	TIMESTAMP_NS	-128
+byte_timestamp_ns_max	BYTE	127	TIMESTAMP_NS	127
+short_date_min	SHORT	-32768	DATE	-32768
+short_date_max	SHORT	32767	DATE	32767
+short_timestamp_min	SHORT	-32768	TIMESTAMP	-32768
+short_timestamp_max	SHORT	32767	TIMESTAMP	32767
+short_timestamp_ns_min	SHORT	-32768	TIMESTAMP_NS	-32768
+short_timestamp_ns_max	SHORT	32767	TIMESTAMP_NS	32767
+int_date_null	INT	-2147483648	DATE	<NULL>
+int_date_negative	INT	-1	DATE	-1
+int_date_max	INT	2147483647	DATE	2147483647
+int_timestamp_null	INT	-2147483648	TIMESTAMP	<NULL>
+int_timestamp_negative	INT	-1	TIMESTAMP	-1
+int_timestamp_max	INT	2147483647	TIMESTAMP	2147483647
+int_timestamp_ns_null	INT	-2147483648	TIMESTAMP_NS	<NULL>
+int_timestamp_ns_negative	INT	-1	TIMESTAMP_NS	-1
+int_timestamp_ns_max	INT	2147483647	TIMESTAMP_NS	2147483647
+long_date_null	LONG	-9223372036854775808	DATE	<NULL>
+long_date_min_value	LONG	-9223372036854775807	DATE	-9223372036854775807
+long_date_max	LONG	9223372036854775807	DATE	9223372036854775807

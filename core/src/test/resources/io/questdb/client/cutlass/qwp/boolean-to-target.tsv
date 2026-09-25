@@ -1,0 +1,19 @@
+# case_id	input_boolean	target_type	expected_wire_type	expected_wire_value	expected_sql_value
+bool_false_boolean	FALSE	BOOLEAN	BOOLEAN	0	false
+bool_true_boolean	TRUE	BOOLEAN	BOOLEAN	1	true
+bool_false_byte	FALSE	BYTE	BYTE	0	0
+bool_true_byte	TRUE	BYTE	BYTE	1	1
+bool_false_short	FALSE	SHORT	SHORT	0	0
+bool_true_short	TRUE	SHORT	SHORT	1	1
+bool_false_int	FALSE	INT	INT	0	0
+bool_true_int	TRUE	INT	INT	1	1
+bool_false_long	FALSE	LONG	LONG	0	0
+bool_true_long	TRUE	LONG	LONG	1	1
+bool_false_float	FALSE	FLOAT	FLOAT	0	0
+bool_true_float	TRUE	FLOAT	FLOAT	1	1
+bool_false_double	FALSE	DOUBLE	DOUBLE	0	0
+bool_true_double	TRUE	DOUBLE	DOUBLE	1	1
+bool_false_string	FALSE	STRING	VARCHAR	66616c7365	00660061006c00730065
+bool_true_string	TRUE	STRING	VARCHAR	74727565	0074007200750065
+bool_false_varchar	FALSE	VARCHAR	VARCHAR	66616c7365	00660061006c00730065
+bool_true_varchar	TRUE	VARCHAR	VARCHAR	74727565	0074007200750065

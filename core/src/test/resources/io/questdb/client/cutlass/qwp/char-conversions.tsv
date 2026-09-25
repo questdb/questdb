@@ -1,0 +1,24 @@
+# case_id	input_kind	utf16_hex	expected_char	expected_null
+char_nul	CHAR	0000	0	true
+char_ascii	CHAR	0041	65	false
+char_two_byte	CHAR	00e9	233	false
+char_three_byte	CHAR	20ac	8364	false
+char_before_surrogate	CHAR	d7ff	55295	false
+char_high_surrogate	CHAR	d83d	55357	false
+char_low_surrogate	CHAR	de00	56832	false
+char_after_surrogate	CHAR	e000	57344	false
+char_max	CHAR	ffff	65535	false
+string_null	STRING	<NULL>	0	true
+string_empty	STRING		0	true
+string_nul	STRING	0000	0	true
+string_ascii	STRING	0041	65	false
+string_two_byte	STRING	00e9	233	false
+string_three_byte	STRING	20ac	8364	false
+string_before_surrogate	STRING	d7ff	55295	false
+string_after_surrogate	STRING	e000	57344	false
+string_max	STRING	ffff	65535	false
+string_supplementary_first	STRING	d83dde00	0	true
+string_lone_high	STRING	d83d	63	false
+string_lone_low	STRING	de00	63	false
+string_high_then_ascii	STRING	d83d0041	63	false
+string_ascii_then_trailing	STRING	004200e9d83dde00	66	false
