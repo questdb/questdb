@@ -1281,12 +1281,17 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * deferred and retried later instead of invalidating the materialized view.
      */
     private static boolean isRetriableRefreshError(Throwable th) {
-        return th instanceof EntryUnavailableException || CairoException.isCairoOomError(th);
+        return th instanceof EntryUnavailableException
+                || th instanceof SqlException e && e.isTableBusy()
+                || CairoException.isCairoOomError(th);
     }
 
     private static CharSequence retriableReason(Throwable th) {
-        if (th instanceof EntryUnavailableException) {
-            return ((EntryUnavailableException) th).getReason();
+        if (th instanceof EntryUnavailableException e) {
+            return e.getReason();
+        }
+        if (th instanceof SqlException e) {
+            return e.getFlyweightMessage();
         }
         return th instanceof CairoException ? ((CairoException) th).getFlyweightMessage() : th.getMessage();
     }
@@ -1424,7 +1429,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @NotNull WalWriter walWriter,
             @NotNull RefreshContext refreshContext,
             long refreshTriggerTimestamp
-    ) {
+    ) throws SqlException {
         assert viewState.isLocked();
 
         final int maxRetries = configuration.getMatViewMaxRefreshRetries();
@@ -1504,6 +1509,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             }
                         } catch (SqlException e) {
                             factory = Misc.free(factory);
+                            if (e.isTableBusy()) {
+                                // Let the interval loop roll back before the caller schedules a retry.
+                                throw e;
+                            }
                             LOG.error().$("could not compile materialized view [view=").$(viewTableToken)
                                     .$(", sql=").$(viewSql)
                                     .$(", errorPos=").$(e.getPosition())
@@ -1733,6 +1742,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // back before rethrowing, so propagate to the caller: incremental and range refresh
                 // schedule a deferred retry (up to the configured limit) instead of invalidating,
                 // while full refresh invalidates as before (it truncates the view up front).
+                if (th instanceof SqlException e) {
+                    throw e;
+                }
                 throw (RuntimeException) th;
             }
             // A demote that flips the read-only flag after this refresh acquired its WalWriter makes the

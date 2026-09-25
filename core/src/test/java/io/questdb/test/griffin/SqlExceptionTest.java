@@ -29,7 +29,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.str.Sinkable;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
+
+import java.io.InputStream;
+import java.lang.reflect.Method;
 
 public class SqlExceptionTest extends AbstractCairoTest {
     @Test
@@ -63,6 +67,58 @@ public class SqlExceptionTest extends AbstractCairoTest {
         sink.clear();
         sink.put((Sinkable) SqlException.$(123, "hello"));
         TestUtils.assertEquals("[123]: hello", sink);
+    }
+
+    @Test
+    public void testTableBusyFlagDoesNotChangeSqlError() {
+        final SqlException exception = SqlException.$(17, "pool unavailable").setTableBusy(true);
+        Assert.assertTrue(exception.isTableBusy());
+        Assert.assertEquals(0, exception.getErrorCode());
+        Assert.assertEquals(17, exception.getPosition());
+        TestUtils.assertEquals("[17] pool unavailable", exception.getMessage());
+        TestUtils.assertEquals("[17]: pool unavailable", exception);
+
+        exception.setTableBusy(false);
+        Assert.assertFalse(exception.isTableBusy());
+    }
+
+    @Test
+    public void testTableBusyFlagResets() {
+        final SqlException busy = SqlException.position(17).setTableBusy(true);
+        Assert.assertTrue(busy.isTableBusy());
+
+        // Matching error text alone must not classify a fresh exception as transient.
+        final SqlException other = SqlException.$(23, "[-1]: table busy [reason=pool size exceeded]");
+        Assert.assertFalse(other.isTableBusy());
+        Assert.assertEquals(23, other.getPosition());
+    }
+
+    @Test
+    public void testTableBusyFlagResetsOnFlyweightReuse() throws Exception {
+        // -ea makes position() allocate fresh exceptions. Load just SqlException without assertions
+        // to verify that its production flyweight clears the flag before the next throw.
+        final byte[] bytes;
+        try (InputStream stream = SqlException.class.getResourceAsStream("SqlException.class")) {
+            Assert.assertNotNull(stream);
+            bytes = stream.readAllBytes();
+        }
+        final Class<?> exceptionClass = new ClassLoader(SqlException.class.getClassLoader()) {
+            Class<?> loadWithoutAssertions() {
+                final String name = SqlException.class.getName();
+                setClassAssertionStatus(name, false);
+                return defineClass(name, bytes, 0, bytes.length);
+            }
+        }.loadWithoutAssertions();
+        Assert.assertFalse(exceptionClass.desiredAssertionStatus());
+        final Method position = exceptionClass.getMethod("position", int.class);
+        final Method isTableBusy = exceptionClass.getMethod("isTableBusy");
+        final Object busy = position.invoke(null, 17);
+        exceptionClass.getMethod("setTableBusy", boolean.class).invoke(busy, true);
+        Assert.assertEquals(true, isTableBusy.invoke(busy));
+
+        final Object other = position.invoke(null, 23);
+        Assert.assertSame(busy, other);
+        Assert.assertEquals(false, isTableBusy.invoke(other));
     }
 
     @Test
