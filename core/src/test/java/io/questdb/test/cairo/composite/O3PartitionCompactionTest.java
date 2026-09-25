@@ -701,7 +701,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
 
             final String expected = fingerprintOfDay("x", "2024-01-01");
             final long frontNameTxnBefore = frontNameTxnOfDay("x", "2024-01-01");
-            final long diskBefore = diskSizeOfDay("x", "2024-01-01");
+            final long diskBefore = diskSizeOfFront("x", "2024-01-01");
 
             pinPieceCap(2);
             runCompactionPasses("x");
@@ -721,7 +721,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                     frontNameTxnOfDay("x", "2024-01-01")
             );
             Assert.assertEquals("MAKE-PLAIN changed the data", expected, fingerprintOfDay("x", "2024-01-01"));
-            final long diskAfter = diskSizeOfDay("x", "2024-01-01");
+            final long diskAfter = diskSizeOfFront("x", "2024-01-01");
             Assert.assertTrue(
                     "TRIM-FILES did not shrink the front's files after MAKE-PLAIN [diskBefore=" + diskBefore +
                             ", diskAfter=" + diskAfter + ']',
@@ -763,7 +763,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             }
 
             final String expected = fingerprintOfDayVarSize("y", "2024-01-01");
-            final long diskBefore = diskSizeOfDay("y", "2024-01-01");
+            final long diskBefore = diskSizeOfFront("y", "2024-01-01");
 
             pinPieceCap(2);
             for (int i = 0; i < 6; i++) {
@@ -782,7 +782,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                     0,
                     deadRowsOfDay("y", "2024-01-01")
             );
-            final long diskAfter = diskSizeOfDay("y", "2024-01-01");
+            final long diskAfter = diskSizeOfFront("y", "2024-01-01");
             Assert.assertTrue(
                     "TRIM-FILES did not shrink the front's var-size column files after MAKE-PLAIN" +
                             " [diskBefore=" + diskBefore + ", diskAfter=" + diskAfter + ']',
@@ -1672,6 +1672,27 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     private static long diskSizeOfDay(String table, String day) throws Exception {
         return scalar("select coalesce(sum(diskSize), 0) d from table_partitions('" + table + "')" +
                 " where name like '" + day + "%'");
+    }
+
+    /**
+     * Disk of the day's own (front) partition directory only. {@link #diskSizeOfDay} also counts the fresh partition
+     * MOVE-TAIL copies the tail into, and FrameFactory rounds that partition's files up to the OS page size - 64 KiB
+     * on Windows, where the tail's page padding outweighs the dead bytes TRIM-FILES cuts from the front. Only
+     * TRIM-FILES shortens the front's files, so a shrink measured here is its doing. The helper first closes idle
+     * pooled readers and the writer, so it measures the files as they stand with nothing holding them open.
+     */
+    private static long diskSizeOfFront(String table, String day) throws Exception {
+        engine.releaseInactive();
+        final TableToken tt = engine.verifyTableName(table);
+        try (TableReader reader = engine.getReader(tt)) {
+            final TxReader txReader = reader.getTxFile();
+            final long partitionTs = parseMicros(day + "T00:00:00.000000Z");
+            final int partitionIndex = txReader.getPartitionIndex(partitionTs);
+            Assert.assertTrue("day has no partition", partitionIndex > -1);
+            final Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tt);
+            TableUtils.setPathForNativePartition(path, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(), partitionTs, txReader.getPartitionNameTxn(partitionIndex));
+            return engine.getConfiguration().getFilesFacade().getDirSize(path);
+        }
     }
 
     /**
