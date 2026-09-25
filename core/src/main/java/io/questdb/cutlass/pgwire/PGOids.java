@@ -25,6 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.std.IntList;
 import io.questdb.std.IntShortHashMap;
 import io.questdb.std.Numbers;
@@ -192,8 +193,10 @@ public class PGOids {
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_VOID = ((PG_VOID >> 24) & 0xff) | ((PG_VOID << 8) & 0xff0000) | ((PG_VOID >> 8) & 0xff00) | ((PG_VOID << 24) & 0xff000000);
     private static final int CHAR_ATT_TYP_MOD = 5; // CHAR(n) in PostgreSQL has n+4 as type modifier
-    private static final IntList TYPE_ARR_OIDS = new IntList();
-    private static final IntList TYPE_OIDS = new IntList();
+    // Indexed by tag, filled at init from arrayTypeOid() / typeOid(); getTypeOid() stays an array read.
+    // The array element tag is a 6-bit field, so its table covers every value the field can hold.
+    private static final int[] TYPE_ARR_OIDS = new int[64];
+    private static final int[] TYPE_OIDS = new int[ColumnType.MAX_TAG + 1];
     private static final int X_CHAR_ATT_TYP_MOD = Numbers.bswap(CHAR_ATT_TYP_MOD);
 
     public static int getAttTypMod(int pgOidType) {
@@ -209,12 +212,16 @@ public class PGOids {
         return -1;
     }
 
+    /**
+     * The PostgreSQL type OID pgwire advertises for a QuestDB column type; 0 when there is none
+     * (see {@link #typeOid(ColumnTypeTag)} and {@link #arrayTypeOid(ColumnTypeTag)}).
+     */
     public static int getTypeOid(int type) {
         if (!ColumnType.isArray(type)) {
-            return TYPE_OIDS.getQuick(ColumnType.tagOf(type));
+            return TYPE_OIDS[ColumnType.tagOf(type)];
         }
         int elType = ColumnType.decodeArrayElementType(type);
-        return TYPE_ARR_OIDS.getQuick(elType);
+        return TYPE_ARR_OIDS[elType];
     }
 
     public static int getXAttTypMod(int pgOidType) {
@@ -274,42 +281,67 @@ public class PGOids {
         return type & (~(1 << 31));
     }
 
-    static {
-        TYPE_OIDS.extendAndSet(ColumnType.STRING, PG_VARCHAR); // VARCHAR
-        TYPE_OIDS.extendAndSet(ColumnType.TIMESTAMP, PG_TIMESTAMP); // TIMESTAMP
-        TYPE_OIDS.extendAndSet(ColumnType.DOUBLE, PG_FLOAT8); // FLOAT8
-        TYPE_OIDS.extendAndSet(ColumnType.FLOAT, PG_FLOAT4); // FLOAT4
-        TYPE_OIDS.extendAndSet(ColumnType.INT, PG_INT4); // INT4
-        TYPE_OIDS.extendAndSet(ColumnType.SHORT, PG_INT2); // INT2
-        TYPE_OIDS.extendAndSet(ColumnType.CHAR, PG_CHAR);
-        TYPE_OIDS.extendAndSet(ColumnType.SYMBOL, PG_VARCHAR); // NAME
-        TYPE_OIDS.extendAndSet(ColumnType.LONG, PG_INT8); // INT8
-        TYPE_OIDS.extendAndSet(ColumnType.BYTE, PG_INT2); // INT2
-        TYPE_OIDS.extendAndSet(ColumnType.BOOLEAN, PG_BOOL); // BOOL
-        // We represent QuestDB native DATE type as TIMESTAMP in PostgreSQL
-        // Why? QuestDB DATE type has millisecond precision, while PostgreSQL DATE type has 'day' precision.
-        // This is a workaround to avoid data loss when transferring data from QuestDB to PostgreSQL.
-        TYPE_OIDS.extendAndSet(ColumnType.DATE, PG_TIMESTAMP); // TIMESTAMP, not PG_DATE! (this intentional)
-        TYPE_OIDS.extendAndSet(ColumnType.BINARY, PG_BYTEA); // BYTEA
-        TYPE_OIDS.extendAndSet(ColumnType.LONG256, PG_VARCHAR); // VARCHAR
-        TYPE_OIDS.extendAndSet(ColumnType.GEOBYTE, PG_VARCHAR); // VARCHAR
-        TYPE_OIDS.extendAndSet(ColumnType.GEOSHORT, PG_VARCHAR); // VARCHAR
-        TYPE_OIDS.extendAndSet(ColumnType.GEOINT, PG_VARCHAR); // VARCHAR
-        TYPE_OIDS.extendAndSet(ColumnType.GEOLONG, PG_VARCHAR); // VARCHAR
-        TYPE_OIDS.extendAndSet(ColumnType.UUID, PG_UUID); // UUID
-        TYPE_OIDS.extendAndSet(ColumnType.IPv4, PG_VARCHAR); //IPv4
-        TYPE_OIDS.extendAndSet(ColumnType.VARCHAR, PG_VARCHAR); // VARCHAR
-        TYPE_OIDS.extendAndSet(ColumnType.INTERVAL, PG_VARCHAR); // VARCHAR
-        TYPE_OIDS.extendAndSet(ColumnType.ARRAY_STRING, PG_VARCHAR); // ARRAY_STRING is a hack, we send results as VARCHAR
-        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL8, PG_NUMERIC); // NUMERIC
-        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL16, PG_NUMERIC); // NUMERIC
-        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL32, PG_NUMERIC); // NUMERIC
-        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL64, PG_NUMERIC); // NUMERIC
-        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL128, PG_NUMERIC); // NUMERIC
-        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL256, PG_NUMERIC); // NUMERIC
+    /**
+     * The PostgreSQL array type OID for a QuestDB array whose elements have the given tag.
+     * Only DOUBLE and VARCHAR elements have one; every other element type is 0, which
+     * {@code PGPipelineEntry.rejectLongArrayResults()} and {@code PGOidsTest} rely on.
+     */
+    private static int arrayTypeOid(ColumnTypeTag elementTag) {
+        return switch (elementTag) {
+            case DOUBLE -> PG_ARR_FLOAT8; // FLOAT8[]
+            case VARCHAR -> PG_ARR_VARCHAR; // VARCHAR[]
+            case UNDEFINED, BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, STRING, SYMBOL, LONG256,
+                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, IPv4,
+                 ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL, REGCLASS,
+                 REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> 0;
+        };
+    }
 
-        TYPE_ARR_OIDS.extendAndSet(ColumnType.DOUBLE, PG_ARR_FLOAT8); // FLOAT8[]
-        TYPE_ARR_OIDS.extendAndSet(ColumnType.VARCHAR, PG_ARR_VARCHAR); // VARCHAR[]
+    /**
+     * The PostgreSQL type OID for a non-array QuestDB column type. 0 means "no OID": the type is
+     * never described to a client (pseudo tags), or pgwire has no representation for it (LONG128,
+     * see {@code PGPipelineEntry.outRecord()}). PB7: the positional table used to leave these
+     * slots at 0 by never setting them; the value is kept.
+     */
+    private static int typeOid(ColumnTypeTag tag) {
+        return switch (tag) {
+            case STRING -> PG_VARCHAR; // VARCHAR
+            case TIMESTAMP -> PG_TIMESTAMP; // TIMESTAMP
+            case DOUBLE -> PG_FLOAT8; // FLOAT8
+            case FLOAT -> PG_FLOAT4; // FLOAT4
+            case INT -> PG_INT4; // INT4
+            case SHORT -> PG_INT2; // INT2
+            case CHAR -> PG_CHAR;
+            case SYMBOL -> PG_VARCHAR; // NAME
+            case LONG -> PG_INT8; // INT8
+            case BYTE -> PG_INT2; // INT2
+            case BOOLEAN -> PG_BOOL; // BOOL
+            // We represent QuestDB native DATE type as TIMESTAMP in PostgreSQL
+            // Why? QuestDB DATE type has millisecond precision, while PostgreSQL DATE type has 'day' precision.
+            // This is a workaround to avoid data loss when transferring data from QuestDB to PostgreSQL.
+            case DATE -> PG_TIMESTAMP; // TIMESTAMP, not PG_DATE! (this intentional)
+            case BINARY -> PG_BYTEA; // BYTEA
+            case LONG256 -> PG_VARCHAR; // VARCHAR
+            case GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> PG_VARCHAR; // VARCHAR
+            case UUID -> PG_UUID; // UUID
+            case IPv4 -> PG_VARCHAR; //IPv4
+            case VARCHAR -> PG_VARCHAR; // VARCHAR
+            case INTERVAL -> PG_VARCHAR; // VARCHAR
+            case ARRAY_STRING -> PG_VARCHAR; // ARRAY_STRING is a hack, we send results as VARCHAR
+            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> PG_NUMERIC; // NUMERIC
+            // ARRAY is served by arrayTypeOid() on the element tag; a bare ARRAY tag has no OID
+            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, ARRAY, DECIMAL, REGCLASS, REGPROCEDURE,
+                 PARAMETER, VARCHAR_SLICE, NULL, UNKNOWN -> 0;
+        };
+    }
+
+    static {
+        for (int tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
+            TYPE_OIDS[tag] = typeOid(ColumnTypeTag.of(tag));
+        }
+        for (int tag = 0; tag < TYPE_ARR_OIDS.length; tag++) {
+            TYPE_ARR_OIDS[tag] = arrayTypeOid(ColumnTypeTag.of(tag));
+        }
 
         PG_TYPE_OIDS.add(PG_VARCHAR);
         PG_TYPE_OIDS.add(PG_TIMESTAMP);
