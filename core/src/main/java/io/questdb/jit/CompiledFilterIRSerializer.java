@@ -24,6 +24,7 @@
 package io.questdb.jit;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableUtils;
@@ -1242,17 +1243,21 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private static byte bindVariableTypeCode(int columnTypeTag) {
-        return switch (columnTypeTag) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE -> I1_TYPE;
-            case ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.CHAR -> I2_TYPE;
-            case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT,
-                 ColumnType.STRING -> // symbol variables are represented with the string type
+        return switch (ColumnTypeTag.of(columnTypeTag)) {
+            case BOOLEAN, BYTE, GEOBYTE -> I1_TYPE;
+            case SHORT, GEOSHORT, CHAR -> I2_TYPE;
+            case INT, IPv4, GEOINT,
+                 STRING -> // symbol variables are represented with the string type
                     I4_TYPE;
-            case ColumnType.FLOAT -> F4_TYPE;
-            case ColumnType.LONG, ColumnType.GEOLONG, ColumnType.DATE, ColumnType.TIMESTAMP -> I8_TYPE;
-            case ColumnType.DOUBLE -> F8_TYPE;
-            case ColumnType.LONG128, ColumnType.UUID -> I16_TYPE;
-            default -> UNDEFINED_CODE;
+            case FLOAT -> F4_TYPE;
+            case LONG, GEOLONG, DATE, TIMESTAMP -> I8_TYPE;
+            case DOUBLE -> F8_TYPE;
+            case LONG128, UUID -> I16_TYPE;
+            // no JIT lane for these; the filter stays in Java
+            case SYMBOL, LONG256, BINARY, VARCHAR, VARCHAR_SLICE, ARRAY, INTERVAL,
+                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256,
+                 UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+                 NULL, UNKNOWN -> UNDEFINED_CODE;
         };
     }
 
@@ -1276,18 +1281,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private static int columnTypeCode(int columnTypeTag) {
-        return switch (columnTypeTag) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE -> I1_TYPE;
-            case ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.CHAR -> I2_TYPE;
-            case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL -> I4_TYPE;
-            case ColumnType.FLOAT -> F4_TYPE;
-            case ColumnType.LONG, ColumnType.GEOLONG, ColumnType.DATE, ColumnType.TIMESTAMP -> I8_TYPE;
-            case ColumnType.DOUBLE -> F8_TYPE;
-            case ColumnType.LONG128, ColumnType.UUID -> I16_TYPE;
-            case ColumnType.STRING -> STRING_HEADER_TYPE;
-            case ColumnType.BINARY -> BINARY_HEADER_TYPE;
-            case ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE -> VARCHAR_HEADER_TYPE;
-            default -> UNDEFINED_CODE;
+        return switch (ColumnTypeTag.of(columnTypeTag)) {
+            case BOOLEAN, BYTE, GEOBYTE -> I1_TYPE;
+            case SHORT, GEOSHORT, CHAR -> I2_TYPE;
+            case INT, IPv4, GEOINT, SYMBOL -> I4_TYPE;
+            case FLOAT -> F4_TYPE;
+            case LONG, GEOLONG, DATE, TIMESTAMP -> I8_TYPE;
+            case DOUBLE -> F8_TYPE;
+            case LONG128, UUID -> I16_TYPE;
+            case STRING -> STRING_HEADER_TYPE;
+            case BINARY -> BINARY_HEADER_TYPE;
+            case VARCHAR, VARCHAR_SLICE -> VARCHAR_HEADER_TYPE;
+            // no JIT lane for these; the filter stays in Java
+            case LONG256, ARRAY, INTERVAL,
+                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256,
+                 UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+                 NULL, UNKNOWN -> UNDEFINED_CODE;
         };
     }
 
@@ -1469,10 +1478,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     // Stands for PredicateType.NUMERIC
     private static boolean isNumeric(int columnTypeTag) {
-        return switch (columnTypeTag) {
-            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT,
-                 ColumnType.DOUBLE, ColumnType.LONG128 -> true;
-            default -> false;
+        return switch (ColumnTypeTag.of(columnTypeTag)) {
+            case BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, LONG128 -> true;
+            case BOOLEAN, CHAR, DATE, TIMESTAMP, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY,
+                 UUID, IPv4, VARCHAR, VARCHAR_SLICE, ARRAY, INTERVAL,
+                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256,
+                 UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+                 NULL, UNKNOWN -> false;
         };
     }
 
@@ -2588,12 +2600,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             int priorityOtherNeq
     ) {
         final int columnType = findOperandColumnType(node);
-        return switch (columnType) {
-            case ColumnType.UUID, ColumnType.LONG128 -> priorityI16Neq;
-            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG -> priorityI8Neq;
-            case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT -> priorityI4Neq;
-            case ColumnType.SYMBOL -> prioritySymNeq;
-            default -> priorityOtherNeq;
+        return switch (ColumnTypeTag.of(columnType)) {
+            case UUID, LONG128 -> priorityI16Neq;
+            case LONG, TIMESTAMP, DATE, GEOLONG -> priorityI8Neq;
+            case INT, IPv4, GEOINT -> priorityI4Neq;
+            case SYMBOL -> prioritySymNeq;
+            case BOOLEAN, BYTE, SHORT, CHAR, FLOAT, DOUBLE, STRING, LONG256, GEOBYTE, GEOSHORT, BINARY, VARCHAR,
+                 VARCHAR_SLICE, ARRAY, INTERVAL,
+                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256,
+                 UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+                 NULL, UNKNOWN -> priorityOtherNeq;
         };
     }
 
@@ -4351,15 +4367,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      */
     private void rejectOrderingComparison(final CharSequence token, int position) throws SqlException {
         final short tag = ColumnType.tagOf(predicateContext.columnType);
-        switch (tag) {
-            case ColumnType.SYMBOL:
-            case ColumnType.UUID:
-            case ColumnType.LONG128:
-                throw SqlException.position(position)
-                        .put("operator: ").put(token).put(" is not supported for ")
-                        .put(ColumnType.nameOf(tag)).put(" type");
-            default:
-                break;
+        final boolean isOrderable = switch (ColumnTypeTag.of(tag)) {
+            case SYMBOL, UUID, LONG128 -> false;
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, LONG256,
+                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, IPv4, VARCHAR, VARCHAR_SLICE, ARRAY, INTERVAL,
+                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256,
+                 UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+                 NULL, UNKNOWN -> true;
+        };
+        if (!isOrderable) {
+            throw SqlException.position(position)
+                    .put("operator: ").put(token).put(" is not supported for ")
+                    .put(ColumnType.nameOf(tag)).put(" type");
         }
     }
 
@@ -4849,21 +4868,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 putOperand(offset, IMM, typeCode, GeoHashes.SHORT_NULL);
                 break;
             case I4_TYPE:
-                switch (ColumnType.tagOf(columnType)) {
-                    case ColumnType.GEOBYTE:
-                    case ColumnType.GEOSHORT:
-                    case ColumnType.GEOINT:
-                    case ColumnType.GEOLONG:
-                    case ColumnType.GEOHASH:
-                        putOperand(offset, IMM, typeCode, GeoHashes.INT_NULL);
-                        break;
-                    case ColumnType.IPv4:
-                        putOperand(offset, IMM, typeCode, Numbers.IPv4_NULL);
-                        break;
-                    default:
-                        putOperand(offset, IMM, typeCode, Numbers.INT_NULL);
-                        break;
-                }
+                final long i4Null = switch (ColumnTypeTag.of(columnType)) {
+                    case GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH -> GeoHashes.INT_NULL;
+                    case IPv4 -> Numbers.IPv4_NULL;
+                    // INT and SYMBOL columns, STRING-typed (symbol) bind variables, and any
+                    // other type an I4 lane carries: INT_NULL, as before
+                    case INT, SYMBOL, STRING,
+                         BOOLEAN, BYTE, SHORT, CHAR, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG256, BINARY, UUID,
+                         LONG128, VARCHAR, VARCHAR_SLICE, ARRAY, INTERVAL,
+                         DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256,
+                         UNDEFINED, CURSOR, VAR_ARG, RECORD, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+                         NULL, UNKNOWN -> Numbers.INT_NULL;
+                };
+                putOperand(offset, IMM, typeCode, i4Null);
                 break;
             case I8_TYPE:
                 putOperand(offset, IMM, typeCode, isGeoHash(columnType) ? GeoHashes.NULL : Numbers.LONG_NULL);
