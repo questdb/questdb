@@ -87,6 +87,14 @@ assert_exact_staged_tree() {
     for staged_file in "${staged_files[@]}"; do
         [[ -f "${staged_root}/${staged_file}" && ! -L "${staged_root}/${staged_file}" && -s "${staged_root}/${staged_file}" ]] || fail "staged artifact is not a non-empty regular file: ${staged_file}"
     done
+
+    # A library under the wrong platform directory would pass every later
+    # checksum comparison, so reject it here by its object-file header.
+    python3 "${script_dir}/native_arch.py" \
+        "${staged_root}/${staged_files[0]}" \
+        "${staged_root}/${staged_files[1]}" \
+        "${staged_root}/${staged_files[2]}" \
+        "${staged_root}/${staged_files[3]}" || fail "staged Rust library does not match its platform directory"
 }
 
 assert_exact_raw_root

@@ -41,7 +41,8 @@ jobs:
     pool:
       name: $(poolName)
     timeoutInMinutes: 60
-    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    # IsFork is unset on merge-queue and scheduled runs, so test for 'true' only.
+    condition: ne(variables['System.PullRequest.IsFork'], 'true')
     variables:
       jdk: "1.25"
     steps:
@@ -78,44 +79,13 @@ jobs:
           jdkVersionOption: "$(jdk)"
       - bash: |
           set -eux
-          cd core/target
-          archive="$(ls questdb-*-rt-*.gz 2>/dev/null | head -1)"
+          archive="$(ls core/target/questdb-*-rt-*.gz 2>/dev/null | head -1)"
           if [ -z "$archive" ]; then
             echo "No rt-* distribution archive found in core/target"
-            ls -la
+            ls -la core/target
             exit 1
           fi
-          echo "Smoke-testing distribution: $archive"
-          tar -xzf "$archive"
-          dist_dir="$(ls -d questdb-*-rt-*/ | head -1)"
-          root="$PWD/smoke-root"
-          rm -rf "$root"
-          # The pipeline sets QDB_LOG_W_FILE_LOCATION (test-hosted-pipeline.yml)
-          # to route unit-test JVM logs into a shared tests.log. That env var
-          # overrides w.file.location in the packaged server's conf/log.conf,
-          # whose rolling-file writer requires a `$` in the location -- a plain
-          # tests.log path makes LogRollingFileWriter reject it and the server
-          # never starts. Clear all leaked QDB_LOG_* overrides so the smoke
-          # server uses its own shipped log configuration.
-          for v in $(env | grep -o '^QDB_LOG_[A-Za-z0-9_]*' || true); do unset "$v"; done
-          "${dist_dir}bin/questdb.sh" start -d "$root"
-          ok=0
-          for _ in $(seq 1 60); do
-            if curl -fsS -G --data-urlencode "query=SELECT 1 AS smoke" \
-                 "http://127.0.0.1:9000/exp" -o exp.out; then
-              ok=1
-              break
-            fi
-            sleep 2
-          done
-          echo "--- /exp response ---"; cat exp.out 2>/dev/null || true; echo
-          "${dist_dir}bin/questdb.sh" stop || true
-          if [ "$ok" -ne 1 ]; then
-            echo "ERROR: packaged QuestDB did not serve a query within the timeout"
-            echo "--- server logs ---"; tail -n 200 "$root"/log/* 2>/dev/null || true
-            exit 1
-          fi
-          echo "Smoke test passed: distribution built from source, started, and served a query."
+          bash ci/smoke_test_runtime_archive.sh "$archive"
         displayName: "Smoke test: start packaged server and run a query"
         env:
           # questdb.sh needs JAVA_HOME when the bundle ships without an embedded

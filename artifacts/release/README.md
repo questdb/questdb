@@ -12,7 +12,14 @@ SNAPSHOT dependencies, including `questdb.client.version`. Do not activate
 `local-client`: it is only a branch/source-build reactor profile and cannot
 substitute for a released external client dependency.
 
-Create the draft GitHub release and prepare the tag:
+Create the draft GitHub release first, on
+https://github.com/questdb/questdb/releases: set its tag to the intended
+version, choose the option that creates the tag on publish, and write the
+release notes in the style of the previous releases. Do not create the git
+tag by hand. The release workflow uploads the archives to this draft and
+publishes it; without the draft, `publish-github` fails at `gh release view`.
+
+Then prepare the tag:
 
 ```bash
 mvn -B release:prepare
@@ -25,11 +32,10 @@ defaults are true, so a release commit and tag can already be remote before a
 later step fails. Do not run `release:perform`; it does not publish Maven
 Central and must not activate the Central profile.
 
-The release plugin's own dependency check rejects SNAPSHOT dependencies and
-plugins before it rewrites any POM. `preparationProfiles` also activates
-`release-preparation-safety`, but its `requireReleaseDeps` rule is inert
-during preparation: the project is still a SNAPSHOT while the preparation
-goals run, and `onlyWhenRelease` skips the rule for SNAPSHOT projects.
+The release plugin's own `check-dependency-snapshots` phase rejects SNAPSHOT
+dependencies and plugins before it rewrites any POM, so preparation needs no
+extra guard. The Central deploy below carries its own `requireReleaseDeps`
+rule inside the `maven-central-release` profile.
 
 After preparation, inspect the POM at the immutable tag. Stop before Central
 deployment if its client pin or any other external dependency is a SNAPSHOT.
@@ -58,13 +64,17 @@ one artifact for every recorded payload/evidence name and match its ID, digest,
 producer job, producer attempt, native manifest hash, and license manifest
 hash. Download `rust-native-libs` by its recorded ID to
 `core/target/native-libs` and `third-party-licenses` by its recorded ID to the
-repository root in a fresh detached checkout of the tag. Initialize the pinned
-client submodule when required. Do not run `clean` after either download.
+repository root in a fresh detached checkout of the tag. Do not run `clean`
+after either download.
 
 ## Publish Maven Central
 
-The immutable tag must resolve a released external client. From the repository
-root, publish the verified aggregate jar with:
+The immutable tag must resolve a released external client. The deploy needs a
+`central` server entry with the Sonatype publishing token in
+`~/.m2/settings.xml` and a GPG signing key available to `gpg`, because the
+`maven-central-release` profile signs every artifact before the
+central-publishing plugin uploads them. From the repository root, publish the
+verified aggregate jar with:
 
 ```bash
 mvn -B -pl core -am deploy -DskipTests -Dmaven.test.skip=true -DskipNative \
@@ -76,9 +86,7 @@ validation, and verify-phase core-jar check fail before Central publication if
 the dependency, provenance, or native inputs are wrong. The tag's POM is a
 release version, so the `requireReleaseDeps` rule inside the
 `maven-central-release` profile fires here and rejects a SNAPSHOT client pin or
-any other SNAPSHOT dependency before Central publication. The root POM's
-`release-preparation-safety` profile is not part of this `-pl core` reactor
-(core has no parent POM), so do not add it to this command.
+any other SNAPSHOT dependency before Central publication.
 
 ## GitHub assets and AMIs
 
@@ -118,8 +126,21 @@ the tag.
 
 Azure [Build Docker Image](https://dev.azure.com/questdb/questdb/_build?definitionId=22)
 automatically builds and releases Docker images after a release tag is pushed.
-If it fails, follow the Docker release procedure in `core/README.md`; retain
-the same immutable tag and release evidence throughout recovery.
+If it fails, re-run that pipeline for the same tag. As a manual fallback,
+run the pipeline's own commands from a detached checkout of the tag on a host
+of each architecture, then assemble the multi-arch manifest the way
+`ci/docker-release-pipeline.yml` does:
+
+```bash
+docker buildx build -f core/Dockerfile --platform linux/amd64 \
+  --build-arg tag_name=<version> \
+  --output "type=image,name=questdb/questdb,push-by-digest=true,push=true" .
+docker buildx build -f core/Dockerfile --platform linux/amd64 --target rhel \
+  --build-arg tag_name=<version> \
+  --output "type=image,name=questdb/questdb,push-by-digest=true,push=true" .
+```
+
+Retain the same immutable tag and release evidence throughout recovery.
 
 ## Update remaining release targets
 

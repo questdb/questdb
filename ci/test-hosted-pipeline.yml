@@ -99,16 +99,17 @@ stages:
     jobs:
       - template: templates/hosted-jobs.yml
 
-  # Binary smoke test (self-hosted Linux).
+  # Binary smoke test (self-hosted Linux, x86-64 and aarch64).
   #
-  # Intent: this is deliberately NOT a per-commit check. Now that the native
-  # libraries are built from source instead of committed, we want a single
-  # end-to-end verification per PR that the packaged distribution actually
-  # builds, starts, and answers a query. It is placed in this on-demand
-  # ("macwin") pipeline -- which is triggered manually (/azp run) once per PR,
-  # typically at the end before merge -- precisely so it does not run on every
-  # push. It runs on self-hosted Linux boxes (they carry the Rust toolchain and
-  # C compiler) independently of the hosted macOS/Windows test jobs above.
+  # Intent: this is deliberately NOT a per-push check. Now that the native
+  # libraries are built from source instead of committed, we want one
+  # end-to-end verification that the packaged distribution builds, starts,
+  # and answers a query. It lives in this pipeline, which runs when a PR
+  # author asks for it (/azp run macwin), in the merge queue, and on the
+  # weekly master schedule declared at the top of this file, so it runs once
+  # per PR rather than on every push. The self-hosted boxes carry the Rust
+  # toolchain, a C compiler, and Docker; the stage is independent of the hosted
+  # macOS/Windows test jobs above.
   - stage: BinarySmokeTest
     displayName: "Binary smoke test"
     dependsOn: []

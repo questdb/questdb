@@ -28,6 +28,9 @@ import sys
 import xml.etree.ElementTree as element_tree
 import zipfile
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import native_arch  # noqa: E402
+
 RUST_NATIVE_PATHS = {
     "io/questdb/bin/linux-x86-64/libquestdbr.so",
     "io/questdb/bin/linux-aarch64/libquestdbr.so",
@@ -119,6 +122,9 @@ def main() -> None:
                 source = arguments.staged_native_root / entry
                 if not source.is_file() or source.is_symlink() or source.stat().st_size == 0:
                     fail(f"staged Rust native is not a non-empty regular file: {entry}")
+                architecture_error = native_arch.mismatch(source, source.parent.name)
+                if architecture_error is not None:
+                    fail(architecture_error)
                 if hashlib.sha256(jar.read(entry)).digest() != hashlib.sha256(source.read_bytes()).digest():
                     fail(f"Central bundled native checksum mismatch: {entry}")
     except (OSError, zipfile.BadZipFile) as error:

@@ -2,8 +2,9 @@
 #
 # Verify a committed, prebuilt native library still loads on an old glibc.
 #
-# Invoked inside an old-glibc container (amazonlinux:2 / almalinux:8) by the
-# "C++ glibc check" stage in ci/test-hosted-pipeline.yml. It installs a Python
+# Invoked inside an old-glibc container (amazonlinux:2 on x86-64, almalinux:8
+# on aarch64) by the "C++ glibc check" step of the binary smoke-test job in
+# ci/templates/binary-smoke-test-jobs.yml. It installs a Python
 # interpreter and the C++ runtime, then dlopen()s the library: if the library
 # was built against a newer glibc (or libstdc++) than the container provides,
 # the load fails and so does this script. RTLD_LAZY defers undefined JNI

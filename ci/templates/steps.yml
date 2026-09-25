@@ -296,8 +296,7 @@ steps:
       mavenPomFile: "pom.xml"
       mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
       goals: "clean test"
-      options:
-        "--batch-mode $(TEST_REACTOR_ARGS) -Dtest.include=$(includeTests)
+      options: "-s $(MAVEN_SETTINGS_FILE) --batch-mode --quiet $(TEST_REACTOR_ARGS) -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
         -DfailIfNoTests=false
@@ -310,6 +309,9 @@ steps:
       RUSTC_WRAPPER: $(RUSTC_WRAPPER)
       SCCACHE_AZURE_BLOB_CONTAINER: $(SCCACHE_AZURE_BLOB_CONTAINER)
       SCCACHE_AZURE_CONNECTION_STRING: $(SCCACHE_AZURE_CONNECTION_STRING)
+      # sccache's client gives its server 10 seconds to start by default; a
+      # cold hosted macOS agent exceeded that once (macwin build 272495).
+      SCCACHE_STARTUP_TIMEOUT: "60"
       CARGO_INCREMENTAL: 0
     timeoutInMinutes: 55
     # succeeded() explicitly: see "Compile with Maven" above.

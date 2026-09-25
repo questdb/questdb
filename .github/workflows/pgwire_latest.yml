@@ -21,10 +21,14 @@ jobs:
           distribution: 'temurin'
           java-version: '25'
           cache: 'maven'
-      - name: Install Rust toolchain for QuestDB native libs
+      - name: Read the pinned Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: echo "channel=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' core/rust/qdbr/rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@4d1965c9142484e48d40c19de54b5cba84953a06
         with:
-          toolchain: nightly-2025-09-24
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
       - name: Detect local client profile
         id: client
         uses: ./.github/actions/detect-local-client

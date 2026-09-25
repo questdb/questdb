@@ -49,12 +49,14 @@ if ! command -v cargo-deny >/dev/null 2>&1; then
     archive="cargo-deny-${CARGO_DENY_VERSION}-${deny_arch}-unknown-linux-musl.tar.gz"
     echo "Installing cargo-deny ${CARGO_DENY_VERSION} (${deny_arch})"
     tmp_dir="$(mktemp -d)"
+    trap 'rm -rf "${tmp_dir}"' EXIT
     archive_path="${tmp_dir}/${archive}"
     curl -fsSL --output "${archive_path}" "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/${archive}"
     printf '%s  %s\n' "${deny_sha256}" "${archive_path}" | sha256sum --check --status
     tar -xzf "${archive_path}" --strip-components=1 -C "${tmp_dir}"
     install -m 0755 "${tmp_dir}/cargo-deny" /usr/local/bin/cargo-deny
     rm -rf "${tmp_dir}"
+    trap - EXIT
 fi
 
 echo "Regenerating ${out_file}"

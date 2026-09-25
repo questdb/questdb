@@ -64,17 +64,42 @@ assert_file_count() {
     [[ "${actual_count}" == "${expected_count}" ]] || fail "expected ${expected_count} files below ${root}, got ${actual_count}"
 }
 
+# Minimal 64-bit object-file headers, so that native_arch.py can classify the
+# fixture inputs the way it classifies real libraries. Each file also carries a
+# distinct trailing payload, which keeps the four checksums different.
+write_fixture_library() {
+    local path="$1"
+    local kind="$2"
+    local payload="$3"
+
+    python3 - "${path}" "${kind}" "${payload}" <<'PY2'
+import pathlib
+import struct
+import sys
+
+path, kind, payload = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3].encode()
+if kind == "elf-x86-64":
+    header = b"\x7fELF" + bytes([2, 1, 1]) + bytes(9) + struct.pack("<HH", 3, 0x3E) + bytes(44)
+elif kind == "elf-aarch64":
+    header = b"\x7fELF" + bytes([2, 1, 1]) + bytes(9) + struct.pack("<HH", 3, 0xB7) + bytes(44)
+elif kind == "macho-arm64":
+    header = b"\xcf\xfa\xed\xfe" + struct.pack("<I", 0x0100000C) + bytes(24)
+elif kind == "pe-x86-64":
+    header = b"MZ" + bytes(58) + struct.pack("<I", 0x40) + b"PE\0\0" + struct.pack("<H", 0x8664) + bytes(18)
+else:
+    raise SystemExit(f"unknown fixture library kind {kind}")
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_bytes(header + payload)
+PY2
+}
+
 create_raw_inputs() {
     local root="$1"
 
-    mkdir -p "${root}/rust-linux-x64" \
-        "${root}/rust-linux-arm64" \
-        "${root}/rust-macos-arm64" \
-        "${root}/rust-windows"
-    printf 'linux-x64\n' > "${root}/rust-linux-x64/libquestdbr.so"
-    printf 'linux-arm64\n' > "${root}/rust-linux-arm64/libquestdbr.so"
-    printf 'macos-arm64\n' > "${root}/rust-macos-arm64/libquestdbr.dylib"
-    printf 'windows-x64\n' > "${root}/rust-windows/questdbr.dll"
+    write_fixture_library "${root}/rust-linux-x64/libquestdbr.so" elf-x86-64 linux-x64
+    write_fixture_library "${root}/rust-linux-arm64/libquestdbr.so" elf-aarch64 linux-arm64
+    write_fixture_library "${root}/rust-macos-arm64/libquestdbr.dylib" macho-arm64 macos-arm64
+    write_fixture_library "${root}/rust-windows/questdbr.dll" pe-x86-64 windows-x64
 }
 
 create_jar() {
@@ -108,7 +133,7 @@ with zipfile.ZipFile(jar_path, "w") as archive:
         if mode == "empty" and path.endswith("linux-x86-64/libquestdbr.so"):
             data = b""
         if mode == "tampered" and path.endswith("linux-aarch64/libquestdbr.so"):
-            data = b"tampered-" + data
+            data = data + b"-tampered"
         archive.writestr(path, data)
     if mode == "renamed":
         archive.writestr(
@@ -148,11 +173,13 @@ payload = (staged_root / source).read_bytes()
 if mode == "empty":
     payload = b""
 if mode == "tampered":
-    payload = b"tampered-" + payload
+    payload = payload + b"-tampered"
 if mode == "wrong-name":
     name = "questdb-test/lib/libquestdbr-wrong.so"
 if mode == "wrong-path":
     name = "questdb-test/not-runtime/lib/" + pathlib.PurePosixPath(source).name
+if mode == "nested-path":
+    name = "questdb-test/lib/nested/" + pathlib.PurePosixPath(source).name
 with tarfile.open(archive_path, "w:gz") as archive:
     info = tarfile.TarInfo(name)
     info.size = len(payload)
@@ -199,6 +226,34 @@ create_raw_inputs "${extra_raw}"
 printf 'extra\n' > "${extra_raw}/rust-linux-x64/unexpected.so"
 assert_failure stage-extra "${stage_script}" "${extra_raw}" "${temp_dir}/stage-extra"
 
+# The two Linux artifacts swapped: identical layout, wrong CPU under each path.
+swapped_raw="${temp_dir}/raw-swapped"
+create_raw_inputs "${swapped_raw}"
+write_fixture_library "${swapped_raw}/rust-linux-x64/libquestdbr.so" elf-aarch64 linux-arm64
+write_fixture_library "${swapped_raw}/rust-linux-arm64/libquestdbr.so" elf-x86-64 linux-x64
+assert_failure stage-swapped "${stage_script}" "${swapped_raw}" "${temp_dir}/stage-swapped"
+grep -F 'linux-x86-64 requires a elf image for machine 0x3e' "${temp_dir}/stage-swapped.out" > /dev/null \
+    || fail "staging did not reject a Rust library staged under the wrong platform directory"
+
+# A staged tree with the wrong CPU under a path must fail the jar verifier even
+# when the jar matches it byte for byte.
+swapped_stage="${temp_dir}/staged-swapped"
+mkdir -p "${swapped_stage}/io/questdb/bin"
+cp -R "${valid_stage}/io/questdb/bin/." "${swapped_stage}/io/questdb/bin/"
+write_fixture_library "${swapped_stage}/io/questdb/bin/windows-x86-64/questdbr.dll" macho-arm64 windows-x64
+create_jar "${temp_dir}/swapped.jar" valid "${swapped_stage}"
+assert_failure jar-swapped-architecture "${jar_verifier}" "${temp_dir}/swapped.jar" "${swapped_stage}"
+grep -F 'windows-x86-64 requires a pe image for machine 0x8664' "${temp_dir}/jar-swapped-architecture.out" > /dev/null \
+    || fail "jar verifier did not reject a staged Rust library with the wrong architecture"
+
+assert_jar_rejection() {
+    local mode="$1"
+    local expected_message="$2"
+
+    grep -F -- "${expected_message}" "${temp_dir}/jar-${mode}.out" > /dev/null \
+        || fail "jar verifier rejected the ${mode} jar for the wrong reason (expected: ${expected_message})"
+}
+
 for mode in valid missing renamed extra duplicate empty tampered; do
     jar_path="${temp_dir}/${mode}.jar"
     create_jar "${jar_path}" "${mode}" "${valid_stage}"
@@ -208,10 +263,22 @@ for mode in valid missing renamed extra duplicate empty tampered; do
         assert_failure "jar-${mode}" "${jar_verifier}" "${jar_path}" "${valid_stage}"
     fi
 done
-grep -F 'checksum mismatch for Rust jar entry: io/questdb/bin/linux-aarch64/libquestdbr.so' "${temp_dir}/jar-tampered.out" > /dev/null \
-    || fail "jar verifier did not report the tampered Rust library as a checksum mismatch"
+assert_jar_rejection missing 'missing io/questdb/bin/windows-x86-64/questdbr.dll'
+assert_jar_rejection renamed 'unexpected io/questdb/bin/linux-x86-64/libquestdbr-renamed.so'
+assert_jar_rejection extra 'unexpected io/questdb/bin/darwin-x86-64/libquestdbr.dylib'
+assert_jar_rejection duplicate 'duplicate Rust entries: io/questdb/bin/linux-x86-64/libquestdbr.so'
+assert_jar_rejection empty 'empty Rust jar entry: io/questdb/bin/linux-x86-64/libquestdbr.so'
+assert_jar_rejection tampered 'checksum mismatch for Rust jar entry: io/questdb/bin/linux-aarch64/libquestdbr.so'
 
-for mode in valid empty wrong-name wrong-path duplicate tampered; do
+assert_runtime_rejection() {
+    local mode="$1"
+    local expected_message="$2"
+
+    grep -F -- "${expected_message}" "${temp_dir}/runtime-${mode}.out" > /dev/null \
+        || fail "runtime verifier rejected the ${mode} archive for the wrong reason (expected: ${expected_message})"
+}
+
+for mode in valid empty wrong-name wrong-path nested-path duplicate tampered; do
     archive_path="${temp_dir}/runtime-${mode}.tar.gz"
     create_runtime_archive "${archive_path}" linux-x86-64 "${mode}" "${valid_stage}"
     if [[ "${mode}" == valid ]]; then
@@ -220,8 +287,12 @@ for mode in valid empty wrong-name wrong-path duplicate tampered; do
         assert_failure "runtime-${mode}" "${runtime_verifier}" "${archive_path}" linux-x86-64 "${valid_stage}"
     fi
 done
-grep -F 'runtime checksum mismatch for questdb-test/lib/libquestdbr.so' "${temp_dir}/runtime-tampered.out" > /dev/null \
-    || fail "runtime verifier did not report the tampered Rust library as a checksum mismatch"
+assert_runtime_rejection empty 'empty Rust runtime library: questdb-test/lib/libquestdbr.so'
+assert_runtime_rejection wrong-name 'Rust runtime library must use <root>/lib/libquestdbr.so: questdb-test/lib/libquestdbr-wrong.so'
+assert_runtime_rejection wrong-path 'Rust runtime library must use <root>/lib/libquestdbr.so: questdb-test/not-runtime/lib/libquestdbr.so'
+assert_runtime_rejection nested-path 'Rust runtime library must use <root>/lib/libquestdbr.so: questdb-test/lib/nested/libquestdbr.so'
+assert_runtime_rejection duplicate 'runtime archive must contain exactly one Rust library, got 2'
+assert_runtime_rejection tampered 'runtime checksum mismatch for questdb-test/lib/libquestdbr.so'
 
 create_incomplete_central_bundle() {
     local bundle_path="$1"
@@ -229,7 +300,10 @@ create_incomplete_central_bundle() {
 
     python3 - "${bundle_path}" "${is_duplicate}" <<'PY'
 import sys
+import warnings
 import zipfile
+
+warnings.filterwarnings("ignore", category=UserWarning, module="zipfile")
 
 bundle_path = sys.argv[1]
 is_duplicate = sys.argv[2] == "duplicate"
@@ -254,27 +328,38 @@ missing_sidecar_bundle="${temp_dir}/central-missing-sidecar.zip"
 create_incomplete_central_bundle "${missing_sidecar_bundle}" false
 assert_failure central-missing-sidecar \
     "${central_bundle_verifier}" "${missing_sidecar_bundle}" "${temp_dir}/valid.jar" "${valid_stage}" --version 9.9.9
-grep -F 'Central bundle entries differ' "${temp_dir}/central-missing-sidecar.out" > /dev/null \
-    || fail "Central verifier did not reject the bundle with missing sidecars through the allowlist check"
+grep -F "missing=['org/questdb/questdb/9.9.9/questdb-9.9.9-javadoc.jar.asc'" "${temp_dir}/central-missing-sidecar.out" > /dev/null \
+    || fail "Central verifier did not name the missing sidecars"
 
 duplicate_central_bundle="${temp_dir}/central-duplicate.zip"
 create_incomplete_central_bundle "${duplicate_central_bundle}" duplicate
 assert_failure central-duplicate-entry \
     "${central_bundle_verifier}" "${duplicate_central_bundle}" "${temp_dir}/valid.jar" "${valid_stage}" --version 9.9.9
-grep -F 'Central bundle entries differ' "${temp_dir}/central-duplicate-entry.out" > /dev/null \
-    || fail "Central verifier did not reject the bundle with a duplicate entry through the allowlist check"
+grep -F "duplicates=['org/questdb/questdb/9.9.9/questdb-9.9.9.pom']" "${temp_dir}/central-duplicate-entry.out" > /dev/null \
+    || fail "Central verifier did not name the duplicate entry"
 
-valid_central_bundle="${temp_dir}/central-valid.zip"
-python3 - "${valid_central_bundle}" "${temp_dir}/valid.jar" <<'PY'
+# mode: valid | snapshot-pom (a SNAPSHOT dependency in the bundled POM) | other-jar (bundled jar differs from the verified jar)
+create_complete_central_bundle() {
+    local bundle_path="$1"
+    local main_jar="$2"
+    local mode="$3"
+
+    python3 - "${bundle_path}" "${main_jar}" "${mode}" <<'PY'
 import sys
 import zipfile
 
-bundle_path, main_jar = sys.argv[1:]
+bundle_path, main_jar, mode = sys.argv[1:]
 version = "9.9.9"
 base = f"org/questdb/questdb/{version}/"
+pom = b"<project><version>9.9.9</version></project>"
+if mode == "snapshot-pom":
+    pom = b"<project><version>9.9.9</version><dependencies><dependency><version>1.0.0-SNAPSHOT</version></dependency></dependencies></project>"
+jar = open(main_jar, "rb").read()
+if mode == "other-jar":
+    jar = jar + b"-not-the-verified-jar"
 artifacts = {
-    f"questdb-{version}.pom": b"<project><version>9.9.9</version></project>",
-    f"questdb-{version}.jar": open(main_jar, "rb").read(),
+    f"questdb-{version}.pom": pom,
+    f"questdb-{version}.jar": jar,
     f"questdb-{version}-sources.jar": b"sources",
     f"questdb-{version}-javadoc.jar": b"javadocs",
     f"questdb-{version}.zip": b"web-console",
@@ -285,7 +370,25 @@ with zipfile.ZipFile(bundle_path, "w") as bundle:
         for suffix in (".asc", ".md5", ".sha1", ".sha256", ".sha512"):
             bundle.writestr(base + artifact + suffix, suffix.encode())
 PY
+}
+
+valid_central_bundle="${temp_dir}/central-valid.zip"
+create_complete_central_bundle "${valid_central_bundle}" "${temp_dir}/valid.jar" valid
 "${central_bundle_verifier}" "${valid_central_bundle}" "${temp_dir}/valid.jar" "${valid_stage}" --version 9.9.9 > "${temp_dir}/central-valid.out"
+
+snapshot_central_bundle="${temp_dir}/central-snapshot-pom.zip"
+create_complete_central_bundle "${snapshot_central_bundle}" "${temp_dir}/valid.jar" snapshot-pom
+assert_failure central-snapshot-pom \
+    "${central_bundle_verifier}" "${snapshot_central_bundle}" "${temp_dir}/valid.jar" "${valid_stage}" --version 9.9.9
+grep -F 'Central bundled POM contains a SNAPSHOT dependency' "${temp_dir}/central-snapshot-pom.out" > /dev/null \
+    || fail "Central verifier did not reject a bundled POM with a SNAPSHOT dependency"
+
+other_jar_central_bundle="${temp_dir}/central-other-jar.zip"
+create_complete_central_bundle "${other_jar_central_bundle}" "${temp_dir}/valid.jar" other-jar
+assert_failure central-other-jar \
+    "${central_bundle_verifier}" "${other_jar_central_bundle}" "${temp_dir}/valid.jar" "${valid_stage}" --version 9.9.9
+grep -F 'Central bundled core jar differs from the verified core jar' "${temp_dir}/central-other-jar.out" > /dev/null \
+    || fail "Central verifier did not reject a bundle whose jar differs from the verified jar"
 
 verify_cargo_deny_checksum_guard() {
     local fixture_root="${temp_dir}/cargo-deny-fixture"
@@ -301,7 +404,7 @@ import sys
 import tarfile
 
 with tarfile.open(sys.argv[1], "w:gz") as archive:
-    payload = b"#!/usr/bin/env bash\\nexit 0\\n"
+    payload = b"#!/usr/bin/env bash\nexit 0\n"
     member = tarfile.TarInfo("cargo-deny-0.19.8/cargo-deny")
     member.mode = 0o755
     member.size = len(payload)
@@ -314,11 +417,16 @@ EOF
     cat > "${fake_bin}/curl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "${1:-}" == "-fsSL" && "${2:-}" == "--output" ]]; then
-    cp "${FAKE_CARGO_DENY_ARCHIVE:?}" "$3"
-else
-    cat "${FAKE_CARGO_DENY_ARCHIVE:?}"
-fi
+output=""
+while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+        --output|-o) output="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+[[ -n "${output}" ]] || { echo "fake curl: no --output given" >&2; exit 2; }
+cp "${FAKE_CARGO_DENY_ARCHIVE:?}" "${output}"
+printf 'downloaded %s\n' "${output}" >> "${FAKE_CARGO_DENY_DOWNLOAD_LOG:?}"
 EOF
     cat > "${fake_bin}/install" <<'EOF'
 #!/usr/bin/env bash
@@ -326,7 +434,19 @@ EOF
 EOF
     chmod +x "${fake_bin}/cargo" "${fake_bin}/curl" "${fake_bin}/install"
 
-    assert_failure cargo-deny-corrupt-archive bash -c "PATH='${fake_bin}:/usr/bin:/bin' FAKE_CARGO_DENY_ARCHIVE='${archive_path}' FAKE_CARGO_DENY_INSTALL_MARKER='${install_marker}' CARGO_DENY_VERSION=0.19.8 '${fixture_root}/ci/generate_third_party_licenses.sh'"
+    # A hermetic PATH: the fakes plus only the coreutils the script needs, so a
+    # cargo-deny installed on the host cannot short-circuit the download path.
+    local toolbox="${fixture_root}/toolbox"
+    local tool
+    mkdir -p "${toolbox}"
+    for tool in bash mktemp sha256sum tar rm mv cp mkdir date cat printf uname dirname; do
+        ln -s "$(command -v "${tool}")" "${toolbox}/${tool}"
+    done
+    local download_log="${fixture_root}/downloads.log"
+
+    : > "${download_log}"
+    assert_failure cargo-deny-corrupt-archive bash -c "PATH='${fake_bin}:${toolbox}' FAKE_CARGO_DENY_ARCHIVE='${archive_path}' FAKE_CARGO_DENY_DOWNLOAD_LOG='${download_log}' FAKE_CARGO_DENY_INSTALL_MARKER='${install_marker}' CARGO_DENY_VERSION=0.19.8 '${fixture_root}/ci/generate_third_party_licenses.sh'"
+    grep -q '^downloaded ' "${download_log}" || fail "cargo-deny fixture never downloaded the archive, so the checksum guard was not exercised"
     [[ ! -e "${install_marker}" ]] || fail "cargo-deny installer ran after a checksum mismatch"
 }
 
@@ -350,41 +470,100 @@ properties = core_pom.find("m:properties", namespace)
 if properties is None or properties.findtext("m:rust.native.artifacts.directory", namespaces=namespace) != "${project.build.directory}/native-libs":
     raise SystemExit("missing normalized native-artifact property")
 
+def execution(profile_element, artifact_id, execution_id):
+    for plugin in profile_element.findall("m:build/m:plugins/m:plugin", namespace):
+        if plugin.findtext("m:artifactId", namespaces=namespace) != artifact_id:
+            continue
+        for item in plugin.findall("m:executions/m:execution", namespace):
+            if item.findtext("m:id", namespaces=namespace) == execution_id:
+                return item
+    raise SystemExit(f"missing {artifact_id} execution {execution_id}")
+
+
+def bound_phase(execution_element, expected_phase):
+    phase = execution_element.findtext("m:phase", namespaces=namespace)
+    if phase != expected_phase:
+        raise SystemExit(f"execution {execution_element.findtext('m:id', namespaces=namespace)} is bound to {phase!r}, expected {expected_phase!r}")
+
+
+def rule(execution_element, rule_name):
+    found = execution_element.find(f"m:configuration/m:rules/m:{rule_name}", namespace)
+    if found is None:
+        raise SystemExit(f"execution {execution_element.findtext('m:id', namespaces=namespace)} has no {rule_name} rule")
+    return found
+
+
+def delete_includes(execution_element):
+    return {
+        item.get("name")
+        for item in execution_element.findall("m:configuration/m:target/m:delete/m:fileset/m:include", namespace)
+    }
+
+
 normal = profile(core_pom, "build-rust-library")
-normal_text = ET.tostring(normal, encoding="unicode")
-if "process-resources" not in normal_text:
-    raise SystemExit("normal build does not remove stale Rust natives at process-resources")
-if "remove-rust-cli-binaries" not in normal_text or "**/pm_*" not in normal_text:
-    raise SystemExit("normal build does not remove the Rust CLI binaries after the Rust build")
+activation = normal.findtext("m:activation/m:property/m:name", namespaces=namespace)
+if activation != "!skipNative":
+    raise SystemExit(f"build-rust-library activates on {activation!r}, expected '!skipNative'")
+stale_delete = execution(normal, "maven-antrun-plugin", "remove-stale-rust-native-artifacts")
+bound_phase(stale_delete, "process-resources")
+if delete_includes(stale_delete) != {"**/libquestdbr.so", "**/libquestdbr.dylib", "**/questdbr.dll"}:
+    raise SystemExit("remove-stale-rust-native-artifacts does not delete exactly the three Rust library names")
+cli_delete = execution(normal, "maven-antrun-plugin", "remove-rust-cli-binaries")
+bound_phase(cli_delete, "compile")
+if delete_includes(cli_delete) != {"**/pm_*"}:
+    raise SystemExit("remove-rust-cli-binaries does not delete the Rust CLI binaries")
+plugin_order = [item.findtext("m:artifactId", namespaces=namespace) for item in normal.findall("m:build/m:plugins/m:plugin", namespace)]
+if plugin_order.index("rust-maven-plugin") > plugin_order.index("maven-antrun-plugin"):
+    raise SystemExit("rust-maven-plugin must be declared before maven-antrun-plugin so the compile-phase delete runs after the Rust build")
 
 jar_plugin = core_pom.find(".//m:build/m:plugins/m:plugin[m:artifactId='maven-jar-plugin']", namespace)
-if jar_plugin is None or "io/questdb/bin/**/pm_*" not in ET.tostring(jar_plugin, encoding="unicode"):
+jar_excludes = [item.text for item in jar_plugin.findall("m:configuration/m:excludes/m:exclude", namespace)] if jar_plugin is not None else []
+if "io/questdb/bin/**/pm_*" not in jar_excludes:
     raise SystemExit("maven-jar-plugin does not exclude the Rust CLI binaries")
 
 aggregate = profile(core_pom, "include-rust-native-artifacts")
-aggregate_text = ET.tostring(aggregate, encoding="unicode")
-for required in ("skipNative", "process-resources", "verify-rust-native-jar.sh"):
-    if required not in aggregate_text:
-        raise SystemExit(f"aggregate profile is missing {required}")
-if "maven-clean-plugin" in aggregate_text:
+skip_native_rule = rule(execution(aggregate, "maven-enforcer-plugin", "require-skip-native-for-rust-aggregation"), "requireProperty")
+bound_phase(execution(aggregate, "maven-enforcer-plugin", "require-skip-native-for-rust-aggregation"), "validate")
+if skip_native_rule.findtext("m:property", namespaces=namespace) != "skipNative":
+    raise SystemExit("include-rust-native-artifacts does not require -DskipNative")
+if skip_native_rule.findtext("m:regex", namespaces=namespace) != "true":
+    raise SystemExit("include-rust-native-artifacts must reject an empty -DskipNative= value")
+bound_phase(execution(aggregate, "maven-antrun-plugin", "validate-rust-native-artifacts"), "validate")
+bound_phase(execution(aggregate, "maven-antrun-plugin", "copy-rust-native-artifacts"), "process-resources")
+jar_verify = execution(aggregate, "exec-maven-plugin", "verify-aggregated-rust-native-jar")
+bound_phase(jar_verify, "verify")
+if not any("verify-rust-native-jar.sh" in (item.text or "") for item in jar_verify.findall("m:configuration/m:arguments/m:argument", namespace)):
+    raise SystemExit("verify-aggregated-rust-native-jar does not run verify-rust-native-jar.sh")
+if any(item.findtext("m:artifactId", namespaces=namespace) == "maven-clean-plugin" for item in aggregate.findall("m:build/m:plugins/m:plugin", namespace)):
     raise SystemExit("aggregate profile must not bind maven-clean-plugin")
 
 central = profile(core_pom, "maven-central-release")
-central_text = ET.tostring(central, encoding="unicode")
-for required in ("requireActiveProfile", "include-rust-native-artifacts", "centralBaseUrl", "requireReleaseDeps", "onlyWhenRelease"):
-    if required not in central_text:
-        raise SystemExit(f"Central profile is missing {required}")
+active_profile = execution(central, "maven-enforcer-plugin", "require-aggregated-rust-native-artifacts")
+bound_phase(active_profile, "validate")
+active_profile_rule = rule(active_profile, "requireActiveProfile")
+if active_profile_rule.findtext("m:profiles", namespaces=namespace) != "include-rust-native-artifacts" or active_profile_rule.findtext("m:all", namespaces=namespace) != "true":
+    raise SystemExit("maven-central-release does not require the include-rust-native-artifacts profile")
+release_deps = execution(central, "maven-enforcer-plugin", "require-release-dependencies-for-central")
+bound_phase(release_deps, "validate")
+release_deps_rule = rule(release_deps, "requireReleaseDeps")
+if release_deps_rule.findtext("m:onlyWhenRelease", namespaces=namespace) != "true":
+    raise SystemExit("maven-central-release requireReleaseDeps must be limited to release versions")
+central_plugin = next((item for item in central.findall("m:build/m:plugins/m:plugin", namespace) if item.findtext("m:artifactId", namespaces=namespace) == "central-publishing-maven-plugin"), None)
+if central_plugin is None or central_plugin.findtext("m:configuration/m:centralBaseUrl", namespaces=namespace) != "${central.base.url}":
+    raise SystemExit("central-publishing-maven-plugin does not take its base URL from central.base.url")
 
-release_profiles = root_pom.findtext(".//m:plugin[m:artifactId='maven-release-plugin']/m:configuration/m:releaseProfiles", namespaces=namespace)
-if release_profiles is None or "maven-central-release" in release_profiles:
-    raise SystemExit("release:perform must not activate maven-central-release")
-if "release-preparation-safety" not in release_profiles:
-    raise SystemExit("release lifecycle must reject external SNAPSHOT dependencies before tagging")
+release_plugin = root_pom.find(".//m:plugin[m:artifactId='maven-release-plugin']/m:configuration", namespace)
+release_profiles = release_plugin.findtext("m:releaseProfiles", namespaces=namespace) if release_plugin is not None else None
+if release_profiles is None or release_profiles.split(",") != ["build-web-console"]:
+    raise SystemExit("release:perform must activate only build-web-console, never maven-central-release")
+if release_plugin.find("m:preparationProfiles", namespace) is not None:
+    raise SystemExit("release:prepare must rely on the release plugin's own snapshot check, not a preparation profile")
 PY
 
 python3 - "${repo_dir}/.github/workflows/github-binaries-release.yml" "${repo_dir}/pkg/ami/marketplace/packer.json" "${repo_dir}/pkg/ami/marketplace/Makefile" "${repo_dir}/.github/workflows/release_website.yml" <<'PY'
 import json
 import pathlib
+import re
 import sys
 
 import yaml
@@ -393,6 +572,18 @@ workflow_path = pathlib.Path(sys.argv[1])
 packer_path = pathlib.Path(sys.argv[2])
 makefile_path = pathlib.Path(sys.argv[3])
 website_workflow_path = pathlib.Path(sys.argv[4])
+
+
+def step_dict_named(job, name):
+    for step in job.get("steps", []):
+        if isinstance(step, dict) and step.get("name") == name:
+            return step
+    raise SystemExit(f"release workflow has no step named {name!r}")
+
+
+def step_named(job, name):
+    return str(step_dict_named(job, name).get("run", ""))
+
 workflow = workflow_path.read_text()
 workflow_document = yaml.load(workflow, Loader=yaml.BaseLoader)
 if not isinstance(workflow_document, dict):
@@ -402,8 +593,9 @@ if not isinstance(jobs, dict):
     raise SystemExit("release workflow has no jobs mapping")
 
 for required in (
-    "execution_mode:",
-    "default: package-only",
+    "workflow_dispatch:",
+    "smoke_test_runtime_archive.sh",
+    "glibc_load_check.sh",
     "core/target/downloaded-rust-artifacts",
     "stage-rust-native-artifacts.sh",
     "include-rust-native-artifacts",
@@ -457,7 +649,7 @@ for job_name in ("publish-github", "publish-website", "publish-ami"):
 github_steps = jobs["publish-github"].get("steps", [])
 if not isinstance(github_steps, list):
     raise SystemExit("GitHub publication job has no steps")
-github_checkout_index = next((index for index, step in enumerate(github_steps) if isinstance(step, dict) and step.get("uses") == "actions/checkout@v5"), None)
+github_checkout_index = next((index for index, step in enumerate(github_steps) if isinstance(step, dict) and str(step.get("uses", "")).startswith("actions/checkout@")), None)
 github_helper_index = next((index for index, step in enumerate(github_steps) if isinstance(step, dict) and "publish-github-release-assets.sh" in str(step.get("run", ""))), None)
 if github_checkout_index is None or github_helper_index is None or github_checkout_index >= github_helper_index:
     raise SystemExit("GitHub publication must check out the helper before invoking it")
@@ -490,8 +682,29 @@ ami_job = jobs["publish-ami"]
 ami_env = ami_job.get("env")
 if not isinstance(ami_env, dict) or set(("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION")) - set(ami_env):
     raise SystemExit("AMI preflight does not receive job-scoped AWS credentials and a region")
-if "PACKER_VERSION=1.10.0" not in workflow or '"packer=${PACKER_VERSION}-1"' not in workflow:
-    raise SystemExit("release workflow does not pin the Packer package version")
+if not str(ami_env.get("AWS_DEFAULT_REGION", "")).strip():
+    raise SystemExit("AMI publication has an empty AWS_DEFAULT_REGION")
+packer_install = step_named(ami_job, "Install Packer")
+if not re.search(r"^\s*PACKER_VERSION=\d+\.\d+\.\d+\s*$", packer_install, re.MULTILINE) or '"packer=${PACKER_VERSION}-1"' not in packer_install:
+    raise SystemExit("Install Packer does not pin the apt package to PACKER_VERSION")
+if '/usr/bin/packer version | grep -F "Packer v${PACKER_VERSION}"' not in packer_install or 'PACKER_BIN=/usr/bin/packer' not in packer_install:
+    raise SystemExit("Install Packer does not assert the pinned binary and export PACKER_BIN")
+for job_name in ("publish-github", "publish-website", "publish-ami"):
+    if " && " not in str(jobs[job_name].get("if")):
+        raise SystemExit(f"{job_name} guard must require every condition, not any of them")
+
+package_linux = jobs["package-linux"]
+for step_name, required_lines in (
+    ("Reject an aggregate build without -DskipNative", ("grep -F 'include-rust-native-artifacts requires -DskipNative'", "test ! -e cargo-invoked.log", "exit 99")),
+    ("Reject Central deploy without the aggregate profile", ("grep -F 'Profile \"include-rust-native-artifacts\" is not activated.'",)),
+    ("Verify aggregate-to-normal transition", ('test "${#rust_libraries[@]}" -eq 1', "linux-x86-64/libquestdbr.so", "-name 'pm_*'")),
+):
+    body = step_named(package_linux, step_name)
+    for required_line in required_lines:
+        if required_line not in body:
+            raise SystemExit(f"step {step_name!r} lost its check: {required_line}")
+    if "if" in step_dict_named(package_linux, step_name):
+        raise SystemExit(f"step {step_name!r} must run unconditionally")
 
 windows_steps = jobs.get("package-windows", {}).get("steps", [])
 provenance_step = next((step for step in windows_steps if isinstance(step, dict) and step.get("name") == "Write package provenance"), None)
@@ -524,7 +737,7 @@ if builder.get("force_deregister") != "{{user `force_deregister`}}" or builder.g
     raise SystemExit("Packer builder does not use the non-destructive release force flags")
 
 makefile = makefile_path.read_text()
-if "PACKER_AMAZON_PLUGIN_VERSION ?= 1.3.9" not in makefile or "plugins install github.com/hashicorp/amazon $(PACKER_AMAZON_PLUGIN_VERSION)" not in makefile:
+if not re.search(r"^PACKER_AMAZON_PLUGIN_VERSION \?= \d+\.\d+\.\d+\s*$", makefile, re.MULTILINE) or "plugins install github.com/hashicorp/amazon $(PACKER_AMAZON_PLUGIN_VERSION)" not in makefile:
     raise SystemExit("Packer Amazon plugin version is not pinned")
 PY
 
@@ -569,7 +782,7 @@ case "$1 $2" in
         fi
         ;;
     "release upload") printf 'upload %s\n' "$4" >> "${GH_FIXTURE_CALL_LOG:?}" ;;
-    "release edit") printf 'edit\n' >> "${GH_FIXTURE_CALL_LOG:?}" ;;
+    "release edit") shift 2; printf 'edit %s\n' "$*" >> "${GH_FIXTURE_CALL_LOG:?}" ;;
     *) echo "unexpected gh invocation: $*" >&2; exit 1 ;;
 esac
 EOF
@@ -583,7 +796,6 @@ EOF
         cp "${release_artifacts}/linux/questdb-linux.tar.gz" "${job_workspace}/artifacts/linux/"
         cp "${release_artifacts}/windows/questdb-windows.tar.gz" "${job_workspace}/artifacts/windows/"
         : > "${call_log}"
-        assert_failure github-helper-without-checkout bash -c "cd '${job_workspace}' && .github/scripts/publish-github-release-assets.sh 9.9.9 artifacts/linux artifacts/windows"
         cp -a "${source_root}/." "${job_workspace}/"
         if [[ "${mode}" == "mismatch" ]]; then
             assert_failure github-asset-mismatch bash -c "cd '${job_workspace}' && PATH='${fake_bin}:/usr/bin:/bin' GH_FIXTURE_MODE='${mode}' GH_FIXTURE_ARCHIVES='${fixture_root}/assets' GH_FIXTURE_CALL_LOG='${call_log}' .github/scripts/publish-github-release-assets.sh 9.9.9 artifacts/linux artifacts/windows"
@@ -600,12 +812,16 @@ EOF
     }
 
     run_github_fixture absent
-    [[ "$(grep -c '^upload ' "${call_log}")" == 2 ]] || fail "absent GitHub assets were not uploaded"
-    [[ "$(grep -c '^edit$' "${call_log}")" == 1 ]] || fail "GitHub release was not finalized after uploads"
+    grep -Fx 'upload artifacts/linux/questdb-linux.tar.gz#questdb-linux.tar.gz' "${call_log}" > /dev/null || fail "absent Linux GitHub asset was not uploaded under its own name"
+    grep -Fx 'upload artifacts/windows/questdb-windows.tar.gz#questdb-windows.tar.gz' "${call_log}" > /dev/null || fail "absent Windows GitHub asset was not uploaded under its own name"
+    [[ "$(grep -c '^upload ' "${call_log}")" == 2 ]] || fail "absent GitHub assets were uploaded more than once"
+    grep -Fx 'edit 9.9.9 --draft=false --latest' "${call_log}" > /dev/null || fail "GitHub release was not published as latest after uploads"
+    [[ "$(grep -c '^edit ' "${call_log}")" == 1 ]] || fail "GitHub release was finalized more than once"
 
     run_github_fixture equal
     [[ "$(grep -c '^upload ' "${call_log}" || true)" == 0 ]] || fail "checksum-equal GitHub assets were unexpectedly uploaded"
-    [[ "$(grep -c '^edit$' "${call_log}" || true)" == 1 ]] || fail "checksum-equal GitHub release was not finalized exactly once"
+    grep -Fx 'edit 9.9.9 --draft=false --latest' "${call_log}" > /dev/null || fail "checksum-equal GitHub release was not published as latest"
+    [[ "$(grep -c '^edit ' "${call_log}" || true)" == 1 ]] || fail "checksum-equal GitHub release was not finalized exactly once"
 
     run_github_fixture mismatch
     [[ ! -s "${call_log}" ]] || fail "mismatched GitHub asset reached an external side effect"
@@ -629,13 +845,18 @@ if [[ "$2" == "describe-regions" ]]; then
 fi
 if [[ "$2" == "describe-images" ]]; then
     region=""
+    owners=""
+    filters=""
     while [[ "$#" -gt 0 ]]; do
-        if [[ "$1" == "--region" ]]; then
-            region="$2"
-            break
-        fi
-        shift
+        case "$1" in
+            --region) region="$2"; shift 2 ;;
+            --owners) owners="$2"; shift 2 ;;
+            --filters) filters="$2"; shift 2 ;;
+            *) shift ;;
+        esac
     done
+    [[ "${owners}" == "self" ]] || { echo "fake aws: describe-images without --owners self" >&2; exit 1; }
+    [[ "${filters}" == "Name=name,Values=questdb-9.9.9-al2023-x86_64-ebs" ]] || { echo "fake aws: unexpected describe-images filter ${filters}" >&2; exit 1; }
     if [[ "${AMI_FIXTURE_MODE:?}" == "duplicate" && "${region}" == "us-west-2" ]]; then
         printf '1\n'
     else
@@ -897,10 +1118,10 @@ for plugin in root.findall('.//m:plugin', ns):
     if config is None:
         continue
     text = ET.tostring(config, encoding='unicode')
-    if 'maven-central-release' in text or 'build-web-console' not in text or 'release-preparation-safety' not in text:
+    if 'maven-central-release' in text or 'build-web-console' not in text:
         raise SystemExit('release-plugin profile configuration is unsafe')
-    if config.findtext('m:preparationProfiles', namespaces=ns) != 'release-preparation-safety':
-        raise SystemExit('release:prepare does not activate its external SNAPSHOT dependency guard')
+    if config.find('m:preparationProfiles', ns) is not None:
+        raise SystemExit('release:prepare must not carry a preparation profile; the release plugin checks snapshots itself')
     if any(element in text for element in ('<preparationGoals>', '<pushChanges>', '<resume>')):
         raise SystemExit('fixture requires release-plugin clean verify, pushChanges=true, and resume=true defaults')
     print('effective release plugin keeps Central inactive; preparation defaults remain clean verify, pushChanges=true, resume=true')

@@ -23,7 +23,7 @@ if [[ "$#" -ne 2 ]]; then
     exit 2
 fi
 
-python3 - "$1" "$2" <<'PY'
+python3 - "$1" "$2" "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" <<'PY'
 import hashlib
 import pathlib
 import sys
@@ -31,6 +31,8 @@ import zipfile
 
 jar_path = pathlib.Path(sys.argv[1])
 staged_root = pathlib.Path(sys.argv[2])
+sys.path.insert(0, sys.argv[3])
+import native_arch  # noqa: E402
 expected_paths = (
     "io/questdb/bin/linux-x86-64/libquestdbr.so",
     "io/questdb/bin/linux-aarch64/libquestdbr.so",
@@ -52,6 +54,9 @@ for expected_path in expected_paths:
     source = staged_root / expected_path
     if not source.is_file() or source.is_symlink() or source.stat().st_size == 0:
         fail(f"staged Rust library is not a non-empty regular file: {expected_path}")
+    architecture_error = native_arch.mismatch(source, source.parent.name)
+    if architecture_error is not None:
+        fail(architecture_error)
     sources[expected_path] = hashlib.sha256(source.read_bytes()).hexdigest()
 
 try:

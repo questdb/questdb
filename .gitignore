@@ -37,7 +37,8 @@ core/rust/qdb-core/target
 core/rust/qdbr/target
 core/rust/parquet2/parquet-tools/target/
 
-# Rust native binaries (libquestdbr) - built from source or cached in CI
+# Rust native binaries (libquestdbr): Maven builds them into core/target/classes; nothing
+# writes them here any more, so stray manual copies must never be committed again.
 core/src/main/resources/io/questdb/bin/*/libquestdbr.so
 core/src/main/resources/io/questdb/bin/*/libquestdbr.dylib
 core/src/main/resources/io/questdb/bin/*/questdbr.dll
@@ -59,3 +60,6 @@ compat/src/test/php/vendor/
 compat/src/test/php/composer.lock
 compat/src/test/golang/gorunner
 compat/src/test/rust/scenarios/target/
+
+# Python bytecode caches written by the CI helper scripts and their fixtures
+__pycache__/

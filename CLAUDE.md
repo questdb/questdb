@@ -301,7 +301,7 @@ instead.
 cd core
 cmake -B build/release -DCMAKE_BUILD_TYPE=Release
 cmake --build build/release --config Release
-# Artifacts go to core/src/main/resources/io/questdb/bin/
+# Artifacts go to core/target/classes/io/questdb/bin-local/
 ```
 
 ## Architecture

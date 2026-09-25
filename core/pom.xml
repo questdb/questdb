@@ -572,7 +572,8 @@
             <id>build-rust-library</id>
             <activation>
                 <property>
-                    <!-- Defining the property with any value, including -DskipNative=false, disables the Rust build. -->
+                    <!-- Defining the property with any non-empty value, including -DskipNative=false, disables the
+                         Rust build; an empty -DskipNative= counts as undefined and leaves it enabled. -->
                     <name>!skipNative</name>
                 </property>
             </activation>
@@ -670,6 +671,11 @@
                                         <requireProperty>
                                             <property>skipNative</property>
                                             <message>include-rust-native-artifacts requires -DskipNative</message>
+                                            <!-- A bare -DskipNative is the value "true". An empty -DskipNative= would
+                                                 leave build-rust-library active (Maven treats an empty value as
+                                                 undefined) and let the host build overwrite a staged library. -->
+                                            <regex>true</regex>
+                                            <regexMessage>include-rust-native-artifacts requires a bare -DskipNative (value true), not -DskipNative=</regexMessage>
                                         </requireProperty>
                                     </rules>
                                 </configuration>

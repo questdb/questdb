@@ -4,15 +4,9 @@ on:
   push:
     tags:
       - '[0-9]*.[0-9]*.[0-9]*'
+  # A manual dispatch packages and verifies only: the publish jobs below run
+  # solely on a tag push.
   workflow_dispatch:
-    inputs:
-      execution_mode:
-        description: Package immutable source without publishing GitHub assets or AMIs
-        required: true
-        default: package-only
-        type: choice
-        options:
-          - package-only
 
 jobs:
   validate-tag:
@@ -272,9 +266,21 @@ jobs:
           path: core/target/downloaded-rust-artifacts/rust-windows
       - name: Stage exact Rust libraries
         run: .github/scripts/stage-rust-native-artifacts.sh
+      # The x86-64 library was built in manylinux2014 (glibc 2.17); load it on
+      # the oldest glibc QuestDB supports to prove the floor before packaging.
+      # The aarch64 library cannot be dlopen'd on this x86-64 runner.
+      - name: Load the staged Linux x86-64 Rust library on amazonlinux:2
+        run: |
+          docker run --rm -v "${GITHUB_WORKSPACE}:/work" amazonlinux:2 \
+            bash /work/ci/glibc_load_check.sh core/target/native-libs/io/questdb/bin/linux-x86-64/libquestdbr.so
       - name: Reject an aggregate build without -DskipNative
         run: |
           set -euo pipefail
+          profiles=include-rust-native-artifacts
+          client_version="$(sed -n 's/.*<questdb.client.version>\(.*\)<\/questdb.client.version>.*/\1/p' core/pom.xml | head -1)"
+          if [[ "${client_version}" == *-SNAPSHOT ]]; then
+            profiles="${profiles},local-client"
+          fi
           mkdir -p fake-bin
           cat > fake-bin/cargo <<'EOF'
           #!/usr/bin/env bash
@@ -283,7 +289,7 @@ jobs:
           EOF
           chmod +x fake-bin/cargo
           set +e
-          PATH="${PWD}/fake-bin:${PATH}" mvn -B -pl core -am compile -P include-rust-native-artifacts,local-client > aggregate-without-skipnative.log 2>&1
+          PATH="${PWD}/fake-bin:${PATH}" mvn -B -pl core -am compile -P "${profiles}" > aggregate-without-skipnative.log 2>&1
           status=$?
           set -e
           if [[ "${status}" -eq 0 ]]; then
@@ -304,10 +310,13 @@ jobs:
             exit 1
           fi
           grep -F 'Profile "include-rust-native-artifacts" is not activated.' central-without-aggregate.log
+      - name: Read the pinned Rust toolchain
+        id: rust-toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' core/rust/qdbr/rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@4d1965c9142484e48d40c19de54b5cba84953a06
         with:
-          toolchain: nightly-2025-09-24
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           # The action exports RUSTFLAGS=-D warnings by default; keep the
           # verify step's from-source build on the same flags as every other
           # release build, which sets none.
@@ -348,6 +357,11 @@ jobs:
           test -n "${runtime_archive}"
           .github/scripts/verify-rust-native-jar.sh "${core_jar}" core/target/native-libs | tee core/target/rust-native-jar-linux.manifest
           .github/scripts/verify-rust-native-runtime-archive.sh "${runtime_archive}" linux-x86-64 core/target/native-libs | tee core/target/rust-native-runtime-linux.manifest
+      - name: Start the Linux runtime archive and run a query
+        run: |
+          set -euo pipefail
+          runtime_archive="$(find core/target -maxdepth 1 -type f -name 'questdb-*-rt-linux-x86-64.tar.gz' | head -1)"
+          ci/smoke_test_runtime_archive.sh "${runtime_archive}"
       - id: upload-evidence
         uses: actions/upload-artifact@v6
         with:
@@ -453,6 +467,12 @@ jobs:
           test -n "${runtime_archive}"
           .github/scripts/verify-rust-native-jar.sh "${core_jar}" core/target/native-libs | tee core/target/rust-native-jar-windows.manifest
           .github/scripts/verify-rust-native-runtime-archive.sh "${runtime_archive}" windows-x86-64 core/target/native-libs | tee core/target/rust-native-runtime-windows.manifest
+      - name: Start the Windows runtime archive and run a query
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime_archive="$(find core/target -maxdepth 1 -type f -name 'questdb-*-rt-windows-x86-64.tar.gz' | head -1)"
+          bash ci/smoke_test_runtime_archive.sh "${runtime_archive}"
       - id: upload-evidence
         uses: actions/upload-artifact@v6
         with:
@@ -610,7 +630,7 @@ jobs:
   # visible on the run but does not block AMI publication, which depends only
   # on the published release assets.
   publish-website:
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && needs.publish-github.result == 'success' }}
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     needs:
       - publish-github
     runs-on: ubuntu-latest
@@ -623,7 +643,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish-ami:
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && needs.publish-github.result == 'success' }}
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     needs:
       - publish-github
     runs-on: ubuntu-latest
