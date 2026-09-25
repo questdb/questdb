@@ -519,6 +519,21 @@ public class PartitionGeometry implements Closeable, Mutable {
     }
 
     /**
+     * Lowers the partition's E to its live rows, leaving its pieces as they are. Only MAKE-PLAIN calls this, ahead
+     * of TRIM-FILES, once no reader can still resolve the dead rows above the live ones. The next {@link #publish}
+     * writes the lowered E.
+     */
+    public void lowerEToLiveRows(int partitionIndex) {
+        final int slot = resolveInternal(partitionIndex);
+        assert slot > -1 : "lowerEToLiveRows on a plain partition";
+        resolved.setQuick(slot + RES_E, txReader.getPartitionSize(partitionIndex));
+        if ((resolved.getQuick(slot + RES_FLAGS) & FLAG_DIRTY) == 0) {
+            resolved.setQuick(slot + RES_FLAGS, resolved.getQuick(slot + RES_FLAGS) | FLAG_DIRTY);
+            dirtyCount++;
+        }
+    }
+
+    /**
      * Appends {@code partitionIndex}'s geometry as one full-snapshot record and returns the slot-3 word {@code _txn}
      * must publish for it.
      */

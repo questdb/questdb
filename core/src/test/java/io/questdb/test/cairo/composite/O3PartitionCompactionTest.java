@@ -32,18 +32,29 @@ import io.questdb.cairo.PartitionCompactionPolicy;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Tests for partition COMPACTION (PARTITION_COMPACTION.md), which reclaims the dead space
@@ -116,7 +127,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     public void testACheckpointDefersTrimFiles() throws Exception {
         // CHECKPOINT CREATE calls sync(), which Windows does not have.
         Assume.assumeTrue(Os.type != Os.WINDOWS);
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             enableCompaction();
             letPreSplitCut();
@@ -193,7 +204,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
 
     @Test
     public void testAgeTriggerCompactsAPartitionNothingHasWrittenTo() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             enableCompaction();
             // The age rule fires when a partition has not changed shape for this long AND it still has
@@ -233,7 +244,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testCompactionDoesNotLoopOnAPartitionItAlreadyEmptied() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             enableCompaction();
 
@@ -281,7 +292,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testCompactionSkipsColdPlainsButStillReclaimsALaterComposite() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             enableCompaction();
             // Isolate the AGE rule, exactly as testAgeTriggerCompactsAPartitionNothingHasWrittenTo does:
@@ -329,7 +340,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testCompactionFindsAFreshCompositeAfterAllPriorOnesDrained() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             enableCompaction();
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
@@ -388,7 +399,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testMakePlainTrimsUnderAReaderPinnedAfterMoveTail() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             enableCompaction();
             letPreSplitCut();
@@ -476,6 +487,95 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
+     * Windows refuses to shorten a file that is still mapped. MAKE-PLAIN first commits the partition as composite with
+     * E lowered to its live rows, then trims, then commits it plain. A refused trim declines MAKE-PLAIN after the first
+     * commit: the partition stays composite in that halfway shape, which the next attempt picks up and trims again.
+     * The refusal lands on {@code ts.d}, after {@code i.d} is already cut, so the test also proves the cut file still
+     * covers the lowered E.
+     */
+    @Test
+    public void testMakePlainDeclinesWhenTrimFilesFailsThenRetries() throws Exception {
+        final AtomicBoolean isTrimRefused = new AtomicBoolean(true);
+        final AtomicInteger refusedTrims = new AtomicInteger();
+        final LongHashSet frontTsFds = new LongHashSet();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                synchronized (frontTsFds) {
+                    frontTsFds.remove(fd);
+                }
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (fd > -1 && Utf8s.containsAscii(name, Files.SEPARATOR + "2024-01-01") && Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d")) {
+                    synchronized (frontTsFds) {
+                        frontTsFds.add(fd);
+                    }
+                }
+                return fd;
+            }
+
+            @Override
+            public boolean truncate(long fd, long size) {
+                final boolean isFrontTs;
+                synchronized (frontTsFds) {
+                    isFrontTs = frontTsFds.contains(fd);
+                }
+                if (isFrontTs && isTrimRefused.get() && size < length(fd)) {
+                    refusedTrims.incrementAndGet();
+                    return false;
+                }
+                return super.truncate(fd, size);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            enableMergeAppend();
+            enableCompaction();
+            letPreSplitCut();
+            setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+
+            createDayTable("x", "2024-01-01", 20_000);
+            backdate("x", "2024-01-01T05:00:00", 200);
+            backdate("x", "2024-01-01T05:00:00", 200);
+            backdate("x", "2024-01-01T05:00:00", 200);
+            pinPieceCap(2);
+            final String before = fingerprintOfDay("x", "2024-01-01");
+
+            runCompactionPasses("x");
+            Assert.assertTrue("TRIM-FILES was never refused", refusedTrims.get() > 0);
+            Assert.assertTrue("a refused TRIM-FILES must keep the partition composite", isComposite("x", "2024-01-01"));
+            Assert.assertEquals(1, pieceCountOfDay("x", "2024-01-01"));
+            Assert.assertEquals("E must be lowered to the live rows", 0, deadRowsOfDay("x", "2024-01-01"));
+            Assert.assertEquals("the declined MAKE-PLAIN changed the data", before, fingerprintOfDay("x", "2024-01-01"));
+            assertFrontFileCoversPhysicalRows("x", "2024-01-01", "i", Integer.BYTES);
+            final long diskAfterDecline = diskSizeOfDay("x", "2024-01-01");
+
+            // Clears the decline's one-minute backoff.
+            isTrimRefused.set(false);
+            setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
+            runCompactionPasses("x");
+            Assert.assertFalse(
+                    "the retry left the partition composite; dead rows: " + deadRowsOfDay("x", "2024-01-01"),
+                    isComposite("x", "2024-01-01")
+            );
+            Assert.assertEquals(0, deadRowsOfDay("x", "2024-01-01"));
+            final long diskAfterRetry = diskSizeOfDay("x", "2024-01-01");
+            Assert.assertTrue(
+                    "the retry did not trim [diskAfterDecline=" + diskAfterDecline + ", diskAfterRetry=" + diskAfterRetry + ']',
+                    diskAfterRetry < diskAfterDecline
+            );
+            Assert.assertEquals("MAKE-PLAIN changed the data", before, fingerprintOfDay("x", "2024-01-01"));
+        });
+    }
+
+    /**
      * A reader pinned AFTER the current geometry record was published must keep reading that record for as
      * long as it lives, across MAKE-PLAIN and the composite commits that follow it into the SAME directory.
      * <p>
@@ -494,7 +594,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testMakePlainKeepsAPinnedReadersSnapshotAcrossGeometryRecreation() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             enableCompaction();
             letPreSplitCut();
@@ -578,7 +678,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testMakePlainReclaimsAMoveTailedFrontsDeadSpace() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             // Piece count off during the buildup below - the effective cap is liveRows / avg.rows.piece.lim
             // with no flat floor any more, so a small fixture could otherwise trip it well before the
@@ -639,7 +739,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testMakePlainTrimsVarSizeColumnFiles() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             // Piece count off during the buildup below - the effective cap is liveRows / avg.rows.piece.lim
             // with no flat floor any more, so a small fixture could otherwise trip it well before the
@@ -709,7 +809,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testMakePlainWaitsForAPinnedReaderThenReclaimsOnceItGoes() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             // Piece count off during the buildup below - the effective cap is liveRows / avg.rows.piece.lim
             // with no flat floor any more, so a small fixture could otherwise trip it well before the
@@ -795,7 +895,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testMoveTailCopiesTheTailNotTheWholePartition() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             // Piece count off during the buildup below - the effective cap is liveRows / avg.rows.piece.lim
             // with no flat floor any more, so a small fixture could otherwise trip it well before the
@@ -873,7 +973,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testPassiveReaderReloadsGeometryAfterCompositePlainCompositeRefReuse() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             enableCompaction();
             letPreSplitCut();
@@ -933,7 +1033,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testPieceCountTriggerReducesTheNumberOfPieces() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             // Piece count off during the buildup below - the effective cap is liveRows / avg.rows.piece.lim
             // with no flat floor any more, so a small fixture could otherwise trip it well before the
@@ -984,7 +1084,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testRewriteLeavesAPinnedReadersDataIntact() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             enableCompaction();
             // A full-partition rewrite naturally crosses the table-wide dead-percent default (50%)
@@ -1032,7 +1132,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testTheCompactionSweepMakesAnIdlePartitionPlainInPlace() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             enableCompaction();
             letPreSplitCut();
@@ -1070,6 +1170,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             Assert.assertTrue("the writer already reclaimed it, the sweep has nothing to do",
                     deadRowsOfDay("x", "2024-01-01") == deadBefore);
 
+            engine.releaseAllReaders();
             try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
                 job.run();
             }
@@ -1103,7 +1204,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testTablePartitionsReportsDeadRowsAndLastWriteTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             createDayTable("x", "2024-01-01", 20_000);
             backdate("x", "2024-01-01T06:00:00", 200);
@@ -1123,7 +1224,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testTablePartitionsReportsPieceCount() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             // Let the pre-split cut the day on every stride, so it ends up as several pieces.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
@@ -1162,7 +1263,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testWastePriorityCompactsTheHighestRatioFirst() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             enableCompaction();
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
@@ -1201,7 +1302,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testPiecePriorityCompactsTheHighestCountFirst() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             enableCompaction();
             letPreSplitCut();
@@ -1248,7 +1349,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testTablePressurePercentageUsesVisibleTableRows() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             enableCompaction();
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
@@ -1297,7 +1398,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testTablePressureDoesNotRewriteAPartitionTheLastCommitsWrote() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
 
             setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
@@ -1354,7 +1455,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testTablePressureTriggerCompactsTheColdestPartitionFirst() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
 
             setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
@@ -1413,7 +1514,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testWasteRatioTriggerReclaimsDeadRows() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             // Piece count off during the buildup below - the effective cap is liveRows / avg.rows.piece.lim
             // with no flat floor any more, and this fixture's live rows (3800) sit well under the default
@@ -1468,7 +1569,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testHasCompositePartitionsTracksTheOnlyShapeCompactionCanPick() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             enableMergeAppend();
             enableCompaction();
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
@@ -1510,6 +1611,26 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      * at the shared file tail, abandoning its previous copy - which is exactly the dead space
      * compaction exists to reclaim.
      */
+    private static void assertFrontFileCoversPhysicalRows(String table, String day, String column, int valueSize) throws Exception {
+        final TableToken tt = engine.verifyTableName(table);
+        try (TableReader reader = engine.getReader(tt)) {
+            final TxReader txReader = reader.getTxFile();
+            final long partitionTs = parseMicros(day + "T00:00:00.000000Z");
+            final int partitionIndex = txReader.getPartitionIndex(partitionTs);
+            Assert.assertTrue("day has no partition", partitionIndex > -1);
+            final long physicalRows = reader.getPartitionPhysicalRowCount(partitionIndex);
+            final int columnIndex = reader.getMetadata().getColumnIndex(column);
+            final long columnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(partitionTs, reader.getMetadata().getWriterIndex(columnIndex));
+            final Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tt);
+            TableUtils.setPathForNativePartition(path, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(), partitionTs, txReader.getPartitionNameTxn(partitionIndex));
+            final long fileSize = engine.getConfiguration().getFilesFacade().length(TableUtils.dFile(path, column, columnNameTxn));
+            Assert.assertTrue(
+                    "the front's " + column + ".d is shorter than its physical rows [physicalRows=" + physicalRows + ", fileSize=" + fileSize + ']',
+                    fileSize >= physicalRows * valueSize
+            );
+        }
+    }
+
     private static void backdate(String table, String ts, int rows) throws Exception {
         execute("insert into " + table + " select cast(x as int) + 500000 i," +
                 " timestamp_sequence('" + ts + "', 1000000L) ts from long_sequence(" + rows + ")");
@@ -1556,9 +1677,11 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     /**
      * Hides {@link AbstractCairoTest#drainWalQueue()} so every one of this file's bare {@code drainWalQueue()}
      * calls also checks that {@code getPartitionPhysicalRowCount} still matches what the writer actually put
-     * on disk - see {@link TestUtils#assertPhysicalRowCountsMatchFiles}.
+     * on disk - see {@link TestUtils#assertPhysicalRowCountsMatchFiles}. It first closes idle pooled readers, which
+     * keep partition files mapped, and {@link WindowsMappedTruncateFacade} refuses TRIM-FILES on a mapped file.
      */
     protected static void drainWalQueue() {
+        engine.releaseInactive();
         AbstractCairoTest.drainWalQueue();
         TestUtils.assertPhysicalRowCountsMatchFiles(engine);
     }

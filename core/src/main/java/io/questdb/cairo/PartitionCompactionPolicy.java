@@ -377,7 +377,8 @@ public class PartitionCompactionPolicy implements Mutable {
         if (geometry.getPieceTimestampLo(partitionIndex, 0) != txWriter.getPartitionTimestampByIndex(partitionIndex)) {
             return false;
         }
-        return geometry.getE(partitionIndex) > txWriter.getPartitionSize(partitionIndex);
+        // E equal to the live rows is MAKE-PLAIN's own halfway state: it lowered E, then TRIM-FILES failed.
+        return geometry.getE(partitionIndex) >= txWriter.getPartitionSize(partitionIndex);
     }
 
     /**

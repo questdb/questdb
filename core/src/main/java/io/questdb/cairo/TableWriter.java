@@ -3191,8 +3191,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         if (!makePartitionPlain(partitionIndex)) {
-            // A reader on the record this shape came from, or a running checkpoint. Nothing is staged, so
-            // there is nothing to undo - the next sweep picks the partition up again.
+            // A reader on the record this shape came from, a running checkpoint, or a refused TRIM-FILES. Nothing
+            // is staged, so there is nothing to undo - the next sweep picks the partition up again.
             LOG.info().$("MAKE-PLAIN declined for the compaction sweep [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                     .I$();
@@ -6719,8 +6719,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @param reason short label folded into the exception message if compaction cannot make progress
      */
     private void compactPartitionToPlain(int partitionIndex, String reason) {
-        final PartitionGeometry geometry = getGeometry();
-        while (geometry.isComposite(partitionIndex)) {
+        // The _txn flag, not the geometry's shape: MAKE-PLAIN's halfway state is one piece at row 0 with E at the
+        // live rows, which the geometry reads as plain while _txn still names its record.
+        while (txWriter.isPartitionComposite(partitionIndex)) {
             if (compactPhysicalPartition(partitionIndex, false, true, Long.MIN_VALUE, Long.MAX_VALUE) != COMPACTION_NONE) {
                 continue;
             }
@@ -10042,7 +10043,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * MAKE-PLAIN (PARTITION_COMPACTION.md Sec.5).
      *
      * @return true if the partition was made plain this call; false if a reader still resolves the geometry record this
-     * shape came from, or a checkpoint is running, leaving it to the caller's decline/backoff bookkeeping
+     * shape came from, a checkpoint is running, or TRIM-FILES failed, leaving it to the caller's decline/backoff
+     * bookkeeping
      */
     private boolean makePartitionPlain(int partitionIndex) {
         final PartitionGeometry geometry = getGeometry();
@@ -10067,35 +10069,43 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         final long liveRows = txWriter.getPartitionSize(partitionIndex);
         final long deadRows = geometry.getE(partitionIndex) - liveRows;
-        setGeometryRefRetiringGenerations(partitionTs, NO_GEOMETRY_REF);
-        LOG.info().$("compacting composite partition, MAKE-PLAIN: dropping dead space above the single" +
-                        " piece at row 0 [table=").$(tableToken)
-                .$(", dir=").$(formatPartitionForTimestamp(partitionTs, partitionNameTxn))
-                .$(", liveRows=").$(liveRows)
-                .$(", deadRows=").$(deadRows)
-                .I$();
-        if (clampColumnTopsToLiveRows(partitionTs, liveRows)) {
-            // Publish the lowered tops with the same commit that publishes the plain partition: _txn must
-            // never point at a plain partition while _cv still carries a top above its row count.
-            columnVersionWriter.commit();
-            txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        if (deadRows > 0) {
+            // First commit: the partition stays composite with E lowered to the live rows, so the files are never
+            // shorter than E. A failed TRIM-FILES below then leaves nothing to undo, and the next attempt finds this
+            // same shape and trims again.
+            LOG.info().$("compacting composite partition, MAKE-PLAIN: dropping dead space above the single" +
+                            " piece at row 0 [table=").$(tableToken)
+                    .$(", dir=").$(formatPartitionForTimestamp(partitionTs, partitionNameTxn))
+                    .$(", liveRows=").$(liveRows)
+                    .$(", deadRows=").$(deadRows)
+                    .I$();
+            geometry.lowerEToLiveRows(partitionIndex);
+            final long geometryRef = geometry.publish(
+                    partitionIndex,
+                    txWriter.getTxn() + 1,
+                    getCompositePartitionSeqTxn(),
+                    configuration.getMicrosecondClock().getTicks(),
+                    configuration.getCommitMode()
+            );
+            setGeometryRefRetiringGenerations(partitionTs, geometryRef);
+            if (clampColumnTopsToLiveRows(partitionTs, liveRows)) {
+                // _cv must never carry a top above the row count of a partition whose E is its live rows.
+                columnVersionWriter.commit();
+                txWriter.setColumnVersion(columnVersionWriter.getVersion());
+            }
+            commitTxWriterAndPublishPendingPostingSealPurges();
         }
-        commitTxWriterAndPublishPendingPostingSealPurges();
         // TRIM-FILES needs no reader wait of its own. A reader maps a partition's column files only as far as
         // its highest live piece reaches (TableReader#mappedRowCount), and the check at the top of this method
         // has already cleared every reader that could still resolve a shape with a piece above the single one
-        // at row 0 - so the bytes cut below are bytes no live or arriving reader can ask for.
-        // Best-effort and strictly after the commit above: a failure leaves dead bytes in place, wasted
-        // disk and nothing more. POSTING index files are left alone - their size tracks seal history, and
-        // PostingSealPurgeJob already reclaims old generations.
-        try {
-            trimPartitionFiles(partitionTs, partitionNameTxn, liveRows);
-        } catch (Throwable th) {
-            LOG.error().$("TRIM-FILES failed after MAKE-PLAIN, dead space left in place [table=").$(tableToken)
-                    .$(", dir=").$(formatPartitionForTimestamp(partitionTs, partitionNameTxn))
-                    .$(", e=").$(th)
-                    .I$();
+        // at row 0 - so the bytes cut below are bytes no live or arriving reader can ask for. POSTING index
+        // files are left alone - their size tracks seal history, and PostingSealPurgeJob already reclaims old
+        // generations.
+        if (!trimPartitionFiles(partitionTs, partitionNameTxn, liveRows)) {
+            return false;
         }
+        setGeometryRefRetiringGenerations(partitionTs, NO_GEOMETRY_REF);
+        commitTxWriterAndPublishPendingPostingSealPurges();
         return true;
     }
 
@@ -10118,8 +10128,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * TRIM-FILES (PARTITION_COMPACTION.md Sec.5): shortens every real column's primary file, and a var-size column's
      * aux file, down to {@code liveRows} worth of bytes.
+     *
+     * @return false if a file could not be shortened, for example because Windows still has it mapped
      */
-    private void trimPartitionFiles(long partitionTs, long partitionNameTxn, long liveRows) {
+    private boolean trimPartitionFiles(long partitionTs, long partitionNameTxn, long liveRows) {
         path.trimTo(pathSize);
         setPathForNativePartition(path, timestampType, partitionBy, partitionTs, partitionNameTxn);
         final int plen = path.size();
@@ -10168,6 +10180,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
             }
+            return true;
+        } catch (Throwable th) {
+            LOG.error().$("TRIM-FILES failed, MAKE-PLAIN declined [table=").$(tableToken)
+                    .$(", dir=").$(formatPartitionForTimestamp(partitionTs, partitionNameTxn))
+                    .$(", e=").$(th)
+                    .I$();
+            return false;
         } finally {
             path.trimTo(pathSize);
         }

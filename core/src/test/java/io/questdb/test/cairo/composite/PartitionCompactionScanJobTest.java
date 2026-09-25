@@ -1492,7 +1492,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int mkdirs(Path path, int mode) {
-                if (Utf8s.containsAscii(path, "/2024-01-01")
+                if (Utf8s.containsAscii(path, Files.SEPARATOR + "2024-01-01")
                         && (Utf8s.containsAscii(path, TableUtils.COMPACTING_DIR_MARKER)
                         || Utf8s.containsAscii(path, TableUtils.MERGING_DIR_MARKER))) {
                     dayStagingMkdirs.add(path.toString());
@@ -1589,7 +1589,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int mkdirs(Path path, int mode) {
-                if (Utf8s.containsAscii(path, "/2020-01-01") && Utf8s.containsAscii(path, TableUtils.COMPACTING_DIR_MARKER)) {
+                if (Utf8s.containsAscii(path, Files.SEPARATOR + "2020-01-01") && Utf8s.containsAscii(path, TableUtils.COMPACTING_DIR_MARKER)) {
                     dayStagingMkdirs.add(path.toString());
                 }
                 return super.mkdirs(path, mode);
@@ -1599,7 +1599,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             public long openRW(LPSZ name, int opts) {
                 // Lands the queued command mid-copy, the way the writer's own thread would, should a rebuild
                 // ever start filling the staging directory that command owns.
-                if (Utf8s.containsAscii(name, TableUtils.COMPACTING_DIR_MARKER) && Utf8s.endsWithAscii(name, "/ts.d")) {
+                if (Utf8s.containsAscii(name, TableUtils.COMPACTING_DIR_MARKER) && Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d")) {
                     final TableWriter writer = tickOnStagingOpen.getAndSet(null);
                     if (writer != null) {
                         writer.tick(false);
