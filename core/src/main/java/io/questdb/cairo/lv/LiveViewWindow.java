@@ -28,6 +28,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
@@ -292,6 +293,21 @@ public class LiveViewWindow implements QuietCloseable {
      * both adds and subtracts, and a subtraction that underflows would publish a root
      * charging a nonsense figure that every later cadence then builds on.
      */
+    /**
+     * The anchor expression's admissible return types, the arms of {@link #readAnchorValue}.
+     * The CREATE-time check ({@code CairoEngine.validateAnchorReturnType}) and
+     * {@link #build} share this one relation.
+     */
+    public static boolean isAnchorType(int type) {
+        return switch (ColumnTypeTag.of(type)) {
+            case TIMESTAMP, LONG, INT -> true;
+            case UNDEFINED, BOOLEAN, BYTE, SHORT, CHAR, DATE, FLOAT, DOUBLE, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT,
+                 GEOINT, GEOLONG, BINARY, UUID, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, IPv4, VARCHAR, ARRAY,
+                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE,
+                 ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> false;
+        };
+    }
+
     private static long checkedAdd(long a, long b) {
         try {
             return Math.addExact(a, b);
@@ -479,8 +495,7 @@ public class LiveViewWindow implements QuietCloseable {
         // the two implementations through it. See retainPartitions.
         Map map = createTrackedAnchorMap(configuration, mapKeyTypes, memoryTracker);
         int returnType = anchorExpression.getType();
-        int tag = ColumnType.tagOf(returnType);
-        if (tag != ColumnType.TIMESTAMP && tag != ColumnType.LONG && tag != ColumnType.INT) {
+        if (!isAnchorType(returnType)) {
             Misc.free(map);
             // Same wording as the CREATE-time check in
             // CairoEngine.validateAnchorReturnType. CREATE validates this, but
@@ -1612,15 +1627,17 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     private long readAnchorValue(Record record) {
-        // build() restricts anchorValueType to TIMESTAMP, LONG, or INT; INT
+        // build() admits only isAnchorType() types: TIMESTAMP, LONG, or INT; INT
         // widens cleanly into the LONG slot via getInt's int-to-long promotion.
         switch (ColumnType.tagOf(anchorValueType)) {
             case ColumnType.TIMESTAMP:
                 return anchorExpression.getTimestamp(record);
             case ColumnType.INT:
                 return anchorExpression.getInt(record);
-            default:
+            case ColumnType.LONG:
                 return anchorExpression.getLong(record);
+            default:
+                throw new IllegalStateException("no anchor arm [type=" + ColumnType.nameOf(anchorValueType) + "]");
         }
     }
 

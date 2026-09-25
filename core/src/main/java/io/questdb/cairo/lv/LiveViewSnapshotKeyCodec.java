@@ -26,6 +26,7 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
@@ -67,6 +68,12 @@ import io.questdb.cairo.vm.api.MemoryR;
  * </pre>
  * No length prefix on the entry itself - callers know the slot shape from the
  * function's stored {@link ColumnTypes}.
+ * <p>
+ * {@link #byteSizeOfType} is the one relation behind the type gates
+ * ({@link #isAllTypesSupported}, {@link #isAllTypesFixedWidth},
+ * {@link LiveViewFunctionSnapshot}'s key validation): a column reaches the
+ * per-row switches below only after a gate admitted its type, so their
+ * {@code default} arms are tripwires for an ungated caller.
  */
 public final class LiveViewSnapshotKeyCodec {
 
@@ -402,14 +409,21 @@ public final class LiveViewSnapshotKeyCodec {
             final int type = ColumnType.tagOf(types.getColumnType(i));
             switch (type) {
                 case ColumnType.BYTE:
+                    sink.putByte(record.getByte(columnIndex));
+                    break;
                 case ColumnType.GEOBYTE:
+                    // getByte, not getGeoByte: every Map record and MapValue that reaches this
+                    // codec implements getGeoByte as getByte, so the two read the same slot.
                     sink.putByte(record.getByte(columnIndex));
                     break;
                 case ColumnType.BOOLEAN:
                     sink.putByte((byte) (record.getBool(columnIndex) ? 1 : 0));
                     break;
                 case ColumnType.SHORT:
+                    sink.putShort(record.getShort(columnIndex));
+                    break;
                 case ColumnType.GEOSHORT:
+                    // getShort, not getGeoShort; see GEOBYTE above.
                     sink.putShort(record.getShort(columnIndex));
                     break;
                 case ColumnType.CHAR:
@@ -525,14 +539,20 @@ public final class LiveViewSnapshotKeyCodec {
             final int type = ColumnType.tagOf(types.getColumnType(i));
             switch (type) {
                 case ColumnType.BYTE:
+                    sink.putByte(record.getByte(columnIndex));
+                    break;
                 case ColumnType.GEOBYTE:
+                    // getByte, not getGeoByte; see writeKey(MemoryA, ...).
                     sink.putByte(record.getByte(columnIndex));
                     break;
                 case ColumnType.BOOLEAN:
                     sink.putByte((byte) (record.getBool(columnIndex) ? 1 : 0));
                     break;
                 case ColumnType.SHORT:
+                    sink.putShort(record.getShort(columnIndex));
+                    break;
                 case ColumnType.GEOSHORT:
+                    // getShort, not getGeoShort; see writeKey(MemoryA, ...).
                     sink.putShort(record.getShort(columnIndex));
                     break;
                 case ColumnType.CHAR:
@@ -572,31 +592,25 @@ public final class LiveViewSnapshotKeyCodec {
         }
     }
 
-    private static int byteSizeOfType(int columnType) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BYTE:
-            case ColumnType.BOOLEAN:
-            case ColumnType.GEOBYTE:
-                return Byte.BYTES;
-            case ColumnType.SHORT:
-            case ColumnType.CHAR:
-            case ColumnType.GEOSHORT:
-                return Short.BYTES;
-            case ColumnType.INT:
-            case ColumnType.SYMBOL:
-            case ColumnType.IPv4:
-            case ColumnType.GEOINT:
-            case ColumnType.FLOAT:
-                return Integer.BYTES;
-            case ColumnType.LONG:
-            case ColumnType.TIMESTAMP:
-            case ColumnType.DATE:
-            case ColumnType.GEOLONG:
-            case ColumnType.DOUBLE:
-                return Long.BYTES;
-            default:
-                return -1;
-        }
+    /**
+     * The wire width of a fixed-width codec slot, or -1 when the codec has no fixed-width arm
+     * for the type. This is the relation the type gates read; the per-row switches above have
+     * an arm for exactly the types it sizes, plus STRING. STRING is -1 here because its slot
+     * is variable-width; {@link #isSupportedKeyType} admits it separately. The other -1 types
+     * are either not column types or fixed-width types without a codec arm (LONG256, UUID,
+     * LONG128, the DECIMALs, INTERVAL): a function or anchor map that keys on one of them
+     * takes the head-miss path instead of a checkpoint.
+     */
+    static int byteSizeOfType(int columnType) {
+        return switch (ColumnTypeTag.of(columnType)) {
+            case BYTE, BOOLEAN, GEOBYTE -> Byte.BYTES;
+            case SHORT, CHAR, GEOSHORT -> Short.BYTES;
+            case INT, SYMBOL, IPv4, GEOINT, FLOAT -> Integer.BYTES;
+            case LONG, TIMESTAMP, DATE, GEOLONG, DOUBLE -> Long.BYTES;
+            case UNDEFINED, STRING, LONG256, BINARY, UUID, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, VARCHAR, ARRAY,
+                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE,
+                 ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> -1;
+        };
     }
 
     /**
