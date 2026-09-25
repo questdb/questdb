@@ -1179,6 +1179,23 @@ public class CairoEngine implements Closeable, WriterSource {
     public void checkTableDroppable(TableToken tableToken) {
     }
 
+    /**
+     * Refuses {@code ALTER TABLE ... RESUME WAL FROM TXN} on a table whose committed transactions
+     * no client may skip, whatever it is authorized to do. Resuming a suspended table from a later
+     * transaction marks every transaction before it as applied, so their rows never reach the
+     * table. Overridden by Enterprise for the view audit table. A plain {@code RESUME WAL} retries
+     * the failed transaction and skips nothing, so it does not consult this.
+     */
+    public void checkTableResumableFromTxn(TableToken tableToken, int tableNamePosition) {
+    }
+
+    /**
+     * Refuses {@code ALTER TABLE ... SUSPEND WAL} on a table whose WAL apply no client may stop,
+     * whatever it is authorized to do. Overridden by Enterprise for the view audit table.
+     */
+    public void checkTableSuspendable(TableToken tableToken, int tableNamePosition) {
+    }
+
     public void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, boolean isIncrementalBackup) throws SqlException {
         checkpointAgent.checkpointCreate(circuitBreaker, false, isIncrementalBackup);
     }
